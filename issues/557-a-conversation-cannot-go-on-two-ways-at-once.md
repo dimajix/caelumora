@@ -511,6 +511,321 @@ Decided by the maintainer, on the proposal above and on the sub-agents of
 The fork of an agent itself, under *What is still hard*, is not needed: a sub-agent is a new agent
 of a personality, and its start does not block the agent that started it (558).
 
+## Plan: the first steps
+
+The author's proposal of 2026-11-17, worked out with a second reviewing model - not decided. Put
+up for decision are step 1 and the points D1 to D6 under *To decide*; step 2 is a sketch, to be
+planned with 558.
+
+### The cut: what 558 needs first
+
+The first user of threads is [558](558-no-agent-hands-a-task-to-a-sub-agent.md#decision), and in
+it **no agent holds two threads**: the main agent takes no part in the sub-agent's thread, and the
+sub-agent, a new agent, takes part in its own thread alone. So neither a transcript with a head
+per thread nor the split of `AgentChannelState` has a user before threads that people open, which
+are forked and in which an agent of the line takes part as well. The plan therefore cuts narrower
+than *An order of steps* above, which proposed both for the first step:
+
+1. **Restructuring, without a change of behaviour**: every event and every entry of the history
+   names the thread it happens in, and everything that goes by a thread knows one, the line.
+2. **Threads for sub-agents**, together with 558: opening and closing a thread, taking an agent
+   into it alone, delivering and reading by thread, the moderator per thread, and the frontends
+   showing the line.
+3. **Later, with the threads people open**: a transcript with a branch per thread, the split of
+   `AgentChannelState`, who takes part growing by mention, a thread's own policy, unloading with
+   [381](381-inactive-channels-held-in-memory.md), closed circles, splitting off.
+
+Nothing in 1 and 2 is without a caller: 1 is the preparation of 2, as *Restructure, then extend*
+asks, and the first caller of opening a thread is 558's tool.
+
+### The pattern: threads are state of the channel
+
+The closest thing the codebase has is how a channel keeps who takes part in it: the participants
+are named in the channel's document, and when they took part is derived from the history - the
+`ParticipantJoined` and `ParticipantLeft` entries, kept by the store beside the chain as the
+`Attendance`. Threads would be kept the same way, as **state of the channel**, not as entities of
+their own:
+
+- a thread is opened, closed and opened again by entries of the channel's history
+  (`ThreadOpened`, `ThreadClosed`), in the name of whoever did it;
+- what the running channel needs of its open threads when it starts - the origin, the opener,
+  later its policy - is a small part of `ChannelState`, recorded whole (`ChannelState::threads`),
+  as `history_from` is. Every thread is an entry of it, the line included: the line's has no
+  origin and is there from the channel's start, so that whether a thread is open, and how it is
+  moderated, is read alike for every thread and nothing asks whether it is the line;
+- which thread an agent takes part in is recorded with its join (`ParticipantJoined::thread`), the
+  line for every join as today, and kept by the store in the `Attendance`;
+- the list of all threads, closed ones too, is a page of the history's items of those entries,
+  the open ones from the state first.
+
+Weighed against a stored kind `Thread` that lies in its channel as a channel lies in its session
+(`Stored`, `Within`, a `ThreadSpec`) - the shape first suggested in review. The state wins on
+four points: a thread has one writer, the channel's loop (STORAGE.md, *one writer per state*);
+it has no attributes of its own to keep in step with the channel's - access list, classification,
+components -, since what it shares with the channel is all of them; it is purged with the
+channel's state; and it adds no level to what [556](556-what-an-id-lies-in-is-found-by-searching.md)
+has to find by id. A thread's own policy fits as well: a `ComponentConfig` in its part of the
+state, built in the channel owner's name as the channel's components are.
+
+### To decide
+
+D1 to D6 were decided by the maintainer on 2026-11-17, as recommended. Still to be confirmed: the
+departure in step 2 from a sub-agent's thread having a policy of its own (*How a sub-agent is
+asked*).
+
+- **D1 - The cut above**: threads for 558 first, the head per thread and the split of
+  `AgentChannelState` with the threads people open. Recommended.
+- **D2 - Threads as state of the channel**, not as a stored kind. Recommended.
+- **D3 - How the line is named.** Every thread has a `ThreadId`; the line's is derived from its
+  channel's (`ThreadId::line(channel_id)`, the same UUID), so that an event made for a channel -
+  `EventContext::new` - is in its line without its makers knowing threads, and the line needs no
+  document, no search and no constant shared by every channel. The alternative is a field
+  `Channel::line` set when the channel is built, which every maker of an `EventContext` would have
+  to read. Recommended: derived.
+- **D4 - What happens in a thread and what in the whole channel.** An entry of the history is of
+  one thread or of the channel as a whole, by its kind (table below); the thread is a field of
+  `Recorded` beside `sender` and `recipients`, stamped by the channel, `None` for the whole
+  channel - not read out of `Recorded::context`, which `Recorded::new` builds from
+  `EventContext::default()`, and which a store does not filter by. Recommended.
+- **D5 - Agents hear by thread, users the whole channel.** An agent is delivered what happens in
+  the threads it takes part in, and what happens in the whole channel; a user everything. The
+  reason for treating them differently: what an agent hears enters its context and is paid for by
+  every call after it, while what a user is delivered is shown by a frontend that sorts it by
+  thread - and every participant may read every thread anyway (*Decision*). Recommended.
+- **D6 - How the sub-agent is kept to its thread**, open in 558: by the rule of D5, not by access
+  lists. Its join names its thread (`ParticipantJoined::thread`), its range in the `Attendance` is
+  of that thread, and what it is delivered live, what it catches up with from the history
+  (`Behind::recorded_for`, read as the participant) and its history as the REST API shows it are
+  what happened in its thread and in the whole channel. This meets the decision that *every
+  participant may read every thread* only for people: they are delivered everything. An agent has
+  no read of its own channel besides what it is delivered - `read_history` reads other channels -,
+  so the conflict does not arise yet; a tool that reads an agent's own channel would raise it
+  again. Recommended.
+- **D7 - The shape of a transcript with several threads** stays open until step 3; it is named
+  below, since the head per thread is recorded as decided and the code argues for weighing it.
+
+### What is of a thread, and what of the channel
+
+| Of the thread it happens in | Of the whole channel |
+|---|---|
+| `Said`, `Given`, `Withdrawn`, `Compacted` | `ParticipantJoined`, `ParticipantLeft`, `HistoryShared` |
+| `TurnFinished`, `TurnGivenUp`, `PlanStepStarted`, `ActivityFinished` | `Fitted` |
+| `CommandRequested`, `CommandExecuted`, `CommandFailed` | `Modified`, `Revoked`, `Reclassified` |
+| `RetryRequested`, `RetryAccepted`, `RetryRefused` | `ThreadOpened`, `ThreadClosed` |
+| `ResponseRequested`, `ChainCutOff`, `ResponderUndecided` | |
+| `ApprovalRequested` to `ApprovalDecided`, `QuestionRequested`, `QuestionClosed` | |
+| `EventRejected`, `EventRefused` | |
+
+A change of a message is of the whole channel, as it is today of every branch: it reaches whoever
+holds the message, and an agent whose transcript does not hold it records nothing (AGENT-TURN.md,
+*Changes to a message*). An approval and a question are of the thread of the call that asks them.
+A join and a leave of an agent taken into a thread alone are of that thread, not of the channel:
+otherwise every agent of the line would note a sub-agent coming and going in its transcript
+(`AgentChannelState::note_announced`) and find it among who is in the channel in its prompt.
+
+### Rules that go by the order of the whole channel
+
+A second thread breaks every rule that reads "the last" or "the next" over the whole channel. Each
+becomes a rule over one thread in step 2:
+
+- **Answering again** (`Chain<Recorded>::turn_given_up_last`, `RetryRefused::NotLast`): the last
+  thing of the conversation in the answer's thread, not in the channel.
+- **What a turn that ended answers** (`AgentBody::drop_answered`, "the very next event"): holds as
+  long as an agent hears one thread; with several, step 3.
+- **The moderator's context** (`PolicyModerator::heard`): kept per thread.
+- **What a policy keeps** (`ResponderPolicy` is public): `round_robin_policy` keeps whose turn is
+  next (`RoundRobinPolicy::next_agent_index`), which requests in a thread would move on for the
+  line. In step 2 a sub-agent is asked by a mention, which takes no turn of it; a policy chosen in a
+  thread of several agents needs what it keeps per thread, with step 3.
+- **Hops between agents** (`EventContext::agent_hops`): counted from the thread's first message,
+  which begins at 0 (*Decided on 2026-11-17*).
+- **A quiet channel after a cancel** (`ChannelLoop::quiet`): stays of the whole channel - a cancel
+  cancels every agent of it.
+- **What is new to a user** (`announce_said`, `ReadMark`): counted in the line; what is new in a
+  thread is shown at it, later.
+- **Reading another channel** (`read_history`): reads the line of the other channel; its threads
+  are not read from outside in step 2.
+
+### Step 1: every event names its thread
+
+No change of behaviour: there is one thread, the line, and every rule gives what it gives today.
+
+```rust
+// caelumora-domain/src/channel/thread.rs
+/// A thread of a channel: a conversation of its own within it (issue 557).
+pub struct ThreadId(Uuid);
+impl ThreadId {
+    /// The thread of a channel's own line: its id derived from the channel's.
+    pub fn line(channel: ChannelId) -> ThreadId;
+}
+
+// caelumora-domain/src/actor/envelope.rs
+pub struct EventContext {
+    /// The thread it happens in; the line of its channel unless made for another. `next` keeps it.
+    pub thread_id: ThreadId,
+    // ...
+}
+
+// caelumora-domain/src/history/entry.rs
+impl HistoryEntry {
+    /// Whether it happens in one thread - a message said, a turn's end - rather than in the whole
+    /// channel - a join, a change of a message, a classification.
+    pub fn is_of_thread(&self) -> bool;
+}
+
+// caelumora-domain/src/history/recorded.rs
+pub struct Recorded {
+    /// The thread it happened in, `None` if in the whole channel (`HistoryEntry::is_of_thread`):
+    /// what a store will filter by beside its sender and its recipients.
+    pub thread: Option<ThreadId>,
+    // ...
+}
+```
+
+The moderator keeps what it heard per thread (`PolicyModerator::heard` by `ThreadId`). Every
+literal of an `EventContext` names its thread; the compiler finds them. Files: the domain's
+`channel`, `actor/envelope.rs`, `history/entry.rs` and `history/recorded.rs`; the moderator; the
+stores of histories, which keep `Recorded::thread` - the `MemoryStore`, `JsonStates` and Postgres,
+there as a column of the history's entries -, to filter by it from step 2; the REST API's types,
+the REST client, the web UI and the TUI, which are given `thread_id` in every envelope and ignore
+it. Tests:
+the existing suites, unchanged; one each that an event made for a channel is in its line, that
+`next` keeps the thread, and that a store keeps and returns an entry's thread.
+
+### Step 2: threads for sub-agents, with 558 - a sketch
+
+A sketch, not yet an interface to decide: it rests on parts not yet read for this plan -
+[CHANNELS.md](../docs/CHANNELS.md#participants) on taking someone in,
+[PERMISSION-CHECKS.md](../docs/PERMISSION-CHECKS.md), [APPROVALS.md](../docs/APPROVALS.md) and
+the rest of [STORAGE.md](../docs/STORAGE.md#histories) on items -, and it is planned with 558.
+
+```rust
+// caelumora-domain/src/history/entry.rs
+pub enum HistoryEntry {
+    /// `by` opened the thread `thread` at `at`, at the message `origin.message` of the thread
+    /// `origin.thread`: from here on what is said in it is said there.
+    ThreadOpened { thread: ThreadId, origin: ThreadOrigin, by: ActorId, at: DateTime<Utc> },
+    /// `by` closed the thread `thread` at `at`: nothing more is said in it.
+    ThreadClosed { thread: ThreadId, by: ActorId, at: DateTime<Utc> },
+    /// ... `ParticipantJoined` gains `thread: ThreadId`: the thread it takes part in, the line
+    /// for whoever joins the channel as today.
+}
+
+// caelumora-domain/src/channel/thread.rs
+/// Where a thread hangs: a message of another thread of the channel.
+pub struct ThreadOrigin { pub thread: ThreadId, pub message: MessageId }
+/// A thread as the running channel keeps it: where it hangs and who opened it, `None` for the
+/// line, which hangs nowhere.
+pub struct ThreadState { pub opened: Option<(ThreadOrigin, ActorId)> }
+
+// caelumora-domain/src/channel/state.rs
+pub struct ChannelState {
+    /// The threads open in the channel, the line among them, recorded whole: what it needs of
+    /// them when it starts.
+    pub threads: BTreeMap<ThreadId, ThreadState>,
+    // ...
+}
+
+// caelumora-domain/src/history/filter.rs
+impl Filter<HistoryField> {
+    /// The items of the thread `thread` and of the whole channel: a page of one thread.
+    pub fn in_thread(thread: ThreadId) -> Self;
+}
+
+// caelumora-kernel/src/channel/mod.rs
+impl ChannelLoop {
+    /// Opens a thread at `origin` in the name of `context`, and returns its id.
+    pub(crate) async fn open_thread(&self, context: &SecurityContext, origin: ThreadOrigin)
+        -> Result<ThreadId, ChannelError>;
+    /// Closes the thread `thread` in the name of `context`; `false` if it is not open.
+    pub(crate) async fn close_thread(&self, context: &SecurityContext, thread: ThreadId)
+        -> Result<bool, ChannelError>;
+}
+
+// caelumora-store/src/history.rs
+/// The `Attendance` keeps each range with the thread it is of; delivering, catching up and an
+/// agent's history go by it (D5, D6).
+```
+
+What else changes, each where the rule lives:
+
+- **Delivering** (`Envelope::recipients`, `ChannelLoop::deliveries`): an agent is delivered an
+  envelope of a thread only if it takes part in that thread, and every envelope of the whole
+  channel; a user everything.
+- **Reading** (`Recorded::seen_by`, `Filter::seen_by` and every store of histories): the same rule
+  over the reader's ranges and the entry's thread.
+- **The moderator**: the agents who can be asked are those taking part in the event's thread, the
+  `ResponderPolicy` is given them and the thread's conversation, and a mention of an agent that
+  takes no part asks nobody.
+- **How a sub-agent is asked.** The brief and every later message of the main agent mention the
+  sub-agent, and a mention asks it under every policy. That replaces, for the first version, the
+  policy of its own that *Decided on 2026-11-17* says a sub-agent's thread needs - a departure
+  from the decision, to be confirmed: its reason, that the channel's policy may ask nobody, is met
+  by the mention, and a thread's own policy comes with a use that needs one.
+- **Who may open a thread** is the kernel's rule (*Decided on 2026-11-17*): in step 2 only the
+  runtime of an agent opens one, for a sub-agent; a person cannot yet, so nothing of the
+  frontends opens one. Which action opening asks in whose name is open.
+- **Taking the sub-agent in.** A channel takes in only participants of its session (CHANNELS.md,
+  *Building a channel*), so the sub-agent joins the session as well; its join and its leave are of
+  its thread (table above).
+- **`ThreadOpened` and `ThreadClosed` are items** of the history, so that a page filtered by them
+  lists the threads.
+- **The REST API** reads a page of one thread (`?thread=`, with `Filter::in_thread`; the line
+  without it). The web UI and the TUI show the line, and of another thread its approvals and its
+  questions as today, since its calls wait for them; its messages are left out of the line's view,
+  and a view of a thread comes later.
+- **The rules over the order** as listed above.
+
+Tests: in the kernel's channel tests, with a scripted agent - an agent taken into a thread alone
+is delivered what is said in it and in the whole channel, and nothing of the line; the line's
+agents nothing of the thread; the users all of it; a page of a thread holds its items alone; the
+moderator asks only those taking part; a closed thread takes nothing more; the threads open are
+there again after a restart. In the security suite, opening and closing a thread, in whose name.
+
+### Open for 558, before step 2
+
+- **An answer taken away.** An agent's turn answers every request taken in together, in the
+  context of the last (AGENT-TURN.md, *Between turns*). If a user writes in the sub-agent's thread
+  before it answers the brief, the turn answers in the user's context, and the answer is not the
+  main agent's to be given. Recommended for the first version: the thread of a sub-agent is a
+  closed circle - only the main agent's messages, through its tools, are said there.
+- **How the answer is given.** Giving to read happens today only within a turn of the agent
+  (`Turn::give`), and the way another participant gives an agent something is an agent command
+  (`/skill`): recorded, delivered again from the history, and admitted again. The way back would
+  either be such a command asked of the main agent, or a new event its intake takes in as given
+  between turns. To be weighed with 558's plan.
+
+### Later: the shape of a transcript with several threads (D7)
+
+Recorded as decided: the agent's transcript keeps a branch with a head of its own for every thread
+(*Threads in the running channel*). Two shapes would do it, and unloading - decided as well -
+tells them apart:
+
+- **One chain, a head per thread.** The store keeps it as now, and `TranscriptStore::path` finds
+  the context of a message on whichever thread's branch. But what is held in memory is a suffix of
+  the chain from one position on (`Chain::keep_from`, `transcript_from`), and the branches of
+  several threads interleave by position: a thread that stays loaded keeps everything after where
+  its window begins in memory, an unloaded thread's entries cannot be let go on their own, and
+  loading one back means entries before what is held - which `Chain::apply` and `Chain::suffix`
+  do not take.
+- **A chain per thread**, the first entry of a forked one following an entry of its origin's
+  chain - a suffix takes an entry that follows one it does not hold already. Every thread has its
+  own window, head and positions, and is unloaded by letting its chain go. But
+  `TranscriptStore::path` has to follow a path into the origin's chain, and the store keeps a
+  transcript per agent, channel and thread.
+
+To be decided with step 3; a fresh thread - all that 558 needs - is the same in both: a branch
+that begins at the root.
+
+### Stored data to delete
+
+Step 1 adds a field to `EventContext` and to `Recorded`, without compatibility code
+([CODING-GUIDELINES.md](../docs/CODING-GUIDELINES.md), *Stored data*): the state of every channel -
+its history - and of every agent in a channel, whose turn under way keeps the `EventContext` it
+answers (`Work::event_context`), have to be deleted, and the open tasks of external agents with
+them. Step 2 changes what is stored again - `ParticipantJoined`, the `Attendance` and
+`ChannelState` -, and the same states have to be deleted then.
+
 ## Done when
 
 - The model is decided - within one channel, as channels, or not at all - with the reasoning
@@ -542,3 +857,12 @@ of a personality, and its start does not block the agent that started it (558).
   model's alone, with the channel's line a thread; a person branches once, by a rule of the
   kernel; a thread begins forked or fresh; every thread has a responder policy of its own; hops are
   counted per thread. The sub-agents of 558 decided with it.
+- **2026-11-17** — A plan for the first steps proposed (*Plan: the first steps*), worked out with a
+  second reviewing model: threads for 558 first, as state of the channel, the line's id derived
+  from its channel's, every entry of the history of a thread or of the whole channel, agents
+  hearing by thread. Step 1 and the points D1 to D6 are put up for decision, step 2 is a sketch to
+  be planned with 558, D7 stays open until step 3; not decided.
+- **2026-11-17** — D1 to D6 of the plan decided by the maintainer, as recommended: threads for 558
+  first, as state of the channel, the line's id derived from its channel's, every entry of a thread
+  or of the whole channel, agents hearing by thread, the sub-agent kept to its thread by that rule.
+  Asked in passing: an agent has one instance per channel, not per thread.
