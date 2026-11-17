@@ -162,6 +162,9 @@ Steps, each committed on its own:
    own check of participation departed from the kernel's.
 6. The REST routes and the web UI; `SessionError::NotAParticipant`, answered as `invalid_channel`
    today, answered for a session.
+6b. Whether one may leave a session is the session view's to say, as a channel's participants
+   carry `can_leave` (`ParticipantView::may_leave`): the web UI offers to leave a session by a rule
+   of its own today - whether its participants list the user.
 7. The exception of 564 rolled back.
 
 **Step 6a, actors in paths** (agreed): the routes of a channel's participants and actors
@@ -299,3 +302,12 @@ agents deleted or restored meanwhile.
   resting one is refused, `403`); cancelling an actor's turn or a tool call asks `CancelChannel`
   first, so that one who may not is answered `403` for an actor that takes no part as well. A user's
   private notes are none, as before.
+- **2026-11-17** — Step 6 done: `DELETE /sessions/{id}/participants/{aid}` and
+  `POST /sessions/{id}/participants/{aid}/leave`, the actor named by its `ActorPath`;
+  `SessionError::NotAParticipant` is `404 participant_not_found`, also where a channel is created
+  with founders not in the session (`400 invalid_channel` before). The web UI's session menu leaves
+  a session, for one who takes part, asked once more, and the list drops a session it fetches again
+  and the user no longer reads - the owner's stays. Removing someone else from a session has no
+  dialog yet: the web UI manages no session's participants. Not seen in a browser.
+- **2026-11-17** — Decided with the maintainer: whether one may leave a session is told by the
+  session view, as for a channel (step 6b, *Plan*), from the finding of the review of step 6.

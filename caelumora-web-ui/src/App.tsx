@@ -104,7 +104,7 @@ function Layout({ user, onLogout }: LayoutProps) {
     setSelectedChannelId(current => (current === channelId ? null : current));
   }, []);
 
-  const handleSessionDeleted = (sessionId: string) => {
+  const handleSessionGone = (sessionId: string) => {
     if (selectedSessionId === sessionId) {
       setSelectedSessionId(null);
       setSelectedChannelId(null);
@@ -119,7 +119,7 @@ function Layout({ user, onLogout }: LayoutProps) {
         selectedSessionId={selectedSessionId}
         selectedChannelId={selectedChannelId}
         onSelectChannel={handleSelectChannel}
-        onSessionDeleted={handleSessionDeleted}
+        onSessionGone={handleSessionGone}
         onChannelDeleted={handleChannelDeleted}
         page={page}
         onSelectPage={handleSelectPage}

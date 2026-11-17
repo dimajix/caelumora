@@ -1,5 +1,5 @@
 //! Sessions in the API: making them - in a shared project if asked (issue 467) -, listing,
-//! reading, changing, deleting and restoring them, and taking participants in.
+//! reading, changing, deleting and restoring them, and taking participants in and letting them go.
 
 use crate::auth::AuthenticatedUser;
 use crate::error::ApiError;
@@ -308,6 +308,31 @@ pub(super) async fn add_participant(
     let into = payload.channel.map(|channel| (channel, payload.history));
     session_loop.add_participant(&user.security_context(), payload.participant, into).await?;
     Ok(Json(session_response(&state, &user, session_id).await?))
+}
+
+/// Lets the user or agent `aid` go from session `id` (issue 590): out of the session and every
+/// channel of it, by whoever may change the session. `404 participant_not_found` for one who takes
+/// part in neither.
+pub(super) async fn remove_participant(
+    State(state): State<Arc<AppState>>,
+    Path((id, ActorPath(participant))): Path<(Uuid, ActorPath)>,
+    user: AuthenticatedUser,
+) -> Result<StatusCode, ApiError> {
+    let session_loop = ensure_session(&state, &user, SessionId(id)).await?;
+    session_loop.remove_participant(&user.security_context(), participant).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Takes participant `aid` - the authenticated user, or an agent of theirs - out of session `id`
+/// and every channel of it by their own act (issue 590), without the right to change it.
+pub(super) async fn leave_session(
+    State(state): State<Arc<AppState>>,
+    Path((id, ActorPath(participant))): Path<(Uuid, ActorPath)>,
+    user: AuthenticatedUser,
+) -> Result<StatusCode, ApiError> {
+    let session_loop = ensure_session(&state, &user, SessionId(id)).await?;
+    session_loop.leave(&user.security_context(), participant).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Joins session `id` by the user's own act (issue 221) - the user, or

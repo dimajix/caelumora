@@ -480,9 +480,10 @@ impl From<SessionError> for ApiError {
                     ),
                 }
             }
-            SessionError::NotAParticipant { .. } | SessionError::ClassificationRefused(_) => {
-                Self::bad_request("invalid_channel", detail)
+            SessionError::NotAParticipant { .. } => {
+                Self::not_found("participant_not_found", detail)
             }
+            SessionError::ClassificationRefused(_) => Self::bad_request("invalid_channel", detail),
             SessionError::WorkspaceOutOfScope(_) => {
                 Self::bad_request("workspace_out_of_scope", detail)
             }
@@ -703,7 +704,7 @@ mod tests {
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::Agent;
     use caelumora_domain::channel::ChannelId;
-    use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::confidentiality::{Classification, Confidentiality};
     use caelumora_domain::content::ContentId;
     use caelumora_domain::message::MessageId;
     use caelumora_domain::project::ProjectId;
@@ -989,6 +990,20 @@ mod tests {
         assert_eq!(
             answer(SessionError::CannotTakeIn(ActorId::System)),
             (400, "invalid_participant".to_string())
+        );
+        assert_eq!(
+            answer(SessionError::NotAParticipant {
+                session,
+                participant: ActorId::User(UserId::new())
+            }),
+            (404, "participant_not_found".to_string()),
+            "to let go, or to found a channel (issue 590)"
+        );
+        assert_eq!(
+            answer(SessionError::ClassificationRefused(Classification::general(
+                Confidentiality::Internal
+            ))),
+            (400, "invalid_channel".to_string())
         );
         assert_eq!(
             answer(SessionError::RunsElsewhere(SessionId::new())),

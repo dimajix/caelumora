@@ -608,6 +608,17 @@ export const api = {
   },
 
   /**
+   * Takes `actor` - you, or an agent of yours, as a path names it (`actorPath`) - out of the
+   * session and every channel of it by your own act (issue 590).
+   */
+  async leaveSession(sessionId: string, actor: string): Promise<void> {
+    const res = await request(`/sessions/${sessionId}/participants/${actor}/leave`, {
+      method: 'POST',
+    });
+    await ensureOk(res, 'Failed to leave the session');
+  },
+
+  /**
    * Deletes an agent (issues 164, 314): it rests in every channel it takes
    * part in, as a former participant, and is kept, marked, until it is purged.
    */

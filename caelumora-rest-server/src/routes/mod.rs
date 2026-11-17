@@ -279,6 +279,8 @@ fn session_routes() -> Router<Arc<AppState>> {
         .route("/sessions/{id}/language", routing::put(sessions::set_session_language))
         .route("/sessions/{id}/time-zone", routing::put(sessions::set_session_time_zone))
         .route("/sessions/{id}/participants", post(sessions::add_participant))
+        .route("/sessions/{id}/participants/{aid}", routing::delete(sessions::remove_participant))
+        .route("/sessions/{id}/participants/{aid}/leave", post(sessions::leave_session))
         .route("/sessions/{id}/join", post(sessions::join_session))
         .route("/sessions/{id}/candidates", get(sessions::candidates))
         .route(
@@ -395,14 +397,17 @@ fn session_routes() -> Router<Arc<AppState>> {
 mod tests {
     use super::*;
     use crate::auth::SESSION_COOKIE;
-    use crate::routes::testing::{login, send, state, user_id};
+    use crate::routes::testing::{login, send, session_of, state, user_id};
     use anyhow::Result;
     use axum::body::Body;
     use axum::http::{Method, Request};
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::channel::Participant;
     use caelumora_domain::template::testing::{make_channel_template, make_template};
     use caelumora_domain::template::{ChannelTemplate, SessionTemplate};
     use caelumora_kernel::kernel::KernelBuilder;
     use caelumora_kernel::plugin::Plugin;
+    use caelumora_rest_api::actor::ActorPath;
     use caelumora_security::SecurityContext;
     use serde_json::json;
     use tower::ServiceExt;
@@ -559,6 +564,56 @@ mod tests {
             (json!("global"), None, None),
             "{global}"
         );
+    }
+
+    /// Issue 590: a participant leaves a session by their own act, and whoever may change it lets
+    /// one go; one who takes part no more is not found, and a bare UUID names nobody.
+    #[tokio::test]
+    async fn a_session_is_left_and_lets_someone_go_by_the_actor_its_path_names() {
+        let state = state();
+        let api = api(Arc::clone(&state), &[]);
+        let alices = login(&api, "alice").await;
+        let bobs = login(&api, "bob").await;
+        let carols = login(&api, "carol").await;
+        let alice = user_id(&api, &alices).await;
+        let bob = ActorId::User(user_id(&api, &bobs).await);
+        let carol = ActorId::User(user_id(&api, &carols).await);
+        let others = [
+            Participant::User(bob.as_user_id().unwrap()),
+            Participant::User(carol.as_user_id().unwrap()),
+        ];
+        let (session_id, _) = session_of(&state, alice, &others).await;
+        let participants = format!("/sessions/{}/participants", session_id.0);
+        let system = SecurityContext::system();
+        let takes_part = async |actor| {
+            let session = state.session_manager.open(&system, session_id).await.unwrap();
+            session.session().takes_part(actor)
+        };
+
+        let leave = format!("{participants}/{}/leave", ActorPath(bob));
+        let (status, _) = send(&api, &bobs, Method::POST, &leave, None).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "bob leaves by his own act");
+        assert!(!takes_part(bob).await, "out of the session");
+        let (status, again) = send(&api, &bobs, Method::POST, &leave, None).await;
+        assert_eq!(
+            (status, again["code"].clone()),
+            (StatusCode::NOT_FOUND, json!("participant_not_found")),
+            "not again"
+        );
+
+        let carols_path = format!("{participants}/{}", ActorPath(carol));
+        let (status, _) = send(&api, &alices, Method::DELETE, &carols_path, None).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "alice lets carol go");
+        assert!(!takes_part(carol).await, "out of the session");
+
+        let bare = format!("{participants}/{}", Uuid::new_v4());
+        let (status, refused) = send(&api, &alices, Method::DELETE, &bare, None).await;
+        assert_eq!(
+            (status, refused["code"].clone()),
+            (StatusCode::BAD_REQUEST, json!("invalid_path")),
+            "a bare UUID names nobody"
+        );
+        state.session_manager.stop(&SecurityContext::system(), session_id).await.unwrap();
     }
 
     /// Issue 467: a session asked for in a shared project is made in its own and put into that
