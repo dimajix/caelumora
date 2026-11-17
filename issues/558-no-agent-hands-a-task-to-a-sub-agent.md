@@ -449,3 +449,5 @@ what the main agent may.
   state, and a brief into a quiet thread is refused; a sub-agent is named by an adjective and its
   personality, never by a name its channel has had; external agents as sub-agents opened as issue
   591.
+- **2026-11-17** — The steps of 557's 2b decided, with this crate as step 5 and the frontends as
+  step 6 ([557](557-a-conversation-cannot-go-on-two-ways-at-once.md#the-steps-of-2b)).

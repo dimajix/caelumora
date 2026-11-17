@@ -1024,6 +1024,61 @@ Proposed:
    sub-agent needs letting go from a session first (issue
    [590](590-a-session-lets-nobody-go.md)).
 
+### The steps of 2b
+
+Decided by the maintainer on 2026-11-17, each step a commit of its own, reviewed before the next.
+Who calls a building block comes in a later step - the crate in 5, the frontends in 6.
+
+1. **Threads opened and closed while the channel runs.** `ChannelState::threads`, with where a
+   thread hangs (`ThreadOrigin`) and who opened it; `ThreadOpened` and `ThreadClosed` in the
+   history, of the whole channel; `Rejection::ThreadClosed`; a moderator of its own for every
+   thread, built as it is opened; an actor starting again in its thread after a restart, as the
+   `Attendance` says (`HistoryStore::attending`); the action `OpenThread`.
+2. **Giving to read.** `ActorId::Delegate` and `ActorEvent::GivenToRead`, delivered to its
+   recipient by name, taken in by the agent as a `Given` entry ("@x gave you this to read:") with a
+   request to respond, waking an agent that sleeps; admitted from a delegate alone.
+3. **Delegating.** The delegate and `delegate`: the open brief in `ChannelState`, the next turn end
+   in the thread taken as its answer, given back to read in the origin; what is open set right as
+   the channel starts (`reconcile`), in the order: threads from the state, reconciling, delegates,
+   participants.
+4. **Cancelling and waking a thread.** Being quiet is a `Thread`'s state, no longer
+   `ChannelLoop::quiet`'s; a brief into a quiet thread is refused.
+5. **The crate `caelumora-subagents`.** Reaching the running session from a plugin
+   (`SessionView::session_loop`, today only the crate's `running`); the `SubAgentWriter` with
+   `start`, `ask` and `end`; names of an adjective and the personality; the tools, with the list of
+   personalities. Ending: let go from the session (590), the thread closed, the agent deleted.
+6. **The frontends.** The line's view in the web UI and the TUI leaves out what is said in other
+   threads - both ignore `thread_id` today -, `GivenToRead` is shown at the call, and the REST API
+   reads a page of one thread (`?thread=`).
+
+Decided with it, on the author's proposal:
+
+- **The way into a thread goes through the session** (`SessionLoop::open_thread`,
+  `close_thread`), not through `ChannelLoop::open_thread` as *The building blocks* proposed: every
+  way into a channel goes through the session, which holds the lock of a participant first (issue
+  590), and a founder is mostly new to the session - a sub-agent always. The locks of several
+  founders are taken sorted by id, as restoring a channel takes them.
+- **Who may be a founder**: whom the opener acts for, or an agent of their own (as
+  `Participation::require_own_act` asks), taken into the session and the channel in the kernel's
+  name once `OpenThread` was permitted - as founding a channel stores its founders -, so that an
+  agent of a user who does not own a shared session can start a sub-agent. Their clearance and
+  their scope are asked as for anyone taken in; one who takes part in the channel already is
+  refused (`AlreadyParticipant`), since an actor takes part in one thread.
+- **The origin's message is not checked against the history**, only that the origin's thread is
+  open: a tool opens the thread while the message with its call may still be on its way into the
+  channel. Opening goes through `run`'s ordered input, which takes the events first, so that the
+  message is recorded before `ThreadOpened`.
+- **A moderator per thread**, built as it is opened from the channel's components; a thread's own
+  policy comes with a user that needs one. The departure of *Step 2* - the sub-agent asked by a
+  mention instead of a policy of its own - is settled: the delegate asks by a request of its own,
+  which no policy decides.
+- **Closing** is refused while anyone takes part in the thread, so that no agent sits in a closed
+  one; it is asked of whoever opened it (the same caller) or whoever may change the channel
+  (`UpdateChannel`). Ending a sub-agent is therefore: let go (590), then closed. A user closing a
+  sub-agent's thread, which ends the sub-agent (558), stays open.
+- **A person branches once**, by the kernel's rule in `open_thread`: a thread a user opens hangs
+  at the line; an agent may open one at another thread.
+
 ## Done when
 
 - The model is decided - within one channel, as channels, or not at all - with the reasoning
@@ -1139,3 +1194,6 @@ Proposed:
   `Thread`, and waking goes the same two ways (*Plan: step 2*, 7). The rule of *Rules that go by
   the order of the whole channel* that kept being quiet the whole channel's changes with it. Part
   of 2b; ending a sub-agent needs letting go from a session first, issue 590.
+- **2026-11-17** — The steps of 2b decided by the maintainer (*The steps of 2b*), with the way
+  into a thread through the session, who may be a founder, the origin's message not checked, a
+  moderator per thread, closing an empty thread alone, and a person branching at the line.
