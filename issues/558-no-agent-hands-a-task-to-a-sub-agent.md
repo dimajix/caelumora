@@ -395,6 +395,13 @@ pub trait SubAgentWriter: Send + Sync {
   woken.
 - **Names.** Two sub-agents of one personality living at once need names of their own in the
   channel's scope; the writer gives each a name of its own.
+- **An external agent as a sub-agent.** An external agent takes part in one thread as any agent
+  does, its remote conversation being that thread's. As a sub-agent, its intake has to take in
+  what it is given to read and pass it to its remote agent as text; and a task that outlives its
+  request is answered later, when the external agent speaks on its own, so that the delegate would
+  take the turn's end before it as an answer that ended without one. Recommended for the first
+  version: the tool starts agents of internal personalities alone, and external ones come later,
+  with a delegate that takes an answer an external agent speaks on its own to an open brief.
 
 Still open from above: the command by which a user starts a sub-agent, and bounding its rights by
 what the main agent may.
@@ -427,3 +434,5 @@ what the main agent may.
 - **2026-11-17** — Decided by the maintainer: the delegate is a concept of the kernel - delegating,
   a building block of the channel (557) -; the crate makes an agent, founds its thread, delegates
   to it and ends it, and registers no kind of actor.
+- **2026-11-17** — Added to *To decide*: whether an external agent may be a sub-agent, with what it
+  would need.

@@ -161,6 +161,9 @@ fn cannot_run(error: &Error) -> bool {
 struct ChannelActor {
     actor: Arc<dyn Actor>,
     participant: ResolvedParticipant,
+    /// The thread it takes part in (issue 557): whose moderator may ask it, and what of the channel
+    /// is delivered to it - an agent's.
+    thread: ThreadId,
     /// Tracks the actor's task while `run` runs it, so that whoever stops
     /// the actor can wait for the task to end without going through `run`
     /// (issue 187) - `run`'s `JoinSet` alone owns the task.
@@ -202,10 +205,10 @@ enum ActorChange {
     /// given (`HistoryShared`, issue 417) - `None` for an actor that starts again with its channel,
     /// or an internal one, which join nothing.
     Start(ChannelActor, Option<Position>, Option<SecurityContext>),
-    /// The actor that leaves, what it was called as it left, and on whose
-    /// behalf it was removed - in whose name `run` announces it once its
-    /// task has ended (`ParticipantLeft`, issues 162, 262, 408).
-    Leave(ActorId, Name, SecurityContext),
+    /// The actor that leaves, what it was called as it left, on whose behalf it was removed - in
+    /// whose name `run` announces it once its task has ended (`ParticipantLeft`, issues 162, 262,
+    /// 408) -, and the thread it took part in, where it is announced (issue 557).
+    Leave(ActorId, Name, SecurityContext, ThreadId),
 }
 
 #[derive(Debug)]
@@ -243,7 +246,7 @@ pub struct ChannelLoop {
     /// that fails would roll back the listing of an actor the other started.
     changing: LocksById<ActorId>,
     /// Its threads (issue 557), each with a moderator of its own: what an event's thread decides
-    /// of it is what the channel delivers. Its line alone for now, in which every actor takes part.
+    /// of it is what the channel delivers. Its line alone, in which every actor takes part.
     threads: HashMap<ThreadId, Thread>,
     mentions: ArcSwap<MentionDirectory>,
     /// Held while `mentions` is built and stored, so that a build from older actors - a join and
@@ -404,22 +407,30 @@ impl ChannelLoop {
     }
 
     /// Takes `actor` into the channel and hands it to `run` to start (`ActorChange::Start`, given
-    /// `from` and `joined` as it says): it takes part in the channel's threads, whose moderators
-    /// route to it, it is among the participants' actors, and it can be mentioned. The one way an
+    /// `from` and `joined` as it says): it takes part in `thread` (issue 557), whose moderator
+    /// routes to it, it is among the participants' actors, and it can be mentioned. The one way an
     /// actor enters the channel - when the channel is built and when a participant joins (issue
     /// 91).
     async fn adopt(
         &self,
         actor: Arc<dyn Actor>,
         resolved: ResolvedParticipant,
+        thread: ThreadId,
         from: Option<Position>,
         joined: Option<SecurityContext>,
     ) {
-        for thread in self.threads.values() {
-            thread.add_actor(Arc::clone(&actor));
+        match self.threads.get(&thread) {
+            Some(taking_part) => taking_part.add_actor(Arc::clone(&actor)),
+            None => warn!(
+                "{} takes part in thread {} the channel {} has not",
+                actor.id(),
+                thread,
+                self.id
+            ),
         }
         let id = actor.id();
-        let adopted = ChannelActor { actor, participant: resolved, task: TaskTracker::new() };
+        let task = TaskTracker::new();
+        let adopted = ChannelActor { actor, participant: resolved, thread, task };
         self.actors.rcu(|actors| {
             let mut actors = HashMap::clone(actors);
             actors.insert(id, adopted.clone());
@@ -533,8 +544,12 @@ impl ChannelLoop {
     }
 
     /// The actor of `resolved`, built but not yet taken in (`adopt`).
-    async fn create_actor(&self, resolved: &ResolvedParticipant) -> Result<Box<dyn Actor>> {
-        let participant_runtime = self.runtime.participant_runtime(resolved);
+    async fn create_actor(
+        &self,
+        resolved: &ResolvedParticipant,
+        thread: ThreadId,
+    ) -> Result<Box<dyn Actor>> {
+        let participant_runtime = self.runtime.participant_runtime(resolved, thread);
         Ok(match resolved.kind().clone() {
             ResolvedKind::User(user) => Box::new(UserActor::new(user, participant_runtime).await?),
             ResolvedKind::Agent(agent, personality) => {

@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::{Agent, AgentChannelState, Personality};
 use caelumora_domain::approval::ApprovalRuleId;
-use caelumora_domain::channel::ChannelId;
+use caelumora_domain::channel::{ChannelId, ThreadId};
 use caelumora_domain::component::ComponentConfig;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::content::{ContentId, ContentRef};
@@ -56,6 +56,10 @@ pub trait ActorRuntime: Send + Sync + Debug {
 
     /// The channel the agent takes part in.
     fn channel_id(&self) -> ChannelId;
+
+    /// The thread of its channel the agent takes part in (issue 557): where what it says of itself
+    /// happens.
+    fn thread_id(&self) -> ThreadId;
 
     /// The agent as it is now, as its session holds it (issue 120).
     fn agent(&self) -> Arc<Agent>;

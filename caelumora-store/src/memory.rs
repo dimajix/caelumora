@@ -13,7 +13,7 @@ use caelumora_domain::channel::{ChannelId, ChannelState};
 use caelumora_domain::context::FrameRef;
 use caelumora_domain::digest::Digest;
 use caelumora_domain::history::{
-    History, HistoryEntry, HistoryField, HistoryPage, Reader, Recorded,
+    Attended, History, HistoryEntry, HistoryField, HistoryPage, Reader, Recorded,
 };
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::query::{ordered_after, FieldPath, Filter};
@@ -492,13 +492,13 @@ impl HistoryStore for MemoryStore {
     ) -> StoreResult<HistoryPage> {
         read_lock(&self.histories, |all| match all.get(&channel) {
             Some(kept) => {
-                let ranges = kept.attendance.of_reader(reader);
+                let attended = kept.attendance.of_reader(reader);
                 let newest = kept
                     .items
                     .newest_before(before.unwrap_or(Position::MAX))
                     .take_while(|(seq, _)| *seq >= from);
                 page_of(
-                    newest.map(|item| seen(reader, &ranges, filter, item)),
+                    newest.map(|item| seen(reader, &attended, filter, item)),
                     from,
                     limit,
                     kept.chain.head(),
@@ -561,11 +561,7 @@ impl HistoryStore for MemoryStore {
         }))
     }
 
-    async fn attendance(
-        &self,
-        channel: ChannelId,
-        actor: ActorId,
-    ) -> StoreResult<Vec<Range<Position>>> {
+    async fn attendance(&self, channel: ChannelId, actor: ActorId) -> StoreResult<Vec<Attended>> {
         Ok(read_lock(&self.histories, |all| {
             all.get(&channel).map(|kept| kept.attendance.of_participant(actor)).unwrap_or_default()
         }))

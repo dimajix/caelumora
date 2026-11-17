@@ -1,17 +1,14 @@
-//! A history as a store keeps it (issue 379): its chain, which is the truth
-//! and only appended to, and beside it the items as they stand - every
-//! message with every change since folded into it - and who took part
-//! when (`Attendance`), both derived from the chain and rebuilt from it at
-//! any time. The chain is written by the put of the state that holds it
-//! (`StateStore`); the `HistoryStore` is the read side, for whoever reads a
-//! history without holding it - always as a reader, who is given what of
-//! each entry they may see (`Recorded::as_seen_by`, issue 417): a predicate
-//! over what the store keeps of an entry and the reader's ranges, which the
-//! domain gives as data too (`Filter::seen_by`, issue 451), so that a
-//! database answers it as a `WHERE`. What else a page keeps - the messages
-//! of one sender, those heard, those of a classification the reader may
-//! copy - is a condition as data as well (`Filter<HistoryField>`, issue
-//! 421). Both are judged on an item as it is kept (`KeptItem`).
+//! A history as a store keeps it (issue 379): its chain, which is the truth and only appended to,
+//! and beside it the items as they stand - every message with every change since folded into it -
+//! and who took part when and where (`Attendance`), both derived from the chain and rebuilt from it
+//! at any time. The chain is written by the put of the state that holds it (`StateStore`); the
+//! `HistoryStore` is the read side, for whoever reads a history without holding it - always as a
+//! reader, who is given what of each entry they may see (`Recorded::as_seen_by`, issue 417): a
+//! predicate over what the store keeps of an entry and where the reader took part, which the domain
+//! gives as data too (`Filter::seen_by`, issue 451), so that a database answers it as a `WHERE`.
+//! What else a page keeps - the messages of one sender, those heard, those of a classification the
+//! reader may copy - is a condition as data as well (`Filter<HistoryField>`, issue 421). Both are
+//! judged on an item as it is kept (`KeptItem`).
 
 use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
@@ -19,7 +16,7 @@ use caelumora_domain::chain::{Node, Position};
 use caelumora_domain::channel::ChannelId;
 use caelumora_domain::digest::Digest;
 use caelumora_domain::history::{
-    HistoryEntry, HistoryField, HistoryPage, KeptItem, Reader, Recorded,
+    Attended, HistoryEntry, HistoryField, HistoryPage, KeptItem, Reader, Recorded,
 };
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::query::{meeting, Filter};
@@ -93,31 +90,28 @@ pub trait HistoryStore: Debug + Send + Sync {
         end: Position,
     ) -> StoreResult<Vec<Message>>;
 
-    /// The ranges of positions in which `actor` was given what went to
-    /// every participant of the channel (`Attendance`), oldest first: none
-    /// if it never was one, the last open - to `Position::MAX` - while it is.
-    async fn attendance(
-        &self,
-        channel: ChannelId,
-        actor: ActorId,
-    ) -> StoreResult<Vec<Range<Position>>>;
+    /// Where `actor` was given what went to every participant of the channel (`Attendance`):
+    /// its ranges of positions, each in the thread it took part in (issue 557), oldest first;
+    /// none if it never was one, the last open - to `Position::MAX` - while it is.
+    async fn attendance(&self, channel: ChannelId, actor: ActorId) -> StoreResult<Vec<Attended>>;
 
     /// Derives the items and the attendance anew from the chain: what
     /// repairs them, and what shows that they are derived.
     async fn rebuild(&self, channel: ChannelId) -> StoreResult<()>;
 }
 
-/// Who took part in a channel when (issue 417): each participant's ranges of positions in which it
-/// was given what went to every participant, oldest first, each from the `from` of the
-/// `HistoryShared` before its `ParticipantJoined`, or else from its join, up to the `until` of its
-/// `ParticipantLeft`. At most one range of a participant is open: a join recorded while it is - an
-/// actor started again without a leave recorded before, issue 568 - continues it.
+/// Who took part in a channel when and where (issues 417, 557): each participant's ranges of
+/// positions in which it was given what went to every participant, oldest first, each from the
+/// `from` of the `HistoryShared` before its `ParticipantJoined`, or else from its join, up to the
+/// `until` of its `ParticipantLeft`, in the thread the context of its join names (`Attended`). At
+/// most one range of a participant is open: a join recorded while it is - an actor started again
+/// without a leave recorded before, issue 568 - continues it.
 /// Derived from the chain beside the items, by `take`, and rebuilt with them; kept whole beside the
 /// chain - also by a database (issue 04), which would otherwise rebuild in SQL what a share before
 /// a join gives.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Attendance {
-    ranges: Vec<(ActorId, Range<Position>)>,
+    attended: Vec<(ActorId, Attended)>,
     /// What the `HistoryShared` before a join shared, from where.
     shared: Vec<(ActorId, Position)>,
     /// The position after the last entry taken in.
@@ -157,7 +151,11 @@ impl Attendance {
                     .map_or(node.seq, |at| self.shared.remove(at).1);
                 match self.open_range(*participant) {
                     Some(open) => open.start = open.start.min(from),
-                    None => self.ranges.push((*participant, from..Position::MAX)),
+                    None => {
+                        let thread = node.entry.context.thread_id;
+                        let range = from..Position::MAX;
+                        self.attended.push((*participant, Attended { thread, range }));
+                    }
                 }
             }
             HistoryEntry::ParticipantLeft { participant, until, .. } => {
@@ -171,25 +169,25 @@ impl Attendance {
 
     /// The open range of `participant`, if it takes part.
     fn open_range(&mut self, participant: ActorId) -> Option<&mut Range<Position>> {
-        self.ranges
+        self.attended
             .iter_mut()
             .rev()
-            .find(|(of, range)| *of == participant && range.end == Position::MAX)
-            .map(|(_, range)| range)
+            .find(|(of, at)| *of == participant && at.range.end == Position::MAX)
+            .map(|(_, at)| &mut at.range)
     }
 
-    /// The ranges of `participant`, oldest first.
-    pub fn of_participant(&self, participant: ActorId) -> Vec<Range<Position>> {
-        self.ranges
+    /// Where `participant` took part, oldest first.
+    pub fn of_participant(&self, participant: ActorId) -> Vec<Attended> {
+        self.attended
             .iter()
             .filter(|(of, _)| *of == participant)
-            .map(|(_, range)| range.clone())
+            .map(|(_, at)| at.clone())
             .collect()
     }
 
-    /// The ranges `reader` reads by (`Recorded::seen_by`): a participant's
-    /// own; none for anyone else.
-    pub fn of_reader(&self, reader: &Reader) -> Vec<Range<Position>> {
+    /// Where `reader` took part, which it reads by (`Recorded::seen_by`): a participant's own;
+    /// nowhere for anyone else.
+    pub fn of_reader(&self, reader: &Reader) -> Vec<Attended> {
         match reader {
             Reader::Participant(participant) => self.of_participant(*participant),
             Reader::Outsider | Reader::Channel => Vec::new(),
@@ -301,19 +299,19 @@ impl From<StandingItems> for Vec<(Position, Recorded)> {
     }
 }
 
-/// The item at the position `seq` as `reader`, with `ranges` as theirs
-/// (`Attendance::of_reader`), may see it, if it meets `filter`: what a
-/// store returns of an item it read.
+/// The item at the position `seq` as `reader`, with `attended` as where it took part
+/// (`Attendance::of_reader`), may see it, if it meets `filter`: what a store returns of an item it
+/// read.
 ///
 /// # Errors
 /// `StoreError::Validation` if the item cannot be judged by `filter`.
 pub fn seen(
     reader: &Reader,
-    ranges: &[Range<Position>],
+    attended: &[Attended],
     filter: Option<&Filter<HistoryField>>,
     (seq, item): &(Position, Recorded),
 ) -> StoreResult<Option<(Position, HistoryEntry)>> {
-    if !item.seen_by(*seq, reader, ranges) {
+    if !item.seen_by(*seq, reader, attended) {
         return Ok(None);
     }
     if let Some(filter) = filter {
@@ -321,22 +319,22 @@ pub fn seen(
             return Ok(None);
         }
     }
-    Ok(item.as_seen_by(*seq, reader, ranges).map(|entry| (*seq, entry)))
+    Ok(item.as_seen_by(*seq, reader, attended).map(|entry| (*seq, entry)))
 }
 
-/// The entries of `nodes` that `reader`, with `ranges` as theirs, may see,
-/// as they may see them, each in its node with what else was recorded of
-/// it: what a store returns of the chain it read.
+/// The entries of `nodes` that `reader`, with `attended` as where it took part, may see, as they
+/// may see them, each in its node with what else was recorded of it: what a store returns of the
+/// chain it read.
 pub fn seen_nodes<'a>(
     reader: &Reader,
-    ranges: &[Range<Position>],
+    attended: &[Attended],
     nodes: impl IntoIterator<Item = &'a Node<Recorded>>,
 ) -> Vec<Node<Recorded>> {
     nodes
         .into_iter()
         .filter_map(|node| {
             let Recorded { sender, recipients, context, timestamp, .. } = &node.entry;
-            let entry = node.entry.as_seen_by(node.seq, reader, ranges)?;
+            let entry = node.entry.as_seen_by(node.seq, reader, attended)?;
             Some(node.with_entry(Recorded {
                 entry,
                 sender: *sender,
@@ -348,17 +346,16 @@ pub fn seen_nodes<'a>(
         .collect()
 }
 
-/// The answer of the turn whose end is `ended` (`HistoryStore::answer`):
-/// its messages said that are not internal, as `reader`, with `ranges` as
-/// theirs, may see them, oldest first, gathered from `older` - the entries
-/// before its end, newest first - back to the end of the turn before of
-/// the same actor: an agent's turns do not overlap, so none of the turn's
-/// messages lies before it. Empty if `ended` is no turn's end.
+/// The answer of the turn whose end is `ended` (`HistoryStore::answer`): its messages said that are
+/// not internal, as `reader`, with `attended` as where it took part, may see them, oldest first,
+/// gathered from `older` - the entries before its end, newest first - back to the end of the turn
+/// before of the same actor: an agent's turns do not overlap, so none of the turn's messages lies
+/// before it. Empty if `ended` is no turn's end.
 pub fn answer_of<'a>(
     ended: &HistoryEntry,
     older: impl IntoIterator<Item = &'a Node<Recorded>>,
     reader: &Reader,
-    ranges: &[Range<Position>],
+    attended: &[Attended],
 ) -> Vec<Message> {
     let HistoryEntry::TurnFinished { turn_id, actor, .. } = ended else { return Vec::new() };
     let mut answer: Vec<Message> = older
@@ -371,7 +368,9 @@ pub fn answer_of<'a>(
                 .is_some_and(|message| message.turn_id == Some(*turn_id) && !message.internal)
         })
         .filter_map(|node| {
-            node.entry.as_seen_by(node.seq, reader, ranges).and_then(|entry| entry.said().cloned())
+            node.entry
+                .as_seen_by(node.seq, reader, attended)
+                .and_then(|entry| entry.said().cloned())
         })
         .collect();
     answer.reverse();
@@ -418,18 +417,38 @@ pub fn page_of(
 mod tests {
     use super::*;
     use caelumora_domain::actor::RequestReason;
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::confidentiality::{
         Classification, Compartment, Compartments, Confidentiality, Reading,
     };
     use caelumora_domain::content::testing::make_content_ref;
     use caelumora_domain::history::testing::items_of;
-    use caelumora_domain::history::{Audience, History};
+    use caelumora_domain::history::{Attended, Audience, History};
     use caelumora_domain::message::testing::{id, make_generated, make_message};
     use caelumora_domain::message::{Message, MessageRole};
     use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_domain::tool::ToolCall;
     use caelumora_domain::user::UserId;
     use chrono::Utc;
+
+    /// Issue 557: a participant takes part in the thread the context of its join names.
+    #[test]
+    fn a_participant_takes_part_in_the_thread_its_join_names() {
+        use caelumora_domain::actor::{ActorEvent, Envelope, EventContext};
+        let alice = ActorId::User(UserId::new());
+        let thread = ThreadId::new();
+        let context = EventContext { thread_id: thread, ..EventContext::default() };
+        let joined =
+            ActorEvent::ParticipantJoined { participant: alice, name: "alice".to_string() };
+        let mut history = History::default();
+        let recorded = Recorded::of(&Envelope::new(context, joined), alice, Audience::Everybody);
+        assert!(history.enter(recorded.expect("a join is recorded")));
+        assert_eq!(
+            Attendance::of(history.all_entries()).of_participant(alice),
+            [Attended { thread, range: Position::START..Position::MAX }],
+            "in its join's thread, from its join on"
+        );
+    }
 
     /// That `participant` joined, by their own act.
     fn joined(participant: ActorId) -> HistoryEntry {
@@ -785,6 +804,8 @@ mod tests {
                 reason: RequestReason::Chosen,
                 at: Utc::now(),
             },
+            // Of the whole channel, wherever its context is (issue 557).
+            HistoryEntry::Revoked { message: id(1), at: Utc::now() },
         ];
         let audiences = [
             Recipients::NOBODY,
@@ -795,31 +816,39 @@ mod tests {
             Recipients::only(vec![agent]),
             Recipients { named: vec![agent], ..Recipients::participants(false) },
         ];
-        let rangings = [
+        // Where a reader took part: nowhere, in one thread, in two (issue 557).
+        let (here, elsewhere) = (ThreadId::new(), ThreadId::new());
+        let at = |thread, range| Attended { thread, range };
+        let whereabouts = [
             vec![],
-            vec![Position::new(2)..Position::new(6)],
-            vec![Position::START..Position::new(1), Position::new(8)..Position::MAX],
+            vec![at(here, Position::new(2)..Position::new(6))],
+            vec![
+                at(here, Position::START..Position::new(1)),
+                at(elsewhere, Position::new(8)..Position::MAX),
+            ],
         ];
         let mut readers = vec![Reader::Channel, Reader::Outsider];
         readers.extend(actors.iter().map(|actor| Reader::Participant(*actor)));
         let mut decided = [0, 0];
         for entry in &entries {
             for sender in actors {
-                for recipients in &audiences {
+                for (recipients, thread) in
+                    audiences.iter().flat_map(|r| [(r, here), (r, elsewhere)])
+                {
                     let item = Recorded {
                         entry: entry.clone(),
                         sender,
                         recipients: recipients.clone(),
-                        context: EventContext::default(),
+                        context: EventContext { thread_id: thread, ..EventContext::default() },
                         timestamp: Utc::now(),
                     };
                     for seq in [Position::START, Position::new(5), Position::new(9)] {
                         let kept = serde_json::to_value(KeptItem::of(seq, item.clone())).unwrap();
                         for reader in &readers {
-                            for ranges in &rangings {
-                                let by_filter = Filter::seen_by(reader, ranges)
+                            for attended in &whereabouts {
+                                let by_filter = Filter::seen_by(reader, attended)
                                     .is_none_or(|filter| filter.matches(&kept));
-                                assert_eq!(by_filter, item.seen_by(seq, reader, ranges), "{reader:?} of {entry:?} from {sender} to {recipients:?} at {seq} in {ranges:?}");
+                                assert_eq!(by_filter, item.seen_by(seq, reader, attended), "{reader:?} of {entry:?} from {sender} to {recipients:?} at {seq} in {attended:?}");
                                 decided[usize::from(by_filter)] += 1;
                             }
                         }
@@ -856,6 +885,19 @@ mod tests {
             "by its position"
         );
         assert!(at(Filter::eq(HistoryField::Published, true)), "and whether it is published");
+        // Issue 557: with the thread it happened in - its context's, of no channel here -, none for
+        // what happened in the whole channel.
+        assert_eq!(read.thread, Some(ThreadId::default()), "the thread it happened in");
+        assert!(
+            at(Filter::in_thread(ThreadId::default())) && !at(Filter::in_thread(ThreadId::new())),
+            "by its thread"
+        );
+        let revoked = Recorded::new(
+            HistoryEntry::Revoked { message: id(1), at: Utc::now() },
+            ActorId::System,
+            Audience::Everybody,
+        );
+        assert_eq!(KeptItem::of(Position::new(8), revoked).thread, None, "of the whole channel");
     }
 
     /// Issue 417: who took part when is read off the chain - from a
@@ -910,7 +952,7 @@ mod tests {
             attendance
                 .of_participant(participant)
                 .into_iter()
-                .map(|range| (range.start.get(), range.end.get()))
+                .map(|at| (at.range.start.get(), at.range.end.get()))
                 .collect::<Vec<_>>()
         };
         assert_eq!(starts_and_ends(alice), [(0, 5)], "from her join to where delivery stopped");
@@ -921,10 +963,10 @@ mod tests {
         );
         let seen = |reader: ActorId| -> Vec<u64> {
             let reading = Reader::Participant(reader);
-            let ranges = attendance.of_reader(&reading);
+            let attended = attendance.of_reader(&reading);
             history
                 .all_entries()
-                .filter(|node| node.entry.seen_by(node.seq, &reading, &ranges))
+                .filter(|node| node.entry.seen_by(node.seq, &reading, &attended))
                 .map(|node| node.seq.get())
                 .collect()
         };
@@ -991,7 +1033,7 @@ mod tests {
         let ranges: Vec<_> = Attendance::of(history.all_entries())
             .of_participant(alice)
             .into_iter()
-            .map(|range| (range.start.get(), range.end.get()))
+            .map(|at| (at.range.start.get(), at.range.end.get()))
             .collect();
         assert_eq!(ranges, [(1, 8)], "one range, from what was shared to where she left");
     }

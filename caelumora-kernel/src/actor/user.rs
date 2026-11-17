@@ -192,7 +192,8 @@ impl UserActor {
     /// `send_message` is. Nothing of what a user says is for its owner
     /// alone: it is sent as it is (`Answering::envelope`).
     fn envelope(&self, event: ActorEvent, span_id: Uuid) -> Envelope {
-        Answering::own(self.session_id, self.channel_id, self.id(), self.name())
+        let thread = self.participant_runtime.thread_id();
+        Answering::own(self.session_id, self.channel_id, thread, self.id(), self.name())
             .with_span(span_id)
             .envelope(event)
     }

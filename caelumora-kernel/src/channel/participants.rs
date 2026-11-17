@@ -5,7 +5,7 @@ use super::{
     ActorChange, Actors, ChannelActor, ChannelError, ChannelLoop, ChannelParticipant,
     ResolvedParticipant, LEAVE_GRACE,
 };
-use anyhow::{Error, Result};
+use anyhow::{anyhow, Error, Result};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::AgentId;
 use caelumora_domain::chain::Position;
@@ -373,8 +373,13 @@ impl ChannelLoop {
         joined: Option<&SecurityContext>,
     ) -> Result<()> {
         self.left(resolved.actor_id()).await?;
-        let actor = self.create_actor(&resolved).await?;
-        self.adopt(Arc::from(actor), resolved, from, joined.cloned()).await;
+        // Where it takes part, decided once (issue 557): what its runtime speaks in, and what the
+        // channel delivers to it and asks it in.
+        let thread = resolved
+            .thread()
+            .ok_or_else(|| anyhow!("{} takes part in no channel", resolved.actor_id()))?;
+        let actor = self.create_actor(&resolved, thread).await?;
+        self.adopt(Arc::from(actor), resolved, thread, from, joined.cloned()).await;
         Ok(())
     }
 
@@ -383,7 +388,7 @@ impl ChannelLoop {
     /// mentions; `run` announces it in the name of `remover` once its task
     /// has ended. The document is the caller's.
     fn leave_actor(&self, participant: ActorId, running: ChannelActor, remover: &SecurityContext) {
-        let ChannelActor { actor, task, .. } = running;
+        let ChannelActor { actor, thread, task, .. } = running;
         let name = actor.name();
         self.leaving
             .lock()
@@ -394,12 +399,13 @@ impl ChannelLoop {
             actors.remove(&participant);
             actors
         });
-        for thread in self.threads.values() {
-            thread.remove_actor(participant);
+        if let Some(taking_part) = self.threads.get(&thread) {
+            taking_part.remove_actor(participant);
         }
         self.rebuild_mentions();
         actor.leave();
-        let _ = self.changes_tx.send(ActorChange::Leave(participant, name, remover.clone()));
+        let leave = ActorChange::Leave(participant, name, remover.clone(), thread);
+        let _ = self.changes_tx.send(leave);
     }
 
     /// Waits until the actor `participant` had in the channel before has
@@ -936,11 +942,11 @@ mod tests {
             .attendance(other)
             .await
             .first()
-            .map(|range| range.start)
+            .map(|at| at.range.start)
             .expect("a participant");
         assert!(from > Position::START, "from the last message");
         assert_eq!(
-            channel.attendance(ctx.initiator_id).await.first().map(|range| range.start),
+            channel.attendance(ctx.initiator_id).await.first().map(|at| at.range.start),
             Some(Position::START),
             "all of it: a founder"
         );
@@ -1368,7 +1374,7 @@ mod tests {
             let session = world.shared_session(&[helper], &[]).await;
             let founded = &session.channels()[0];
             assert_eq!(joins_recorded(founded, actor).await, 1, "a founder");
-            let founding = founded.attendance(actor).await[0].start;
+            let founding = founded.attendance(actor).await[0].range.start;
             assert!(founding > Position::START, "after the users' joins, so that a move shows");
             world.manager.stop(&alice, session.id()).await.unwrap();
             let personalities = &world.kernel.entity_stores().personalities;
@@ -1416,8 +1422,8 @@ mod tests {
             let until = left_until(&main, actor).await;
             let ranges = main.attendance(actor).await;
             assert!(
-                matches!(ranges.as_slice(), [range]
-                    if range.start == founding && range.end == until),
+                matches!(ranges.as_slice(), [at]
+                    if at.range.start == founding && at.range.end == until),
                 "{again:?}: one range, from its founding to where it left: {ranges:?}"
             );
             world.manager.stop(&alice, session.id()).await.unwrap();

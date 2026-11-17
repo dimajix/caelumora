@@ -1,19 +1,19 @@
 //! What a page of a history is filtered by (issues 421, 451): an item as it is kept to be judged
-//! (`KeptItem`) - the item as it is recorded, its position and whether it is published -, the
-//! fields of it a filter names (`HistoryField`), and the conditions over them
+//! (`KeptItem`) - the item as it is recorded, its position, whether it is published and the thread
+//! it happened in -, the fields of it a filter names (`HistoryField`), and the conditions over them
 //! (`Filter<HistoryField>`): what a reader may be given of each entry (`Filter::seen_by`, as
 //! `Recorded::as_seen_by` decides it, issue 417), the messages of one sender, those heard, those of
 //! a classification the reader may copy - conditions as data, so that a database answers them as a
 //! `WHERE`. The histories a store keeps, and how it reads them, are `caelumora_store::history`'s.
 
-use super::{Reader, Recorded};
+use super::{Attended, Reader, Recorded};
 use crate::actor::ActorId;
 use crate::chain::Position;
+use crate::channel::ThreadId;
 use crate::confidentiality::{Classification, Compartments, Confidentiality, Reading};
 use crate::message::MessageRole;
 use crate::query::{Field, Filter};
 use serde::{Deserialize, Serialize};
-use std::ops::Range;
 
 /// What a page of a history may be filtered by (`HistoryStore::page`,
 /// issue 421): where it lies in an item as it is kept (`KeptItem`) - the
@@ -54,6 +54,9 @@ pub enum HistoryField {
     /// Whether anything of it is for others than its sender
     /// (`HistoryEntry::is_published`).
     Published,
+    /// The thread it happened in (`Recorded::thread`, issue 557); absent for what happened in the
+    /// whole channel.
+    Thread,
 }
 
 impl Field for HistoryField {
@@ -80,6 +83,7 @@ impl Field for HistoryField {
             HistoryField::Named => &["recipients", "named"],
             HistoryField::Position => &["seq"],
             HistoryField::Published => &["published"],
+            HistoryField::Thread => &["thread"],
         }
     }
 }
@@ -147,6 +151,15 @@ impl Filter<HistoryField> {
         Filter::any(HistoryField::ToolCalls, Filter::contains(HistoryField::CallDescription, words))
     }
 
+    /// What happened in `thread` or in the whole channel (issue 557): a page of one thread -
+    /// `Recorded::thread` being `None` or `thread`.
+    pub fn in_thread(thread: ThreadId) -> Self {
+        Filter::any_of([
+            Filter::IsNull(HistoryField::Thread),
+            Filter::eq(HistoryField::Thread, thread),
+        ])
+    }
+
     /// A message mentioning `actor`.
     pub fn mentioning(actor: ActorId) -> Self {
         Filter::any(HistoryField::Mentions, Filter::eq(HistoryField::Element, actor))
@@ -166,12 +179,11 @@ impl Filter<HistoryField> {
         }
     }
 
-    /// What `reader`, with `ranges` as theirs (`Attendance::of_reader`),
-    /// is given of a history (issue 451): the rule of `Recorded::seen_by`
-    /// as a condition over an item as it is kept (`KeptItem`), which a
-    /// database adds to the `WHERE` of a page; no condition for the channel,
-    /// which is given everything. `seen_by` decides the same in memory.
-    pub fn seen_by(reader: &Reader, ranges: &[Range<Position>]) -> Option<Self> {
+    /// What `reader`, with `attended` as where it took part (`Attendance::of_reader`), is given of
+    /// a history (issues 451, 557): the rule of `Recorded::seen_by` as a condition over an item as
+    /// it is kept (`KeptItem`), which a database adds to the `WHERE` of a page; no condition for
+    /// the channel, which is given everything. `seen_by` decides the same in memory.
+    pub fn seen_by(reader: &Reader, attended: &[Attended]) -> Option<Self> {
         let published = Filter::eq(HistoryField::Published, true);
         match reader {
             Reader::Channel => None,
@@ -179,21 +191,22 @@ impl Filter<HistoryField> {
                 Some(Filter::all_of([published, Filter::eq(HistoryField::ToUsers, true)]))
             }
             Reader::Participant(actor) => {
-                let while_taking_part = |kind| {
-                    let within = ranges
-                        .iter()
-                        .map(|range| {
-                            Filter::within(
-                                HistoryField::Position,
-                                range.start.get()..range.end.get(),
-                            )
-                        })
-                        .collect();
+                // What went to every participant of `kind`, and `where_it_took_part` of the
+                // reader's: a user while it took part, an agent while and where - in that thread,
+                // or in the whole channel (`Attended::holds`).
+                let while_taking_part = |kind, where_it_took_part: &dyn Fn(&Attended) -> Self| {
+                    let within = attended.iter().map(where_it_took_part).collect();
                     Filter::all_of([Filter::eq(kind, true), Filter::Or(within)])
                 };
+                let positions = |at: &Attended| {
+                    let range = at.range.start.get()..at.range.end.get();
+                    Filter::within(HistoryField::Position, range)
+                };
+                let in_its_thread =
+                    |at: &Attended| Filter::all_of([positions(at), Filter::in_thread(at.thread)]);
                 let of_kind = match actor {
-                    ActorId::User(_) => while_taking_part(HistoryField::ToUsers),
-                    ActorId::Agent(_) => while_taking_part(HistoryField::ToAgents),
+                    ActorId::User(_) => while_taking_part(HistoryField::ToUsers, &positions),
+                    ActorId::Agent(_) => while_taking_part(HistoryField::ToAgents, &in_its_thread),
                     ActorId::Approver(_) => Filter::eq(HistoryField::ToApprovers, true),
                     ActorId::System | ActorId::None => Filter::nothing(),
                 };
@@ -230,15 +243,16 @@ impl Filter<HistoryField> {
     }
 }
 
-/// An item as it is kept to be judged (issue 451): the item as it is
-/// recorded, with its position and whether it is published - derived as it
-/// is made, as the item is from the chain -, so that a filter of a page
-/// names them (`HistoryField`). What a database keeps of an item, and what
-/// a store in memory judges a filter on.
+/// An item as it is kept to be judged (issue 451): the item as it is recorded, with its position,
+/// whether it is published and the thread it happened in (issue 557) - derived as it is made, as
+/// the item is from the chain -, so that a filter of a page names them (`HistoryField`). What a
+/// database keeps of an item, and what a store in memory judges a filter on.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeptItem {
     pub seq: Position,
     pub published: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread: Option<ThreadId>,
     #[serde(flatten)]
     pub item: Recorded,
 }
@@ -246,6 +260,6 @@ pub struct KeptItem {
 impl KeptItem {
     /// `item`, at the position `seq`, as it is kept.
     pub fn of(seq: Position, item: Recorded) -> Self {
-        Self { seq, published: item.entry.is_published(), item }
+        Self { seq, published: item.entry.is_published(), thread: item.thread(), item }
     }
 }

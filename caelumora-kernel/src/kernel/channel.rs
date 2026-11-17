@@ -14,6 +14,7 @@ use caelumora_api::component::Services;
 use caelumora_domain::actor::ActorId;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_domain::channel::Channel;
+use caelumora_domain::channel::ThreadId;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_domain::prompt_catalogue::PromptCatalogue;
 #[cfg(any(test, feature = "test-support"))]
@@ -86,23 +87,32 @@ impl ChannelRuntime {
         }
     }
 
-    /// The runtime of the participant `resolved` in the channel this runtime is for: acting in
-    /// the participant's context as the controllers hold it now (issue 516).
-    pub(crate) fn participant_runtime(&self, resolved: &ResolvedParticipant) -> ParticipantRuntime {
+    /// The runtime of the participant `resolved`, taking part in `thread` (issue 557), in the
+    /// channel this runtime is for: acting in the participant's context as the controllers hold it
+    /// now (issue 516).
+    pub(crate) fn participant_runtime(
+        &self,
+        resolved: &ResolvedParticipant,
+        thread: ThreadId,
+    ) -> ParticipantRuntime {
         let participant = resolved.clone();
         let channel = Arc::clone(self.channel_controller());
-        self.runtime_acting(
-            resolved.actor_id(),
-            Acting(ActingKind::Participant { participant, channel }),
-        )
+        let acting = Acting(ActingKind::Participant { participant, channel });
+        self.runtime_acting(resolved.actor_id(), acting, thread)
     }
 
-    fn runtime_acting(&self, actor: ActorId, acting: Acting) -> ParticipantRuntime {
+    fn runtime_acting(
+        &self,
+        actor: ActorId,
+        acting: Acting,
+        thread: ThreadId,
+    ) -> ParticipantRuntime {
         ParticipantRuntime {
             runtime: self.clone(),
             actor,
             session_id: self.session.id(),
             channel_id: self.channel.id(),
+            thread_id: thread,
             acting,
         }
     }
@@ -223,7 +233,8 @@ impl ChannelRuntime {
     /// runtimes of their participants (`participant_runtime`).
     pub fn new_participant_runtime(&self, actor: ActorId) -> ParticipantRuntime {
         let (session_id, channel_id) = (self.session.id(), self.channel.id());
-        self.runtime_acting(actor, Acting(ActingKind::Itself { actor, session_id, channel_id }))
+        let acting = Acting(ActingKind::Itself { actor, session_id, channel_id });
+        self.runtime_acting(actor, acting, ThreadId::line(channel_id))
     }
 
     /// Where the transcripts of the agents' contexts are kept, for the tests' views.

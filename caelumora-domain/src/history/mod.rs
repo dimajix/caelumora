@@ -22,7 +22,7 @@ pub mod testing;
 
 pub use entry::HistoryEntry;
 pub use filter::{HistoryField, KeptItem};
-pub use reader::{Heard, Reader, EVERY_POSITION};
+pub use reader::{Attended, Heard, Reader, EVERY_POSITION};
 pub use recorded::{Audience, Recipients, Recorded};
 
 use crate::actor::ActorId;

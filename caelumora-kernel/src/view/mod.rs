@@ -2291,6 +2291,7 @@ mod tests {
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn an_agent_reads_another_channel_as_a_whole_by_their_classifications_or_what_was_released_to_it(
     ) {
+        use caelumora_domain::actor::{ActorEvent, Envelope, EventContext};
         use caelumora_domain::confidentiality::{Compartment, Compartments, Confidentiality};
         use caelumora_domain::content::testing::make_content_ref;
         use caelumora_domain::content::ContentRef;
@@ -2328,6 +2329,14 @@ mod tests {
         )
         .await;
 
+        // What is said and done in a channel, recorded in its line (issue 557), as the channel
+        // records it.
+        let in_line = |channel: &Channel, sender: ActorId, event: ActorEvent| {
+            let context = EventContext::new(channel.session_id, channel.id, sender, String::new());
+            Recorded::of(&Envelope::new(context, event), sender, Audience::Everybody)
+                .expect("it is recorded")
+        };
+        let hers = ActorId::User(alice.id);
         // Said and noted in secret: one of each released to everyone.
         let said = |t: &str, classification: &Classification| Message {
             id: MessageId::new(),
@@ -2349,14 +2358,13 @@ mod tests {
             attachments: vec![agenda.clone(), minutes.clone()],
             ..said("the date", &public.classification)
         };
-        state.history.extend(vec![plan.clone(), date.clone()]);
-        let ended = HistoryEntry::TurnGivenUp {
-            turn_id: TurnId::new(),
-            actor: ActorId::Agent(helper.id),
-            reason: GivenUpReason::Left,
-            at: Utc::now(),
-        };
-        state.history.record(ended);
+        for message in [plan.clone(), date.clone()] {
+            let message = Message { sender_id: hers, ..message };
+            let said = ActorEvent::CompleteMessageGenerated(message);
+            state.history.enter(in_line(&secret, hers, said));
+        }
+        let ended = ActorEvent::TurnGivenUp { turn_id: TurnId::new(), reason: GivenUpReason::Left };
+        state.history.enter(in_line(&secret, ActorId::Agent(helper.id), ended));
         kernel.state_store().put_channel_state(secret.id, &mut state).await.unwrap();
         let mut agent_state = AgentChannelState::default();
         let note = |id, text: &str, classification: &Classification| Change::Add {
@@ -2380,7 +2388,8 @@ mod tests {
             .await
             .unwrap();
         let mut state = kernel.state_store().get_channel_state(team.id).await.unwrap();
-        state.history.extend(vec![said("internal", &team.classification)]);
+        let message = Message { sender_id: hers, ..said("internal", &team.classification) };
+        state.history.enter(in_line(&team, hers, ActorEvent::CompleteMessageGenerated(message)));
         kernel.state_store().put_channel_state(team.id, &mut state).await.unwrap();
 
         // The agent, reading from one of its channels, as its components do.

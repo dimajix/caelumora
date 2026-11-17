@@ -218,6 +218,7 @@ pub(super) async fn channel_with_sleepers(
             .adopt(
                 Arc::<StandIn>::clone(sleeper),
                 ResolvedParticipant::approver(channel.session_id, channel.id),
+                ThreadId::line(channel.id),
                 None,
                 None,
             )

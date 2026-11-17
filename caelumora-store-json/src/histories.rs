@@ -15,7 +15,7 @@ use caelumora_domain::actor::ActorId;
 use caelumora_domain::chain::{Node, Position};
 use caelumora_domain::channel::ChannelId;
 use caelumora_domain::history::{
-    History, HistoryEntry, HistoryField, HistoryPage, Reader, Recorded,
+    Attended, History, HistoryEntry, HistoryField, HistoryPage, Reader, Recorded,
 };
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::query::Filter;
@@ -217,7 +217,7 @@ impl HistoryStore for JsonStates {
             return Ok(HistoryPage::default());
         }
         let mut newest: Vec<(Position, HistoryEntry)> = Vec::new();
-        let ranges = read_attendance(&dir).await?.of_reader(reader);
+        let attended = read_attendance(&dir).await?.of_reader(reader);
         let mut segment = before.previous().map(segment_of);
         while let Some(from_here) = segment {
             for item in read_items(&dir, from_here)
@@ -225,7 +225,7 @@ impl HistoryStore for JsonStates {
                 .newest_before(before)
                 .take_while(|(seq, _)| *seq >= from)
             {
-                newest.extend(seen(reader, &ranges, filter, item)?);
+                newest.extend(seen(reader, &attended, filter, item)?);
             }
             if newest.len() > limit || from_here <= from {
                 break;
@@ -245,8 +245,8 @@ impl HistoryStore for JsonStates {
         let mut segment = read_items_end(&dir).await?.previous().map(segment_of);
         while let Some(from) = segment {
             if let Some(found) = read_items(&dir, from).await?.said(id) {
-                let ranges = read_attendance(&dir).await?.of_reader(reader);
-                return seen(reader, &ranges, None, found);
+                let attended = read_attendance(&dir).await?.of_reader(reader);
+                return seen(reader, &attended, None, found);
             }
             segment = segment_before(from);
         }
@@ -263,8 +263,8 @@ impl HistoryStore for JsonStates {
         let head = read_head(&dir).await?;
         let chain: Vec<Node<Recorded>> =
             read_chain(&dir, range.start, head.end.min(range.end)).await?;
-        let ranges = read_attendance(&dir).await?.of_reader(reader);
-        Ok(seen_nodes(reader, &ranges, &chain))
+        let attended = read_attendance(&dir).await?.of_reader(reader);
+        Ok(seen_nodes(reader, &attended, &chain))
     }
 
     /// Reads the chain backwards a segment at a time, until a segment holds
@@ -295,15 +295,11 @@ impl HistoryStore for JsonStates {
             }
             before = from;
         }
-        let ranges = read_attendance(&dir).await?.of_reader(reader);
-        Ok(answer_of(&ended.entry.entry, older.iter().rev(), reader, &ranges))
+        let attended = read_attendance(&dir).await?.of_reader(reader);
+        Ok(answer_of(&ended.entry.entry, older.iter().rev(), reader, &attended))
     }
 
-    async fn attendance(
-        &self,
-        channel: ChannelId,
-        actor: ActorId,
-    ) -> StoreResult<Vec<Range<Position>>> {
+    async fn attendance(&self, channel: ChannelId, actor: ActorId) -> StoreResult<Vec<Attended>> {
         let dir = self.history_dir(channel).await?;
         derive_missing(&dir, channel).await?;
         Ok(read_attendance(&dir).await?.of_participant(actor))

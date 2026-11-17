@@ -334,13 +334,13 @@ impl ChannelView {
     /// # Errors
     /// `Failed` if the history cannot be read.
     pub async fn visible_from(&self) -> ViewResult<Position> {
-        let ranges = self
+        let attended = self
             .views()
             .histories()
             .attendance(self.channel.id, self.reader())
             .await
             .map_err(|e| self.failed_reading(e))?;
-        Ok(ranges.first().map_or(Position::START, |range| range.start))
+        Ok(attended.first().map_or(Position::START, |at| at.range.start))
     }
 
     /// A page of the history as the viewer sees it (issues 46, 218, 379,

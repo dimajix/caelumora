@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use caelumora_domain::actor::{
     ActorDescription, ActorEvent, ActorId, ActorState, Envelope, EventContext,
 };
-use caelumora_domain::channel::ChannelId;
+use caelumora_domain::channel::{ChannelId, ThreadId};
 use caelumora_domain::command::CommandDescription;
 use caelumora_domain::component::ComponentConfig;
 use caelumora_domain::history::Heard;
@@ -188,16 +188,18 @@ impl Answering {
         Self { event_context: work.event_context.clone() }
     }
 
-    /// The context in which the actor `id`, called `name`, speaks of itself
-    /// rather than answering - nobody asked: in the channel `channel_id` of
-    /// session `session_id`, its own initiator.
+    /// The context in which the actor `id`, called `name`, speaks of itself rather than answering -
+    /// nobody asked: in the thread `thread_id` (issue 557) of the channel `channel_id` of session
+    /// `session_id`, its own initiator.
     pub fn own(
         session_id: SessionId,
         channel_id: ChannelId,
+        thread_id: ThreadId,
         id: ActorId,
         name: impl Into<String>,
     ) -> Self {
-        Self { event_context: EventContext::new(session_id, channel_id, id, name) }
+        let event_context = EventContext::new(session_id, channel_id, id, name);
+        Self { event_context: EventContext { thread_id, ..event_context } }
     }
 
     /// `event` in this context, as it is - what `send` sends, and what a
@@ -240,7 +242,8 @@ mod tests {
     #[test]
     fn every_envelope_is_an_event_of_its_own() {
         let (session, channel) = (SessionId::new(), ChannelId::new());
-        let request = Answering::own(session, channel, ActorId::System, "user")
+        let line = ThreadId::line(channel);
+        let request = Answering::own(session, channel, line, ActorId::System, "user")
             .envelope(ActorEvent::WakeupRequested);
         let turn = Answering::to(&request, ActorId::System, "agent");
 

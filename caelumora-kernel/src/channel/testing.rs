@@ -28,7 +28,7 @@ use caelumora_domain::channel::ChannelId;
 use caelumora_domain::channel::{Channel, InternalActor, Participant};
 use caelumora_domain::content::ContentId;
 use caelumora_domain::history::testing::{items_of, messages_of};
-use caelumora_domain::history::{Audience, History, HistoryEntry, Reader, Recorded};
+use caelumora_domain::history::{Attended, Audience, History, HistoryEntry, Reader, Recorded};
 use caelumora_domain::message::Message;
 use caelumora_domain::message::MessageId;
 use caelumora_domain::security::SecurityAttributes;
@@ -42,7 +42,6 @@ use caelumora_security::{AccessPolicy, ActionType, Policies, SecurityContext};
 use caelumora_store::testing::record_users;
 use caelumora_store::testing::stored_agent;
 use caelumora_store::{EntityStores, Persistence};
-use std::ops::Range;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
@@ -323,9 +322,9 @@ impl ChannelLoop {
             .collect()
     }
 
-    /// The ranges of positions in which `participant` was given what went to
-    /// every participant (`HistoryStore::attendance`, issue 417).
-    pub async fn attendance(&self, participant: ActorId) -> Vec<Range<Position>> {
+    /// Where `participant` was given what went to every participant (`HistoryStore::attendance`,
+    /// issues 417, 557).
+    pub async fn attendance(&self, participant: ActorId) -> Vec<Attended> {
         self.history_store.attendance(self.id, participant).await.expect("the history is read")
     }
 
@@ -406,7 +405,9 @@ impl ChannelLoop {
     /// hold it (issue 516), or, for an actor that takes no part, one in its own name without roles.
     pub(crate) fn new_participant_runtime(&self, actor: ActorId) -> ParticipantRuntime {
         match self.actors.load().get(&actor) {
-            Some(taking_part) => self.runtime.participant_runtime(&taking_part.participant),
+            Some(taking_part) => {
+                self.runtime.participant_runtime(&taking_part.participant, taking_part.thread)
+            }
             None => self.runtime.new_participant_runtime(actor),
         }
     }

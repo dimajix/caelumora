@@ -104,6 +104,6 @@ impl ChannelLoop {
             .attendance(self.id, participant)
             .await?
             .last()
-            .map_or(Position::START, |range| range.start))
+            .map_or(Position::START, |at| at.range.start))
     }
 }

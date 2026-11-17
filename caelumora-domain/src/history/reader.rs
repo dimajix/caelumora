@@ -1,13 +1,33 @@
 //! Who reads a history and where they stand in it (issues 223, 417): the reader, who is given what
-//! of an entry they may see (`Reader`), and the positions delivered to them (`Heard`).
+//! of an entry they may see (`Reader`), the positions delivered to them (`Heard`), and where they
+//! took part (`Attended`, issue 557).
 
 use crate::actor::ActorId;
 use crate::chain::Position;
+use crate::channel::ThreadId;
 use serde::{Deserialize, Serialize};
 use std::ops::Range;
 
 /// Every position of a history: the range of a participant from its start on.
 pub const EVERY_POSITION: Range<Position> = Position::START..Position::MAX;
+
+/// Where a participant took part in a channel (issues 417, 557): a range of positions of its
+/// history, in the thread it took part in - the one the context of its join names. What went to
+/// every participant of its kind while it took part reached it: for an agent, what happened in
+/// that thread or in the whole channel (`holds`); for a user, anything.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Attended {
+    pub thread: ThreadId,
+    pub range: Range<Position>,
+}
+
+impl Attended {
+    /// Whether what happened at `seq`, in the thread `happened_in` - `None`: in the whole
+    /// channel -, happened while and where the participant took part.
+    pub fn holds(&self, seq: Position, happened_in: Option<ThreadId>) -> bool {
+        self.range.contains(&seq) && happened_in.is_none_or(|thread| thread == self.thread)
+    }
+}
 
 /// Where a reader of a history stands in it (issue 223): `next`, the first
 /// position not yet delivered to it in order, and `taken`, the positions

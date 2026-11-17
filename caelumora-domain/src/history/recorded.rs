@@ -3,12 +3,14 @@
 //! the envelope it came in, so that it is delivered again as it came (issue 223); and what a reader
 //! is given of it (`Recorded::seen_by`, `Recorded::as_seen_by`).
 
-use super::{HistoryEntry, Reader};
+use super::{Attended, HistoryEntry, Reader, EVERY_POSITION};
 use crate::actor::{ActorId, Envelope, EventContext};
 use crate::chain::Position;
+use crate::channel::ThreadId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::ops::{Not, Range};
+use std::ops::Not;
+use std::slice;
 
 /// What happened in a channel, recorded (issue 417): the entry, the actor
 /// whose envelope it was - the system for what the channel says itself -,
@@ -50,19 +52,19 @@ pub enum Audience {
     Only(Vec<ActorId>),
 }
 
-/// Whom something in a channel goes to, resolved as it is recorded (issue
-/// 417): every participant of the kinds it names at the time - whoever's
-/// range holds the entry's position -, the channel's approvers, and whom it
-/// names, participant or not. What a store filters by - for a database,
-/// columns of the row and a `WHERE` over them and the reader's ranges
-/// (`Recorded::seen_by`); and, read off an envelope, whom a channel delivers
-/// it to (`Envelope::recipients`). Nobody if it names nobody.
+/// Whom something in a channel goes to, resolved as it is recorded (issue 417): every participant
+/// of the kinds it names at the time and place - whoever's range holds the entry's position, an
+/// agent's in the thread it happened in, or any for the whole channel (issue 557, `reaches`) -,
+/// the channel's approvers, and whom it names, participant or not. What a store filters by - for a
+/// database, a `WHERE` over the kept item and where the reader took part (`Recorded::seen_by`);
+/// and, read off an envelope, whom a channel delivers it to (`Envelope::recipients`, `goes_to`).
+/// Nobody if it names nobody.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Recipients {
     /// Every user that took part at the time.
     #[serde(default, skip_serializing_if = "Not::not")]
     pub users: bool,
-    /// Every agent that took part at the time.
+    /// Every agent that took part at the time, in the thread it happened in (issue 557).
     #[serde(default, skip_serializing_if = "Not::not")]
     pub agents: bool,
     /// The channel's approvers: its own actors, no participants (issue
@@ -105,11 +107,12 @@ impl Recipients {
         }
     }
 
-    /// Whether it goes to `actor` for what `actor` is or by its name -
-    /// whether a user or an agent took part at the time is the ranges'
-    /// to say (`reaches`).
-    pub fn names(&self, actor: ActorId) -> bool {
-        self.named.contains(&actor) || self.of_kind(actor)
+    /// Whether it goes to `actor`, which takes part in `thread` now, having happened in
+    /// `happened_in` - `None`: in the whole channel -: as `reaches` decides for one that takes part
+    /// all along (issue 557).
+    pub fn goes_to(&self, actor: ActorId, thread: ThreadId, happened_in: Option<ThreadId>) -> bool {
+        let now = Attended { thread, range: EVERY_POSITION };
+        self.reaches(actor, Position::START, happened_in, slice::from_ref(&now))
     }
 
     /// Whether it goes to `actor` for what it is: a user or an agent of the
@@ -123,13 +126,26 @@ impl Recipients {
         }
     }
 
-    /// Whether it reached `actor` at the position `seq`, `ranges` being
-    /// where `actor` took part: by name; as an approver; as a user or an
-    /// agent while it took part.
-    fn reaches(&self, actor: ActorId, seq: Position, ranges: &[Range<Position>]) -> bool {
+    /// Whether it reached `actor` at the position `seq`, having happened in `happened_in` -
+    /// `None`: in the whole channel -, `attended` being where `actor` took part (issue 557): by
+    /// name; as an approver; as a user while it took part; as an agent while it took part in that
+    /// thread, or in any for what happened in the whole channel (`Attended::holds`). An agent
+    /// hears the threads it takes part in, while a user is given everything of the channel and
+    /// sorts it by thread.
+    fn reaches(
+        &self,
+        actor: ActorId,
+        seq: Position,
+        happened_in: Option<ThreadId>,
+        attended: &[Attended],
+    ) -> bool {
+        let while_taking_part = || match actor {
+            ActorId::Agent(_) => attended.iter().any(|at| at.holds(seq, happened_in)),
+            _ => attended.iter().any(|at| at.range.contains(&seq)),
+        };
         self.named.contains(&actor)
             || (self.approvers && matches!(actor, ActorId::Approver(_)))
-            || (self.of_kind(actor) && ranges.iter().any(|range| range.contains(&seq)))
+            || (self.of_kind(actor) && while_taking_part())
     }
 }
 
@@ -190,39 +206,45 @@ impl Recorded {
         })
     }
 
-    /// Whether `reader` is given anything of the entry at the position `seq`
-    /// (issue 417), `ranges` being the reader's as a participant - where it
-    /// was given what went to every participant (`Attendance`): the channel
-    /// everything; a participant what it sent, and, if anything of it is
-    /// published, what went to it by name or what went to every participant
-    /// of its kind while it was one; an outsider what was published to every
-    /// participant. The one rule by which a history is read, a predicate over
-    /// what a store keeps of the entry - its sender, its recipients, whether
-    /// it is published, its position - and the reader's ranges, so that a
-    /// database answers it as a `WHERE`: the model gives it as a filter too
-    /// (`Filter::seen_by`, issue 451), which decides the same.
-    pub fn seen_by(&self, seq: Position, reader: &Reader, ranges: &[Range<Position>]) -> bool {
+    /// The thread it happened in, the one its context names (issue 557); `None` if it happened in
+    /// the whole channel (`HistoryEntry::is_of_thread`).
+    pub fn thread(&self) -> Option<ThreadId> {
+        self.entry.is_of_thread().then_some(self.context.thread_id)
+    }
+
+    /// Whether `reader` is given anything of the entry at the position `seq` (issue 417),
+    /// `attended` being where the reader took part as a participant - where it was given what went
+    /// to every participant (`Attendance`): the channel everything; a participant what it sent,
+    /// and, if anything of it is published, what went to it by name or what went to every
+    /// participant of its kind while and where it was one (`Recipients::reaches`, issue 557); an
+    /// outsider what was published to every participant. The one rule by which a history is read,
+    /// a predicate over what a store keeps of the entry - its sender, its recipients, whether it is
+    /// published, its position, its thread - and where the reader took part, so that a database
+    /// answers it as a `WHERE`: the model gives it as a filter too (`Filter::seen_by`, issue 451),
+    /// which decides the same.
+    pub fn seen_by(&self, seq: Position, reader: &Reader, attended: &[Attended]) -> bool {
         match reader {
             Reader::Channel => true,
             Reader::Participant(actor) if *actor == self.sender => true,
             Reader::Participant(actor) => {
-                self.entry.is_published() && self.recipients.reaches(*actor, seq, ranges)
+                self.entry.is_published()
+                    && self.recipients.reaches(*actor, seq, self.thread(), attended)
             }
             Reader::Outsider => self.entry.is_published() && self.recipients.users,
         }
     }
 
     /// What `reader` may see of the entry at the position `seq`, with
-    /// `ranges` as `seen_by` takes them: nothing unless it sees it; then the
+    /// `attended` as `seen_by` takes it: nothing unless it sees it; then the
     /// entry as it was recorded for its sender and the channel, and as
     /// everybody was given it for anyone else (`HistoryEntry::published`).
     pub fn as_seen_by(
         &self,
         seq: Position,
         reader: &Reader,
-        ranges: &[Range<Position>],
+        attended: &[Attended],
     ) -> Option<HistoryEntry> {
-        if !self.seen_by(seq, reader, ranges) {
+        if !self.seen_by(seq, reader, attended) {
             return None;
         }
         match reader {
@@ -254,6 +276,25 @@ mod tests {
     use crate::work::TurnId;
     use uuid::Uuid;
 
+    /// Issue 557: what goes to every participant of a kind reaches an agent where it happened in
+    /// its thread or in the whole channel, a user wherever it happened; what goes to someone by
+    /// name reaches them wherever.
+    #[test]
+    fn an_agent_is_reached_in_its_thread_and_a_user_in_every_one() {
+        let (here, elsewhere) = (ThreadId::new(), ThreadId::new());
+        let agent = ActorId::Agent(AgentId::new());
+        let user = ActorId::User(UserId::new());
+        let to_all = Recipients::participants(true);
+        assert!(to_all.goes_to(agent, here, Some(here)), "an agent, in its thread");
+        assert!(to_all.goes_to(agent, here, None), "an agent, in the whole channel");
+        assert!(!to_all.goes_to(agent, here, Some(elsewhere)), "an agent, not in another thread");
+        assert!(to_all.goes_to(user, here, Some(elsewhere)), "a user, in every thread");
+        assert!(
+            Recipients::only(vec![agent]).goes_to(agent, here, Some(elsewhere)),
+            "by name, wherever it happened"
+        );
+    }
+
     /// Issue 417: a reader is given an entry only if it went to them or
     /// they sent it - an outsider what went to everybody, the channel
     /// everything -, in full only if they sent it.
@@ -261,8 +302,9 @@ mod tests {
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     fn a_reader_is_given_what_went_to_them_and_what_they_sent_in_full() {
         use crate::tool::{ToolCall, ToolVisibility};
-        // Each reader taking part all along.
-        const ALL: &[Range<Position>] = &[EVERY_POSITION];
+        // Each reader taking part all along, in the thread of no channel the entries are made in.
+        const ALL: &[Attended] =
+            &[Attended { thread: ThreadId(Uuid::nil()), range: EVERY_POSITION }];
         let agent = ActorId::Agent(AgentId::new());
         let other = ActorId::Agent(AgentId::new());
         let user = ActorId::User(UserId::new());
@@ -585,14 +627,15 @@ mod tests {
                 ActorId::User(UserId::new()),
                 ActorId::Approver(Default::default()),
             ] {
-                let taking_part_all_along = [EVERY_POSITION];
+                let thread = envelope.context.thread_id;
+                let taking_part_all_along = [Attended { thread, range: EVERY_POSITION }];
                 assert_eq!(
                     recorded.seen_by(
                         Position::START,
                         &Reader::Participant(participant),
                         &taking_part_all_along
                     ),
-                    envelope.recipients().names(participant),
+                    envelope.recipients().goes_to(participant, thread, envelope.thread()),
                     "{kind} of {sender} for {participant}"
                 );
             }

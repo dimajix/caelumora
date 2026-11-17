@@ -12,7 +12,7 @@ pub use manager::{ActorManager, Shown};
 
 use caelumora_api::actor::Answering;
 use caelumora_domain::actor::EventContext;
-use caelumora_domain::channel::ChannelId;
+use caelumora_domain::channel::{ChannelId, ThreadId};
 use caelumora_domain::session::SessionId;
 use caelumora_security::SecurityContext;
 use uuid::Uuid;
@@ -36,6 +36,10 @@ pub(crate) trait ChannelAnswering: Sized {
     /// This context in the span `span_id`: a user's action, whose events
     /// share the span the frontend learns.
     fn with_span(self, span_id: Uuid) -> Self;
+
+    /// This context in the thread `thread` of its channel (issue 557): what the channel says of
+    /// someone, where they take part.
+    fn in_thread(self, thread: ThreadId) -> Self;
 
     /// This context in the span and the thread of `answered`, answering its event - what is said
     /// of an event that is no request, as the channel's rejection of it (`Answering::to`
@@ -62,10 +66,14 @@ impl ChannelAnswering for Answering {
         self
     }
 
+    fn in_thread(mut self, thread: ThreadId) -> Self {
+        self.event_context.thread_id = thread;
+        self
+    }
+
     fn replying_to(self, answered: &EventContext) -> Self {
-        let mut answering = self.with_span(answered.span_id);
+        let mut answering = self.with_span(answered.span_id).in_thread(answered.thread_id);
         answering.event_context.correlation_id = answered.event_id;
-        answering.event_context.thread_id = answered.thread_id;
         answering
     }
 }

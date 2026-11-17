@@ -324,8 +324,9 @@ impl AgentBody {
     /// The context the agent speaks in of itself, nobody having asked: in its channel, its own
     /// initiator (`Answering::own`).
     pub(super) fn own(&self) -> Answering {
-        let (session, channel) = (self.runtime.session_id(), self.runtime.channel_id());
-        Answering::own(session, channel, self.id(), self.name())
+        let runtime = &self.runtime;
+        let (session, channel) = (runtime.session_id(), runtime.channel_id());
+        Answering::own(session, channel, runtime.thread_id(), self.id(), self.name())
     }
 }
 

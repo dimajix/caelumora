@@ -2,13 +2,12 @@
 //! only what they differ in.
 
 use super::{moderation_components, Channel, ChannelState};
-use crate::actor::ActorId;
+use crate::actor::{ActorEvent, ActorId, Envelope, EventContext};
 use crate::confidentiality::Classification;
-use crate::history::{Audience, HistoryEntry, Recorded};
+use crate::history::{Audience, Recorded};
 use crate::security::SecurityAttributes;
 use crate::session::{Session, SessionId};
 use crate::value::name::Name;
-use chrono::Utc;
 
 /// A channel `name` of the session `session_id` as `Channel::build` makes one - broadcast to
 /// its participants, of the default classification, without participants - but the system's,
@@ -57,21 +56,20 @@ pub fn main_channel(session: &Session) -> Channel {
 
 /// The state of `channel` - a channel a test stores as it is, its participants written into
 /// its document - with their joins recorded in its history, in its owner's name, as if they
-/// had founded it (issue 420): so that its history says who takes part, as it does of a
-/// channel created by the one way in. What a test records in the history goes after them.
+/// had founded it (issue 420): so that its history says who takes part, and where - in its line
+/// (issue 557) -, as it does of a channel created by the one way in. What a test records in the
+/// history goes after them.
 pub fn founded(channel: &Channel) -> ChannelState {
     let mut state = ChannelState::new(channel.id);
     let owner = channel.security_attributes.owner_id;
+    let context = EventContext::new(channel.session_id, channel.id, owner, String::new());
     for participant in &channel.participants {
         let actor = participant.actor_id();
-        let joined = HistoryEntry::ParticipantJoined {
-            participant: actor,
-            name: actor.to_string(),
-            by: owner,
-            by_name: owner.to_string(),
-            at: Utc::now(),
-        };
-        state.history.enter(Recorded::new(joined, owner, Audience::Everybody));
+        let joined = ActorEvent::ParticipantJoined { participant: actor, name: actor.to_string() };
+        let envelope = Envelope::new(context.clone(), joined);
+        if let Some(recorded) = Recorded::of(&envelope, owner, Audience::Everybody) {
+            state.history.enter(recorded);
+        }
     }
     state
 }

@@ -20,7 +20,7 @@ use caelumora_domain::actor::ActorId;
 use caelumora_domain::chain::{Node, Position};
 use caelumora_domain::channel::ChannelId;
 use caelumora_domain::history::{
-    History, HistoryEntry, HistoryField, HistoryPage, KeptItem, Reader, Recorded,
+    Attended, History, HistoryEntry, HistoryField, HistoryPage, KeptItem, Reader, Recorded,
 };
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::query::Filter;
@@ -214,8 +214,8 @@ impl HistoryStore for PostgresStore {
         let mut conn = self.connection.acquire().await?;
         let (key, name) = key(channel);
         let head = HISTORIES.head(&mut conn, &key, &name).await?;
-        let ranges = read_attendance(&mut conn, &key, &name).await?.of_reader(reader);
-        let asked = match (Filter::seen_by(reader, &ranges), filter) {
+        let attended = read_attendance(&mut conn, &key, &name).await?.of_reader(reader);
+        let asked = match (Filter::seen_by(reader, &attended), filter) {
             (Some(given), Some(filter)) => Some(Filter::all_of([given, filter.clone()])),
             (given, filter) => given.or_else(|| filter.cloned()),
         };
@@ -239,7 +239,7 @@ impl HistoryStore for PostgresStore {
             for row in read {
                 let item = item(row);
                 before = item.0;
-                newest.extend(seen(reader, &ranges, filter, &item)?);
+                newest.extend(seen(reader, &attended, filter, &item)?);
             }
             if newest.len() > limit || !whole {
                 break;
@@ -265,8 +265,8 @@ impl HistoryStore for PostgresStore {
         .await
         .map_err(failed(&name))?;
         let Some(found) = found else { return Ok(None) };
-        let ranges = read_attendance(&mut conn, &key, &name).await?.of_reader(reader);
-        seen(reader, &ranges, None, &item(found))
+        let attended = read_attendance(&mut conn, &key, &name).await?.of_reader(reader);
+        seen(reader, &attended, None, &item(found))
     }
 
     async fn entries(
@@ -278,8 +278,8 @@ impl HistoryStore for PostgresStore {
         let mut conn = self.connection.acquire().await?;
         let (key, name) = key(channel);
         let nodes = HISTORIES.nodes(&mut conn, &key, &name, range, false, None).await?;
-        let ranges = read_attendance(&mut conn, &key, &name).await?.of_reader(reader);
-        Ok(seen_nodes(reader, &ranges, &nodes))
+        let attended = read_attendance(&mut conn, &key, &name).await?.of_reader(reader);
+        Ok(seen_nodes(reader, &attended, &nodes))
     }
 
     /// Reads the chain backwards in batches, until one holds the end of the
@@ -314,15 +314,11 @@ impl HistoryStore for PostgresStore {
                 break;
             }
         }
-        let ranges = read_attendance(&mut conn, &key, &name).await?.of_reader(reader);
-        Ok(answer_of(&ended.entry.entry, &older, reader, &ranges))
+        let attended = read_attendance(&mut conn, &key, &name).await?.of_reader(reader);
+        Ok(answer_of(&ended.entry.entry, &older, reader, &attended))
     }
 
-    async fn attendance(
-        &self,
-        channel: ChannelId,
-        actor: ActorId,
-    ) -> StoreResult<Vec<Range<Position>>> {
+    async fn attendance(&self, channel: ChannelId, actor: ActorId) -> StoreResult<Vec<Attended>> {
         let mut conn = self.connection.acquire().await?;
         let (key, name) = key(channel);
         Ok(read_attendance(&mut conn, &key, &name).await?.of_participant(actor))

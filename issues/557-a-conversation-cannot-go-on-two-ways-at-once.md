@@ -1094,3 +1094,31 @@ Proposed:
   through `SessionView::session_loop`; `ActorId::Delegate`; `GivenToRead`, published to the users
   and given to the recipient by name; and a derived `KeptItem::thread` for what is of the whole
   channel.
+- **2026-11-17** — The interface of 2a agreed with the maintainer: `HistoryEntry::is_of_thread`
+  and `Recorded::thread` with their first users; `KeptItem::thread`, derived as `published` is;
+  the `Attendance` keeping each range with the thread its join's context names (`Attended`); one
+  rule of reaching for delivering and reading (`Recipients`), by thread for agents; an actor
+  knowing its thread (`ActorRuntime::thread_id`), and its join and leave announced there. Moved to
+  2b: `ChannelState::threads` and threads changing at runtime, which have no user while the line
+  is the one thread. External agents are covered alike, through the `AgentBody` both kinds share.
+- **2026-11-17** — Step 2a implemented, without a change of behaviour: `HistoryEntry::is_of_thread`,
+  `Recorded::thread`, `Envelope::thread` and `KeptItem::thread`; the `Attendance` keeping each
+  range with its join's thread (`Attended`); one rule of reaching (`Recipients::goes_to`,
+  `reaches`) by which the channel delivers and a store reads, by thread for agents; a participant's
+  thread (`ResolvedParticipant::thread`), decided once as its actor starts and handed to its
+  runtime (`ParticipantRuntime::thread_id`, `ActorRuntime::thread_id`), which its actor speaks of
+  itself in (`Answering::own`), whose moderator alone may ask it, and where its join and leave are
+  announced (`ChannelAnswering::in_thread`, `Leaving`). Where it departs from the agreed
+  interface: a participant's thread is its channel's line, derived, not read from the `Attendance`
+  as the channel starts - which thread an actor starts again in comes with 2b, with
+  `ChannelState::threads`. The test helpers that recorded joins
+  and messages in no channel's thread record them in the channel's line
+  (`channel::testing::founded`, a test of the views). Stored data: the `Attendance` changed its
+  form; the histories' derived parts have to be rebuilt (`HistoryStore::rebuild`) or the states of
+  the channels deleted.
+- **2026-11-17** — Decided by the maintainer, on a question of the review of 2a: a join, a leave
+  and what a newcomer was given (`HistoryShared`) happen in the thread they join, not in the whole
+  channel, so that the agents of the line do not hear a sub-agent come and go. Of the whole channel
+  are a change of a message and a classification of the channel alone. This changes the table of
+  *What is of a thread, and what of the channel*, whose note already said so of an agent taken into
+  a thread alone; `HistoryEntry::is_of_thread` follows it.

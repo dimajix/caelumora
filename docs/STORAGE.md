@@ -562,10 +562,11 @@ participant (issue 417), and is kept apart from the channel state's document (is
     (`HistoryEntry::fold_into`), the marks of turns, steps, commands, activities, compactions and
     of who joined or left -
     each at the position of the entry that added it (`StandingItems`). So is who took part
-    when (`Attendance`): each participant's ranges of positions, from the `from` of the
+    when and where (`Attendance`): each participant's ranges of positions, from the `from` of the
     `HistoryShared` before its `ParticipantJoined`, or else from its join, up to the `until` of its
-    `ParticipantLeft` - where the channel stopped delivering to it; a join while its range is open
-    continues it, so that at most one is open. Both are derived entry by entry
+    `ParticipantLeft` - where the channel stopped delivering to it -, each in the thread the context
+    of its join names (`Attended`, issue 557); a join while its range is open continues it, so that
+    at most one is open. Both are derived entry by entry
     as the chain grows and rebuilt from it at any time (`HistoryStore::rebuild`); the store suite
     checks that the items equal the chain folded, and what each reader is given.
 *   **The read side is the `HistoryStore`**, handed out by the `Persistence` beside the
@@ -575,13 +576,16 @@ participant (issue 417), and is kept apart from the channel state's document (is
     they sent - the latter in full; an outsider - a session's owner who takes no part, a reader from
     another channel -, given what went to every user; the channel itself, for its own checks.
     Whether a reader is given an entry is one predicate (`Recorded::seen_by`) over what the store
-    keeps of it - its sender, its recipients, whether anything of it is published, its position -
-    and the reader's ranges: the channel everything; a participant what it sent, and what went to it
-    by name or to every participant of its kind while it was one; an outsider what went to every
-    user. The domain gives the same rule as data (`Filter::seen_by`, issue
+    keeps of it - its sender, its recipients, whether anything of it is published, its position,
+    the thread it happened in - and where the reader took part: the channel everything; a
+    participant what it sent, and what went to it by name or to every participant of its kind while
+    it was one - an agent only what happened in its thread or in the whole channel (see
+    [CHANNELS.md](CHANNELS.md#its-threads)); an outsider what went to every user. The domain gives
+    the same rule as data (`Filter::seen_by`, issue
     [451](../issues/451-history-reader-judged-after-reading.md)), over an item as it is kept
-    (`KeptItem`: the item as recorded, its position, whether it is published), which a test holds
-    to `seen_by`; a database adds it to the `WHERE` of a page. A page counts what its reader sees.
+    (`KeptItem`: the item as recorded, its position, whether it is published, its thread), which a
+    test holds to `seen_by`; a database adds it to the `WHERE` of a page. A page counts what its
+    reader sees.
     The filter is data too (issue 421): a `Filter` of the entity stores' queries over the fields of
     an item as it is kept (`HistoryField`) - a message said, its sender, role and words, what it
     carries, whom it mentions, its level and compartments -, made by the reader's needs

@@ -307,6 +307,48 @@ impl HistoryEntry {
         }
     }
 
+    /// Whether it happens in one thread of its channel (issue 557) - a message said or given, a
+    /// turn's end, a command, a notice, a request, an approval or a question of a call, and who
+    /// joined or left and what a newcomer was given, in the thread they joined - rather than in the
+    /// whole channel: a classification of the channel, and a change of a message, which reaches
+    /// whoever holds the message, as it does on every branch.
+    pub fn is_of_thread(&self) -> bool {
+        match self {
+            HistoryEntry::Said { .. }
+            | HistoryEntry::Given { .. }
+            | HistoryEntry::Withdrawn { .. }
+            | HistoryEntry::Compacted { .. }
+            | HistoryEntry::TurnFinished { .. }
+            | HistoryEntry::TurnGivenUp { .. }
+            | HistoryEntry::PlanStepStarted { .. }
+            | HistoryEntry::ActivityFinished { .. }
+            | HistoryEntry::CommandRequested { .. }
+            | HistoryEntry::CommandExecuted { .. }
+            | HistoryEntry::CommandFailed { .. }
+            | HistoryEntry::RetryRequested { .. }
+            | HistoryEntry::RetryAccepted { .. }
+            | HistoryEntry::RetryRefused { .. }
+            | HistoryEntry::ResponseRequested { .. }
+            | HistoryEntry::ChainCutOff { .. }
+            | HistoryEntry::ResponderUndecided { .. }
+            | HistoryEntry::ApprovalRequested { .. }
+            | HistoryEntry::ApprovalAnswered { .. }
+            | HistoryEntry::ApprovalDecided { .. }
+            | HistoryEntry::ApprovalRequestWithdrawn { .. }
+            | HistoryEntry::QuestionRequested { .. }
+            | HistoryEntry::QuestionClosed { .. }
+            | HistoryEntry::EventRejected { .. }
+            | HistoryEntry::EventRefused { .. }
+            | HistoryEntry::ParticipantJoined { .. }
+            | HistoryEntry::ParticipantLeft { .. }
+            | HistoryEntry::HistoryShared { .. } => true,
+            HistoryEntry::Fitted { .. }
+            | HistoryEntry::Modified { .. }
+            | HistoryEntry::Revoked { .. }
+            | HistoryEntry::Reclassified { .. } => false,
+        }
+    }
+
     /// Whether it is part of the conversation - something said, given or
     /// done in it, a change of it, a turn's end, a change of who takes
     /// part -, rather than what was only told or asked about it: a notice,

@@ -12,7 +12,7 @@ use crate::controller::{ChannelController, SessionController};
 use crate::event::EventSubscription;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::AgentId;
-use caelumora_domain::channel::{Channel, ChannelId};
+use caelumora_domain::channel::{Channel, ChannelId, ThreadId};
 use caelumora_domain::security::SecurityAttributes;
 use caelumora_domain::session::SessionId;
 use caelumora_domain::store::StoreResult;
@@ -35,6 +35,8 @@ pub struct ParticipantRuntime {
     pub(super) actor: ActorId,
     pub(super) session_id: SessionId,
     pub(super) channel_id: ChannelId,
+    /// The thread of its channel the actor takes part in (issue 557).
+    pub(super) thread_id: ThreadId,
     /// In whose name it acts, which the kernel builds into a context at every call (issue 516).
     pub(super) acting: Acting,
 }
@@ -45,6 +47,12 @@ impl ParticipantRuntime {
     /// of the actor (`Acting`), never handed in by the actor.
     pub(crate) fn acting_for(&self, initiator: ActorId) -> SecurityContext {
         self.acting.context_for(initiator)
+    }
+
+    /// The thread of its channel the actor takes part in (issue 557): where what it says of itself
+    /// happens.
+    pub(crate) fn thread_id(&self) -> ThreadId {
+        self.thread_id
     }
 
     /// The kernel of the process the participant runs in, which the runtime of its agent answers by

@@ -34,7 +34,7 @@ use caelumora_domain::external_agent::ConversationId;
 use caelumora_domain::group::{Group, GroupId};
 use caelumora_domain::history::testing::items_of;
 use caelumora_domain::history::{
-    Audience, History, HistoryEntry, HistoryPage, Reader, Recorded, EVERY_POSITION,
+    Attended, Audience, History, HistoryEntry, HistoryPage, Reader, Recorded, EVERY_POSITION,
 };
 use caelumora_domain::message::MessageId;
 use caelumora_domain::message::{Message, MessageRole};
@@ -1527,7 +1527,7 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
     );
     assert_eq!(
         histories.attendance(key, other).await.unwrap(),
-        vec![EVERY_POSITION],
+        vec![Attended { thread: ThreadId::default(), range: EVERY_POSITION }],
         "a participant from what was shared, and still"
     );
     assert!(histories.attendance(key, stranger).await.unwrap().is_empty());
@@ -1659,6 +1659,37 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
             .is_empty(),
         "nothing there"
     );
+
+    // Issue 557: an agent is read what happened in the thread it took part in and in the whole
+    // channel, and nothing of another thread - in a page as in the chain an inbox catches up with.
+    let listener = ActorId::Agent(AgentId::new());
+    let (its, another) = (ThreadId::new(), ThreadId::new());
+    let in_thread = |thread, sender, event| {
+        let context = EventContext { thread_id: thread, ..EventContext::default() };
+        let context = EventContext { sender_id: sender, initiator_id: sender, ..context };
+        Recorded::of(&Envelope::new(context, event), sender, Audience::Everybody).expect("recorded")
+    };
+    let heard = |n| {
+        ActorEvent::CompleteMessageGenerated(Message { sender_id: user, ..make_message(id(n)) })
+    };
+    let mut threads = states.get_channel_state(channel).await.expect("get");
+    let from = threads.history.end();
+    let joined = ActorEvent::ParticipantJoined { participant: listener, name: String::new() };
+    threads.history.enter(in_thread(its, speaker, joined));
+    threads.history.enter(in_thread(its, user, heard(900)));
+    threads.history.enter(in_thread(another, user, heard(901)));
+    states.put_channel_state(channel, &mut threads).await.expect("put");
+    let as_listener = Reader::Participant(listener);
+    let page = histories.page(key, &as_listener, from, None, 10, None).await.unwrap();
+    let paged: Vec<_> = page.entries().filter_map(HistoryEntry::said).map(|m| m.id).collect();
+    assert_eq!(paged, [id(900)], "a page: what happened in its thread, nothing of another");
+    let caught_up = histories.entries(key, &as_listener, from..threads.history.end()).await;
+    let caught_up: Vec<_> = caught_up
+        .unwrap()
+        .iter()
+        .filter_map(|node| node.entry.entry.said().map(|m| m.id))
+        .collect();
+    assert_eq!(caught_up, [id(900)], "the chain: what happened in its thread, nothing of another");
 
     states.delete_channel_state(channel).await.expect("delete");
     assert!(

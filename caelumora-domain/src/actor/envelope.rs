@@ -128,6 +128,17 @@ impl Envelope {
         self.entry().filter(|_| self.event.is_announcement())
     }
 
+    /// The thread it happens in (issue 557), the one its context names - `None` if what the
+    /// history records of it happens in the whole channel (`HistoryEntry::is_of_thread`), as
+    /// `Recorded::thread` says of the entry; what the history does not record happens in its
+    /// context's thread.
+    pub fn thread(&self) -> Option<ThreadId> {
+        match self.entry() {
+            Some(entry) if !entry.is_of_thread() => None,
+            _ => Some(self.context.thread_id),
+        }
+    }
+
     /// What a channel's history records of this envelope (issue 417): a
     /// message said, a step of it included (issue 258); how a turn ended;
     /// where a step of its plan began (issue 263); a command carried out,
@@ -687,7 +698,7 @@ mod tests {
                 .chain(&self.users)
                 .chain([&self.approver])
                 .copied()
-                .filter(|id| recipients.names(*id))
+                .filter(|id| recipients.goes_to(*id, envelope.context.thread_id, envelope.thread()))
                 .collect()
         }
 

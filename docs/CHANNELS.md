@@ -183,10 +183,23 @@ happens in (`EventContext::thread_id`), and the history keeps it with the contex
 in. A channel has one thread so far, its **line**, whose id is derived from the channel's
 (`ThreadId::line`): an event made for a channel (`EventContext::new`) happens there, and what
 follows an event (`EventContext::next`) stays in its thread. The running channel holds a `Thread`
-for each of its threads, with a moderator of its own (see [Moderators](#moderators)), and every
-actor takes part in it. What names a thread the channel does not have is not let in (see *The
-channel decides what enters it* below); the rejection is said, as every rejection, in the thread
-of what it rejects, and reaches its sender by name.
+for each of its threads, with a moderator of its own (see [Moderators](#moderators)). What names a
+thread the channel does not have is not let in (see *The channel decides what enters it* below);
+the rejection is said, as every rejection, in the thread of what it rejects, and reaches its sender
+by name.
+
+Every participant takes part in one thread of the channel - so far its line -, which its actor
+knows from its runtime (`ParticipantRuntime::thread_id`, an agent's `ActorRuntime::thread_id`):
+what it says of itself happens there, its join and its leave are announced there, and only that
+thread's moderator may ask it. Whether something happens in one thread or in the whole channel is
+the kind of what the history records of it (`HistoryEntry::is_of_thread`): a message said, a turn's
+end, a request, an approval, and who joined or left, happen in a thread - the one the context names
+(`Recorded::thread`, `Envelope::thread`), for a join the one joined -; a change of a message and a
+classification of the channel happen in the whole channel. By one rule (`Recipients::goes_to`,
+`reaches`), what goes to every participant of a kind is delivered and read so: an agent is given
+what happens in its thread and in the whole channel - what it hears enters its context, and is paid
+for by every call after it -, a user everything of the channel, which a frontend sorts by thread;
+what goes to someone by name reaches them wherever it happens.
 
 ### Building a channel
 
@@ -1041,7 +1054,8 @@ The actor of an agent is on the agent side, and is given less (issue 516): its k
 `AgentRuntime` serves. It holds the agent's participant runtime and the controllers of the agent and
 of its personality, and answers what only an agent asks itself: who the agent
 and its personality are as they are now (`agent`, `personality`), the ids of its session and its
-channel and the channel's classification; its state in the channel and its transcript; what a turn
+channel, the thread it takes part in (`thread_id`, issue 557) and the channel's classification; its
+state in the channel and its transcript; what a turn
 staged for a system service, handed to the writer that commits it (`commit_staged`, issue 518); the
 attachments of its messages; its session and its channel to read, as readers at the classification
 of a piece of work (`session`, `channel`), from which the session's other channels are read as the
@@ -1089,7 +1103,10 @@ which for what the history records is the rule its entry is read by (`HistoryEnt
 *   approvals, questions and commands go to whom they concern: a request for a command to the agent
     it names, that it began to the issuer, its answer to the issuer alone if private, else to every
     user; an approval through the approvers; questions to the users asked;
-*   nothing goes back to its sender, but what the channel announces in their name.
+*   nothing goes back to its sender, but what the channel announces in their name;
+*   what goes to every agent goes to those of the thread it happens in, and to every agent if it
+    happens in the whole channel (see [Its threads](#its-threads)); a user is given it wherever it
+    happens.
 
 A moderator answers each event with a `Routing`: whether it goes where the rule sends it or to some
 participants alone, whom to ask to respond, and which of its own notices to tell whom - of a fixed

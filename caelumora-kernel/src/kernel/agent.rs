@@ -17,7 +17,7 @@ use caelumora_api::staging::{CommitError, CommitResult};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::{Agent, AgentChannelState, Personality};
 use caelumora_domain::approval::{ApprovalRule, ApprovalRuleId, RuleDecision};
-use caelumora_domain::channel::{self, Channel, ChannelId};
+use caelumora_domain::channel::{self, Channel, ChannelId, ThreadId};
 use caelumora_domain::component::ComponentConfig;
 use caelumora_domain::confidentiality::{Classification, Place};
 use caelumora_domain::content::{ContentId, ContentRef};
@@ -206,6 +206,10 @@ impl ActorRuntime for AgentRuntime {
 
     fn channel_id(&self) -> ChannelId {
         self.participant.channel_id
+    }
+
+    fn thread_id(&self) -> ThreadId {
+        self.participant.thread_id()
     }
 
     fn agent(&self) -> Arc<Agent> {

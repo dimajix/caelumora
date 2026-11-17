@@ -9,7 +9,7 @@ use anyhow::Result;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::{Agent, AgentId, Personality};
 use caelumora_domain::approval::Approver;
-use caelumora_domain::channel::{Channel, ChannelId, InternalActor, Participant};
+use caelumora_domain::channel::{Channel, ChannelId, InternalActor, Participant, ThreadId};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::role::RoleId;
 use caelumora_domain::scope::Scope;
@@ -261,6 +261,12 @@ impl ResolvedParticipant {
     /// What its actor is built from.
     pub(crate) fn kind(&self) -> &ResolvedKind {
         &self.kind
+    }
+
+    /// The thread of its channel it takes part in (issue 557): the channel's line, the one thread a
+    /// channel has; none for one taken into the session alone.
+    pub(crate) fn thread(&self) -> Option<ThreadId> {
+        self.channel_id.map(ThreadId::line)
     }
 
     pub(crate) fn actor_id(&self) -> ActorId {
