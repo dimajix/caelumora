@@ -667,7 +667,8 @@ becomes a rule over one thread in step 2:
 - **Hops between agents** (`EventContext::agent_hops`): counted from the thread's first message,
   which begins at 0 (*Decided on 2026-11-17*).
 - **A quiet channel after a cancel** (`ChannelLoop::quiet`): stays of the whole channel - a cancel
-  cancels every agent of it.
+  cancels every agent of it. Changed on 2026-11-17 (*Plan: step 2*, 7): being quiet is a thread's,
+  and a cancel ends the work of one thread or of the whole channel.
 - **What is new to a user** (`announce_said`, `ReadMark`): counted in the line; what is new in a
   thread is shown at it, later.
 - **Reading another channel** (`read_history`): reads the line of the other channel; its threads
@@ -984,6 +985,15 @@ Proposed:
    frontend does (`SessionLoop::channel_for`), acting in the work's context through the loop's
    public operations, each checking itself. The alternative is a service of the kernel's for
    acting on channels.
+7. **Cancelling and waking a thread.** Decided by the maintainer on 2026-11-17 (558): a cancel
+   ends the agents' work in a scope - one thread, or the whole channel. Being quiet becomes the
+   state of a thread, held by its `Thread` (D8), no longer the channel's (`ChannelLoop::quiet`): a
+   cancel of a thread ends the turns of the actors taking part in it and makes it quiet; a cancel
+   of the channel does so for every thread, as a cancel does today. Waking goes the same two ways.
+   Both ask what cancelling and waking ask today (`CancelChannel`, `WakeChannel`): a thread is part
+   of its channel. A delegation into a quiet thread is refused, not waking it, so that a giver
+   cannot undo a user's cancel; what the delegate gives back into a quiet thread is delivered, and
+   nobody there is asked until it is woken. The interface is agreed with 2b.
 
 ### To decide in step 2
 
@@ -1009,8 +1019,10 @@ Proposed:
    delivering and reading by thread - with everyone in the line, so that every rule gives what it
    gives today.
 2. **2b, the building blocks with their first user**: founding and closing a thread, giving to
-   read, delegating, reaching a running channel - together with `caelumora-subagents` (558), which
-   uses them, in commits each reviewed on its own.
+   read, delegating, cancelling and waking a thread, reaching a running channel - together with
+   `caelumora-subagents` (558), which uses them, in commits each reviewed on its own. Ending a
+   sub-agent needs letting go from a session first (issue
+   [590](590-a-session-lets-nobody-go.md)).
 
 ## Done when
 
@@ -1122,3 +1134,8 @@ Proposed:
   are a change of a message and a classification of the channel alone. This changes the table of
   *What is of a thread, and what of the channel*, whose note already said so of an agent taken into
   a thread alone; `HistoryEntry::is_of_thread` follows it.
+- **2026-11-17** — Decided by the maintainer, with the open points of 558: a cancel ends the
+  agents' work in one thread or in the whole channel, being quiet a thread's state, held by its
+  `Thread`, and waking goes the same two ways (*Plan: step 2*, 7). The rule of *Rules that go by
+  the order of the whole channel* that kept being quiet the whole channel's changes with it. Part
+  of 2b; ending a sub-agent needs letting go from a session first, issue 590.

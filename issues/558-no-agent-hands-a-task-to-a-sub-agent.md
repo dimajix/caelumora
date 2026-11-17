@@ -377,31 +377,37 @@ pub trait SubAgentWriter: Send + Sync {
   this but that it delegates.
 - **Asking again** is `ask`: the writer delegates the text once more, which the delegate gives the
   sub-agent once the open brief is answered.
-- **Ending** is `end`: the sub-agent leaves the channel, is deleted (E3 below), and the thread is
-  closed with its delegate.
+- **Ending** is `end`: the sub-agent is let go from its channel and its session, is deleted (E3
+  below), and the thread is closed with its delegate.
 - **What users see.** The thread is read by everyone in the channel; that a brief was given and
   what was given back are shown there and at the call that started it (557, T5).
 
-### To decide
+### Decided on the open points
 
-- **E3 - How a sub-agent ends.** B: it leaves the channel and is deleted - restored, it comes back
-  into the session alone. C: as B, then purged in the kernel's name - nothing of it left but what it
-  said, which is final, and a new rule: today only an administrator or a retention policy purges.
-  Recommended: C.
-- **Whether the answer wakes a main agent that sleeps** - a mention wakes, a policy's choice does
-  not. Recommended: it wakes, as a mention does.
-- **What a quiet channel does** to a brief and to an answer given: today nobody is asked while the
-  channel is quiet, in any thread. Recommended: the delegate gives, and asks once the channel is
-  woken.
-- **Names.** Two sub-agents of one personality living at once need names of their own in the
-  channel's scope; the writer gives each a name of its own.
-- **An external agent as a sub-agent.** An external agent takes part in one thread as any agent
-  does, its remote conversation being that thread's. As a sub-agent, its intake has to take in
-  what it is given to read and pass it to its remote agent as text; and a task that outlives its
-  request is answered later, when the external agent speaks on its own, so that the delegate would
-  take the turn's end before it as an answer that ended without one. Recommended for the first
-  version: the tool starts agents of internal personalities alone, and external ones come later,
-  with a delegate that takes an answer an external agent speaks on its own to an open brief.
+The maintainer, on 2026-11-17:
+
+- **E3 - How a sub-agent ends.** It is let go from its channel and from its session - out of both
+  lists, kept as a former participant of the channel - and deleted, never purged: what it did, its
+  document and its state are kept, for tracing what happened. Restored, it comes back into nothing.
+  That a session lets nobody go turned out to be a gap, not a decision: letting go from a session
+  is issue [590](590-a-session-lets-nobody-go.md), which ending needs first.
+- **The answer wakes a main agent that sleeps**, as a mention does.
+- **Cancelling, a thread or the whole channel.** A cancel ends the agents' work in a scope: one
+  thread, or the channel. Being quiet becomes the state of a thread, held by its `Thread` (557,
+  D8): a cancel of a thread makes it quiet, a cancel of the channel every thread, as it does today;
+  waking goes the same two ways, both under the permissions of today (`CancelChannel`,
+  `WakeChannel`). So a user who cancels the sub-agent's thread ends its turn, the delegate gives the
+  main agent that it ended without an answer, and the main agent, whose thread is not quiet, is
+  asked. A cancel of the channel - a user wanting everything to stop - still lets the delegate
+  give, but nobody is asked until the channel is woken. A brief given into a quiet thread (`ask`)
+  is refused - the thread is quiet - instead of waking it, so that the main agent cannot undo a
+  user's cancel.
+- **Names**: an adjective and the personality (`curious-researcher`, `steady-reviewer`), drawn by
+  the writer, never one the channel has had - among its participants or its former ones -, so that
+  its history never shows two sub-agents under one name. No names of real people, as Docker's are.
+- **An external agent as a sub-agent** is issue
+  [591](591-an-external-agent-cannot-be-a-sub-agent.md): the tool starts agents of internal
+  personalities alone, and refuses an external one with an error.
 
 Still open from above: the command by which a user starts a sub-agent, and bounding its rights by
 what the main agent may.
@@ -436,3 +442,10 @@ what the main agent may.
   to it and ends it, and registers no kind of actor.
 - **2026-11-17** — Added to *To decide*: whether an external agent may be a sub-agent, with what it
   would need.
+- **2026-11-17** — The points of *To decide* decided by the maintainer (*Decided on the open
+  points*): a sub-agent whose work is done is let go from its channel and its session and deleted,
+  never purged - letting go from a session opened as issue 590 -; its answer wakes a main agent
+  that sleeps; a cancel ends the work of one thread or of the whole channel, being quiet a thread's
+  state, and a brief into a quiet thread is refused; a sub-agent is named by an adjective and its
+  personality, never by a name its channel has had; external agents as sub-agents opened as issue
+  591.
