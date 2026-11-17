@@ -1,6 +1,6 @@
 # 590 — A session lets nobody go
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Sessions and channels
@@ -356,3 +356,12 @@ agents deleted or restored meanwhile.
   back with it, as documented -; and `/channel join` by one a channel still lists but the session
   no longer does - a letting go that failed in a channel - asks the session's entry and may take
   them back into the session, where it refused them as `NotInSession` before.
+- **2026-11-17** — Accepted by the maintainer: `/channel join` by one a channel still lists but the
+  session no longer does may take them back into the session. And, asked to close it: restoring a
+  channel holds the session's locks of all its participants, in the order of their ids - the one
+  place several are held, so that two restorings cannot wait on each other -, until it is listed
+  again: one let go meanwhile is let go after it, from it too. Not held by a test: the window is
+  not reached by running both at once.
+- **2026-11-17** — Done: a session lets someone go, by whoever may change it or by their own act,
+  out of every channel of it, over REST and in the web UI; the exception of 564 is taken back.
+  Status: done.

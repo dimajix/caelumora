@@ -603,9 +603,10 @@ impl SessionLoop {
     /// session that lists it again (`UpdateSession`). Who was let go from the session while it was
     /// deleted (issue 590) is let go from it now, in the kernel's name and removed by it, before
     /// it is built - the document of a deleted channel cannot be changed -, and their clearance is
-    /// not asked: who was taken into the session again meanwhile comes back with it. One let go
-    /// from the session while it is restored, before it is listed again, is not reached by that
-    /// and comes back with it too; letting them go again finishes it.
+    /// not asked: who was taken into the session again meanwhile comes back with it. While it is
+    /// restored, none of its participants is taken in or let go (`changing`, issue 590): it holds
+    /// the locks of all of them, in the order of their ids, until it is listed again, so that one
+    /// let go meanwhile is let go after it, from it too.
     ///
     /// # Errors
     /// - `SessionError::ChannelNotFound` if the session has no such deleted
@@ -642,6 +643,15 @@ impl SessionLoop {
                 StoreError::PermissionDenied,
             )
             .await?;
+        // All of its participants held, in one order wherever several are, until it is listed.
+        let mut held: Vec<ActorId> =
+            channel.participants.iter().map(Participant::actor_id).collect();
+        held.sort_by_key(ActorId::id);
+        held.dedup();
+        let mut _changing = Vec::with_capacity(held.len());
+        for participant in held {
+            _changing.push(self.changing.lock(participant).await);
+        }
         let session = self.session();
         let (staying, gone): (Vec<Participant>, Vec<Participant>) =
             channel.participants.iter().cloned().partition(|p| session.takes_part(p.actor_id()));

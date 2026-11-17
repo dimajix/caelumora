@@ -244,7 +244,8 @@ pub struct SessionLoop {
     /// the channel cannot take them in, or as a founder of a channel (`found`) - or let go from the
     /// session (issue 590), one change of a participant at a time, as a channel makes them
     /// (`ChannelLoop::changing`): before the channel's lock, every way into a channel coming
-    /// through the session.
+    /// through the session. Restoring a channel holds those of all its participants, in the
+    /// order of their ids, the one place several are held.
     changing: LocksById<ActorId>,
 }
 
