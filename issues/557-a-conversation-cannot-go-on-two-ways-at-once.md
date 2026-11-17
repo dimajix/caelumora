@@ -570,7 +570,7 @@ state, built in the channel owner's name as the channel's components are.
 ### To decide
 
 D1 to D6 were decided by the maintainer on 2026-11-17, as recommended, and D8 on the same day,
-the maintainer's own proposal; the name of its type is still open. Still to be confirmed: the
+the maintainer's own proposal, its type named `Thread`. Still to be confirmed: the
 departure in step 2 from a sub-agent's thread having a policy of its own (*How a sub-agent is
 asked*).
 
@@ -610,8 +610,8 @@ asked*).
   actors and their lifecycle, the inboxes and catching up, the history, admission and rights, the
   participants, the directory of mentions, `quiet`, how an envelope is stamped and delivered -;
   what is a thread's is its moderator, with everything the moderator keeps. So a thread object of
-  the kernel (`channel::thread`, named `Thread`, or `ChannelThread` to set it apart from
-  `std::thread`) holds the thread's `ThreadState`, a moderator built for it from the channel's
+  the kernel (`channel::thread::Thread`; `ChannelThread`, set apart from `std::thread`, was the
+  alternative) holds the thread's `ThreadState`, a moderator built for it from the channel's
   components, and who takes part in it; the channel admits an event, finds its thread by
   `EventContext::thread_id`, has the thread decide its `Routing`, and records and delivers it. The
   line is such a thread object too.
@@ -709,7 +709,7 @@ pub struct Recorded {
 ```
 
 ```rust
-// caelumora-kernel/src/channel/thread.rs - its name to be decided (D8)
+// caelumora-kernel/src/channel/thread.rs (D8)
 /// A thread of a running channel: what decides whom its events go to and who is asked in it.
 pub(crate) struct Thread { /* its id, its `ThreadState` from step 2, its moderator */ }
 impl Thread {
@@ -918,3 +918,4 @@ them. Step 2 changes what is stored again - `ParticipantJoined`, the `Attendance
 - **2026-11-17** — D8 added and decided, the maintainer's proposal: the channel's loop holds a
   thread object per thread, with a moderator of its own, as a split of the code before the channel
   grows further - step 1 introduces it, with the line as its first. The name of its type is open.
+- **2026-11-17** — The type of D8 named `Thread` by the maintainer.
