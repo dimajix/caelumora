@@ -13,7 +13,7 @@ use caelumora_domain::session::Session;
 use caelumora_domain::store::{StoreError, Stored};
 use caelumora_security::{ActionType, Enforcement, SecurityContext, JOIN};
 use std::sync::Arc;
-use tracing::info;
+use tracing::{info, warn};
 
 impl SessionLoop {
     /// Takes `participant` - a user, or an agent `context` may read (issue 14: nobody brings in
@@ -24,8 +24,8 @@ impl SessionLoop {
     /// needs no right to change the session (issue 46). Everything is asked before anything is
     /// stored - their clearance for the channel too; the session is stored first, then the
     /// channel: one the channel cannot take in after all - refused, or failed as their actor
-    /// starts - stays in the session, as one taken in without a channel does, and is not rolled
-    /// back out of it (issue 564).
+    /// starts - is rolled back out of the session as it had them before (`roll_back_taking_in`,
+    /// issue 590).
     ///
     /// # Errors
     /// `StoreError::PermissionDenied` if `context` may not change the session or the channel;
@@ -64,10 +64,13 @@ impl SessionLoop {
             }
             None => None,
         };
-        self.take_in(context, participant, channel.as_ref().map(|(channel, _)| channel), false)
-            .await?;
+        let taken = channel.as_ref().map(|(channel, _)| channel);
+        let before = self.take_in(context, participant, taken, false).await?;
         if let Some((channel, history)) = channel {
-            channel.add_participant(context, participant, history).await?;
+            if let Err(error) = channel.add_participant(context, participant, history).await {
+                self.roll_back_taking_in(participant, before.as_ref()).await;
+                return Err(error);
+            }
         }
         Ok(())
     }
@@ -76,8 +79,8 @@ impl SessionLoop {
     /// session by their own act, where an entry of its access list lets them join (`JOIN`), and
     /// with `into` into that channel at once, where the channel's list lets them join as well
     /// (`ChannelLoop::join`). Asked and stored as `add_participant`, but stored in the kernel's
-    /// name once joining was permitted; one the channel cannot take in stays in the session, their
-    /// invitation to it used up, and joins the channel later by its entry alone.
+    /// name once joining was permitted; one the channel cannot take in is rolled back out of the
+    /// session, their invitation to it given back (`roll_back_taking_in`, issue 590).
     ///
     /// # Errors
     /// `StoreError::PermissionDenied` if they may not join the session or the channel;
@@ -93,9 +96,12 @@ impl SessionLoop {
             Some(id) => Some(self.channel_to_join(id)?),
             None => None,
         };
-        self.take_in(context, participant, channel.as_ref(), true).await?;
+        let before = self.take_in(context, participant, channel.as_ref(), true).await?;
         if let Some(channel) = channel {
-            channel.join(context, participant).await?;
+            if let Err(error) = channel.join(context, participant).await {
+                self.roll_back_taking_in(participant, before.as_ref()).await;
+                return Err(error);
+            }
         }
         Ok(())
     }
@@ -106,6 +112,7 @@ impl SessionLoop {
     /// (`require_to_take_in`): whose participant it is first, then anything in its name (issue
     /// 562). Whoever takes them in reads them first, a user to find out that they exist (issue
     /// 120). The session announces it, and follows the one taken in from here on (`following`).
+    /// Answers the session as it was before, where it took them in; `None` for one in it already.
     ///
     /// # Errors
     /// `SessionError::AlreadyParticipant`, `CannotTakeIn`; `StoreError::PermissionDenied` if they
@@ -117,7 +124,7 @@ impl SessionLoop {
         actor: ActorId,
         channel: Option<&Arc<ChannelLoop>>,
         joining: bool,
-    ) -> Result<()> {
+    ) -> Result<Option<Session>> {
         let session = self.session();
         let in_session = session.participants.iter().any(|p| p.actor_id() == actor);
         if in_session && channel.is_none() {
@@ -166,15 +173,31 @@ impl SessionLoop {
         }
         // Whose participant it is first, then anything in its name (issue 562).
         self.require_to_take_in(context, &resolved, channel).await?;
-        if let Some(storing) = storing {
-            // Followed before it is stored, so that nothing of it is missed meanwhile - its
-            // deletion above all; one whose storing fails is followed for nothing, which is
-            // harmless: its channels look only at whom they list.
-            self.events.follow(&self.following, SubscriptionTopic::of_participant(&participant));
-            self.session_controller.add_participant(&storing, participant).await?;
-            info!(session = %self.id, participant = %actor, by = %context.caller_id, "Taken into the session");
+        let Some(storing) = storing else { return Ok(None) };
+        // Followed before it is stored, so that nothing of it is missed meanwhile - its deletion
+        // above all. One whose storing fails, or who is rolled back out of the session again
+        // (`roll_back_taking_in`), is followed for nothing, which is harmless: its channels look
+        // only at whom they list, and a topic followed already is not followed twice.
+        self.events.follow(&self.following, SubscriptionTopic::of_participant(&participant));
+        let before = self.session_controller.add_participant(&storing, participant).await?;
+        info!(session = %self.id, participant = %actor, by = %context.caller_id, "Taken into the session");
+        Ok(Some(before))
+    }
+
+    /// Rolls back taking `participant` into the session, as `before` - the session as it was
+    /// before - had them, once its channel could not take them in (issue 590): out of it again,
+    /// their invitation given back (`SessionController::roll_back_participant_addition`). Nothing
+    /// for one who was in it before (`None`). What cannot be rolled back is logged and stays.
+    async fn roll_back_taking_in(&self, participant: ActorId, before: Option<&Session>) {
+        let Some(before) = before else { return };
+        let rolled_back =
+            self.session_controller.roll_back_participant_addition(participant, before);
+        if let Err(undo) = rolled_back.await {
+            warn!(
+                "{} was taken into session {} but not its channel, and not rolled back: {}",
+                participant, self.id, undo
+            );
         }
-        Ok(())
     }
 
     /// Lets `participant` go from the session on behalf of `context`, who may change it
@@ -609,6 +632,39 @@ mod tests {
                 .collect();
             assert_eq!(left, [ActorId::System], "once, in the kernel's name");
         }
+        world.manager.stop(&alice, session.id()).await.unwrap();
+    }
+
+    /// Issue 590: one an owner takes into the session and a channel, whose actor cannot start -
+    /// no agent runs in this world -, is rolled back out of the session as well, the group of its
+    /// participants following, and the leave announced.
+    #[tokio::test]
+    async fn one_the_channel_cannot_take_in_is_rolled_back_out_of_the_session() {
+        let world = World::new().await;
+        let hers = world.personality("hers", Some(world.alice), &[]).await;
+        let helper = ActorId::Agent(world.agent("helper", world.alice, &hers).await);
+        let session = world.session_of(&[], &[], &[]).await;
+        let main = Arc::clone(&session.channels()[0]);
+        let alice = World::as_user(world.alice);
+        let mut events = world.kernel.event_bus().subscribe_all();
+
+        let into = Some((main.id(), HistoryAccess::All));
+        session.add_participant(&alice, helper, into).await.expect_err("it cannot start");
+
+        assert!(!session.session().takes_part(helper), "rolled back out of the session");
+        assert!(!main.channel().lists(helper), "and out of the channel");
+        let members = world
+            .entity_store::<Group>()
+            .get(&World::system(), GroupId::of_session(session.id()))
+            .await
+            .unwrap()
+            .members;
+        assert!(!members.contains(&helper), "the group of its participants follows");
+        let left = |event: &GlobalEvent| {
+            let update = event.about::<Session>().and_then(|(_, c)| c.update());
+            matches!(update, Some(SessionUpdateEvent::ParticipantLeft(id)) if id == helper)
+        };
+        assert!(events.drain().await.iter().any(left), "announced");
         world.manager.stop(&alice, session.id()).await.unwrap();
     }
 

@@ -180,21 +180,56 @@ impl SessionController {
     /// over. The group of its participants follows (issue 286) before it is announced
     /// (`ParticipantJoined`), so that the new one hears of it too - announced only where they were
     /// listed anew (issue 564). Whether they may be taken in is the caller's to have asked.
+    /// Answers the session as it was before, for [`Self::roll_back_participant_addition`].
     ///
     /// # Errors
     /// Whatever the store reports, `StoreError::PermissionDenied` included; the session is then
     /// unchanged.
-    pub async fn add_participant(
+    pub(crate) async fn add_participant(
         &self,
         ctx: &SecurityContext,
         participant: Participant,
-    ) -> StoreResult<()> {
+    ) -> StoreResult<Session> {
         let mut writing = self.session.write().await;
-        let (joined, session) =
-            writing.change(ctx, |session| Ok(session.take_in(participant.clone()))).await?;
+        let ((before, joined), session) = writing
+            .change(ctx, |session| {
+                let before = session.clone();
+                let joined = session.take_in(participant.clone());
+                Ok((before, joined))
+            })
+            .await?;
         self.keep_participants(&session).await;
         if joined {
             writing.announce_update(&SessionUpdateEvent::ParticipantJoined(participant), &session);
+        }
+        Ok(before)
+    }
+
+    /// Rolls back taking `participant` in (`add_participant`, issue 590), in the kernel's name -
+    /// taking them in was permitted -, as `before`, the session as it was before, had them
+    /// (`Session::undo_take_in`): out of it again unless listed before, their invitation given
+    /// back; nothing if they were let go meanwhile. The group of its participants follows, and a
+    /// leave is announced where who is listed changed - to the one taken out as well, as when
+    /// someone is let go. Like the channel's (`ChannelController::roll_back_participant_addition`)
+    /// it answers what the store reports, for its caller to log.
+    ///
+    /// # Errors
+    /// Whatever the store reports; the session is then unchanged.
+    pub(crate) async fn roll_back_participant_addition(
+        &self,
+        participant: ActorId,
+        before: &Session,
+    ) -> StoreResult<()> {
+        let mut writing = self.session.write().await;
+        let (left, session) = writing
+            .change(&SecurityContext::system(), |session| {
+                Ok(session.undo_take_in(participant, before))
+            })
+            .await?;
+        self.keep_participants(&session).await;
+        if left {
+            let left = self.left(participant);
+            writing.announce_also_to(left, &session, [Subject::Actor(participant)]);
         }
         Ok(())
     }
@@ -225,9 +260,7 @@ impl SessionController {
             })
             .await?;
         self.keep_participants(&session).await;
-        let left = SessionUpdateEvent::ParticipantLeft(participant);
-        let left = GlobalEvent::updated::<Session>(self.session.address(), &left);
-        writing.announce_also_to(left, &session, [Subject::Actor(participant)]);
+        writing.announce_also_to(self.left(participant), &session, [Subject::Actor(participant)]);
         Ok(removed)
     }
 
@@ -286,6 +319,12 @@ impl SessionController {
     /// included; the session is then unchanged.
     async fn update(&self, ctx: &SecurityContext, event: SessionUpdateEvent) -> StoreResult<()> {
         self.session.update(ctx, &event).await.map(drop)
+    }
+
+    /// The announcement that `participant` left the session (`ParticipantLeft`, issue 590).
+    fn left(&self, participant: ActorId) -> GlobalEvent {
+        let left = SessionUpdateEvent::ParticipantLeft(participant);
+        GlobalEvent::updated::<Session>(self.session.address(), &left)
     }
 
     /// Lets the group of the participants of `session` follow them, in the kernel's name (issue

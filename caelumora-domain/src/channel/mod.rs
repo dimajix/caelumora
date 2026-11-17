@@ -24,7 +24,7 @@ use crate::group::GroupId;
 use crate::query::Field;
 use crate::removal::Removal;
 use crate::scope::{Scope, Scoped};
-use crate::security::{AclEntry, Grant, Secured, SecuredMut, SecurityAttributes, Subject};
+use crate::security::{Grant, Secured, SecuredMut, SecurityAttributes, Subject};
 use crate::session::{Session, SessionId};
 use crate::store::{EntityKind, Revision, Stored, Updatable};
 use crate::value::language::Language;
@@ -375,11 +375,7 @@ impl Channel {
         self.former.retain(|former| former.participant.actor_id() != actor);
         let was_former = before.former.iter().filter(|f| f.participant.actor_id() == actor);
         self.former.extend(was_former.cloned());
-        let invitation = AclEntry::invitation(actor);
-        let invited = before.security_attributes.acl.contains(&invitation);
-        if invited && !self.security_attributes.acl.contains(&invitation) {
-            self.security_attributes.acl.push(invitation);
-        }
+        self.security_attributes.give_back_invitation(actor, &before.security_attributes);
         unlisted
     }
 
@@ -405,6 +401,7 @@ mod tests {
     use super::*;
     use crate::agent::AgentId;
     use crate::channel::testing::make_channel;
+    use crate::security::AclEntry;
     use crate::session::testing::make_session;
     use crate::user::UserId;
 

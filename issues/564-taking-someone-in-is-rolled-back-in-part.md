@@ -139,3 +139,8 @@ channel had the participant before (`ChannelController::roll_back_participant_ad
   invitation stays, and a user's actor has no way to fail as it starts that a test reaches. The
   finding of the review of step 3b is opened as issue
   [568](568-a-second-join-leaves-attendance-open.md).
+- **2026-11-17** — Taken back by issue [590](590-a-session-lets-nobody-go.md): with a way out of a
+  session, one the channel cannot take in after the session took them in is rolled back out of the
+  session, their invitation to it given back (`Session::undo_take_in`,
+  `SessionController::roll_back_participant_addition`); the exception named in the rule of rolling
+  back is gone.

@@ -166,6 +166,11 @@ Steps, each committed on its own:
    carry `can_leave` (`ParticipantView::may_leave`): the web UI offers to leave a session by a rule
    of its own today - whether its participants list the user.
 7. The exception of 564 rolled back.
+8. A session makes the changes of one participant one at a time, by a lock per participant
+   (`LocksById`, as a channel's `changing`), which taking in - the session, then the channel, and
+   rolling back -, and letting go hold: two takings-in of one person at once, the first failing in
+   its channel, cannot roll back one the other took into a channel meanwhile, nor letting go and
+   taking in race. The lock order is the session's, then the channel's, everywhere.
 
 **Step 6a, actors in paths** (agreed): the routes of a channel's participants and actors
 (`…/participants/{aid}`, `…/actors/{aid}`, and the private notes of `/sessions/{id}/actors/{aid}`)
@@ -316,3 +321,19 @@ agents deleted or restored meanwhile.
   of theirs that exists -, decided by the session view as a channel's is, the policy not asked;
   the web UI's session menu offers to leave by it. The views read an actor's name and whom it
   answers to from one read (`Views::name_and_owner_of`), which `name_of` answers by.
+- **2026-11-17** — Step 7 done: one the channel cannot take in after the session took them in is
+  rolled back out of the session as it had them before (`Session::undo_take_in`,
+  `SessionController::roll_back_participant_addition`, as the channel's), in the kernel's name,
+  their invitation given back, a leave announced where who is listed changed; by
+  `SessionLoop::add_participant` and `join` (`roll_back_taking_in`). The exception of 564 is gone
+  from CHANNELS.md, the rule of rolling back and PERMISSION-CHECKS.md; the security suite holds it
+  for joining, a session test for taking in, with the group and the announcement. Giving an
+  invitation back is `SecurityAttributes::give_back_invitation`, which both `undo_take_in`s use.
+  That the invitation of one who joined themselves is given back is held by the domain's test
+  alone: a user's actor has no way to fail as it starts that a test reaches, as 564 found. Left
+  for the maintainer: the session holds no lock per participant, so one taken into another channel
+  between the session's storing and its rollback - two takings-in of one person at once, the first
+  failing in its channel - is listed there and out of the session; letting go from the session
+  finishes it.
+- **2026-11-17** — Decided with the maintainer: a lock per participant in the session, as a step of
+  its own (step 8, *Plan*), from the finding of the review of step 7.

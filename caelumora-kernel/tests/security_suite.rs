@@ -5571,14 +5571,14 @@ async fn an_invitation_to_a_channel_is_used_up_as_it_is_taken() {
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
-/// One the channel cannot take in after the session took them in stays in the session (issue
-/// 564): bob, invited to both, brings his agent in by his own act; it is stored in the session and
-/// in the channel, whose addition is rolled back once its actor cannot start, no agent running in
-/// this world. Bob keeps his invitations, as an owner who brings his agent along does (issue 563).
-/// In the session already, it tries again by the channel's entry alone: nothing of the session is
-/// asked in its name again.
+/// One the channel cannot take in after the session took them in is rolled back out of the
+/// session (issue 590, which took back the exception of 564): bob, invited to both, brings his
+/// agent in by his own act; it is stored in the session and in the channel, whose addition is
+/// rolled back once its actor cannot start, no agent running in this world - and then the
+/// session's. Bob keeps his invitations, as an owner who brings his agent along does (issue 563).
+/// Tried again, it is asked as the first time: the session's entry too.
 #[tokio::test]
-async fn one_the_channel_cannot_take_in_stays_in_the_session_and_may_try_again() {
+async fn one_the_channel_cannot_take_in_is_rolled_back_out_of_the_session() {
     let world = World::new().await;
     let bobs = world.personality("his", Some(world.bob), &[]).await;
     let scout = ActorId::Agent(world.agent("scout", world.bob, &bobs).await);
@@ -5611,8 +5611,8 @@ async fn one_the_channel_cannot_take_in_stays_in_the_session_and_may_try_again()
 
     let failed = world.manager.join(&bob, id, scout, Some(main_id)).await.expect_err("cannot run");
     assert!(cannot_start(&failed), "stored, then failed as it starts: {failed}");
-    assert!(session.session().takes_part(scout), "in the session");
-    assert!(!main.channel().lists(scout), "not in the channel");
+    assert!(!session.session().takes_part(scout), "rolled back out of the session");
+    assert!(!main.channel().lists(scout), "and the channel");
     assert!(session.session().security_attributes.acl.contains(&invitation), "bob keeps his");
     assert!(main.security_attributes().acl.contains(&invitation), "in both");
 
@@ -5625,8 +5625,9 @@ async fn one_the_channel_cannot_take_in_stays_in_the_session_and_may_try_again()
             "bob: JoinSession(alice's) yes",
             // Whoever takes them in reads them first (`SessionLoop::take_in`).
             "bob: GetAgent(bob's) yes",
-            // Nothing of the session in its name, since it takes part already: the channel's
-            // entry, whether it may run and be cleared, before anything is stored.
+            // Out of the session again: its entry in its name, as the first time, then the
+            // channel's, whether it may run and be cleared, before anything is stored.
+            "bob as scout: JoinSession(alice's) yes",
             "bob as scout: JoinChannel(alice's) yes",
             "bob as scout: GetPersonality(bob's) yes",
             "bob: Cleared(scout) yes",
@@ -5635,8 +5636,9 @@ async fn one_the_channel_cannot_take_in_stays_in_the_session_and_may_try_again()
             "bob as scout: GetPersonality(bob's) yes",
             "bob: Cleared(scout) yes",
         ]),
-        "the channel's entry, not the session's again: {asked:#?}"
+        "the session's entry, as the first time: {asked:#?}"
     );
+    assert!(!session.session().takes_part(scout), "rolled back again");
     world.manager.stop(&alice, id).await.unwrap();
 }
 
