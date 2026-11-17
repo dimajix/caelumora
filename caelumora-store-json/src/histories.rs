@@ -13,7 +13,7 @@ use super::{delete_if_exists, read_json_opt, write_json_atomic};
 use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::chain::{Node, Position};
-use caelumora_domain::channel::ChannelId;
+use caelumora_domain::channel::{ChannelId, ThreadId};
 use caelumora_domain::history::{
     Attended, History, HistoryEntry, HistoryField, HistoryPage, Reader, Recorded,
 };
@@ -24,7 +24,7 @@ use caelumora_store::history::{
     answer_of, page_of, seen, seen_nodes, Attendance, HistoryStore, StandingItems,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use tracing::warn;
@@ -303,6 +303,12 @@ impl HistoryStore for JsonStates {
         let dir = self.history_dir(channel).await?;
         derive_missing(&dir, channel).await?;
         Ok(read_attendance(&dir).await?.of_participant(actor))
+    }
+
+    async fn attending(&self, channel: ChannelId) -> StoreResult<HashMap<ActorId, ThreadId>> {
+        let dir = self.history_dir(channel).await?;
+        derive_missing(&dir, channel).await?;
+        Ok(read_attendance(&dir).await?.attending())
     }
 
     async fn rebuild(&self, channel: ChannelId) -> StoreResult<()> {

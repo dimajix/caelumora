@@ -18,7 +18,7 @@ use crate::PostgresStore;
 use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::chain::{Node, Position};
-use caelumora_domain::channel::ChannelId;
+use caelumora_domain::channel::{ChannelId, ThreadId};
 use caelumora_domain::history::{
     Attended, History, HistoryEntry, HistoryField, HistoryPage, KeptItem, Reader, Recorded,
 };
@@ -31,6 +31,7 @@ use caelumora_store::history::{
 use serde_json::Value;
 use sqlx::postgres::PgConnection;
 use sqlx::types::Json;
+use std::collections::HashMap;
 use std::ops::Range;
 
 /// The chains of the histories, by channel.
@@ -322,6 +323,12 @@ impl HistoryStore for PostgresStore {
         let mut conn = self.connection.acquire().await?;
         let (key, name) = key(channel);
         Ok(read_attendance(&mut conn, &key, &name).await?.of_participant(actor))
+    }
+
+    async fn attending(&self, channel: ChannelId) -> StoreResult<HashMap<ActorId, ThreadId>> {
+        let mut conn = self.connection.acquire().await?;
+        let (key, name) = key(channel);
+        Ok(read_attendance(&mut conn, &key, &name).await?.attending())
     }
 
     /// In one transaction: the items and the attendance of the whole chain.

@@ -298,7 +298,7 @@ impl ChannelLoop {
             // Without an actor - left out as the channel started - but taking part in its history
             // all the same: its leave is recorded at once, so that its attendance ends here.
             None => {
-                if let Some(thread) = self.attending(participant).await {
+                if let Some(&thread) = self.attending().await.get(&participant) {
                     let name = self.name_of(participant).await;
                     let leave = ActorChange::Leave(participant, name, context.clone(), thread);
                     let _ = self.changes_tx.send(leave);

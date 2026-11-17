@@ -14,6 +14,7 @@ use caelumora_domain::store::StoreResult;
 use caelumora_security::SecurityContext;
 use caelumora_store::history::HistoryStore;
 use chrono::{DateTime, Utc};
+use std::collections::HashMap;
 use tracing::{info, warn};
 
 /// How many items a page holds that is read to find something in a history
@@ -109,19 +110,14 @@ impl ChannelLoop {
             .map_or(Position::START, |at| at.range.start))
     }
 
-    /// The thread in which `participant` takes part in the channel's history now: where a range
-    /// of its attendance is still open (`HistoryStore::attendance`); `None` if none is, or if it
-    /// cannot be read, which is logged.
-    pub(super) async fn attending(&self, participant: ActorId) -> Option<ThreadId> {
-        match self.history_store.attendance(self.id, participant).await {
-            Ok(attended) => {
-                attended.into_iter().find(|at| at.range.end == Position::MAX).map(|at| at.thread)
-            }
-            Err(e) => {
-                warn!("Cannot read where {} takes part in channel {}: {}", participant, self.id, e);
-                None
-            }
-        }
+    /// Who takes part in the channel's history now, and in which thread: whoever has a range of
+    /// attendance still open (`HistoryStore::attending`); nobody if it cannot be read, which is
+    /// logged.
+    pub(super) async fn attending(&self) -> HashMap<ActorId, ThreadId> {
+        self.history_store.attending(self.id).await.unwrap_or_else(|e| {
+            warn!("Cannot read who takes part in channel {}: {}", self.id, e);
+            HashMap::new()
+        })
     }
 
     /// Brings the channel's history in line with its document as it is built (reconciling, issue
@@ -134,9 +130,10 @@ impl ChannelLoop {
     /// actor removed whose task had not ended as its session stopped - their attendance ends only
     /// here.
     pub(super) async fn reconcile(&self) {
+        let attending = self.attending().await;
         for former in &self.channel().former {
             let participant = former.participant.actor_id();
-            let Some(thread) = self.attending(participant).await else { continue };
+            let Some(&thread) = attending.get(&participant) else { continue };
             let name = self.name_of(participant).await;
             info!("{} left channel {} while it did not run: recorded now", participant, self.id);
             let leave = ActorChange::Leave(participant, name, SecurityContext::system(), thread);

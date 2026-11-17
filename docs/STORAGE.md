@@ -598,7 +598,8 @@ participant (issue 417), and is kept apart from the channel state's document (is
     behind, the tool that reads another channel. The answer of a turn, what its end carried as it
     was delivered, is read from the messages of the turn said before its end
     (`HistoryStore::answer`). Where a participant's view begins is the start of their first range
-    (`HistoryStore::attendance`). A page is addressed by the position (`seq`) of its oldest item; a
+    (`HistoryStore::attendance`); who takes part now, and where, is whoever has a range open
+    (`HistoryStore::attending`). A page is addressed by the position (`seq`) of its oldest item; a
     client passes it back without computing with it.
 *   **The holder keeps a window.** The channel loop holds the history from `history_from` on, a
     small part of the document: the last `WINDOW` (200) entries. After every put it lets go of what

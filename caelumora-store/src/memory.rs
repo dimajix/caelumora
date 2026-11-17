@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::{AgentChannelState, AgentId};
 use caelumora_domain::chain::{Node, Position};
-use caelumora_domain::channel::{ChannelId, ChannelState};
+use caelumora_domain::channel::{ChannelId, ChannelState, ThreadId};
 use caelumora_domain::context::FrameRef;
 use caelumora_domain::digest::Digest;
 use caelumora_domain::history::{
@@ -564,6 +564,12 @@ impl HistoryStore for MemoryStore {
     async fn attendance(&self, channel: ChannelId, actor: ActorId) -> StoreResult<Vec<Attended>> {
         Ok(read_lock(&self.histories, |all| {
             all.get(&channel).map(|kept| kept.attendance.of_participant(actor)).unwrap_or_default()
+        }))
+    }
+
+    async fn attending(&self, channel: ChannelId) -> StoreResult<HashMap<ActorId, ThreadId>> {
+        Ok(read_lock(&self.histories, |all| {
+            all.get(&channel).map(|kept| kept.attendance.attending()).unwrap_or_default()
         }))
     }
 

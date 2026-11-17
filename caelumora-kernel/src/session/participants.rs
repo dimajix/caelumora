@@ -497,14 +497,14 @@ mod tests {
         OutOfService { session, unavailable, deleted, withdrawn }
     }
 
-    /// Whether carol's range of attendance in `channel` is open, once it is as `open` says.
+    /// Whether carol takes part in the history of `channel` (`HistoryStore::attending`), once she
+    /// does as `open` says.
     async fn carol_attending(world: &World, channel: ChannelId, open: bool) -> bool {
         let carol = ActorId::User(world.carol);
         let history = world.kernel.history_store();
         time::timeout(Duration::from_secs(5), async {
             loop {
-                let attended = history.attendance(channel, carol).await.unwrap();
-                if attended.iter().any(|at| at.range.end == Position::MAX) == open {
+                if history.attending(channel).await.unwrap().contains_key(&carol) == open {
                     break;
                 }
                 time::sleep(Duration::from_millis(10)).await;

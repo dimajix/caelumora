@@ -153,8 +153,8 @@ Steps, each committed on its own:
    announcement on the bus: it subscribes to its own topic for this alone since step 4, and every
    event of its channels passes its loop to be dropped; a stale or forged join would have it follow
    one let go. Its subscription then no longer lives on `run`'s stack alone.
-5. A history store answers the open ranges of attendance of a channel at once, so that a channel
-   being built reads them in one question instead of one per former participant
+5. A history store answers who has a range of attendance open in a channel at once, so that a
+   channel being built reads them in one question instead of one per former participant
    (`HistoryStore::attendance`, step 3), whose number grows with every sub-agent.
 6. The REST routes and the web UI; `SessionError::NotAParticipant`, answered as `invalid_channel`
    today, answered for a session.
@@ -249,3 +249,9 @@ agents deleted or restored meanwhile.
   do (`participant_topics` went with it). `Following`, `EventSubscription::following` and
   `EventBus::follow` are the kernel's (`pub(crate)`). The tests of a loss flood a topic the session
   still follows; the one of an agent taken in while events were lost is gone, its case with it.
+- **2026-11-17** — Step 5 done, the interface agreed with the maintainer: `HistoryStore::attending`
+  answers who takes part in a channel's history now, each with the thread of their open range,
+  from the attendance every store reads whole anyway (`Attendance::attending`); in the memory, the
+  JSON and the Postgres store, held by the store suite. A channel reads it once as it is built
+  (`reconcile`) and as it removes one without an actor; `ChannelLoop::attending` answers all of
+  them, no longer one. Postgres not tested here, without a database.

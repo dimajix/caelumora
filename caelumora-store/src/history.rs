@@ -13,7 +13,7 @@
 use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::chain::{Node, Position};
-use caelumora_domain::channel::ChannelId;
+use caelumora_domain::channel::{ChannelId, ThreadId};
 use caelumora_domain::digest::Digest;
 use caelumora_domain::history::{
     Attended, HistoryEntry, HistoryField, HistoryPage, KeptItem, Reader, Recorded,
@@ -94,6 +94,10 @@ pub trait HistoryStore: Debug + Send + Sync {
     /// its ranges of positions, each in the thread it took part in (issue 557), oldest first;
     /// none if it never was one, the last open - to `Position::MAX` - while it is.
     async fn attendance(&self, channel: ChannelId, actor: ActorId) -> StoreResult<Vec<Attended>>;
+
+    /// Who takes part in the channel's history now, and where: each actor whose range of
+    /// attendance is still open, with the thread of that range (issue 590).
+    async fn attending(&self, channel: ChannelId) -> StoreResult<HashMap<ActorId, ThreadId>>;
 
     /// Derives the items and the attendance anew from the chain: what
     /// repairs them, and what shows that they are derived.
@@ -182,6 +186,15 @@ impl Attendance {
             .iter()
             .filter(|(of, _)| *of == participant)
             .map(|(_, at)| at.clone())
+            .collect()
+    }
+
+    /// Who takes part now, each with the thread of its open range (`HistoryStore::attending`).
+    pub fn attending(&self) -> HashMap<ActorId, ThreadId> {
+        self.attended
+            .iter()
+            .filter(|(_, at)| at.range.end == Position::MAX)
+            .map(|(actor, at)| (*actor, at.thread))
             .collect()
     }
 
@@ -448,6 +461,33 @@ mod tests {
             [Attended { thread, range: Position::START..Position::MAX }],
             "in its join's thread, from its join on"
         );
+    }
+
+    /// Issue 590: who takes part now is whoever has a range open, with its thread - not one who
+    /// left.
+    #[test]
+    fn who_takes_part_now_is_whoever_has_a_range_open() {
+        use caelumora_domain::actor::{ActorEvent, Envelope, EventContext};
+        let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
+        let mut history = History::default();
+        let left = HistoryEntry::ParticipantLeft {
+            participant: alice,
+            name: String::new(),
+            by: alice,
+            by_name: String::new(),
+            until: Position::new(2),
+            at: Utc::now(),
+        };
+        for (entry, sender) in [(joined(alice), alice), (left, alice)] {
+            assert!(history.enter(Recorded::new(entry, sender, Audience::Everybody)));
+        }
+        let thread = ThreadId::new();
+        let context = EventContext { thread_id: thread, ..EventContext::default() };
+        let joined = ActorEvent::ParticipantJoined { participant: bob, name: "bob".to_string() };
+        let recorded = Recorded::of(&Envelope::new(context, joined), bob, Audience::Everybody);
+        assert!(history.enter(recorded.expect("a join is recorded")));
+        let attending = Attendance::of(history.all_entries()).attending();
+        assert_eq!(attending, HashMap::from([(bob, thread)]), "bob, in the thread he joined");
     }
 
     /// That `participant` joined, by their own act.
