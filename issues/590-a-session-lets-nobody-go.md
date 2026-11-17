@@ -237,3 +237,15 @@ agents deleted or restored meanwhile.
 - **2026-11-17** — Accepted by the maintainer: step 4 as done, without `take_stored`. The finding
   of its review - the session hears its own joins through the bus only to follow whom it took in -
   is a step of its own, 4b (*Plan*).
+- **2026-11-17** — Step 4b done, as the maintainer agreed the interface: a subscription is followed
+  by its `Following` (`EventSubscription::following`), which `EventBus::follow` takes in place of
+  the subscription. A session subscribes as it is made, to the topics of its participants alone,
+  and keeps its `Following`; `run` takes the subscription over. Whom it takes in it follows in
+  `take_in`, before storing them, so that nothing of them is missed meanwhile - one whose storing
+  fails is followed for nothing, which is harmless. It hears none of its own announcements and
+  none of its channels' events any more; `participant_taken_in` is gone. Unlike the agreed
+  interface, it no longer follows its participants again after lost events: a loss drops events,
+  not topics, and whom it takes in it follows as it takes them in, so that step had nothing left to
+  do (`participant_topics` went with it). `Following`, `EventSubscription::following` and
+  `EventBus::follow` are the kernel's (`pub(crate)`). The tests of a loss flood a topic the session
+  still follows; the one of an agent taken in while events were lost is gone, its case with it.

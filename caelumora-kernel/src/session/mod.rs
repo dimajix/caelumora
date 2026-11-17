@@ -16,7 +16,7 @@ use crate::channel::{ChannelLoop, Participation};
 use crate::command::CommandExecutor;
 use crate::component::ComponentRegistry;
 use crate::controller::{ControllerManager, SessionController, WorkspaceController};
-use crate::event::{EventBus, SubscriptionTopic};
+use crate::event::{EventBus, EventSubscription, Following, SubscriptionTopic};
 use crate::group::{keep_participants, GroupManager};
 use crate::kernel::{ChannelRuntime, Kernel};
 use crate::scoped::{purge_for_good, ScopeNotEmpty, ScopedEntities};
@@ -37,7 +37,7 @@ use caelumora_domain::group::GroupId;
 use caelumora_domain::privacy::SessionPrivacy;
 use caelumora_domain::project::{Project, ProjectId};
 use caelumora_domain::scope::Scope;
-use caelumora_domain::session::{Session, SessionId, SessionUpdateEvent};
+use caelumora_domain::session::{Session, SessionId};
 use caelumora_domain::store::{StoreResult, StoreResultExt};
 use caelumora_domain::template::SessionTemplateId;
 use caelumora_domain::user::{User, UserUpdateEvent};
@@ -223,6 +223,14 @@ pub struct SessionLoop {
     start_tx: mpsc::UnboundedSender<ChannelId>,
     /// Taken by `run`, which is how it knows it is not already running.
     start_rx: Mutex<mpsc::UnboundedReceiver<ChannelId>>,
+    /// The events about its agents' lifecycle and its participants' names, subscribed to as the
+    /// session is made, so that nothing of whom it takes in before it runs is missed; taken by
+    /// `run`, which follows them. Taking them into their controllers is the `ControllerManager`'s
+    /// (issue 121).
+    subscription: Mutex<EventSubscription>,
+    /// What the participants it takes in are followed by on `subscription` (issue 590), from
+    /// wherever it takes them in.
+    following: Following,
     /// Held while the session is put into another project (issue 467), so
     /// that two such changes do not share and unshare projects across each
     /// other.
@@ -344,6 +352,9 @@ impl SessionLoop {
         let id = session.id;
         let commands = Arc::new(kernel.new_command_executor(&session).await?);
         let workspace = held_workspace(kernel.controller_manager(), id, session.workspace).await?;
+        let topics = session.participants.iter().map(SubscriptionTopic::of_participant).collect();
+        let subscription = kernel.event_bus().subscribe(SecurityContext::system(), topics);
+        let following = subscription.following();
         let session_controller = kernel.controller_manager().new_session_controller(session);
         let (start_tx, start_rx) = mpsc::unbounded_channel();
 
@@ -365,6 +376,8 @@ impl SessionLoop {
             channels: DashMap::new(),
             start_tx,
             start_rx: Mutex::new(start_rx),
+            subscription: Mutex::new(subscription),
+            following,
             moving: Mutex::new(()),
             rebuilding: Mutex::new(()),
         });
@@ -417,15 +430,10 @@ impl SessionLoop {
     /// participant renamed, and after it lost events.
     pub async fn run(&self) -> Result<()> {
         let mut start_rx = self.start_rx.try_lock().map_err(|_| anyhow!("Already running"))?;
+        let mut subscription =
+            self.subscription.try_lock().map_err(|_| anyhow!("Already running"))?;
 
         let mut join_set = JoinSet::new();
-        // The session's own events, for whom it takes in (issue 221), and those about its agents'
-        // lifecycle and its participants' names; taking them into their controllers is the
-        // `ControllerManager`'s (issue 121). A participant taken in later is followed once that is
-        // announced.
-        let mut topics = vec![SubscriptionTopic::Session(self.id())];
-        topics.extend(self.participant_topics());
-        let mut subscription = self.events.subscribe(SecurityContext::system(), topics);
         let mut following = true;
         self.follow_agents(None).await;
 
@@ -458,19 +466,12 @@ impl SessionLoop {
                 }
                 received = subscription.receiver().recv(), if following => {
                     match received {
-                        Ok(global_event) => {
-                            if let Some(topic) = self.participant_taken_in(&global_event) {
-                                self.events.follow(&subscription, topic);
-                            }
-                            self.handle_global_event(&global_event).await
-                        }
+                        Ok(global_event) => self.handle_global_event(&global_event).await,
                         Err(RecvError::Lagged(lost)) => {
                             tracing::warn!("Session {} lost {} events and looks at its participants again", self.id, lost);
-                            // A participant taken in meanwhile is followed from now on (issue
-                            // 502), and one renamed meanwhile is mentioned by its name (issue 585).
-                            for topic in self.participant_topics() {
-                                self.events.follow(&subscription, topic);
-                            }
+                            // An agent deleted or restored meanwhile is followed (issue 502), and
+                            // one renamed meanwhile is mentioned by its name (issue 585). Whom it
+                            // takes in it follows as it takes them in, which loses nothing.
                             self.follow_agents(None).await;
                             self.rebuild_mentions();
                         }
@@ -482,31 +483,10 @@ impl SessionLoop {
         }
     }
 
-    /// The topics of the participants of the session: of its agents, whose deletion and restoring
-    /// its channels follow, and of its agents and users, whose names they follow.
-    fn participant_topics(&self) -> Vec<SubscriptionTopic> {
-        self.session().participants.iter().map(SubscriptionTopic::of_participant).collect()
-    }
-
-    /// The topic of the participant taken into this session, if `global_event` announces one
-    /// (issue 221).
-    fn participant_taken_in(&self, global_event: &GlobalEvent) -> Option<SubscriptionTopic> {
-        let (id, change) = global_event.about::<Session>()?;
-        match change.update::<SessionUpdateEvent>() {
-            Some(SessionUpdateEvent::ParticipantJoined(participant)) if id == self.id => {
-                Some(SubscriptionTopic::of_participant(&participant))
-            }
-            _ => None,
-        }
-    }
-
     async fn handle_global_event(&self, global_event: &GlobalEvent) {
         if let Some((participant, name)) = renamed(global_event) {
             self.participant_renamed(participant, &name);
         }
-        // Its own announcements it does not take over: its controller is the one writer of it,
-        // which holds every change live already - and taken over on top of what changed since,
-        // a join would list again one let go after it (issue 590).
         if let Some((id, EntityChange::Deleted | EntityChange::Restored)) =
             global_event.about::<Agent>()
         {
@@ -558,7 +538,7 @@ mod tests {
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::testing::make_personality;
     use caelumora_domain::agent::{Agent, AgentUpdateEvent};
-    use caelumora_domain::channel::{self, Channel, HistoryAccess};
+    use caelumora_domain::channel::HistoryAccess;
     use caelumora_domain::event::GlobalEvent;
     use caelumora_domain::security::SecurityAttributes;
     use caelumora_domain::user::{User, UserUpdateEvent};
@@ -670,13 +650,9 @@ mod tests {
 
         let controller = kernel.controller_manager().agent_controller(helper.id).await.unwrap();
         controller.update_name(&ctx, "Assistant").await.expect("renamed");
-        // More than a subscription holds, published before the session runs again: the
-        // announcement of the rename is lost.
-        kernel.event_bus().publish_past_capacity(&GlobalEvent::custom::<Channel>(
-            &(session.id(), main.id()),
-            channel::AGENT_STATE_CHANGED,
-            &helper.id,
-        ));
+        // More than a subscription holds, on a topic the session follows and published before it
+        // runs again: the announcement of the rename is lost.
+        kernel.event_bus().publish_past_capacity(&GlobalEvent::created::<Agent>(&helper.id));
         let mentioned = async {
             while main.mentions().resolve("@assistant") != [agent] {
                 time::sleep(Duration::from_millis(10)).await;

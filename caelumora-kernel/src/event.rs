@@ -325,29 +325,36 @@ pub struct EventBus {
 
 /// The events of an `EventBus` subscription.
 ///
-/// A subscriber that falls more than `SUBSCRIPTION_CAPACITY` events behind
-/// loses the oldest ones, and makes up for them (issue 502): it takes the
-/// receiver with `into_receiver`, or borrows it with `receiver` to keep the
-/// subscription, which `EventBus::follow` extends by a topic, and answers
-/// `RecvError::Lagged` by reading anew what it keeps - a stream sends its
-/// client a fresh snapshot. Only tests, which read what they caused, skip a
-/// loss (`recv`, `try_recv`). An event is made once and shared by every
-/// subscriber that receives it (issue 503), so a receiver holds it as an
-/// `Arc`.
+/// A subscriber that falls more than `SUBSCRIPTION_CAPACITY` events behind loses the oldest ones,
+/// and makes up for them (issue 502): it takes the receiver with `into_receiver`, or borrows it
+/// with `receiver` to keep the subscription, which `EventBus::follow` extends by a topic through
+/// its `Following`, and answers `RecvError::Lagged` by reading anew what it keeps - a stream sends
+/// its client a fresh snapshot. Only tests, which read what they caused, skip a loss (`recv`,
+/// `try_recv`). An event is made once and shared by every subscriber that receives it (issue 503),
+/// so a receiver holds it as an `Arc`.
 #[derive(Debug)]
 pub struct EventSubscription {
     rx: broadcast::Receiver<Arc<GlobalEvent>>,
-    /// What the bus sends its events with: by which `EventBus::follow`
-    /// finds the subscription. Weak, so that the receiver learns once the
-    /// bus is gone (`Closed`).
-    tx: broadcast::WeakSender<Arc<GlobalEvent>>,
+    following: Following,
     /// The dispatcher's queue, for tests to wait for it (`settled`); weak,
     /// so that a subscription does not keep it running once the bus is
     /// gone.
     #[cfg(any(test, feature = "test-support"))]
     queue: mpsc::WeakUnboundedSender<Dispatched>,
 }
+/// What more topics of a subscription are followed by (`EventBus::follow`), apart from its
+/// receiver (issue 590): what the bus sends the subscription's events with, by which it finds the
+/// subscription. Weak, so that the receiver learns once the bus is gone (`Closed`).
+#[derive(Debug, Clone)]
+pub(crate) struct Following(broadcast::WeakSender<Arc<GlobalEvent>>);
+
 impl EventSubscription {
+    /// What more topics of this subscription are followed by (`EventBus::follow`), for whoever
+    /// follows them while the receiver is elsewhere.
+    pub(crate) fn following(&self) -> Following {
+        self.following.clone()
+    }
+
     /// The underlying receiver, for a subscriber that handles lost events
     /// itself.
     pub fn into_receiver(self) -> broadcast::Receiver<Arc<GlobalEvent>> {
@@ -468,17 +475,17 @@ impl EventBus {
         let queue = self.queue();
         EventSubscription {
             rx,
-            tx: weak,
+            following: Following(weak),
             #[cfg(any(test, feature = "test-support"))]
             queue: queue.downgrade(),
         }
     }
 
-    /// Has `subscription` receive the events of `topic` as well, of what
-    /// the bus has yet to deliver - a running session those of an agent
-    /// taken in (issue 221). Nothing for one it follows already.
-    pub fn follow(&self, subscription: &EventSubscription, topic: SubscriptionTopic) {
-        if let Some(tx) = subscription.tx.upgrade() {
+    /// Has the subscription of `following` receive the events of `topic` as well, of what the bus
+    /// has yet to deliver - a running session those of an agent taken in (issue 221). Nothing for
+    /// one it follows already, or one that is gone.
+    pub(crate) fn follow(&self, following: &Following, topic: SubscriptionTopic) {
+        if let Some(tx) = following.0.upgrade() {
             self.dispatcher.follow(&tx, topic);
         }
     }
@@ -1077,7 +1084,7 @@ mod tests {
         bus.publish(GlobalEvent::created::<Agent>(&theirs), readable.clone());
         assert!(hers.drain().await.is_empty(), "not of a topic it does not follow");
 
-        bus.follow(&hers, SubscriptionTopic::Agent(theirs));
+        bus.follow(&hers.following(), SubscriptionTopic::Agent(theirs));
         bus.publish(GlobalEvent::deleted::<Agent>(&theirs), readable);
         bus.publish(GlobalEvent::restored::<Agent>(&theirs), unreadable);
         assert_eq!(

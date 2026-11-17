@@ -631,7 +631,8 @@ themselves or their own agent, never someone else.
     follows before it is announced (`SessionUpdateEvent::ParticipantJoined`), so that the new one
     hears of it, too - announced only for one who did not take part before, so that two who take
     the same person in at once announce them once -, and a running session follows an agent taken
-    in as it follows those it started with.
+    in as it follows those it started with, from where it takes them in - not by hearing its own
+    announcement, of which it hears none (issue [590](../issues/590-a-session-lets-nobody-go.md)).
 
 Whom one could take in is the session view's to answer (`SessionView::candidates`): the users and
 agents whose names are sought (`NameMatch`), each with whether they take part already and why they
@@ -659,10 +660,10 @@ channel it takes part in until it is restored. The channels follow its mark inst
 *   the views show it as a former participant, removed as its mark says, and keep its name, so that
     what it said keeps its sender.
 
-A running session subscribes to the events of its agents, and looks at all of them again as it
-starts and after it lost events, so that a deletion or a restore it did not hear of is not missed;
-after a loss it follows every agent taking part, also one taken in whose announcement was lost. It
-follows its users alike, for their renames (see [`@`-Mentions](#-mentions)).
+A session subscribes to the events of its agents as it is made, follows each one it takes in as it
+takes them in, and looks at all of them again as it starts and after it lost events, so that a
+deletion or a restore it did not hear of is not missed. It follows its users alike, for their
+renames (see [`@`-Mentions](#-mentions)).
 
 Restoring the agent is refused if another agent took its name in its scope meanwhile. Otherwise it
 takes part again in every channel it rested in: a running session builds its actor anew, gives it

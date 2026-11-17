@@ -5,6 +5,7 @@
 
 use super::{ChannelRun, SessionError, SessionLoop};
 use crate::channel::{ChannelLoop, ResolvedParticipant};
+use crate::event::SubscriptionTopic;
 use anyhow::Result;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::channel::{Channel, ChannelId, HistoryAccess, Participant};
@@ -104,7 +105,7 @@ impl SessionLoop {
     /// and then whether they can be taken in and take part in `channel` as well
     /// (`require_to_take_in`): whose participant it is first, then anything in its name (issue
     /// 562). Whoever takes them in reads them first, a user to find out that they exist (issue
-    /// 120). The session announces it, and follows an agent taken in (`run`).
+    /// 120). The session announces it, and follows the one taken in from here on (`following`).
     ///
     /// # Errors
     /// `SessionError::AlreadyParticipant`, `CannotTakeIn`; `StoreError::PermissionDenied` if they
@@ -166,6 +167,10 @@ impl SessionLoop {
         // Whose participant it is first, then anything in its name (issue 562).
         self.require_to_take_in(context, &resolved, channel).await?;
         if let Some(storing) = storing {
+            // Followed before it is stored, so that nothing of it is missed meanwhile - its
+            // deletion above all; one whose storing fails is followed for nothing, which is
+            // harmless: its channels look only at whom they list.
+            self.events.follow(&self.following, SubscriptionTopic::of_participant(&participant));
             self.session_controller.add_participant(&storing, participant).await?;
             info!(session = %self.id, participant = %actor, by = %context.caller_id, "Taken into the session");
         }
@@ -341,9 +346,9 @@ mod tests {
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::chain::Position;
     use caelumora_domain::channel::testing::main_channel;
-    use caelumora_domain::channel::{self, Channel, ChannelId, HistoryAccess, Participant};
+    use caelumora_domain::channel::{Channel, ChannelId, HistoryAccess, Participant};
     use caelumora_domain::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
-    use caelumora_domain::event::{Announcing, EntityChange, GlobalEvent};
+    use caelumora_domain::event::{Announcing, GlobalEvent};
     use caelumora_domain::group::{Group, GroupId};
     use caelumora_domain::history::{HistoryEntry, Reader};
     use caelumora_domain::scope::Scope;
@@ -607,30 +612,13 @@ mod tests {
         world.manager.stop(&alice, session.id()).await.unwrap();
     }
 
-    /// Issue 590: a session does not take over its own announcements - its controller holds every
-    /// change of it live already -, so that a join it hears of only after the leave that followed
-    /// it does not list the one let go again.
+    /// Issue 590: a session hears none of its own announcements - its controller holds every
+    /// change of it live already, and whom it takes in it follows where it takes them in -, so
+    /// that a join announced after the leave that followed it does not list the one let go again.
     #[tokio::test]
     async fn a_join_heard_of_after_the_leave_does_not_list_the_one_let_go_again() {
         let world = World::new().await;
-        let mut events = world.kernel.event_bus().subscribe_all();
         let session = world.session_of(&[world.bob], &[], &[]).await;
-        // The session hears what is announced once it runs: it follows the bus before it starts
-        // its channels.
-        let main = session.channels()[0].id();
-        time::timeout(Duration::from_secs(5), async {
-            while let Some(event) = events.recv().await {
-                if let Some(((_, id), EntityChange::Custom { name: channel::STARTED, .. })) =
-                    event.about::<Channel>()
-                {
-                    if id == main {
-                        return;
-                    }
-                }
-            }
-        })
-        .await
-        .expect("it runs");
         let alice = World::as_user(world.alice);
         let bob = ActorId::User(world.bob);
         session.remove_participant(&alice, bob).await.expect("the owner lets him go");
@@ -753,47 +741,12 @@ mod tests {
             .await
             .expect("taken in");
         assert!(main.participant_ids().contains(&actor), "it runs in the channel");
-        // Once the session took in its own announcement, it follows the agent.
+        // Announced, and followed by the session as it took it in.
         let announced = |events: &[GlobalEvent]| {
             events.iter().any(|e| matches!(e.about::<Session>().and_then(|(_, change)| change.update::<SessionUpdateEvent>()),
             Some(SessionUpdateEvent::ParticipantJoined(p)) if p.actor_id() == actor))
         };
         assert!(announced(&events.drain().await), "announced");
-        time::sleep(Duration::from_millis(50)).await;
-
-        deleted_stops_in(&kernel, &ctx, helper.id, &main).await;
-        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
-    }
-
-    /// Issue 502: an agent taken in among more events than the session's
-    /// subscription holds is followed all the same, its announcement lost.
-    #[tokio::test]
-    async fn an_agent_taken_in_while_events_were_lost_is_followed() {
-        let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
-        let helper = stored_agent(
-            kernel.entity_stores(),
-            "helper",
-            make_personality("plain"),
-            ActorId::User(UserId::new()),
-        )
-        .await;
-        let actor = ActorId::Agent(helper.id);
-        let (session, ctx, _) = running_session_of_a_user(&manager).await;
-        let main = Arc::clone(&session.channels()[0]);
-        time::sleep(Duration::from_millis(50)).await;
-
-        session
-            .add_participant(&ctx, actor, Some((main.id(), HistoryAccess::All)))
-            .await
-            .expect("taken in");
-        // More than a subscription holds, published before the session runs
-        // again: the announcement that it was taken in is lost.
-        kernel.event_bus().publish_past_capacity(&GlobalEvent::custom::<Channel>(
-            &(session.id(), main.id()),
-            channel::AGENT_STATE_CHANGED,
-            &helper.id,
-        ));
         time::sleep(Duration::from_millis(50)).await;
 
         deleted_stops_in(&kernel, &ctx, helper.id, &main).await;

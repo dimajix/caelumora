@@ -76,9 +76,10 @@ them.
 Every subscription is made the same way: `subscribe(context, topics)` names whom it receives for and
 the `SubscriptionTopic`s it follows - everything, or a session, channel, agent or user -, and
 receives the matching events that context may read through an `EventSubscription`; `follow` adds a
-topic later. An event about a session, an agent or a user goes to its topic; one about a channel -
-and so about its participants - to the channel's and to the session's it lies in, which the bus
-reads from the event's address. Other kinds have no topic of their own. The kernel's own
+topic later, through the subscription's `Following`, which can be kept apart from its receiver. An
+event about a session, an agent or a user goes to its topic; one about a channel - and so about its
+participants - to the channel's and to the session's it lies in, which the bus reads from the
+event's address. Other kinds have no topic of their own. The kernel's own
 subscribers - the controllers, a running session, an approver, the `CommandReaper` - subscribe as
 the system (`subscribe_all`, `subscribe_session`, …), which the bus does not ask about: they receive
 everything on their topics.
@@ -103,8 +104,9 @@ what it keeps (issue 502) - a loss between instances will be the rule, not the e
 
 *   the `ControllerManager` reads every live agent, user, workspace and project controller again as
     stored (see [STORAGE.md](STORAGE.md#following-changes));
-*   a running session follows every participant, looks at all its agents again, and has its
-    channels build the handles of their participants anew from their actors (see
+*   a running session looks at all its agents again, and has its channels build the handles of
+    their participants anew from their actors - whom it takes in it follows as it takes them in,
+    which loses nothing - (see
     [CHANNELS.md](CHANNELS.md)); its own document it does not read again, since a session runs in
     one instance and its controller is the one writer of it there, which holds every change of it
     live already;
