@@ -930,40 +930,54 @@ Proposed:
    /// Opens a thread at `origin`, in the name of `context`, with `founders` taking part in it
    /// alone, and returns its id.
    pub async fn open_thread(&self, context: &SecurityContext, origin: ThreadOrigin,
-       founders: Vec<Founder>) -> Result<ThreadId, ChannelError>;
-   /// Closes `thread` in the name of `context`; `false` if it is not open.
+       founders: Vec<Participant>) -> Result<ThreadId, ChannelError>;
+   /// Closes `thread` in the name of `context`, its delegate with it; `false` if it is not open.
    pub async fn close_thread(&self, context: &SecurityContext, thread: ThreadId)
        -> Result<bool, ChannelError>;
    ```
 
-   A founder is a participant - one of the session, then of the channel, taking part in this thread
-   alone - or an internal actor of a registered kind (5). Opening goes through `run`'s ordered input
-   of changes: the thread, then its founders started, then whatever they say first.
+   A founder is taken into the session, then into the channel, taking part in this thread alone.
+   Opening goes through `run`'s ordered input of changes: the thread, then its founders started,
+   then whatever is said in it first.
 2. **Giving something to read.** A new event by which an actor gives another participant a message
    to read and asks it to respond - recorded by the channel to the recipient by name, as a request
    to respond is, so that it is delivered again from the history (issue 223), and taken in by the
    recipient's intake as a `Given` entry of its transcript, with the giver named as `/skill` names
    one ("@researcher gave you this to read:"). The agent records the given message once, as it
    records what it is given today (`MessageGiven`); the message given has an id of its own. Nobody
-   speaks in another's name: the giver is a statement of the event. Admitted from an internal actor
-   of the thread it is given in, or given into the origin of that actor's own thread.
+   speaks in another's name: the giver is a statement of the event. Admitted from the delegate (5)
+   of the thread it is given in, or given into the origin of the delegate's own thread.
 3. **Threads in the running channel.** `ChannelLoop::threads` changes while the channel runs, and
-   the channel's threads, their origins and their internal actors are a part of `ChannelState`,
+   the channel's threads, their origins and their delegations are a part of `ChannelState`,
    recorded whole, from which the channel builds them as it starts.
 4. **An actor knows its thread.** It learns from its runtime the thread it takes part in; what it
    makes itself - `own()` - happens there, and so do the channel's announcements of its join and
    leave. The thread of a join is the one its context names, as D4 was changed: no field of
    `ParticipantJoined`. The `Attendance` keeps each range with its thread; delivering, catching up
    and an agent's history go by it (D5, D6).
-5. **Kinds of internal actors that a plugin registers.** Today the approver is the one internal
-   actor, configured in the channel's document and built by `ChannelLoop::create_actor`. A registry
-   `InternalActorKinds`, filled by plugins as `AgentKinds` is filled by libraries
-   (`KernelBuilder::register_internal_actor`), builds an actor of a kind from parameters and a
-   narrow runtime - its channel, its thread, the thread's origin; its transport is `run`'s. An
-   internal actor of a thread is kept with the thread in `ChannelState`, with its kind, its id and
-   its parameters, and built again from there as the channel starts; what it has to keep across a
-   restart it keeps there, written back by the channel - one writer. It is an actor of a kind of its
-   own (`ActorId::Internal`).
+5. **Delegating.** A participant - the giver - has another - the recipient - work on something in
+   a thread, and is given back what came of it in the thread's origin. A **delegate** carries it
+   out: an internal actor of the thread, built by the kernel as the approver is
+   (`ChannelLoop::create_actor`), no participant, of a kind of its own (`ActorId::Delegate`). It
+   gives the recipient the brief to read (2), naming the giver, and asks it to respond; it holds
+   the one brief that is open, and takes the recipient's next turn end in the thread as its answer;
+   and it gives the giver, in the origin, what came of it - the answer, that the turn ended without
+   one, that it was given up and why, or that the recipient was not asked - and asks the giver to
+   respond. A further brief waits until the open one is answered. The giver is whom the caller acts
+   for: nobody delegates in another's name. The delegate's giver, recipient, origin and open brief
+   are the thread's part of `ChannelState`, written by the channel alone, and it is built again
+   from there as the channel starts.
+
+   ```rust
+   /// Has the delegate of `thread` give `recipient` `brief` to read on behalf of whom `context`
+   /// acts for, and bring what came of it back to them in the thread's origin.
+   pub async fn delegate(&self, context: &SecurityContext, thread: ThreadId, recipient: ActorId,
+       brief: String) -> Result<(), ChannelError>;
+   ```
+
+   Asked: that the giver reads the thread, and that the recipient takes part in it. The first
+   delegation in a thread starts its delegate. Sub-agents are one user of it (558); an agent asking
+   another agent of the channel in a thread aside, or a side question as `/btw`, could be others.
 6. **Reaching a running channel from a plugin.** A plugin's writer is bound with the work's
    `SessionView` (`KernelBuilder::extend_writers`); the view gives out the running session it holds
    (`SessionView::session_loop`, today the crate's), and the plugin reaches the channel as a
@@ -977,13 +991,13 @@ Proposed:
   `OpenThread` granted by reading the channel. Recommended.
 - **T2 - How a plugin reaches a running channel**: through `SessionView::session_loop`, or a
   service of its own. Recommended: the view.
-- **T3 - `ActorId::Internal`** as a new kind of actor, beside the approver's. Recommended.
-- **T4 - Where an internal actor keeps what it must keep across a restart**: in its parameters in
-  `ChannelState`, written back by the channel, or in a state of the plugin's own. Recommended: the
-  channel's.
-- **T5 - The event of giving to read**: its name, and whether the users see it - the brief and the
-  answer given are what a person follows of a sub-agent. Recommended: published to the users, given
-  to the recipient by name.
+- **T3 - `ActorId::Delegate`** as a new kind of actor, beside the approver's. Recommended.
+- **T4** - where an internal actor of a plugin keeps its state - fell away with the delegate in the
+  kernel: its state is the channel's.
+- **T5 - The event of giving to read**: its name - `GivenToRead`, apart from the agent's own
+  `MessageGiven` -, and whether the users see it - the brief and the answer given are what a person
+  follows of a sub-agent. Recommended: `GivenToRead`, published to the users, given to the recipient
+  by name.
 - **T6 - What is of the whole channel**: by the entry's kind and the line's context, written into
   the filter, or a field derived as the kept item's `published` is (`KeptItem::thread`), so that
   the kinds are listed once (`HistoryEntry::is_of_thread`). Recommended: the derived field.
@@ -995,8 +1009,8 @@ Proposed:
    delivering and reading by thread - with everyone in the line, so that every rule gives what it
    gives today.
 2. **2b, the building blocks with their first user**: founding and closing a thread, giving to
-   read, kinds of internal actors, reaching a running channel - together with
-   `caelumora-subagents` (558), which uses them, in commits each reviewed on its own.
+   read, delegating, reaching a running channel - together with `caelumora-subagents` (558), which
+   uses them, in commits each reviewed on its own.
 
 ## Done when
 
@@ -1072,3 +1086,11 @@ Proposed:
   closing a thread, giving something to read, threads in `ChannelState`, an actor knowing its
   thread, kinds of internal actors registered by plugins, and reaching a running channel from a
   plugin; T1 to T6 to decide, and a cut into 2a and 2b.
+- **2026-11-17** — Decided by the maintainer: the delegate is a concept of the kernel, not of the
+  plugin - delegating, a building block of the channel (*Plan: step 2*, 5). The kinds of internal
+  actors registered by plugins fell away with it, and so did T4; T3 became `ActorId::Delegate`.
+- **2026-11-17** — T1, T2, T3, T5 and T6 decided by the maintainer, as recommended: founding a
+  thread under `OpenThread`, granted by reading the channel; a plugin reaches a running channel
+  through `SessionView::session_loop`; `ActorId::Delegate`; `GivenToRead`, published to the users
+  and given to the recipient by name; and a derived `KeptItem::thread` for what is of the whole
+  channel.

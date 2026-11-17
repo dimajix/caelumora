@@ -341,7 +341,7 @@ a plugin is*), a plugin and a library at once, cut by features:
 | Feature | What | Trusted |
 |---|---|---|
 | `api` | the writer `SubAgentWriter` and its errors | what the agent side is given of the service |
-| `kernel` | `SubagentsPlugin`: binds the writer (`extend_writers`), and registers the delegate (below) as a kind of internal actor | as the kernel |
+| `kernel` | `SubagentsPlugin`: binds the writer (`extend_writers`), whose work is made of the kernel's building blocks | as the kernel |
 | `library` | `SubagentsLibrary`: the tool, offered where the writer is (`Situation::has_writer`), configured with the personalities it may start an agent of | for nothing |
 
 ```rust
@@ -363,23 +363,20 @@ pub trait SubAgentWriter: Send + Sync {
 
 - **Starting.** The writer makes an agent of the personality (`AgentManager::create`, in the
   channel's scope, owned by the main agent's owner, who has to be able to read the personality),
-  and founds a thread at the call (557's `open_thread`) with two founders: the new agent, taking
-  part in the thread alone, and a **delegate** - an internal actor of the crate's kind, given the
-  main agent, the origin thread and the brief. The call returns the thread's id at once; the main
-  agent's turn ends as any turn does.
-- **The delegate carries the brief in.** It gives the sub-agent the brief to read, in the
-  sub-agent's thread, and asks it to respond (557's giving to read), in its own name, naming the
-  main agent as the giver. The sub-agent is asked by a request of its own, not by the moderator's
-  policy, so that no policy, mention or chain limit decides it.
-- **The delegate carries the answer out.** It holds the one brief that is open, and takes the
-  sub-agent's next turn end in its thread as the answer to it - sound because the thread is a
-  closed circle in which the delegate alone gives the sub-agent anything, one brief at a time.
-  Then it gives the main agent, in the origin thread, what came of it, and asks it to respond: the
-  answer; that the turn ended without one; that it was given up, and why; or that the sub-agent
-  was not asked. The main agent so never waits for nothing. In a turn, the main agent takes it in
-  once its turn ended.
-- **Asking again** is `ask`: the delegate gives the sub-agent the text once the open brief is
-  answered.
+  founds a thread at the call with the new agent taking part in it alone (557's `open_thread`), and
+  delegates the brief to it (557's `delegate`), on behalf of the main agent. The call returns the
+  thread's id at once; the main agent's turn ends as any turn does.
+- **The kernel's delegate carries the rest** (557, *Delegating*): it gives the sub-agent the brief
+  to read, naming the main agent as the giver, and asks it to respond - by a request of its own, so
+  that no policy, mention or chain limit decides it -; it takes the sub-agent's next turn end in
+  its thread as the answer - sound because the thread is a closed circle in which the delegate
+  alone gives the sub-agent anything, one brief at a time -; and it gives the main agent, in the
+  origin thread, what came of it, and asks it to respond: the answer, that the turn ended without
+  one, that it was given up and why, or that the sub-agent was not asked. The main agent so never
+  waits for nothing; in a turn, it takes it in once its turn ended. The crate knows nothing of
+  this but that it delegates.
+- **Asking again** is `ask`: the writer delegates the text once more, which the delegate gives the
+  sub-agent once the open brief is answered.
 - **Ending** is `end`: the sub-agent leaves the channel, is deleted (E3 below), and the thread is
   closed with its delegate.
 - **What users see.** The thread is read by everyone in the channel; that a brief was given and
@@ -427,3 +424,6 @@ what the main agent may.
   sub-agents' work lies in a crate of its own, `caelumora-subagents`. Proposed (*Plan: the crate
   caelumora-subagents*): the crate's three features, the writer, and a delegate - an internal actor
   of the crate's kind - that carries the brief in and the answer out by giving to read.
+- **2026-11-17** — Decided by the maintainer: the delegate is a concept of the kernel - delegating,
+  a building block of the channel (557) -; the crate makes an agent, founds its thread, delegates
+  to it and ends it, and registers no kind of actor.
