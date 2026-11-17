@@ -4,12 +4,14 @@ use super::check_restricting;
 use super::document::LiveDocument;
 use crate::group::keep_participants;
 use arc_swap::Guard;
+use caelumora_domain::actor::ActorId;
 use caelumora_domain::approval::ApprovalRule;
 use caelumora_domain::channel::{ChannelId, Participant};
 use caelumora_domain::event::{EventPublisher, GlobalEvent};
 use caelumora_domain::group::Group;
 use caelumora_domain::privacy::PrivacyConfig;
 use caelumora_domain::project::ProjectId;
+use caelumora_domain::security::Subject;
 use caelumora_domain::session::{Session, SessionId, SessionUpdateEvent};
 use caelumora_domain::store::{StoreError, StoreResult};
 use caelumora_domain::value::name::Name;
@@ -195,6 +197,38 @@ impl SessionController {
             writing.announce_update(&SessionUpdateEvent::ParticipantJoined(participant), &session);
         }
         Ok(())
+    }
+
+    /// Lets `participant` go from the session on behalf of `ctx` (issue 590), as `Session::let_go`
+    /// lets one go, and returns it: stored first, on behalf of whoever may change it
+    /// (`UpdateSession`) or of the kernel for one who left by their own act, then taken over. The
+    /// group of its participants follows, and the announcement (`ParticipantLeft`) is delivered to
+    /// whoever was let go besides the participants: they no longer read the session when it is
+    /// delivered. Whether they may be let go is the caller's to have asked, and so is letting them
+    /// go from its channels.
+    ///
+    /// # Errors
+    /// `StoreError::NotFound` if `participant` takes no part in the session; whatever the store
+    /// reports otherwise. The session is then unchanged.
+    pub(crate) async fn remove_participant(
+        &self,
+        ctx: &SecurityContext,
+        participant: ActorId,
+    ) -> StoreResult<Participant> {
+        let mut writing = self.session.write().await;
+        let (removed, session) = writing
+            .change(ctx, |session| {
+                session.let_go(participant).ok_or_else(|| StoreError::NotFound {
+                    entity: "participant",
+                    id: participant.to_string(),
+                })
+            })
+            .await?;
+        self.keep_participants(&session).await;
+        let left = SessionUpdateEvent::ParticipantLeft(participant);
+        let left = GlobalEvent::updated::<Session>(self.session.address(), &left);
+        writing.announce_also_to(left, &session, [Subject::Actor(participant)]);
+        Ok(removed)
     }
 
     /// Adds `channel` to the session on behalf of `ctx`: stored first, which

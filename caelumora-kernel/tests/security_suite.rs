@@ -4927,6 +4927,96 @@ async fn leaving_asks_leave_channel_in_the_context_of_who_leaves() {
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
+/// Letting someone go from a session (issue 590) asks `UpdateSession` of whoever lets them go,
+/// before anything else, and nothing of its channels: they are let go from each in the kernel's
+/// name, kept as removed by whoever let them go. Who may not change the session lets nobody go;
+/// one let go reads neither the session nor its channels any more.
+#[tokio::test]
+async fn letting_someone_go_from_a_session_asks_update_session_and_nothing_of_its_channels() {
+    let world = World::new().await;
+    let session = world.session_of(&[world.bob, world.carol], &[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let alice = World::as_user(world.alice);
+    let carol = World::as_user(world.carol);
+    let bob = ActorId::User(world.bob);
+
+    let (refused, asked) = world.asked(session.remove_participant(&carol, bob)).await;
+    let refused = refused.expect_err("not hers to change");
+    assert!(matches!(refused.downcast_ref(), Some(StoreError::PermissionDenied(_))), "{refused}");
+    assert_eq!(asked, checks(&["carol: UpdateSession(alice's) no"]), "{asked:#?}");
+    assert!(session.session().takes_part(bob), "nothing changed");
+
+    let (let_go, asked) = world.asked(session.remove_participant(&alice, bob)).await;
+    let_go.expect("hers to change");
+    assert_eq!(
+        asked,
+        // Asked first, then by the store as it stores the session; nothing of the channel.
+        checks(&[
+            "alice: UpdateSession(alice's) yes",
+            "alice: GetSession(alice's) yes",
+            "alice: UpdateSession(alice's) yes",
+        ]),
+        "{asked:#?}"
+    );
+    assert!(!session.session().takes_part(bob), "out of the session");
+    let stored = world.entity_store::<Channel>().get(&World::system(), main.id()).await.unwrap();
+    let former = stored.former.iter().find(|f| f.participant.actor_id() == bob);
+    assert_eq!(former.expect("kept").left.by, ActorId::User(world.alice), "removed by alice");
+    let his = World::as_user(world.bob);
+    let views = world.manager.views(Viewer::new(his.clone()));
+    assert!(views.session(session.id()).await.is_err(), "he reads the session no more");
+    assert!(session.channel_for(&his, main.id()).await.is_err(), "nor its channel");
+    world.manager.stop(&alice, session.id()).await.unwrap();
+}
+
+/// Leaving a session (issue 590) asks `LeaveSession` in the context of the one who leaves - an
+/// agent's by its owner - and nothing of changing the session or its channels: bob takes his
+/// agent out of alice's session and leaves himself, out of its channel too; he takes out neither
+/// alice nor her agent, and nothing is asked in their names: whose participant it is comes first.
+#[tokio::test]
+async fn leaving_a_session_asks_leave_session_in_the_context_of_who_leaves() {
+    // Agents that run, so that they take part.
+    let answering = ScriptedAgents(Script::Answers("ok".to_string()));
+    let world = World::with(&[], &[&answering], |_| {}).await;
+    let bobs = world.personality("his", Some(world.bob), &[]).await;
+    let alices = world.personality("hers", Some(world.alice), &[]).await;
+    let scout = world.agent("scout", world.bob, &bobs).await;
+    let aide = world.agent("aide", world.alice, &alices).await;
+    let session = world.shared_session(&[scout, aide], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let bob = World::as_user(world.bob);
+
+    for other in [ActorId::User(world.alice), ActorId::Agent(aide)] {
+        let (refused, asked) = world.asked(session.leave(&bob, other)).await;
+        let refused = refused.expect_err("not his own");
+        assert!(
+            matches!(refused.downcast_ref(), Some(StoreError::PermissionDenied(_))),
+            "{refused}"
+        );
+        assert_eq!(asked, checks(&[]), "refused before anything is asked: {asked:#?}");
+    }
+
+    let (left, asked) = world.asked(session.leave(&bob, ActorId::Agent(scout))).await;
+    left.expect("his own agent");
+    assert_eq!(
+        asked,
+        // In the agent's own context, by its owner; whether it could run is not asked.
+        checks(&["bob as scout: LeaveSession(alice's) yes"]),
+        "{asked:#?}"
+    );
+    assert!(!session.session().takes_part(ActorId::Agent(scout)), "out of the session");
+    let stored = world.entity_store::<Channel>().get(&World::system(), main.id()).await.unwrap();
+    let former = stored.former.iter().find(|f| f.participant.actor_id() == ActorId::Agent(scout));
+    assert_eq!(former.expect("kept").left.by, ActorId::User(world.bob), "removed by bob");
+
+    let (left, asked) = world.asked(session.leave(&bob, ActorId::User(world.bob))).await;
+    left.expect("his own act");
+    assert_eq!(asked, checks(&["bob: LeaveSession(alice's) yes"]), "{asked:#?}");
+    assert!(!session.session().takes_part(ActorId::User(world.bob)), "out of the session");
+    assert!(main.user_actor(world.bob).is_none(), "and its channel");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 /// Joining asks whose participant it is before anything in its name (issue 562): bob, who would
 /// take alice's agent into a channel by his own act, is refused before its personality is asked
 /// in its name; his own agent is asked the session's entry before its personality.

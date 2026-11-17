@@ -147,7 +147,8 @@ enum ChannelEntry {
     /// Built, and once `run` started it, with its task.
     Running { channel: Arc<ChannelLoop>, task: Option<AbortHandle> },
     /// Left out as the session opened (issue 463): its components cannot be read. Held with its
-    /// document as it was then - a channel that does not run is not changed.
+    /// document as it was then; a channel that does not run is changed only as someone is let go
+    /// from the session (issue 590), and its copy renewed with it (`let_go_where_unavailable`).
     Unavailable { channel: Arc<Channel>, cause: Arc<ComponentError> },
 }
 
@@ -226,6 +227,10 @@ pub struct SessionLoop {
     /// that two such changes do not share and unshare projects across each
     /// other.
     moving: Mutex<()>,
+    /// Held while the channels that do not run are built again (`retry_unavailable`), and while
+    /// someone is let go from one of them (issue 590), so that none is built from a copy that
+    /// still lists one let go.
+    rebuilding: Mutex<()>,
 }
 
 /// Removes the document of channel `channel_id` for good, in the kernel's name, with the group of
@@ -361,6 +366,7 @@ impl SessionLoop {
             start_tx,
             start_rx: Mutex::new(start_rx),
             moving: Mutex::new(()),
+            rebuilding: Mutex::new(()),
         });
         for channel in channels {
             session_loop.add_listed_channel(channel).await?;

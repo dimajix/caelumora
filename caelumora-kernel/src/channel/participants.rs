@@ -37,7 +37,7 @@ enum Entry {
     Founding,
 }
 
-/// How someone goes out of a channel (`ChannelLoop::let_go`): the one way out, asked for in two
+/// How someone goes out of a channel (`ChannelLoop::let_go`): the one way out, asked for in three
 /// ways.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Exit {
@@ -45,6 +45,9 @@ enum Exit {
     Removed,
     /// By their own act, themselves or their own agent (`LeaveChannel`, issue 562).
     Leaving,
+    /// Let go from the session (issue 590), by whoever let them go from it: that was what was
+    /// asked.
+    WithTheSession,
 }
 
 impl ChannelLoop {
@@ -215,6 +218,22 @@ impl ChannelLoop {
         self.let_go(context, participant, Exit::Leaving).await
     }
 
+    /// Takes `participant` out of the channel as it is let go from the session (issue 590), on
+    /// behalf of `context`, who let them go from it: asked nothing - letting them go from the
+    /// session was permitted - and stored in the kernel's name, kept as removed by `context`'s
+    /// caller; then as [`Self::let_go`] says. For `SessionLoop::remove_participant` and `leave`
+    /// alone. Nothing for one the channel does not list (any more).
+    ///
+    /// # Errors
+    /// What storing the channel reports.
+    pub(crate) async fn let_go_with_the_session(
+        &self,
+        context: &SecurityContext,
+        participant: ActorId,
+    ) -> Result<()> {
+        self.let_go(context, participant, Exit::WithTheSession).await
+    }
+
     /// Takes `participant` out of the channel on behalf of `context`, by the way `exit` says:
     /// leaving is asked once the participant is resolved. Stored first, kept as a former
     /// participant removed by `context`'s caller, then its actor stopped - an agent at once,
@@ -232,7 +251,8 @@ impl ChannelLoop {
     /// participant at a time (`changing`, issue 564), as `take_in` makes it.
     ///
     /// # Errors
-    /// `ChannelError::NotAParticipant`, `Forbidden`; what resolving the one who leaves reports
+    /// `ChannelError::NotAParticipant` - but for one let go with the session, which the channel
+    /// need not list -, `Forbidden`; what resolving the one who leaves reports
     /// (`Participation::resolve`); a `StoreError` if `context` may not change the channel, where
     /// that is what is asked.
     async fn let_go(
@@ -242,16 +262,20 @@ impl ChannelLoop {
         exit: Exit,
     ) -> Result<()> {
         let _changing = self.changing.lock(participant).await;
-        let found = self
-            .channel()
-            .participants
-            .iter()
-            .find(|p| p.actor_id() == participant)
-            .cloned()
-            .ok_or(ChannelError::NotAParticipant { participant, channel: self.id })?;
-        // Leaving was permitted; storing is the kernel's.
+        let listed =
+            self.channel().participants.iter().find(|p| p.actor_id() == participant).cloned();
+        let Some(found) = listed else {
+            return match exit {
+                Exit::WithTheSession => Ok(()),
+                Exit::Removed | Exit::Leaving => {
+                    Err(ChannelError::NotAParticipant { participant, channel: self.id }.into())
+                }
+            };
+        };
+        // Leaving, or letting go from the session, was permitted; storing is the kernel's.
         let storing = match exit {
             Exit::Removed => context.clone(),
+            Exit::WithTheSession => SecurityContext::system(),
             Exit::Leaving => {
                 let channel = self.id;
                 let attributes = self.security_attributes();

@@ -1,8 +1,9 @@
-//! Taking someone into a running session after it was built (issue 221): by whoever may change it,
-//! or by their own act where its access list lets them join - into the session and, if one is
-//! named, into one of its channels at once.
+//! Who takes part in a running session after it was built: taken in (issue 221) by whoever may
+//! change it, or by their own act where its access list lets them join - into the session and, if
+//! one is named, into one of its channels at once -, and let go (issue 590) by whoever may change
+//! it, or by their own act - out of the session and every channel of it.
 
-use super::{SessionError, SessionLoop};
+use super::{ChannelRun, SessionError, SessionLoop};
 use crate::channel::{ChannelLoop, ResolvedParticipant};
 use anyhow::Result;
 use caelumora_domain::actor::ActorId;
@@ -171,6 +172,119 @@ impl SessionLoop {
         Ok(())
     }
 
+    /// Lets `participant` go from the session on behalf of `context`, who may change it
+    /// (`UpdateSession`, asked before anything else), and from every channel of it (issue 590):
+    /// then as [`Self::let_go`] says.
+    ///
+    /// # Errors
+    /// `StoreError::PermissionDenied` if `context` may not change the session; as `let_go`.
+    pub async fn remove_participant(
+        &self,
+        context: &SecurityContext,
+        participant: ActorId,
+    ) -> Result<()> {
+        let session = self.session();
+        self.policies
+            .access_policy()
+            .require(
+                context,
+                ActionType::update(Session::KIND, &session.security_attributes),
+                StoreError::PermissionDenied,
+            )
+            .await?;
+        if self.listed_anywhere(participant).is_none() {
+            return Err(SessionError::NotAParticipant { session: self.id, participant }.into());
+        }
+        self.let_go(context, context, participant).await
+    }
+
+    /// Takes `participant` - whom `context` acts for: themselves, or their own agent - out of the
+    /// session by their own act (issue 590), without the right to change it: leaving
+    /// (`LeaveSession`) is asked in the participant's own context, an agent's by its owner, as
+    /// leaving a channel is (`ChannelLoop::leave`). Stored in the kernel's name once leaving was
+    /// permitted; then as [`Self::let_go`] says. One that cannot be resolved, a deleted agent,
+    /// cannot leave: whoever may change the session lets it go.
+    ///
+    /// # Errors
+    /// `SessionError::NotAParticipant`; `StoreError::PermissionDenied` if they may not leave; what
+    /// resolving the participant reports (`Participation::resolve`); as `let_go`.
+    pub async fn leave(&self, context: &SecurityContext, participant: ActorId) -> Result<()> {
+        let Some(leaver) = self.listed_anywhere(participant) else {
+            return Err(SessionError::NotAParticipant { session: self.id, participant }.into());
+        };
+        let attributes = self.session().security_attributes.clone();
+        let leaving = ActionType::LeaveSession(&attributes);
+        let Some(resolved) = self.participation.resolve(&leaver, self.id, None).await? else {
+            return Err(StoreError::PermissionDenied(leaving.refused()).into());
+        };
+        self.participation
+            .require_own_act(&resolved, context, leaving, StoreError::PermissionDenied)
+            .await?;
+        // Leaving was permitted; storing is the kernel's.
+        self.let_go(context, &SecurityContext::system(), participant).await
+    }
+
+    /// Lets `participant` go on behalf of `context`, stored in the name of `storing` (issue 590),
+    /// asking nothing: its callers asked what letting go is asked for in their way, and say in
+    /// whose name it is stored. Unlike a channel's one way out (`ChannelLoop::let_go`, `Exit`),
+    /// the session holds no lock per participant that would keep what is asked with the change.
+    /// Out of the session first, so that nobody takes them into one of its channels from then on
+    /// (`ChannelLoop::take_in`) - one being taken in holds the participant in its channel, and is
+    /// let go once that is done -; then out of every channel of it in the kernel's name, kept as
+    /// removed by `context`'s caller, each as it is when it is reached: a running one as
+    /// `ChannelLoop::let_go_with_the_session` says, one that does not run (issue 463) as
+    /// `let_go_where_unavailable` does. A deleted channel lets them go as it is restored
+    /// (`restore_channel`). Nothing is rolled back - taking them out of a channel ended their
+    /// turn -: a channel that fails leaves the error to the caller, and asking again, for one out
+    /// of the session and not yet out of each of its channels, finishes it. One taken into the
+    /// session and a channel again while this goes on may be let go from that channel all the
+    /// same, and stays in the session: a state of its own, though no order of the two produces it.
+    ///
+    /// # Errors
+    /// Whatever storing the session or a channel reports.
+    async fn let_go(
+        &self,
+        context: &SecurityContext,
+        storing: &SecurityContext,
+        participant: ActorId,
+    ) -> Result<()> {
+        match self.session_controller.remove_participant(storing, participant).await {
+            // Out of the session already, as a let go that failed in a channel left them.
+            Ok(_) | Err(StoreError::NotFound { .. }) => {}
+            Err(error) => return Err(error.into()),
+        }
+        let channels = self.session().channels.clone();
+        for channel in channels {
+            match self.listed_channel(channel) {
+                Some((_, ChannelRun::Running(running))) => {
+                    running.let_go_with_the_session(context, participant).await?;
+                }
+                Some((_, ChannelRun::Unavailable(_))) => {
+                    self.let_go_where_unavailable(context, channel, participant).await?;
+                }
+                None => {}
+            }
+        }
+        info!(
+            session = %self.id,
+            participant = %participant,
+            by = %context.caller_id,
+            "Let go from the session"
+        );
+        Ok(())
+    }
+
+    /// `participant` as the session lists it, or else a channel of it - one let go from the
+    /// session whom a channel failed to let go (`let_go`); `None` if neither does.
+    fn listed_anywhere(&self, participant: ActorId) -> Option<Participant> {
+        let listed = |participants: &[Participant]| {
+            participants.iter().find(|p| p.actor_id() == participant).cloned()
+        };
+        listed(&self.session().participants).or_else(|| {
+            self.listed_channels().iter().find_map(|(channel, _)| listed(&channel.participants))
+        })
+    }
+
     /// `participant` with what its actor is built from, to be taken into the session and into
     /// `channel` too, where one is named (`Participation::resolve`). Asks nothing.
     ///
@@ -212,10 +326,14 @@ impl SessionLoop {
 
 #[cfg(test)]
 mod tests {
-    use crate::channel::ChannelLoop;
+    use crate::channel::{ChannelError, ChannelLoop};
+    use crate::component::BUNDLE_REF_KIND;
+    use crate::event::SubscriptionTopic;
     use crate::kernel::Kernel;
     use crate::session::testing::*;
+    use crate::session::ChannelSpec;
     use crate::session::{SessionError, SessionManager};
+    use crate::testing::{attributes, World};
     use crate::view::Viewer;
     use anyhow::Error;
     use caelumora_domain::actor::ActorId;
@@ -223,17 +341,21 @@ mod tests {
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::channel::testing::main_channel;
     use caelumora_domain::channel::{self, Channel, HistoryAccess};
+    use caelumora_domain::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
     use caelumora_domain::event::GlobalEvent;
-    use caelumora_domain::group::GroupId;
+    use caelumora_domain::group::{Group, GroupId};
+    use caelumora_domain::scope::Scope;
     use caelumora_domain::security::{AclEntry, SecurityAttributes};
     use caelumora_domain::session::testing::make_session;
     use caelumora_domain::session::{Session, SessionUpdateEvent};
     use caelumora_domain::store::StoreError;
     use caelumora_domain::user::testing::make_user;
     use caelumora_domain::user::{User, UserId};
+    use caelumora_domain::value::name::ScopedName;
     use caelumora_security::SecurityContext;
     use caelumora_store::testing::record_users;
     use caelumora_store::testing::stored_agent;
+    use serde_json::json;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::time;
@@ -319,6 +441,111 @@ mod tests {
             "{approver}"
         );
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+    }
+
+    /// Issue 590: one let go from the session is let go from every channel of it - a running one,
+    /// one that does not run, in its document and in the copy the session holds, and a deleted one
+    /// as it is restored -, the leave is announced, and they are not taken into a channel again but
+    /// through the session.
+    #[tokio::test]
+    async fn one_let_go_from_the_session_is_let_go_from_every_channel_of_it() {
+        let world = World::new().await;
+        let bundles = Arc::clone(&world.kernel.entity_stores().component_bundles);
+        let bobs = World::as_user(world.bob);
+        let policy = ComponentConfig {
+            component_nodes: vec![ComponentDescriptor::new("policy", "broadcast_policy")],
+        };
+        let name = ScopedName::new("bobs-policy", Scope::GlobalScope).unwrap();
+        let mut shared =
+            ComponentBundle::new(name, policy, attributes(Some(world.bob), &[world.alice]));
+        bundles.create(&bobs, &mut shared).await.expect("bob shares a policy with alice");
+        let session = world.session_of(&[world.bob, world.carol], &[], &[]).await;
+        let alice = World::as_user(world.alice);
+        let carol = ActorId::User(world.carol);
+        let with_carol = |name| ChannelSpec { participants: vec![carol], ..ChannelSpec::new(name) };
+        let by_bundle = ComponentConfig {
+            component_nodes: vec![ComponentDescriptor {
+                params: json!({ "name": "bobs-policy" }),
+                ..ComponentDescriptor::new("policy", BUNDLE_REF_KIND)
+            }],
+        };
+        let spec = ChannelSpec { components: by_bundle, ..with_carol("unavailable") };
+        let unavailable = session.create_channel(&alice, spec).await.unwrap().id();
+        let deleted = session.create_channel(&alice, with_carol("deleted")).await.unwrap().id();
+        assert!(session.delete_channel(&alice, deleted).await.unwrap(), "deleted");
+        let attributes = attributes(Some(world.bob), &[]);
+        let mut withdrawn = ComponentBundle { security_attributes: attributes, ..shared };
+        bundles.update(&bobs, &mut withdrawn).await.expect("bob withdraws it");
+        world.manager.stop(&alice, session.id()).await.unwrap();
+        let session = world.manager.open(&alice, session.id()).await.unwrap();
+        assert!(session.channel(unavailable).is_none(), "does not run");
+        let main = Arc::clone(&session.channels()[0]);
+        let topics = vec![SubscriptionTopic::All];
+        let mut hers = world.kernel.event_bus().subscribe(World::as_user(world.carol), topics);
+
+        session.remove_participant(&alice, carol).await.expect("the owner lets her go");
+
+        assert!(!session.session().takes_part(carol), "out of the session");
+        assert!(!main.channel().lists(carol), "out of a running channel");
+        let channels = world.entity_store::<Channel>();
+        let stored = channels.get(&World::system(), unavailable).await.unwrap();
+        assert!(!stored.lists(carol), "out of the document of one that does not run");
+        let (held, _) = session.listed_channel(unavailable).expect("listed");
+        assert!(!held.lists(carol), "and of the copy the session holds");
+        let members = world
+            .entity_store::<Group>()
+            .get(&World::system(), GroupId::of_session(session.id()))
+            .await
+            .unwrap()
+            .members;
+        assert!(!members.contains(&carol), "the group of its participants follows");
+        let left = |event: &GlobalEvent| {
+            let update = event.about::<Session>().and_then(|(_, c)| c.update());
+            matches!(update, Some(SessionUpdateEvent::ParticipantLeft(id)) if id == carol)
+        };
+        assert!(hers.drain().await.iter().any(left), "announced, to her as well");
+
+        let restored = session.restore_channel(&alice, deleted).await.expect("restored").channel();
+        assert!(!restored.lists(carol), "let go from a deleted one as it is restored");
+        let former = restored.former.iter().find(|f| f.participant.actor_id() == carol);
+        let former = former.expect("kept as a former participant there");
+        assert_eq!(former.left.by, ActorId::System, "removed by the kernel, as it is restored");
+        let refused = main
+            .add_participant(&alice, carol, HistoryAccess::All)
+            .await
+            .expect_err("not in the session");
+        assert!(
+            matches!(refused.downcast_ref(), Some(ChannelError::NotInSession { .. })),
+            "{refused}"
+        );
+        let again = session.remove_participant(&alice, carol).await.expect_err("let go already");
+        assert!(
+            matches!(again.downcast_ref(), Some(SessionError::NotAParticipant { .. })),
+            "{again}"
+        );
+        world.manager.stop(&alice, session.id()).await.unwrap();
+    }
+
+    /// Issue 590: one let go from the session whom a channel failed to let go - nothing rolls them
+    /// back into the session - is let go from it by asking again, by their own act too.
+    #[tokio::test]
+    async fn asking_again_finishes_letting_go_where_a_channel_failed() {
+        let world = World::new().await;
+        let session = world.session_of(&[world.bob], &[], &[]).await;
+        let main = Arc::clone(&session.channels()[0]);
+        let bob = ActorId::User(world.bob);
+        // Out of the session, as letting go leaves one whose channel failed to store.
+        session.session_controller.remove_participant(&World::system(), bob).await.unwrap();
+        assert!(main.channel().lists(bob), "still in its channel");
+
+        session.leave(&World::as_user(world.bob), bob).await.expect("he finishes it");
+        assert!(!main.channel().lists(bob), "out of the channel too");
+        let again = session.leave(&World::as_user(world.bob), bob).await.expect_err("nowhere");
+        assert!(
+            matches!(again.downcast_ref(), Some(SessionError::NotAParticipant { .. })),
+            "{again}"
+        );
+        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 
     #[tokio::test]

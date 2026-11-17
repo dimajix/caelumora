@@ -1,6 +1,6 @@
 # 590 — A session lets nobody go
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** medium
 **Area:** Sessions and channels
@@ -62,6 +62,85 @@ own project (`Project::own_of`).
   as one of its own, as decided there. Either way, the sentence "a session lets nobody go" in
   CHANNELS.md and CODING-GUIDELINES.md goes.
 
+## Plan
+
+Decided with the maintainer on 2026-11-17. The pattern is the channel's: `remove_participant`
+and `leave` by one way out (`ChannelLoop::let_go`, `Exit`), `ChannelController::remove_participant`
+announcing also to the one let go, `Channel::let_go`. What it keeps: whoever a channel lists takes
+part in its session - what issue 564 rests on.
+
+```rust
+// caelumora-domain
+impl Session {
+    /// Lets `actor` go: out of its participants; the participant, or `None` if it took no part.
+    pub fn let_go(&mut self, actor: ActorId) -> Option<Participant>;
+}
+pub enum SessionUpdateEvent { …, ParticipantLeft(ActorId) }
+
+// caelumora-security
+ActionType::LeaveSession(&SecurityAttributes)   // rule 3, as LeaveChannel: always allowed
+
+// caelumora-kernel
+impl SessionLoop {
+    /// Lets `participant` go in the name of `context`, which may change the session: out of
+    /// the session, then out of every channel of it.
+    pub async fn remove_participant(&self, context: &SecurityContext, participant: ActorId)
+        -> Result<()>;
+    /// Takes whom `context` acts for, or their own agent `participant`, out of the session
+    /// by their own act.
+    pub async fn leave(&self, context: &SecurityContext, participant: ActorId) -> Result<()>;
+}
+impl SessionController {
+    /// Lets `participant` go; the group follows; announced to the one let go too.
+    pub(crate) async fn remove_participant(&self, ctx: &SecurityContext, participant: ActorId)
+        -> StoreResult<Participant>;
+}
+```
+
+A sub-agent of 558 is its main agent's owner's, and the main agent acts for that owner, so its
+work lets the sub-agent go by `leave` (`Participation::require_own_act`): no third way, in the
+kernel's name, is needed.
+
+Decided:
+
+- **F1 - Channels that do not run.** The operation is the running session's - the REST server
+  opens a session first -, but a session holds channels that do not run: one whose components
+  cannot be read (`ChannelEntry::Unavailable`, held with its document as it was), and its deleted
+  ones, kept in the store. Either would start the one let go again as it is built. Their stored
+  documents are changed as well, and the copy held of an unavailable one is renewed, so that the
+  rights by the group of a channel's participants go at once too. Leaving them out as a channel is
+  built would bring one back into a channel they had been let go from, once taken into the
+  session again.
+- **F2 - The order.** The session first, then its channels: once the session is stored, taking
+  the participant into a channel is refused (`NotInSession`), and one under way holds the lock of
+  its participant in its channel, which letting go waits for, and finds them listed. A channel
+  that fails afterwards - a store's failure alone - leaves the error to the caller, and asking
+  again finishes letting go; it is not rolled back, since taking someone out of a channel ended
+  their turn. Named as an exception in the rule of rolling back.
+- **F3 - In whose name the channels change**: the kernel's, once letting go from the session was
+  permitted, as founding and joining store; each channel keeps who let them go (`Removal::by`). A
+  way out of the channel of its own, which asks nothing (`Exit`, as `Entry::Founding`).
+- **F4** - no former participants of the session: its channels keep theirs, and nothing would read
+  the session's. No rule for its owner or its last participant, as for a channel.
+- **F5 - Users.** The kernel's operations and `LeaveSession` first, which 557's step 2b needs;
+  the REST routes (`DELETE /sessions/{id}/participants/{aid}`, `POST …/{aid}/leave`) and the
+  web UI's sidebar, which keeps a session it no longer reads, as a step of their own. Commands
+  once someone needs them.
+- **The exception of 564** goes: one the channel cannot take in after the session took them in is
+  rolled back out of the session, their invitation given back (`Session::undo_take_in`, as the
+  channel's), as a step of its own, the last.
+
+Steps, each committed on its own:
+
+1. `Session::let_go`, `SessionUpdateEvent::ParticipantLeft` - taken over again harmlessly, as a
+   controller's own announcement comes back to it -, `SessionController::remove_participant`.
+2. `SessionLoop::remove_participant` and `leave`, through every channel of the session, running
+   or not; `LeaveSession`; the security suite; CHANNELS.md, PERMISSION-CHECKS.md, SECURITY.md, and
+   the sentence "a session lets nobody go" where it stands.
+3. The REST routes and the web UI; `SessionError::NotAParticipant`, answered as `invalid_channel`
+   today, answered for a session.
+4. The exception of 564 rolled back.
+
 ## Done when
 
 - A participant can be let go from a session - by whoever may change it, or by their own act for
@@ -78,3 +157,26 @@ own project (`Project::own_of`).
   whose work is done disappears from the participants of its channel and session and is deleted,
   never purged - its data stays for tracing what happened. Whether the exception of 564 goes with
   this is left open.
+- **2026-11-17** — Planned with the maintainer (*Plan*): the session first, then every channel of
+  it, also those that do not run, in the kernel's name; leaving by one's own act under
+  `LeaveSession`; no former participants of the session; the REST routes and the web UI as a step
+  of their own; the exception of 564 rolled back. The consideration that a stopped channel is
+  changed by `Channel::let_go` did not hold: nothing changes a channel that does not run today.
+  Status: in progress.
+- **2026-11-17** — Steps 1 and 2 done together: step 1 alone would have left
+  `SessionController::remove_participant` without a caller. `Session::let_go`,
+  `SessionUpdateEvent::ParticipantLeft`, `SessionController::remove_participant` - announced to the
+  one let go as well -, `ActionType::LeaveSession`, `SessionLoop::remove_participant` and `leave`.
+  The session is stored first, then every channel of it in the kernel's name: a running one by a
+  way out of its own (`Exit::WithTheSession`), one that does not run in its stored document and
+  the copy the session holds (`let_go_where_unavailable`), never while it is built again
+  (`SessionLoop::rebuilding`, which `retry_unavailable` takes as well); a deleted one, whose
+  document the store does not change, lets go whoever is not in the session as it is restored,
+  removed by the kernel, without their clearance asked - decided with the maintainer. Asking again
+  finishes a letting go a channel failed. CHANNELS.md (*Letting someone go from the session*),
+  PERMISSION-CHECKS.md, SECURITY.md and the rule of rolling back, which names letting go as an
+  exception. Left open, for the maintainer: a channel that does not run records no leave in its
+  history, so the participant's range of attendance there stays open; a restoring under way while
+  someone is let go brings them back with the channel; and a session takes over its own
+  announcements on top of its live copy, so that a join handled after a leave lists the one let
+  go again for a moment.

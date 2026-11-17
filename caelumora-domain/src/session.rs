@@ -50,6 +50,8 @@ pub enum SessionUpdateEvent {
     /// Someone was taken in after it was built (issue 221): by whoever may
     /// change it, or by themselves, where an entry let them join.
     ParticipantJoined(Participant),
+    /// Someone was let go (issue 590): by whoever may change it, or by their own act.
+    ParticipantLeft(ActorId),
 }
 
 define_id!(SessionId);
@@ -182,6 +184,9 @@ impl Updatable for Session {
             SessionUpdateEvent::ParticipantJoined(participant) => {
                 self.take_in(participant.clone());
             }
+            SessionUpdateEvent::ParticipantLeft(actor) => {
+                self.let_go(*actor);
+            }
         }
         Ok(())
     }
@@ -248,6 +253,14 @@ impl Session {
             self.participants.push(participant);
         }
         anew
+    }
+
+    /// Lets `actor` go (issue 590): out of its participants, so that the group of its participants
+    /// follows it where it is stored. Their invitation stays used up: coming back takes an entry
+    /// that is not. `None` if they take no part: only then is no leave announced.
+    pub fn let_go(&mut self, actor: ActorId) -> Option<Participant> {
+        let index = self.participants.iter().position(|p| p.actor_id() == actor)?;
+        Some(self.participants.remove(index))
     }
 
     /// Whether `actor` is one of its participants.
@@ -362,6 +375,7 @@ pub mod testing {
 mod tests {
     use super::*;
     use crate::agent::AgentId;
+    use crate::group::Group;
     use crate::session::testing::bare_session;
 
     /// A new session of `owner` with `participants`, granting what `access` grants besides.
@@ -409,6 +423,32 @@ mod tests {
             }),
             "read by its members"
         );
+    }
+
+    /// Issue 590: one let go is out of the participants and their group, their invitation used up
+    /// all the same; a leave taken over again, as a controller's own announcement comes back to
+    /// it, changes nothing, and one taken in after it is listed again.
+    #[test]
+    fn one_let_go_is_out_of_the_session_and_a_leave_taken_over_again_changes_nothing() {
+        let alice = UserId::new();
+        let bob = UserId::new();
+        let invitation = AclEntry::invitation(ActorId::User(bob));
+        let mut session = session_of(alice, vec![Participant::User(alice)], &[invitation]);
+        session.take_in(Participant::User(bob));
+
+        let let_go = session.let_go(ActorId::User(bob)).as_ref().map(Participant::actor_id);
+        assert_eq!(let_go, Some(ActorId::User(bob)), "let go");
+        assert!(!session.takes_part(ActorId::User(bob)), "out of its participants");
+        assert!(!Group::of_session(&session).has_member(ActorId::User(bob)), "and their group");
+        assert!(!session.security_attributes.acl.contains(&invitation), "invitation used up");
+        assert!(session.let_go(ActorId::User(bob)).is_none(), "nobody to let go again");
+
+        let left = SessionUpdateEvent::ParticipantLeft(ActorId::User(bob));
+        session.apply(&left).expect("a leave taken over again");
+        let listed: Vec<_> = session.participants.iter().map(Participant::actor_id).collect();
+        assert_eq!(listed, [ActorId::User(alice)], "changes nothing");
+        session.apply(&SessionUpdateEvent::ParticipantJoined(Participant::User(bob))).unwrap();
+        assert!(session.takes_part(ActorId::User(bob)), "taken in after it, listed again");
     }
 
     /// The condition of the sessions an actor takes part in meets exactly

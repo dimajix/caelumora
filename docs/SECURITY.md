@@ -295,9 +295,10 @@ lose theirs.
     and who reads it may not join by that; a personal `Join` entry is an invitation, used up as it
     is taken (see
     [CHANNELS.md](CHANNELS.md#taking-someone-into-the-session)). Leaving needs no grant: who takes
-    part leaves a channel, or takes their own agent out of it, by their own act (`LeaveChannel`,
-    see [CHANNELS.md](CHANNELS.md#leaving-a-channel)). Changing the attributes, deleting and
-    reclassifying stay the owner's.
+    part leaves a channel or a session, or takes their own agent out of it, by their own act
+    (`LeaveChannel`, `LeaveSession`, see [CHANNELS.md](CHANNELS.md#leaving-a-channel) and
+    [CHANNELS.md](CHANNELS.md#letting-someone-go-from-the-session)). Changing the attributes,
+    deleting and reclassifying stay the owner's.
 *   **Subjects**, matched against the context's principal, and for what is read also against its
     caller:
     *   `Actor` - a user. Never an agent, the system or nobody: an agent acts with its owner's

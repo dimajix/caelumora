@@ -618,11 +618,10 @@ themselves or their own agent, never someone else.
 *   **The session first, then the channel.** One the channel cannot take in after all - refused,
     or failed as their actor starts - stays in the session, and is not rolled back out of it (issue
     [564](../issues/564-taking-someone-in-is-rolled-back-in-part.md)): what the channel can refuse
-    is asked before the session is stored, so only a failure or a race is left; being in the session
-    and in none of its channels is a state of its own, as for one taken in without a channel; and a
-    session lets nobody go. Who is in the session already is added to a channel by whoever may
-    change the channel alone, and joins it by the channel's entry alone - so one left so can be
-    taken in again.
+    is asked before the session is stored, so only a failure or a race is left; and being in the
+    session and in none of its channels is a state of its own, as for one taken in without a
+    channel. Who is in the session already is added to a channel by whoever may change the channel
+    alone, and joins it by the channel's entry alone - so one left so can be taken in again.
 *   **Stored in the kernel's name** for one who joined: joining was the act that was permitted. A
     personal `Join` entry - an invitation - is used up as the person comes into the session or the
     channel, whoever takes them in (`Session::take_in`, `Channel::take_in`), so that one removed
@@ -694,6 +693,34 @@ joining and founding come in by one.
 *   **Whether it could run is not asked**: its owner takes out an agent whose personality was
     withdrawn. One that no longer exists - a deleted agent resting in the channel - cannot leave;
     whoever may change the channel removes it.
+
+### Letting someone go from the session
+
+Who takes part in a session is let go from it by whoever may change it
+(`SessionLoop::remove_participant`), or leaves it by their own act, themselves or their own agent
+(`leave`) - asked as leaving a channel is, as `LeaveSession` (issue
+[590](../issues/590-a-session-lets-nobody-go.md)). Whoever a channel lists takes part in its
+session, so they go out of every channel of it as well:
+
+*   **The session first**, stored as the session's participants change - in the name of whoever
+    let them go, or the kernel's for one who left -; the group of its participants follows, so
+    that they read the session no longer, and it is announced (`ParticipantLeft`) to them as well.
+    From then on no channel takes them in (`NotInSession`); one taking them in meanwhile holds them
+    in its channel, and the channel lets them go once that is done.
+*   **Then every channel of it, in the kernel's name**: letting them go from the session was what
+    was asked. Each keeps them as a former participant, removed by whoever let them go, and ends
+    their actor as a removal does. A channel that does not run (issue 463) is changed in its stored
+    document and in the copy the session holds of it, never while it is built again; a deleted
+    one, whose document cannot be changed, lets go whoever is not in the session as it is
+    restored, removed by the kernel and without asking their clearance - one taken into the
+    session again meanwhile comes back with it.
+*   **Not rolled back.** Taking them out of a channel ended their turn, so a channel that fails
+    leaves its error to the caller, and asking again - for one out of the session and still in a
+    channel of it - finishes it.
+*   **Nothing is deleted.** What they said stays in the histories, and an agent's state stays; the
+    session keeps no former participants of its own, its channels keep theirs. A personal
+    invitation was used up as they came in. No rule for the owner or the last one, as for a
+    channel.
 
 ### How much history a newcomer sees
 

@@ -147,8 +147,8 @@ impl Participation {
     }
 
     /// Nothing if `context` may do `action` for `resolved` by its own act - join a session or
-    /// channel (`JOIN`, issue 221), leave a channel (`LeaveChannel`, issue 562): the participant is
-    /// whom `context` acts for, or owned by them -
+    /// channel (`JOIN`, issue 221), leave a channel (`LeaveChannel`, issue 562) or a session
+    /// (`LeaveSession`, issue 590): the participant is whom `context` acts for, or owned by them -
     /// themselves, or their own agent (issue 341) - and `action` is permitted in the participant's
     /// own context, an agent's by its owner.
     ///
