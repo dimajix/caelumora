@@ -569,7 +569,8 @@ state, built in the channel owner's name as the channel's components are.
 
 ### To decide
 
-D1 to D6 were decided by the maintainer on 2026-11-17, as recommended. Still to be confirmed: the
+D1 to D6 were decided by the maintainer on 2026-11-17, as recommended, and D8 on the same day,
+the maintainer's own proposal; the name of its type is still open. Still to be confirmed: the
 departure in step 2 from a sub-agent's thread having a policy of its own (*How a sub-agent is
 asked*).
 
@@ -603,6 +604,30 @@ asked*).
   again. Recommended.
 - **D7 - The shape of a transcript with several threads** stays open until step 3; it is named
   below, since the head per thread is recorded as decided and the code argues for weighing it.
+- **D8 - The channel's loop holds a thread object per thread, with a moderator of its own.** Not a
+  loop of its own (*Threads in the running channel*), but a split of the code before the channel
+  grows further: of what `ChannelLoop` holds, nearly everything is the whole channel's - the
+  actors and their lifecycle, the inboxes and catching up, the history, admission and rights, the
+  participants, the directory of mentions, `quiet`, how an envelope is stamped and delivered -;
+  what is a thread's is its moderator, with everything the moderator keeps. So a thread object of
+  the kernel (`channel::thread`, named `Thread`, or `ChannelThread` to set it apart from
+  `std::thread`) holds the thread's `ThreadState`, a moderator built for it from the channel's
+  components, and who takes part in it; the channel admits an event, finds its thread by
+  `EventContext::thread_id`, has the thread decide its `Routing`, and records and delivers it. The
+  line is such a thread object too.
+
+  What it makes simpler: the moderator's context (`PolicyModerator::heard`), what a policy keeps
+  (`RoundRobinPolicy::next_agent_index`) and the count of hops are each a thread's without being
+  keyed by one; a thread's own policy (*Decided on 2026-11-17*) is a moderator built from a
+  `ComponentConfig` of the thread's instead of the channel's, with no mechanism of its own; and an
+  unloaded thread is a thread object let go. What it costs: the rule that a channel has exactly
+  one moderator (COMPONENTS.md, *Facets of which there is exactly one*) becomes one per thread;
+  the components of a moderator are built once per thread, in the channel owner's name - for
+  `decision_policy` a client of its model per thread -; and step 1 grows by the thread object,
+  which has a user from the start, the line. An event of the whole channel - a join, `Fitted` - is
+  routed by the thread its context names, the line unless made for another, and delivered by
+  `Recorded::thread` being `None`. The rules over the order that read the history -
+  `turn_given_up_last` - stay methods of the history, given a `ThreadId`. Decided.
 
 ### What is of a thread, and what of the channel
 
@@ -632,11 +657,12 @@ becomes a rule over one thread in step 2:
   thing of the conversation in the answer's thread, not in the channel.
 - **What a turn that ended answers** (`AgentBody::drop_answered`, "the very next event"): holds as
   long as an agent hears one thread; with several, step 3.
-- **The moderator's context** (`PolicyModerator::heard`): kept per thread.
+- **The moderator's context** (`PolicyModerator::heard`): the thread's, since every thread has a
+  moderator of its own (D8).
 - **What a policy keeps** (`ResponderPolicy` is public): `round_robin_policy` keeps whose turn is
   next (`RoundRobinPolicy::next_agent_index`), which requests in a thread would move on for the
-  line. In step 2 a sub-agent is asked by a mention, which takes no turn of it; a policy chosen in a
-  thread of several agents needs what it keeps per thread, with step 3.
+  line if the moderator were shared; with a moderator per thread (D8), its policy keeps it for its
+  thread alone.
 - **Hops between agents** (`EventContext::agent_hops`): counted from the thread's first message,
   which begins at 0 (*Decided on 2026-11-17*).
 - **A quiet channel after a cancel** (`ChannelLoop::quiet`): stays of the whole channel - a cancel
@@ -682,15 +708,37 @@ pub struct Recorded {
 }
 ```
 
-The moderator keeps what it heard per thread (`PolicyModerator::heard` by `ThreadId`). Every
-literal of an `EventContext` names its thread; the compiler finds them. Files: the domain's
-`channel`, `actor/envelope.rs`, `history/entry.rs` and `history/recorded.rs`; the moderator; the
-stores of histories, which keep `Recorded::thread` - the `MemoryStore`, `JsonStates` and Postgres,
-there as a column of the history's entries -, to filter by it from step 2; the REST API's types,
-the REST client, the web UI and the TUI, which are given `thread_id` in every envelope and ignore
-it. Tests:
-the existing suites, unchanged; one each that an event made for a channel is in its line, that
-`next` keeps the thread, and that a store keeps and returns an entry's thread.
+```rust
+// caelumora-kernel/src/channel/thread.rs - its name to be decided (D8)
+/// A thread of a running channel: what decides whom its events go to and who is asked in it.
+pub(crate) struct Thread { /* its id, its `ThreadState` from step 2, its moderator */ }
+impl Thread {
+    /// The thread `id`, moderated by `moderator`, built for it.
+    pub(crate) fn new(id: ThreadId, moderator: ComponentImpl<dyn Moderator>) -> Self;
+    /// What becomes of `event`, which happens in this thread (`Moderator::route`).
+    pub(crate) async fn route(&self, event: &Envelope, context: &SecurityContext) -> Routing;
+    /// `actor` takes part in the thread: its moderator may ask it.
+    pub(crate) fn add_actor(&self, actor: Arc<dyn Actor>);
+    /// `actor` no longer takes part in the thread.
+    pub(crate) fn remove_actor(&self, actor: ActorId);
+}
+```
+
+`ChannelLoop` holds its threads by id - in step 1 the line alone - in place of its one
+`moderator`, and routes every event by the thread `EventContext::thread_id` names (D8). Every
+literal of an `EventContext` names its thread; the compiler finds them.
+
+Files: the domain's `channel`, `actor/envelope.rs`, `history/entry.rs` and `history/recorded.rs`;
+the kernel's `channel` - `mod.rs`, `run.rs`, `participants.rs` where actors are added to and
+removed from the moderator, and the new `thread.rs`; the stores of histories, which keep
+`Recorded::thread` - the `MemoryStore`, `JsonStates` and Postgres, there as a column of the
+history's entries -, to filter by it from step 2; the REST API's types, the REST client, the web
+UI and the TUI, which are given `thread_id` in every envelope and ignore it; COMPONENTS.md and
+CHANNELS.md, for a moderator per thread.
+
+Tests: the existing suites, unchanged; one each that an event made for a channel is in its line,
+that `next` keeps the thread, that a store keeps and returns an entry's thread, and that the
+channel routes an event by its thread's moderator.
 
 ### Step 2: threads for sub-agents, with 558 - a sketch
 
@@ -754,14 +802,15 @@ What else changes, each where the rule lives:
   channel; a user everything.
 - **Reading** (`Recorded::seen_by`, `Filter::seen_by` and every store of histories): the same rule
   over the reader's ranges and the entry's thread.
-- **The moderator**: the agents who can be asked are those taking part in the event's thread, the
-  `ResponderPolicy` is given them and the thread's conversation, and a mention of an agent that
-  takes no part asks nobody.
+- **The moderator**: each thread's knows the agents taking part in it (D8), its `ResponderPolicy`
+  is given them and the thread's conversation, and a mention of an agent that takes no part asks
+  nobody.
 - **How a sub-agent is asked.** The brief and every later message of the main agent mention the
   sub-agent, and a mention asks it under every policy. That replaces, for the first version, the
   policy of its own that *Decided on 2026-11-17* says a sub-agent's thread needs - a departure
   from the decision, to be confirmed: its reason, that the channel's policy may ask nobody, is met
-  by the mention, and a thread's own policy comes with a use that needs one.
+  by the mention, and a thread's own policy comes with a use that needs one - with D8 a moderator
+  built from the thread's own components.
 - **Who may open a thread** is the kernel's rule (*Decided on 2026-11-17*): in step 2 only the
   runtime of an agent opens one, for a sub-agent; a person cannot yet, so nothing of the
   frontends opens one. Which action opening asks in whose name is open.
@@ -866,3 +915,6 @@ them. Step 2 changes what is stored again - `ParticipantJoined`, the `Attendance
   first, as state of the channel, the line's id derived from its channel's, every entry of a thread
   or of the whole channel, agents hearing by thread, the sub-agent kept to its thread by that rule.
   Asked in passing: an agent has one instance per channel, not per thread.
+- **2026-11-17** — D8 added and decided, the maintainer's proposal: the channel's loop holds a
+  thread object per thread, with a moderator of its own, as a split of the code before the channel
+  grows further - step 1 introduces it, with the line as its first. The name of its type is open.
