@@ -37,9 +37,9 @@ pub(crate) trait ChannelAnswering: Sized {
     /// share the span the frontend learns.
     fn with_span(self, span_id: Uuid) -> Self;
 
-    /// This context in the span of `answered`, answering its event - what
-    /// is said of an event that is no request, as the channel's rejection of
-    /// it (`Answering::to` continues a request so).
+    /// This context in the span and the thread of `answered`, answering its event - what is said
+    /// of an event that is no request, as the channel's rejection of it (`Answering::to`
+    /// continues a request so).
     fn replying_to(self, answered: &EventContext) -> Self;
 }
 
@@ -65,6 +65,7 @@ impl ChannelAnswering for Answering {
     fn replying_to(self, answered: &EventContext) -> Self {
         let mut answering = self.with_span(answered.span_id);
         answering.event_context.correlation_id = answered.event_id;
+        answering.event_context.thread_id = answered.thread_id;
         answering
     }
 }
@@ -73,14 +74,18 @@ impl ChannelAnswering for Answering {
 mod tests {
     use super::*;
     use caelumora_domain::actor::{ActorEvent, ActorId};
+    use caelumora_domain::channel::ThreadId;
 
     /// What the channel says of an event in its own name: in its place,
-    /// whatever its context names, in the span of the event and answering
-    /// it (issue 352).
+    /// whatever its context names, in the span and the thread of the event
+    /// and answering it (issues 352, 557).
     #[test]
     fn what_is_said_of_an_event_is_said_in_the_channel_and_answers_it() {
         let (session, channel) = (SessionId::new(), ChannelId::new());
-        let answered = EventContext::new(session, channel, ActorId::System, "sender");
+        let answered = EventContext {
+            thread_id: ThreadId::new(),
+            ..EventContext::new(session, channel, ActorId::System, "sender")
+        };
 
         let said = Answering::in_channel(session, channel, "system", &SecurityContext::system())
             .replying_to(&answered)
@@ -98,6 +103,7 @@ mod tests {
         );
         assert_eq!(said.context.span_id, answered.span_id, "in the span of what it answers");
         assert_eq!(said.context.correlation_id, answered.event_id, "answering it");
+        assert_eq!(said.context.thread_id, answered.thread_id, "in the thread of what it answers");
         assert_ne!(said.context.event_id, answered.event_id, "an event of its own");
     }
 }

@@ -379,7 +379,7 @@ impl ChannelLoop {
     }
 
     /// Makes `running`, the actor of `participant`, leave (`Actor::leave`),
-    /// and takes it out of the channel's actors, the moderator and the
+    /// and takes it out of the channel's actors, its threads and the
     /// mentions; `run` announces it in the name of `remover` once its task
     /// has ended. The document is the caller's.
     fn leave_actor(&self, participant: ActorId, running: ChannelActor, remover: &SecurityContext) {
@@ -394,7 +394,9 @@ impl ChannelLoop {
             actors.remove(&participant);
             actors
         });
-        self.moderator.remove_actor(participant);
+        for thread in self.threads.values() {
+            thread.remove_actor(participant);
+        }
         self.rebuild_mentions();
         actor.leave();
         let _ = self.changes_tx.send(ActorChange::Leave(participant, name, remover.clone()));

@@ -1,4 +1,5 @@
-//! A running channel: `ChannelLoop`, how it is built, and what it tells of itself and its actors.
+//! A running channel: `ChannelLoop`, how it is built, and what it tells of itself and its actors;
+//! the threads within it are `thread`'s.
 
 mod control;
 mod history;
@@ -11,6 +12,7 @@ mod settings;
 pub mod testing;
 #[cfg(test)]
 mod tests;
+mod thread;
 
 pub(crate) use participation::{Participation, ResolvedKind, ResolvedParticipant};
 
@@ -28,12 +30,12 @@ use crate::session::SessionLoop;
 use anyhow::{Error, Result};
 use arc_swap::ArcSwap;
 use caelumora_api::actor::Actor;
-use caelumora_api::component::{ComponentError, ComponentImpl};
+use caelumora_api::component::ComponentError;
 use caelumora_domain::actor::ActorId;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_domain::actor::Envelope;
 use caelumora_domain::chain::Position;
-use caelumora_domain::channel::{Channel, ChannelId, ChannelState, Participant};
+use caelumora_domain::channel::{Channel, ChannelId, ChannelState, Participant, ThreadId};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::mention::MentionDirectory;
 use caelumora_domain::message::MessageId;
@@ -55,6 +57,7 @@ use std::sync;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
+use thread::Thread;
 #[cfg(any(test, feature = "test-support"))]
 use tokio::sync::broadcast;
 use tokio::sync::{mpsc, Mutex};
@@ -239,7 +242,9 @@ pub struct ChannelLoop {
     /// changes of one participant do not cross: two takings-in would start two actors, and one
     /// that fails would roll back the listing of an actor the other started.
     changing: LocksById<ActorId>,
-    moderator: ComponentImpl<dyn Moderator>,
+    /// Its threads (issue 557), each with a moderator of its own: what an event's thread decides
+    /// of it is what the channel delivers. Its line alone for now, in which every actor takes part.
+    threads: HashMap<ThreadId, Thread>,
     mentions: ArcSwap<MentionDirectory>,
     /// Held while `mentions` is built and stored, so that a build from older actors - a join and
     /// a rename at once - does not replace a newer one (issue 585).
@@ -323,7 +328,7 @@ impl ChannelLoop {
             actors: ArcSwap::from_pointee(HashMap::new()),
             leaving: sync::Mutex::new(HashMap::new()),
             changing: LocksById::new(),
-            moderator,
+            threads: HashMap::from([(ThreadId::line(id), Thread::new(moderator))]),
             mentions: ArcSwap::from_pointee(MentionDirectory::default()),
             building_mentions: sync::Mutex::new(()),
             changes_tx,
@@ -398,11 +403,11 @@ impl ChannelLoop {
         self.runtime.session_loop()
     }
 
-    /// Takes `actor` into the channel and hands it to `run` to start
-    /// (`ActorChange::Start`, given `from` and `joined` as it says): the
-    /// moderator routes to it, it is among the participants' actors, and it
-    /// can be mentioned. The one way an actor enters the channel - when the
-    /// channel is built and when a participant joins (issue 91).
+    /// Takes `actor` into the channel and hands it to `run` to start (`ActorChange::Start`, given
+    /// `from` and `joined` as it says): it takes part in the channel's threads, whose moderators
+    /// route to it, it is among the participants' actors, and it can be mentioned. The one way an
+    /// actor enters the channel - when the channel is built and when a participant joins (issue
+    /// 91).
     async fn adopt(
         &self,
         actor: Arc<dyn Actor>,
@@ -410,7 +415,9 @@ impl ChannelLoop {
         from: Option<Position>,
         joined: Option<SecurityContext>,
     ) {
-        self.moderator.add_actor(Arc::clone(&actor));
+        for thread in self.threads.values() {
+            thread.add_actor(Arc::clone(&actor));
+        }
         let id = actor.id();
         let adopted = ChannelActor { actor, participant: resolved, task: TaskTracker::new() };
         self.actors.rcu(|actors| {

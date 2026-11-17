@@ -20,7 +20,9 @@ use caelumora_domain::agent::testing::make_personality;
 use caelumora_domain::agent::{Agent, AgentChannelState, AgentId, Personality, PersonalityId};
 use caelumora_domain::chain::{Node, Position};
 use caelumora_domain::channel::testing::make_channel;
-use caelumora_domain::channel::{moderation_components, Channel, ChannelId, ChannelState};
+use caelumora_domain::channel::{
+    moderation_components, Channel, ChannelId, ChannelState, ThreadId,
+};
 use caelumora_domain::component::{
     ComponentBundle, ComponentBundleId, ComponentConfig, ComponentDescriptor,
 };
@@ -1562,11 +1564,12 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
         "and so is the chain"
     );
 
-    // Issue 223: what was recorded of an envelope is read with its head, and
-    // the answer of a turn from the messages said before its end - those of
-    // the turn that are not internal, as the reader may see them, back to
-    // the turn before, also over more than a segment of the JSON store.
+    // Issue 223: what was recorded of an envelope is read with its head - and with the thread it
+    // happened in (issue 557) -, and the answer of a turn from the messages said before its end -
+    // those of the turn that are not internal, as the reader may see them, back to the turn
+    // before, also over more than a segment of the JSON store.
     let (earlier, turn) = (TurnId::new(), TurnId::new());
+    let thread = ThreadId::new();
     let by_speaker = |n: u128, turn_id: TurnId, internal: bool| Message {
         sender_id: speaker,
         role: MessageRole::Assistant,
@@ -1579,6 +1582,7 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
     let sent = |event: ActorEvent| {
         Envelope::new(
             EventContext {
+                thread_id: thread,
                 sender_id: speaker,
                 initiator_id: user,
                 agent_hops: 2,
@@ -1613,8 +1617,11 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
     let head =
         histories.entries(key, &Reader::Participant(user), first..first.next()).await.unwrap();
     assert_eq!(
-        head.first().map(|node| (node.entry.context.initiator_id, node.entry.context.agent_hops)),
-        Some((user, 2)),
+        head.first().map(|node| {
+            let context = &node.entry.context;
+            (context.thread_id, context.initiator_id, context.agent_hops)
+        }),
+        Some((thread, user, 2)),
         "with the context it came in"
     );
     let answer = histories.answer(key, &Reader::Participant(user), ended).await.unwrap();

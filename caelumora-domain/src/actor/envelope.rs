@@ -5,7 +5,7 @@
 use super::{ActorEvent, ActorId, Rejection};
 use crate::approval::ApprovalStatus;
 use crate::chain::Position;
-use crate::channel::ChannelId;
+use crate::channel::{ChannelId, ThreadId};
 use crate::history::{HistoryEntry, Recipients};
 use crate::session::SessionId;
 use chrono::{DateTime, Utc};
@@ -16,6 +16,9 @@ use uuid::Uuid;
 pub struct EventContext {
     pub session_id: SessionId,
     pub channel_id: ChannelId,
+    /// The thread of its channel it happens in (issue 557): the channel's line (`ThreadId::line`)
+    /// unless it was made for another. `next` keeps it.
+    pub thread_id: ThreadId,
     pub sender_id: ActorId,
     pub sender_name: String,
     pub event_id: Uuid,
@@ -53,6 +56,7 @@ impl EventContext {
         Self {
             session_id,
             channel_id,
+            thread_id: ThreadId::line(channel_id),
             sender_id,
             sender_name: sender_name.into(),
             event_id: Uuid::new_v4(),
@@ -69,6 +73,7 @@ impl EventContext {
         Self {
             session_id: self.session_id,
             channel_id: self.channel_id,
+            thread_id: self.thread_id,
             sender_id,
             sender_name: sender_name.into(),
             event_id: Uuid::new_v4(),
@@ -637,6 +642,21 @@ mod tests {
     use crate::user::UserId;
     use crate::work::TurnId;
     use std::collections::HashSet;
+
+    /// Issue 557: an event made for a channel happens in its line, and what follows it in the
+    /// thread it happened in.
+    #[test]
+    fn an_event_happens_in_its_channels_line_and_what_follows_it_in_its_thread() {
+        let (session, channel) = (SessionId::new(), ChannelId::new());
+        let alice = ActorId::User(UserId::new());
+        let said = EventContext::new(session, channel, alice, "alice");
+        assert_eq!(said.thread_id, ThreadId::line(channel), "made for the channel: its line");
+
+        let other = ThreadId::new();
+        let in_other = EventContext { thread_id: other, ..said };
+        let answer = in_other.next(ActorId::Agent(AgentId::new()), "bob");
+        assert_eq!(answer.thread_id, other, "what follows stays in the thread");
+    }
 
     /// A channel's participants to deliver to: two agents, two users, an
     /// approver.

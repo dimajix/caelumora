@@ -230,8 +230,9 @@ Details: [CONFIGURATION.md](CONFIGURATION.md#backends).
 
 A **session** is one piece of work, such as a conversation about a topic. It has participants -
 users and agents - and one or more **channels**, in which some of them talk. A channel is a chat
-room with its own history, its own classification and its own **moderator**, which decides who is
-asked to respond to a message.
+room with its own history and its own classification. Its conversation is held in **threads** -
+so far one, its line -, each with its own **moderator**, which decides who is asked to respond to a
+message.
 
 Everything that takes part in a channel is an **actor**: a user (`UserActor`), an agent
 (`AgentActor`), an agent that runs elsewhere (`ExternalAgentActor`), or the channel's approver
@@ -293,10 +294,11 @@ The path of one message shows how the parts fit together:
 1.  **A user writes.** The frontend (REST or TUI) hands the text to *that user's* actor in the
     channel. There is no way to write into a channel other than through one's own actor, so sender
     and authority always follow from who is writing.
-2.  **The channel routes it.** The `ChannelLoop` resolves `@`-mentions, asks the moderator whom it
-    goes to and whom to ask to respond, records it in the channel's history with its sender and whom
-    it went to, and delivers it - and the requests to those asked - in the order of the history: the
-    one record of what every participant received (issue 417).
+2.  **The channel routes it.** The `ChannelLoop` resolves `@`-mentions, asks the moderator of the
+    thread it happens in whom it goes to and whom to ask to respond, records it in the channel's
+    history with its sender and whom it went to, and delivers it - and the requests to those
+    asked - in the order of the history: the one record of what every participant received (issue
+    417).
 3.  **An agent takes a turn.** The `AgentActor` begins a **turn**: its context provider assembles
     what the model is given (prompt parts, the agent's transcript), the model answers, and tool
     calls in the answer are run - after approval, where a tool requires it - and their results fed

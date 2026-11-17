@@ -18,7 +18,7 @@ use crate::view::AgentContextView;
 use anyhow::{Error, Result};
 use caelumora_api::actor::Actor;
 use caelumora_api::command::CommandError;
-use caelumora_domain::actor::{ActorEvent, ActorId, ActorState, Envelope};
+use caelumora_domain::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_domain::agent::{AgentChannelState, AgentId, Personality};
 use caelumora_domain::approval::{ApprovalStrategy, Approver};
 use caelumora_domain::chain::Position;
@@ -28,7 +28,7 @@ use caelumora_domain::channel::ChannelId;
 use caelumora_domain::channel::{Channel, InternalActor, Participant};
 use caelumora_domain::content::ContentId;
 use caelumora_domain::history::testing::{items_of, messages_of};
-use caelumora_domain::history::{History, HistoryEntry, Reader};
+use caelumora_domain::history::{Audience, History, HistoryEntry, Reader, Recorded};
 use caelumora_domain::message::Message;
 use caelumora_domain::message::MessageId;
 use caelumora_domain::security::SecurityAttributes;
@@ -196,6 +196,12 @@ impl ChannelLoop {
         self.observed.subscribe()
     }
 
+    /// The context of an event made for the channel by nobody in particular: in its session, in
+    /// it and in its line (issue 557) - what a test sets the sender and the rest of in.
+    pub fn event_context(&self) -> EventContext {
+        EventContext::new(self.session_id, self.id, ActorId::None, String::new())
+    }
+
     /// The actor of `actor` in the channel (`ChannelLoop::actor`).
     pub fn actor_of(&self, actor: ActorId) -> Option<Arc<dyn Actor>> {
         self.actor(actor)
@@ -218,12 +224,18 @@ impl ChannelLoop {
         self.history().await
     }
 
-    /// Records `messages` as said in the channel - in its history, stored -
-    /// without routing them: what an actor that starts reads from there
-    /// (issue 223).
+    /// Records `messages` as said in the channel - in its history, in its line (issue 557),
+    /// stored - without routing them: what an actor that starts reads from there (issue 223).
     pub async fn record_said(&self, messages: Vec<Message>) {
         let mut state = self.state.lock().await;
-        state.history.extend(messages);
+        for message in messages {
+            let sender = message.sender_id;
+            let context =
+                EventContext { sender_id: sender, initiator_id: sender, ..self.event_context() };
+            let said = Envelope::new(context, ActorEvent::CompleteMessageGenerated(message));
+            let recorded = Recorded::of(&said, sender, Audience::Everybody).expect("it is said");
+            state.history.enter(recorded);
+        }
         self.state_store
             .put_channel_state(self.id, &mut state)
             .await

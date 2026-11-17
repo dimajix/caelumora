@@ -173,7 +173,20 @@ A **channel** is one conversation within a session, such as a chat room. Its `Ch
 
 *   manages the lifecycle of the **actors** taking part in it;
 *   routes **envelopes** between them;
-*   applies a **moderator**, which decides who is asked to respond.
+*   has the **thread** an envelope happens in apply its **moderator**, which decides who is asked
+    to respond.
+
+### Its threads
+
+A channel's conversation is held in **threads** (issue 557): every event names the thread it
+happens in (`EventContext::thread_id`), and the history keeps it with the context every entry came
+in. A channel has one thread so far, its **line**, whose id is derived from the channel's
+(`ThreadId::line`): an event made for a channel (`EventContext::new`) happens there, and what
+follows an event (`EventContext::next`) stays in its thread. The running channel holds a `Thread`
+for each of its threads, with a moderator of its own (see [Moderators](#moderators)), and every
+actor takes part in it. What names a thread the channel does not have is not let in (see *The
+channel decides what enters it* below); the rejection is said, as every rejection, in the thread
+of what it rejects, and reaches its sender by name.
 
 ### Building a channel
 
@@ -384,8 +397,9 @@ approvals and questions.
 channel's loop, one after another, as it takes it in (`ChannelLoop::admission`) - against the
 channel as it is at that moment, so that nothing changes between a check and the entry. An actor
 asks nothing of the policy for what it sends; it reads of the channel only what it needs to build
-what it sends, or to address it. The channel asks, in the sender's name, first whether the sender
-may act so, then whether what it carries may flow in:
+what it sends, or to address it. It rejects first whatever names a thread it does not have (issue
+557, `Rejection::Invalid`). The channel asks, in the sender's name, then whether the sender may act
+so, then whether what it carries may flow in:
 
 | What enters | What the channel asks |
 |---|---|
@@ -1057,6 +1071,10 @@ channels:
   - id: responders
     kind: mentions_only_policy
 ```
+
+They are built for each thread of the channel (issue 557): each thread has a moderator of its own,
+so that what a moderator keeps - the messages heard, a policy's turns, the hops it counts - is its
+thread's, and an event is routed by the moderator of the thread it happens in.
 
 Every channel delivers by one rule, the channel's and not a moderator's (`Envelope::recipients`),
 which for what the history records is the rule its entry is read by (`HistoryEntry::recipients`):

@@ -24,14 +24,14 @@ use caelumora_security::SecurityContext;
 use std::fmt::Debug;
 use std::sync::Arc;
 
-/// Decides whom the events of a channel are delivered to, who is asked to
-/// respond, and what it tells of its own - never what anyone is told of an
-/// event (issue 418): the channel builds every envelope it delivers. A
-/// component of the channel, of which it has exactly one (issue 174);
-/// shared like every facet, so it keeps what it changes behind its own lock.
+/// Decides whom the events of a thread of a channel are delivered to, who is asked to respond,
+/// and what it tells of its own - never what anyone is told of an event (issue 418): the channel
+/// builds every envelope it delivers. A component of the channel, of which it has exactly one
+/// (issue 174), built for each of its threads (issue 557); shared like every facet, so it keeps
+/// what it changes behind its own lock.
 #[async_trait]
 pub(crate) trait Moderator: Send + Sync + Debug {
-    /// What becomes of `event` in the channel: whom it is delivered to,
+    /// What becomes of `event` in its thread: whom it is delivered to,
     /// whom to ask to respond, and what the moderator tells of its own.
     /// What a user sees is what is delivered to their actor (issue 220).
     /// `context` is the one the channel admitted the event in - its

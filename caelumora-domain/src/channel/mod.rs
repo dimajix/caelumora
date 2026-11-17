@@ -1,17 +1,20 @@
 //! A channel of a session (`Channel`): its name, language and classification, who takes part in it
 //! and what of its history they read, how it is stored and asked for (`ChannelField`), and the
 //! events of its changes (`ChannelUpdateEvent`). How much of its history a participant is given is
-//! `history_access`'s, who takes part `participant`'s, and what it holds while it runs `state`'s.
+//! `history_access`'s, who takes part `participant`'s, what it holds while it runs `state`'s, and
+//! the conversations within it `thread`'s.
 
 mod history_access;
 mod participant;
 mod state;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
+mod thread;
 
 pub use history_access::{HistoryAccess, HistoryStart};
 pub use participant::{FormerParticipant, InternalActor, Participant};
 pub use state::{ChannelState, ChannelStateChange};
+pub use thread::ThreadId;
 
 use crate::actor::ActorId;
 use crate::approval::ApprovalRule;

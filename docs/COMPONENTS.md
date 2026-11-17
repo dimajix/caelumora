@@ -212,7 +212,8 @@ turn.
 
 Of some facets an agent has exactly one: the `ContextProvider`, the `LanguageModelClient`, the
 `ModelProfileProvider` and the `CompactionStrategy`; an external agent exactly one `ExternalAgent`
-and one `ModelProfileProvider`; a channel exactly one `Moderator` and one `ResponderPolicy`. They
+and one `ModelProfileProvider`; a channel exactly one `Moderator` and one `ResponderPolicy`, built
+for each of its threads (see [CHANNELS.md](CHANNELS.md#its-threads)). They
 are registered with `ComponentRegistry::single` by the module that holds the default kind: the
 `LanguageModelClient` and the `ModelProfileProvider` by the plugin `caelumora-model`, whose kind
 `language_model` is the default of both (issue 520); the `ExternalAgent` by the agents' library,

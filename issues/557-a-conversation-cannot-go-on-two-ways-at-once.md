@@ -1,6 +1,6 @@
 # 557 — A conversation cannot go on in two directions at once
 
-**Status:** open
+**Status:** in progress
 **Type:** question
 **Priority:** medium
 **Area:** Sessions and channels
@@ -570,7 +570,8 @@ state, built in the channel owner's name as the channel's components are.
 ### To decide
 
 D1 to D6 were decided by the maintainer on 2026-11-17, as recommended, and D8 on the same day,
-the maintainer's own proposal, its type named `Thread`. Still to be confirmed: the
+the maintainer's own proposal, its type named `Thread`; D4 was changed the same day, to no field of
+its own (see *History*). Still to be confirmed: the
 departure in step 2 from a sub-agent's thread having a policy of its own (*How a sub-agent is
 asked*).
 
@@ -799,7 +800,9 @@ What else changes, each where the rule lives:
 
 - **Delivering** (`Envelope::recipients`, `ChannelLoop::deliveries`): an agent is delivered an
   envelope of a thread only if it takes part in that thread, and every envelope of the whole
-  channel; a user everything.
+  channel; a user everything. Whether an entry is of a thread or of the whole channel is
+  `HistoryEntry::is_of_thread`, after the table above; its thread is the one its context names
+  (D4 as changed on 2026-11-17).
 - **Reading** (`Recorded::seen_by`, `Filter::seen_by` and every store of histories): the same rule
   over the reader's ranges and the entry's thread.
 - **The moderator**: each thread's knows the agents taking part in it (D8), its `ResponderPolicy`
@@ -819,6 +822,10 @@ What else changes, each where the rule lives:
   its thread (table above).
 - **`ThreadOpened` and `ThreadClosed` are items** of the history, so that a page filtered by them
   lists the threads.
+- **What is sent into a closed thread** is not let in, with a `Rejection` of its own - presumably
+  `ThreadClosed` -, worded for its sender in the web UI and the TUI: the case a person meets once
+  threads are closed. Step 1 rejects what names a thread the channel does not have as `Invalid`,
+  which only a context not made by the channel can do (decided on 2026-11-17).
 - **The REST API** reads a page of one thread (`?thread=`, with `Filter::in_thread`; the line
   without it). The web UI and the TUI show the line, and of another thread its approvals and its
   questions as today, since its calls wait for them; its messages are left out of the line's view,
@@ -919,3 +926,27 @@ them. Step 2 changes what is stored again - `ParticipantJoined`, the `Attendance
   thread object per thread, with a moderator of its own, as a split of the code before the channel
   grows further - step 1 introduces it, with the line as its first. The name of its type is open.
 - **2026-11-17** — The type of D8 named `Thread` by the maintainer.
+- **2026-11-17** — Step 1 implemented, without a change of behaviour for every event the program
+  makes: `ThreadId` with the line's id derived from its channel's, `EventContext::thread_id`, kept
+  by the history in the context of every entry, and the kernel's `Thread` with a moderator of its
+  own, which `ChannelLoop` holds for its line and routes every event by. Where it departs from the
+  plan: `Recorded::thread` and `HistoryEntry::is_of_thread` are not there (below); `Thread::new`
+  takes no id, which nothing would read; and an event naming a thread the channel does not have
+  is not let in (`Rejection::Invalid`, checked first in the channel's admission, before
+  attachments are claimed), so that its sender is told - in the thread it named, as a rejection
+  is said in the thread of what it rejects (`replying_to`), reaching its sender by name -, while
+  one that enters all the same is dropped. The tests that forged envelopes in no channel make them
+  in the channel's line now (`ChannelLoop::event_context`, `ChannelLoop::record_said`). Stored
+  data to delete: the state of every channel, whose every entry keeps the context it came in; of
+  the agents' states in a channel, those with a turn under way or an external agent's open task,
+  which keep the context they answer (`Work::event_context`) - the others load as they are, and
+  deleting them would lose their notes.
+- **2026-11-17** — D4 changed by the maintainer: `Recorded` keeps no thread of its own. The thread
+  of an entry is the one its context names, as its channel and session are, if the entry is of a
+  thread rather than of the whole channel; a field beside them would repeat the context, and is
+  no column of a store either - `sender` and `recipients` are none. That rule, and with it
+  `HistoryEntry::is_of_thread` after the table above, come with their first user in step 2
+  (*Delivering*, *Reading*).
+- **2026-11-17** — Decided by the maintainer: in step 1 an event naming a thread the channel does
+  not have stays rejected as `Rejection::Invalid`; a rejection of its own, for what is sent into a
+  closed thread, comes with step 2 (*Step 2*, *What is sent into a closed thread*).

@@ -51,7 +51,7 @@ use tokio::time;
 /// `remote` stands in for, after alice said "hello". The remote agent is
 /// its personality's component, of a kind registered for the test.
 async fn with_an_external_agent(remote: Arc<ScriptedExternalAgent>) -> Stuck {
-    let channel = external_channel(remote, external_components(), |_| None)
+    let channel = external_channel(remote, external_components(), |_, _| None)
         .await
         .expect("the external agent can be run");
     start(channel).await
@@ -81,7 +81,7 @@ fn after_founding() -> Heard {
 async fn external_channel(
     remote: Arc<ScriptedExternalAgent>,
     components: ComponentConfig,
-    stored: impl FnOnce(AgentId) -> Option<AgentChannelState>,
+    stored: impl FnOnce(AgentId, ChannelId) -> Option<AgentChannelState>,
 ) -> Result<(Arc<ChannelLoop>, SecurityContext, AgentId, UserId)> {
     let store = Persistence::in_memory();
     let personality =
@@ -126,7 +126,7 @@ async fn external_channel(
     kernel.entity_stores().channels.create(&SecurityContext::system(), &mut channel).await.unwrap();
     // Its participants' joins recorded, as if they had founded it (issue 420).
     kernel.state_store().put_channel_state(channel.id, &mut founded(&channel)).await.unwrap();
-    if let Some(mut stored) = stored(agent_id) {
+    if let Some(mut stored) = stored(agent_id, channel.id) {
         kernel
             .state_store()
             .put_agent_channel_state(agent_id, channel.id, &mut stored)
@@ -162,7 +162,7 @@ async fn an_external_agent_that_starts_takes_in_what_it_missed_without_its_own()
     use caelumora_domain::message::{MessageId, MessageRole};
     let remote = Arc::new(ScriptedExternalAgent::default());
     let (channel, context, agent, _) =
-        external_channel(remote, external_components(), |_| None).await.unwrap();
+        external_channel(remote, external_components(), |_, _| None).await.unwrap();
     let message = |sender: ActorId, text: &str| Message {
         id: MessageId::new(),
         role: MessageRole::User,
@@ -194,7 +194,7 @@ async fn an_external_agent_does_not_answer_again() {
         Ok(ExternalEvent::Message("Hello, alice.".to_string())),
         Ok(ExternalEvent::Completed),
     ]]));
-    let built = external_channel(Arc::clone(&remote), external_components(), |_| None)
+    let built = external_channel(Arc::clone(&remote), external_components(), |_, _| None)
         .await
         .expect("the external agent can be run");
     let Stuck { channel, context, agent, mut events, running, .. } = start(built).await;
@@ -234,7 +234,7 @@ async fn what_an_external_agents_perceive_processors_drop_is_kept_but_never_give
     ]));
     let mut components = external_components();
     components.component_nodes.push(ComponentDescriptor::new("filter", "test_no_secrets"));
-    let built = external_channel(Arc::clone(&remote), components, |_| None)
+    let built = external_channel(Arc::clone(&remote), components, |_, _| None)
         .await
         .expect("the external agent can be run");
     let Stuck { channel, context, agent, mut events, running, .. } = start(built).await;
@@ -608,7 +608,7 @@ async fn an_external_agent_is_shown_carrying_out_a_command_as_an_agent_run_here_
     let mut components = external_components();
     components.component_nodes.push(ComponentDescriptor::new("marking", "test_marking"));
     let Stuck { channel, context, agent, mut events, running, .. } =
-        start(external_channel(remote, components, |_| None).await.expect("runs")).await;
+        start(external_channel(remote, components, |_, _| None).await.expect("runs")).await;
     answered(&mut events, agent).await;
     let actor = channel.user_actor(alice_of(&context)).unwrap();
     let mut watch = actor.watch();
@@ -842,9 +842,10 @@ async fn an_external_agent_is_given_its_prompt_parts_first_and_again_only_when_t
         vec![Ok(ExternalEvent::Message("Hello, alice.".to_string())), Ok(ExternalEvent::Completed)],
         vec![Ok(ExternalEvent::Message("Fine.".to_string())), Ok(ExternalEvent::Completed)],
     ]));
-    let built = external_channel(Arc::clone(&remote), external_components_with_prompts(), |_| None)
-        .await
-        .expect("the external agent can be run");
+    let built =
+        external_channel(Arc::clone(&remote), external_components_with_prompts(), |_, _| None)
+            .await
+            .expect("the external agent can be run");
     let Stuck { channel, context, agent, mut events, running, .. } = start(built).await;
     let first = answered(&mut events, agent).await;
     channel
@@ -892,9 +893,10 @@ async fn a_part_given_that_holds_nothing_any_more_is_withdrawn_once() {
     let answer =
         || vec![Ok(ExternalEvent::Message("Fine.".to_string())), Ok(ExternalEvent::Completed)];
     let remote = Arc::new(ScriptedExternalAgent::answering(vec![answer(), answer(), answer()]));
-    let built = external_channel(Arc::clone(&remote), external_components_with_rules(), |_| None)
-        .await
-        .expect("the external agent can be run");
+    let built =
+        external_channel(Arc::clone(&remote), external_components_with_rules(), |_, _| None)
+            .await
+            .expect("the external agent can be run");
     let Stuck { channel, context, agent, mut events, running, .. } = start(built).await;
     answered(&mut events, agent).await;
     for text in ["How are you?", "Still there?"] {
@@ -928,9 +930,10 @@ async fn a_part_a_failed_send_did_not_give_is_not_given_once_it_holds_nothing() 
         ]])
         .unreachable_for(1),
     );
-    let built = external_channel(Arc::clone(&remote), external_components_with_rules(), |_| None)
-        .await
-        .expect("the external agent can be run");
+    let built =
+        external_channel(Arc::clone(&remote), external_components_with_rules(), |_, _| None)
+            .await
+            .expect("the external agent can be run");
     let Stuck { channel, context, agent, mut events, running, .. } = start(built).await;
     turn_given_up(&mut events, agent).await;
 
@@ -968,9 +971,11 @@ async fn after_a_restart_an_external_agent_is_given_only_the_prompt_parts_it_was
     stored.remote.give("heard".to_string(), digest::prompt("[Heard]\n0"));
     stored.heard = after_founding();
     let built =
-        external_channel(Arc::clone(&remote), external_components_with_prompts(), |_| Some(stored))
-            .await
-            .expect("the external agent can be run");
+        external_channel(Arc::clone(&remote), external_components_with_prompts(), |_, _| {
+            Some(stored)
+        })
+        .await
+        .expect("the external agent can be run");
     let Stuck { agent, mut events, running, .. } = start(built).await;
     answered(&mut events, agent).await;
 
@@ -994,9 +999,10 @@ async fn the_prompt_parts_an_external_agent_could_not_send_are_sent_with_its_nex
         ]])
         .unreachable_for(1),
     );
-    let built = external_channel(Arc::clone(&remote), external_components_with_prompts(), |_| None)
-        .await
-        .expect("the external agent can be run");
+    let built =
+        external_channel(Arc::clone(&remote), external_components_with_prompts(), |_, _| None)
+            .await
+            .expect("the external agent can be run");
     let Stuck { channel, context, agent, mut events, running, .. } = start(built).await;
     turn_given_up(&mut events, agent).await;
 
@@ -1033,7 +1039,7 @@ async fn after_a_restart_an_external_agent_sends_what_it_heard_but_had_not_sent(
         Ok(ExternalEvent::Message("Noted.".to_string())),
         Ok(ExternalEvent::Completed),
     ]]));
-    let built = external_channel(Arc::clone(&remote), external_components(), |_| Some(stored))
+    let built = external_channel(Arc::clone(&remote), external_components(), |_, _| Some(stored))
         .await
         .unwrap();
     let Stuck { agent, mut events, running, .. } = start(built).await;
@@ -1344,8 +1350,9 @@ async fn a_task_taken_up_again_is_done_as_the_call_that_took_it_up_though_the_re
 #[tokio::test]
 async fn an_external_personality_that_names_no_remote_agent_cannot_be_run() {
     let remote = Arc::new(ScriptedExternalAgent::default());
-    let refused =
-        external_channel(remote, Default::default(), |_| None).await.expect_err("nothing to reach");
+    let refused = external_channel(remote, Default::default(), |_, _| None)
+        .await
+        .expect_err("nothing to reach");
     let message = format!("{refused:#}");
     assert!(
         message.contains("no component provides ExternalAgent, and it has no default"),
@@ -1642,7 +1649,7 @@ async fn after_a_restart_an_open_task_is_followed_again_and_one_that_asked_back_
         Ok(ExternalEvent::Completed),
     ]]));
     let (channel, _, agent, owner) =
-        external_channel(Arc::clone(&remote), external_components(), |_| Some(stored))
+        external_channel(Arc::clone(&remote), external_components(), |_, _| Some(stored))
             .await
             .unwrap();
     let mut events = channel.observe();
@@ -1698,7 +1705,7 @@ async fn an_open_task_is_followed_and_told_of_in_the_contexts_of_the_request_tha
     let request =
         EventContext::new(SessionId::default(), ChannelId::default(), bob, "bob".to_string());
     let begun = request.clone();
-    let stored = move |agent| {
+    let stored = move |agent, channel| {
         let hermes = ActorId::Agent(agent);
         Some(AgentChannelState {
             remote: RemoteState {
@@ -1708,7 +1715,11 @@ async fn an_open_task_is_followed_and_told_of_in_the_contexts_of_the_request_tha
                     state: OpenTaskState::Working,
                     unsaid: None,
                     work: Some(Work::new(
-                        begun.next(hermes, "hermes".to_string()),
+                        EventContext {
+                            span_id: begun.span_id,
+                            ..EventContext::new(SessionId::default(), channel, bob, "bob")
+                        }
+                        .next(hermes, "hermes".to_string()),
                         None,
                         Classification::CHANNEL_DEFAULT,
                         Default::default(),
@@ -1751,15 +1762,19 @@ async fn an_open_task_is_followed_and_told_of_in_the_contexts_of_the_request_tha
     running.abort();
 }
 
-/// The state of external agent `agent` with one task `standing` so,
-/// begun while its channel was confidential - above the channel as it is
-/// now - in its own name.
-fn begun_above(agent: AgentId, open: &str, standing: OpenTaskState) -> AgentChannelState {
+/// The state of external agent `agent` in `channel` with one task `standing` so, begun while its
+/// channel was confidential - above the channel as it is now - in its own name.
+fn begun_above(
+    agent: AgentId,
+    channel: ChannelId,
+    open: &str,
+    standing: OpenTaskState,
+) -> AgentChannelState {
     use caelumora_domain::confidentiality::Confidentiality;
     use caelumora_domain::external_agent::{OpenTask, RemoteState};
     let own = ActorId::Agent(agent);
     let work = Work::new(
-        EventContext::default().next(own, "hermes".to_string()),
+        EventContext::new(SessionId::default(), channel, own, "hermes".to_string()),
         None,
         Classification::general(Confidentiality::Confidential),
         Default::default(),
@@ -1822,8 +1837,8 @@ async fn lowering_the_channel_gives_up_an_external_agents_answer_under_way() {
 async fn a_task_begun_before_its_channel_was_lowered_is_given_up_instead_of_followed() {
     let remote = Arc::new(ScriptedExternalAgent::default());
     let (channel, _, agent, _) =
-        external_channel(Arc::clone(&remote), external_components(), |agent| {
-            Some(begun_above(agent, "t-1", OpenTaskState::Working))
+        external_channel(Arc::clone(&remote), external_components(), |agent, channel| {
+            Some(begun_above(agent, channel, "t-1", OpenTaskState::Working))
         })
         .await
         .unwrap();
@@ -1850,8 +1865,8 @@ async fn a_task_that_asked_back_before_its_channel_was_lowered_is_not_taken_up()
         Ok(ExternalEvent::Message("Hello.".to_string())),
         Ok(ExternalEvent::Completed),
     ]]));
-    let built = external_channel(Arc::clone(&remote), external_components(), |agent| {
-        Some(begun_above(agent, "t-1", OpenTaskState::InputRequired))
+    let built = external_channel(Arc::clone(&remote), external_components(), |agent, channel| {
+        Some(begun_above(agent, channel, "t-1", OpenTaskState::InputRequired))
     })
     .await
     .unwrap();
@@ -1907,7 +1922,9 @@ async fn a_followed_task_that_fails_says_so_and_keeps_nothing_of_what_came_befor
         Ok(ExternalEvent::Failed("out of coffee".to_string())),
     ]]));
     let (channel, _, agent, _) =
-        external_channel(remote, external_components(), |_| Some(working_on("t-1"))).await.unwrap();
+        external_channel(remote, external_components(), |_, _| Some(working_on("t-1")))
+            .await
+            .unwrap();
     let mut events = channel.observe();
     let running = tokio::spawn({
         let channel = Arc::clone(&channel);
@@ -1941,7 +1958,9 @@ async fn a_followed_task_whose_stream_breaks_says_nothing_and_stays_open() {
         }),
     ]]));
     let (channel, _, agent, _) =
-        external_channel(remote, external_components(), |_| Some(working_on("t-1"))).await.unwrap();
+        external_channel(remote, external_components(), |_, _| Some(working_on("t-1")))
+            .await
+            .unwrap();
     let mut events = channel.observe();
     let running = tokio::spawn({
         let channel = Arc::clone(&channel);

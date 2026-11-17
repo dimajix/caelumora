@@ -661,7 +661,8 @@ pub enum Rejection {
     #[error("the message it is about was taken back or cannot be changed so")]
     MessageUnchangeable,
     /// It does not fit the channel as it is: sent in another's name, about
-    /// someone who takes no part, or asking what cannot be asked.
+    /// someone who takes no part, in a thread the channel does not have
+    /// (issue 557), or asking what cannot be asked.
     #[error("it does not fit the channel as it is")]
     Invalid,
 }

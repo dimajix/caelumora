@@ -292,15 +292,14 @@ impl ChannelLoop {
         self.enter(event, &context, running).await;
     }
 
-    /// Lets `event` enter the channel, admitted or the channel's own, in
-    /// `context` - its sender's, as the channel built it to admit the event,
-    /// or the one the channel speaks in (issue 516), which the moderator
-    /// routes it by -: its mentions resolved, appended to the history and
-    /// routed.
-    /// What its sender's owner alone sees is recorded with it, and given to
-    /// nobody else (issue 417): the moderator decides on what everybody may
-    /// see of it, and that is what is delivered; of an event with nothing
-    /// left to show, nothing is, and its entry went to nobody.
+    /// Lets `event` enter the channel, admitted or the channel's own, in `context` - its sender's,
+    /// as the channel built it to admit the event, or the one the channel speaks in (issue 516),
+    /// which the moderator routes it by -: its mentions resolved, appended to the history and
+    /// routed by the thread it happens in (issue 557), which admission made sure the channel has -
+    /// dropped, unrecorded, if it has not. What its sender's owner alone sees is recorded with
+    /// it, and given to nobody else (issue 417): the moderator decides on what everybody may see
+    /// of it, and that is what is delivered; of an event with nothing left to show, nothing is,
+    /// and its entry went to nobody.
     ///
     /// An answer under way asked for again (issue 235) has its turn ended
     /// first, so that the agent finds it given up as it takes the request
@@ -317,6 +316,14 @@ impl ChannelLoop {
         context: &SecurityContext,
         running: &HashMap<ActorId, RunningActor>,
     ) {
+        let Some(thread) = self.threads.get(&event.context.thread_id) else {
+            warn!(
+                "Dropped {}: the channel has no thread {}",
+                event.describe(),
+                event.context.thread_id
+            );
+            return;
+        };
         if let ActorEvent::RetryRequested { target: RetryTarget::Turn(turn), author } = &event.event
         {
             let interrupted = self.actor(*author).is_some_and(|actor| actor.retry_turn(*turn));
@@ -328,7 +335,7 @@ impl ChannelLoop {
         let event = self.resolve_mentions(event);
         let shown = event.published();
         let routing = match &shown {
-            Some(shown) => Some(self.moderator.route(shown, context).await),
+            Some(shown) => Some(thread.route(shown, context).await),
             None => None,
         };
         let audience = routing
@@ -471,6 +478,8 @@ impl ChannelLoop {
     /// what they send; who sent what is not let in is told (`EventRejected`). Whether whoever
     /// sends it may act so is asked before the flow of what it carries. Decided:
     ///
+    /// - first, it happens in a thread the channel has (issue 557), else it does not fit the
+    ///   channel as it is (`Rejection::Invalid`);
     /// - a message, by the actor that is acting - only who acts puts something into the channel -,
     ///   each part of it, the message, its attachments, its tool results and what they gave and
     ///   showed, as it is classified (`ConfidentialityPolicy::may_publish`, issue 133): its sender
@@ -511,6 +520,9 @@ impl ChannelLoop {
         event: &Envelope,
         context: &SecurityContext,
     ) -> Result<(), Rejection> {
+        if !self.threads.contains_key(&event.context.thread_id) {
+            return Err(Rejection::Invalid);
+        }
         let messages = event.event.messages();
         let classification = self.classification();
         let channel = self.security_attributes();
@@ -697,9 +709,11 @@ impl ChannelLoop {
     }
 
     /// Tells the sender of `event`, which the channel did not let in, why (`EventRejected`, issue
-    /// 304) - it alone, in the channel's name; not one that left, whose inbox is closed. The notice
-    /// is recorded, to the sender alone, so that it is shown after a reload (issue 417); what was
-    /// rejected entered nothing and is not.
+    /// 304) - it alone, in the channel's name, in the thread of `event` (issue 557); not one that
+    /// left, whose inbox is closed. The notice is recorded, to the sender alone, so that it is
+    /// shown after a reload (issue 417); what was rejected entered nothing and is not. Of an event
+    /// naming a thread the channel does not have, the notice is recorded in that thread, and
+    /// reaches its sender all the same: by name.
     async fn reject(
         &self,
         event: &Envelope,
@@ -1013,7 +1027,7 @@ mod tests {
         RetryTarget,
     };
     use caelumora_domain::agent::AgentId;
-    use caelumora_domain::channel::ChannelId;
+    use caelumora_domain::channel::{ChannelId, ThreadId};
     use caelumora_domain::confidentiality::{Classification, Confidentiality};
     use caelumora_domain::content::ContentRef;
     use caelumora_domain::history::{HistoryEntry, Recipients};
@@ -1061,13 +1075,14 @@ mod tests {
     }
 
     /// Routes `event` in `channel` to `running` as the channel does once it
-    /// recorded it: decided by its moderator, then delivered.
+    /// recorded it: decided by the moderator of its thread, then delivered.
     async fn routed(
         channel: &ChannelLoop,
         running: &HashMap<ActorId, RunningActor>,
         event: Envelope,
     ) {
-        let routing = channel.moderator.route(&event, &channel.admitted_in(&event)).await;
+        let thread = channel.threads.get(&event.context.thread_id).expect("its thread");
+        let routing = thread.route(&event, &channel.admitted_in(&event)).await;
         channel.route_event(running, event, Some(routing), None).await;
     }
 
@@ -1141,7 +1156,7 @@ mod tests {
             },
         )]);
         let said = Envelope::new(
-            EventContext { sender_id: bob, ..EventContext::default() },
+            EventContext { sender_id: bob, ..channel.event_context() },
             ActorEvent::TurnFinished {
                 turn_id: TurnId::new(),
                 messages: vec![Message::new(Classification::CHANNEL_DEFAULT)],
@@ -1220,7 +1235,7 @@ mod tests {
             channel_moderated_by(&[&alice], Arc::<PolicyModerator>::clone(&moderator)).await;
         // One hop into a chain between agents, as the answer to a request.
         let talker = ActorId::Agent(AgentId::new());
-        let context = EventContext { sender_id: talker, agent_hops: 1, ..EventContext::default() };
+        let context = EventContext { sender_id: talker, agent_hops: 1, ..channel.event_context() };
         let said = Message {
             sender_id: talker,
             role: MessageRole::Assistant,
@@ -1296,7 +1311,7 @@ mod tests {
         let (channel, _, agent, alice) = scripted_channel(Script::Hangs).await;
         let (her, its) = (ActorId::User(alice), ActorId::Agent(agent));
         let from_her = |event| {
-            Envelope::new(EventContext { sender_id: her, ..EventContext::default() }, event)
+            Envelope::new(EventContext { sender_id: her, ..channel.event_context() }, event)
         };
         let command = ActorEvent::CommandRequested {
             command: "mark".to_string(),
@@ -1335,7 +1350,7 @@ mod tests {
                 ..Message::new(Classification::CHANNEL_DEFAULT)
             };
             Envelope::new(
-                EventContext { sender_id: sender, ..EventContext::default() },
+                EventContext { sender_id: sender, ..channel.event_context() },
                 ActorEvent::CompleteMessageGenerated(message),
             )
         };
@@ -1347,7 +1362,7 @@ mod tests {
                 context: EventContext {
                     sender_id: talker,
                     initiator_id: her,
-                    ..EventContext::default()
+                    ..channel.event_context()
                 },
                 ..said(talker, talker, "its own")
             },
@@ -1391,7 +1406,7 @@ mod tests {
         let her = ActorId::User(alice.id);
         let stranger = ActorId::User(UserId::new());
         let from_her = |event| {
-            Envelope::new(EventContext { sender_id: her, ..EventContext::default() }, event)
+            Envelope::new(EventContext { sender_id: her, ..channel.event_context() }, event)
         };
         let (to_her, mut hers) = opened();
         let actors = HashMap::from([(
@@ -1474,7 +1489,7 @@ mod tests {
         let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
         let (her, bob) = (ActorId::User(alice.id), ActorId::User(UserId::new()));
         let from_her = |event| {
-            Envelope::new(EventContext { sender_id: her, ..EventContext::default() }, event)
+            Envelope::new(EventContext { sender_id: her, ..channel.event_context() }, event)
         };
         let (to_her, mut hers) = opened();
         let actors = HashMap::from([(
@@ -1543,7 +1558,7 @@ mod tests {
         let actors =
             HashMap::from([(her, running(her, to_her)), (agent, running(agent, to_agent))]);
         let sent = |sender: ActorId, event: ActorEvent| {
-            Envelope::new(EventContext { sender_id: sender, ..EventContext::default() }, event)
+            Envelope::new(EventContext { sender_id: sender, ..channel.event_context() }, event)
         };
         let refused = |to| ActorEvent::EventRefused {
             to,
@@ -1591,7 +1606,7 @@ mod tests {
         let agent = ActorId::Agent(AgentId::new());
         let her = ActorId::User(alice.id);
         let sent = |sender: ActorId, event: ActorEvent| {
-            Envelope::new(EventContext { sender_id: sender, ..EventContext::default() }, event)
+            Envelope::new(EventContext { sender_id: sender, ..channel.event_context() }, event)
         };
         let turn_id = TurnId::new();
         let activity = "compacting its context".to_string();
@@ -1663,7 +1678,7 @@ mod tests {
         }
         let said = || {
             Envelope::new(
-                EventContext { sender_id: ActorId::User(alice.id), ..EventContext::default() },
+                EventContext { sender_id: ActorId::User(alice.id), ..channel.event_context() },
                 ActorEvent::TurnFinished {
                     turn_id: TurnId::new(),
                     messages: vec![Message::new(Classification::CHANNEL_DEFAULT)],
@@ -1690,7 +1705,7 @@ mod tests {
         let alice_id = ActorId::User(alice.id);
         let from = |sender: ActorId, classification: Classification| {
             Envelope::new(
-                EventContext { sender_id: sender, ..EventContext::default() },
+                EventContext { sender_id: sender, ..channel.event_context() },
                 ActorEvent::CompleteMessageGenerated(Message::new(classification)),
             )
         };
@@ -1729,7 +1744,7 @@ mod tests {
         let channel = channel_with(&[&alice], Arc::new(OwnershipPolicy::new())).await;
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(UserId::new()));
         let from = |sender: ActorId, event| {
-            Envelope::new(EventContext { sender_id: sender, ..EventContext::default() }, event)
+            Envelope::new(EventContext { sender_id: sender, ..channel.event_context() }, event)
         };
         let said = Message {
             id: MessageId::new(),
@@ -1911,7 +1926,7 @@ mod tests {
         let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
         let alice_id = ActorId::User(alice.id);
         let from = |event| {
-            Envelope::new(EventContext { sender_id: alice_id, ..EventContext::default() }, event)
+            Envelope::new(EventContext { sender_id: alice_id, ..channel.event_context() }, event)
         };
         let said = |n: usize| Message {
             id: MessageId::new(),
@@ -1986,7 +2001,7 @@ mod tests {
             ..Message::new(Classification::CHANNEL_DEFAULT)
         };
         let from = |sender: ActorId, event| {
-            Envelope::new(EventContext { sender_id: sender, ..EventContext::default() }, event)
+            Envelope::new(EventContext { sender_id: sender, ..channel.event_context() }, event)
         };
         let (to_alice, mut alices) = opened();
         let (to_bob, mut bobs) = opened();
@@ -2408,7 +2423,7 @@ mod tests {
         let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
         let said = || {
             Envelope::new(
-                EventContext { sender_id: ActorId::User(alice.id), ..EventContext::default() },
+                EventContext { sender_id: ActorId::User(alice.id), ..channel.event_context() },
                 ActorEvent::CompleteMessageGenerated(Message {
                     id: MessageId::new(),
                     sender_id: ActorId::User(alice.id),
@@ -2484,7 +2499,7 @@ mod tests {
         )]);
         let from_alice = |event| {
             Envelope::new(
-                EventContext { sender_id: ActorId::User(alice.id), ..EventContext::default() },
+                EventContext { sender_id: ActorId::User(alice.id), ..channel.event_context() },
                 event,
             )
         };
@@ -2545,7 +2560,7 @@ mod tests {
         assert!(!other.cancelled(), "the other's goes on");
 
         let said = Envelope::new(
-            EventContext { sender_id: ActorId::User(alice.id), ..EventContext::default() },
+            EventContext { sender_id: ActorId::User(alice.id), ..channel.event_context() },
             ActorEvent::TurnFinished {
                 turn_id: TurnId::new(),
                 messages: vec![Message::new(Classification::CHANNEL_DEFAULT)],
@@ -2573,15 +2588,77 @@ mod tests {
         );
     }
 
+    /// Issue 557: what enters the channel is routed in the thread it happens in - its line - and
+    /// recorded there; what names a thread the channel does not have is not let in, and its
+    /// sender is told why, in the thread it named.
+    #[tokio::test]
+    async fn an_event_enters_in_its_thread_and_one_of_no_thread_of_the_channel_is_not_let_in() {
+        let alice = make_user("alice");
+        let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
+        let alice_id = ActorId::User(alice.id);
+        let said = |thread_id: ThreadId, text: &str| {
+            Envelope::new(
+                EventContext { sender_id: alice_id, thread_id, ..channel.event_context() },
+                ActorEvent::CompleteMessageGenerated(Message {
+                    sender_id: alice_id,
+                    role: MessageRole::User,
+                    content: Some(text.to_string()),
+                    ..Message::new(Classification::CHANNEL_DEFAULT)
+                }),
+            )
+        };
+        let (to_alice, mut alices) = opened();
+        let running = RunningActor {
+            id: alice_id,
+            abort_handle: tokio::spawn(async {}).abort_handle(),
+            task: TaskTracker::new(),
+            inbox: Some(to_alice),
+            leaving: None,
+        };
+        let actors = HashMap::from([(alice_id, running)]);
+        let (line, elsewhere) = (ThreadId::line(channel.id), ThreadId::new());
+        channel.process_envelope(said(line, "in the line"), &actors).await;
+        channel.process_envelope(said(elsewhere, "elsewhere"), &actors).await;
+
+        let mut rejections = Vec::new();
+        while let Some(envelope) = alices.try_recv().await {
+            if let ActorEvent::EventRejected { reason, .. } = envelope.event {
+                rejections.push((reason, envelope.context.thread_id));
+            }
+        }
+        assert_eq!(rejections, [(Rejection::Invalid, elsewhere)], "told why, in the thread named");
+        let recorded = channel
+            .reading_history(|history| {
+                history
+                    .entries()
+                    .filter_map(|node| match &node.entry.entry {
+                        HistoryEntry::Said { message } => {
+                            Some((message.content.clone(), node.entry.context.thread_id))
+                        }
+                        HistoryEntry::EventRejected { .. } => {
+                            Some((None, node.entry.context.thread_id))
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .await;
+        assert_eq!(
+            recorded,
+            [(Some("in the line".to_string()), line), (None, elsewhere)],
+            "what is said in the line, recorded there, then the rejection of the other, in its thread"
+        );
+    }
+
     /// Issue 417: what enters the channel is recorded with its sender and
     /// whom the moderator delivered it to - everybody, as every channel
     /// delivers, or some alone.
     #[tokio::test]
     async fn what_enters_is_recorded_with_its_sender_and_whom_it_went_to() {
         let (alice, bob) = (make_user("alice"), make_user("bob"));
-        let said = |text: &str| {
+        let said = |channel: &ChannelLoop, text: &str| {
             Envelope::new(
-                EventContext { sender_id: ActorId::User(alice.id), ..EventContext::default() },
+                EventContext { sender_id: ActorId::User(alice.id), ..channel.event_context() },
                 ActorEvent::CompleteMessageGenerated(Message {
                     sender_id: ActorId::User(alice.id),
                     role: MessageRole::User,
@@ -2602,7 +2679,7 @@ mod tests {
         };
 
         let everybody = channel_with(&[&alice, &bob], Arc::new(AllowAllPolicy::new())).await;
-        everybody.let_in(said("hello"), &HashMap::new()).await;
+        everybody.let_in(said(&everybody, "hello"), &HashMap::new()).await;
         assert_eq!(
             recorded(Arc::clone(&everybody)).await,
             Some((ActorId::User(alice.id), Recipients::participants(true))),
@@ -2611,7 +2688,7 @@ mod tests {
 
         let to_bob =
             channel_moderated_by(&[&alice, &bob], Arc::new(AskBack(ActorId::User(bob.id)))).await;
-        to_bob.let_in(said("psst"), &HashMap::new()).await;
+        to_bob.let_in(said(&to_bob, "psst"), &HashMap::new()).await;
         assert_eq!(
             recorded(Arc::clone(&to_bob)).await,
             Some((ActorId::User(alice.id), Recipients::only(vec![ActorId::User(bob.id)]))),
@@ -2662,7 +2739,7 @@ mod tests {
         channel
             .let_in(
                 Envelope::new(
-                    EventContext { sender_id: hers, ..EventContext::default() },
+                    EventContext { sender_id: hers, ..channel.event_context() },
                     ActorEvent::CompleteMessageGenerated(said),
                 ),
                 &running,
@@ -2753,7 +2830,7 @@ mod tests {
         };
         let said = |message: Message| {
             Envelope::new(
-                EventContext { sender_id: agent, ..EventContext::default() },
+                EventContext { sender_id: agent, ..channel.event_context() },
                 ActorEvent::CompleteMessageGenerated(message),
             )
         };
@@ -2824,7 +2901,7 @@ mod tests {
         let owner = ctx.initiator_id;
         let said = |message: &Message| {
             Envelope::new(
-                EventContext { sender_id: owner, ..EventContext::default() },
+                EventContext { sender_id: owner, ..channel.event_context() },
                 ActorEvent::CompleteMessageGenerated(message.clone()),
             )
         };
@@ -2867,7 +2944,7 @@ mod tests {
         let upload = || attachments.create(&hers, &channel, "a.txt", None, (1, file("a")));
         let (alice, bob) = (ActorId::User(world.alice), ActorId::User(world.bob));
         let sent = |sender: ActorId, event: ActorEvent| {
-            Envelope::new(EventContext { sender_id: sender, ..EventContext::default() }, event)
+            Envelope::new(EventContext { sender_id: sender, ..main.event_context() }, event)
         };
         let said = |sender: ActorId, attachments: Vec<ContentRef>| {
             sent(
