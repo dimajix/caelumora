@@ -7,7 +7,7 @@ import React, {useEffect, useState} from 'react';
 import {IdCard, X} from 'lucide-react';
 import type {ChannelParticipant} from '../types';
 import {api} from '../api';
-import {actorUuid} from '../actor';
+import {actorPath} from '../actor';
 import {reportError} from '../errors';
 
 interface ProfilePanelProps {
@@ -19,7 +19,7 @@ interface ProfilePanelProps {
 }
 
 export const ProfilePanel: React.FC<ProfilePanelProps> = ({sessionId, channelId, participant, onClose}) => {
-  const actor = actorUuid(participant.id);
+  const actor = actorPath(participant.id);
   const [profile, setProfile] = useState<ChannelParticipant | null>(null);
 
   useEffect(() => {

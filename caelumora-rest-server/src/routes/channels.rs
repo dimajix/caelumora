@@ -14,7 +14,6 @@ use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response, Sse};
 use axum::{extract::State, http::StatusCode};
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::agent::AgentId;
 use caelumora_domain::approval::{ApprovalId, ApprovalRule};
 use caelumora_domain::channel::{moderation_components, ChannelId};
 use caelumora_domain::command::{CommandDescription, CommandVisibility};
@@ -29,7 +28,8 @@ use caelumora_kernel::actor::user::{ChannelWatch, Lagged, UserActor};
 use caelumora_kernel::actor::Shown;
 use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::session::ChannelSpec;
-use caelumora_kernel::view::{ChannelView, ParticipantView, Reached, SessionView, Views};
+use caelumora_kernel::view::{Reached, SessionView, Views};
+use caelumora_rest_api::actor::ActorPath;
 use caelumora_rest_api::channel::{
     AddParticipantRequest, AnswerQuestionsRequest, ChannelParticipantResponse, ChannelResponse,
     ChannelSnapshot, CommandReplyResponse, CreateChannelRequest, ExecuteCommandRequest,
@@ -380,13 +380,14 @@ pub(super) async fn add_participant(
 /// used, which would read its whole state for it: that is `get_participant_usage`.
 pub(super) async fn get_participant(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
+    Path((id, cid, ActorPath(aid))): Path<(Uuid, Uuid, ActorPath)>,
     user: AuthenticatedUser,
 ) -> Result<Json<ChannelParticipantResponse>, ApiError> {
     let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let participant = participant_of(&channel, aid).await?.snapshot(Detail::PROFILE).await;
+    let participant = channel.participant(aid).await?.snapshot(Detail::PROFILE).await;
     ChannelParticipantResponse::of(participant).map(Json).ok_or_else(|| {
-        ApiError::not_found("actor_not_found", format!("Actor {} is not in channel {}", aid, cid))
+        let actor = ActorPath(aid);
+        ApiError::not_found("actor_not_found", format!("Actor {actor} is not in channel {cid}"))
     })
 }
 
@@ -397,23 +398,22 @@ pub(super) async fn get_participant(
 /// a state that cannot be read is an error.
 pub(super) async fn get_participant_usage(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
+    Path((id, cid, ActorPath(aid))): Path<(Uuid, Uuid, ActorPath)>,
     user: AuthenticatedUser,
 ) -> Result<Json<Option<TokenUsage>>, ApiError> {
     let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    Ok(Json(participant_of(&channel, aid).await?.usage().await?))
+    Ok(Json(channel.participant(aid).await?.usage().await?))
 }
 
-/// Removes a participant from the channel (issue 46); `aid` is the id of the
-/// user or agent. Only who may change the channel may do it.
+/// Removes the user or agent `aid` from the channel (issue 46). Only who may change the channel
+/// may do it.
 pub(super) async fn remove_participant(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
+    Path((id, cid, ActorPath(participant))): Path<(Uuid, Uuid, ActorPath)>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let context = user.security_context();
-    let participant = actor_in(&channel, aid)?;
     channel.remove_participant(&context, participant).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -422,11 +422,10 @@ pub(super) async fn remove_participant(
 /// their own act (issue 562), without the right to change it (`ChannelLoop::leave`).
 pub(super) async fn leave(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
+    Path((id, cid, ActorPath(participant))): Path<(Uuid, Uuid, ActorPath)>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let participant = actor_in(&channel, aid)?;
     channel.leave(&user.security_context(), participant).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -496,13 +495,12 @@ pub(super) async fn retry_message(
 /// it delivers the request, and the stream shows `RetryAccepted` and the new answer.
 pub(super) async fn retry_turn(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
+    Path((id, cid, ActorPath(participant))): Path<(Uuid, Uuid, ActorPath)>,
     user: AuthenticatedUser,
     Json(payload): Json<TurnRequest>,
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
-    let participant = actor_in(&channel, aid)?;
     let span_id = user_actor.request_retry_of_turn(participant, payload.turn_id).await?;
     Span::current().record("span_id", field::display(span_id));
     Ok(StatusCode::OK)
@@ -522,35 +520,6 @@ pub(super) async fn revoke_message(
     let span_id = user_actor.revoke_message(MessageId(mid)).await?;
     Span::current().record("span_id", field::display(span_id));
     Ok(StatusCode::NO_CONTENT)
-}
-
-/// The actor of `channel` whose id is `id`, whatever kind it is - a path
-/// names an actor by its UUID alone.
-///
-/// # Errors
-/// `participant_not_found` if none of its participants has that id.
-fn actor_in(channel: &ChannelLoop, id: Uuid) -> Result<ActorId, ApiError> {
-    channel.participant_ids().into_iter().find(|actor| actor.id() == id).ok_or_else(|| {
-        ApiError::not_found(
-            "participant_not_found",
-            format!("{} takes no part in channel {}", id, channel.id()),
-        )
-    })
-}
-
-/// The participant of `channel` whose id is `id`, whatever kind it is - or a
-/// former participant (issue 164), whose history and context stay readable.
-async fn participant_of(channel: &ChannelView, id: Uuid) -> Result<ParticipantView, ApiError> {
-    let mut participants = channel.participants().await;
-    participants.extend(channel.former_participants().await);
-    if let Some(participant) =
-        participants.into_iter().find(|participant| participant.id().id() == id)
-    {
-        return Ok(participant);
-    }
-    // An agent that left before the channel kept who left is known by what
-    // it said.
-    Ok(channel.participant(ActorId::Agent(AgentId(id))).await?)
 }
 
 /// The actor the authenticated user acts through in `channel` (issue 30).
@@ -588,11 +557,10 @@ pub(super) async fn cancel_channel(
 /// the channel). The others go on, and the channel stays answering.
 pub(super) async fn cancel_participant(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
+    Path((id, cid, ActorPath(participant))): Path<(Uuid, Uuid, ActorPath)>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let participant = actor_in(&channel, aid)?;
     channel.cancel_actor(&user.security_context(), participant).await?;
     Ok(StatusCode::OK)
 }
@@ -604,12 +572,11 @@ pub(super) async fn cancel_participant(
 /// that does not run, or no longer, is `409 tool_call_not_running`.
 pub(super) async fn interrupt_tool_call(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, aid, call_id)): Path<(Uuid, Uuid, Uuid, String)>,
+    Path((id, cid, ActorPath(participant), call_id)): Path<(Uuid, Uuid, ActorPath, String)>,
     user: AuthenticatedUser,
     Json(payload): Json<TurnRequest>,
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let participant = actor_in(&channel, aid)?;
     channel
         .interrupt_tool_call(&user.security_context(), participant, payload.turn_id, &call_id)
         .await?;
@@ -737,11 +704,11 @@ pub(super) async fn execute_command(
 /// produced a message has a context for it.
 pub(super) async fn message_context(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, aid, mid)): Path<(Uuid, Uuid, Uuid, Uuid)>,
+    Path((id, cid, ActorPath(aid), mid)): Path<(Uuid, Uuid, ActorPath, Uuid)>,
     user: AuthenticatedUser,
 ) -> Result<Json<MessageContextResponse>, ApiError> {
     let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let participant = participant_of(&channel, aid).await?;
+    let participant = channel.participant(aid).await?;
     let view = participant.context().await?;
     let seen = view.context_of(MessageId(mid)).await?;
     // What set the message's label, of the parts classified (issue 170).
@@ -842,12 +809,12 @@ async fn knowledge_response(
 /// attachments alone (issue 509).
 pub(super) async fn agent_history(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
+    Path((id, cid, ActorPath(aid))): Path<(Uuid, Uuid, ActorPath)>,
     Query(query): Query<HistoryQuery>,
     user: AuthenticatedUser,
 ) -> Result<Json<HistoryPageResponse<HistoryMessageResponse>>, ApiError> {
     let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let view = participant_of(&channel, aid).await?.context().await?;
+    let view = channel.participant(aid).await?.context().await?;
     let page = view.history_page_of(query.before, query.limit(), query.filter()).await?;
     let heard: Vec<MessageId> =
         page.entries().filter_map(|item| item.said().map(|m| m.id)).collect();
@@ -863,11 +830,11 @@ pub(super) async fn agent_history(
 /// may see them (`ReadAgentTools`).
 pub(super) async fn agent_tools(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
+    Path((id, cid, ActorPath(aid))): Path<(Uuid, Uuid, ActorPath)>,
     user: AuthenticatedUser,
 ) -> Result<Json<AgentToolsResponse>, ApiError> {
     let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let tool_sets = participant_of(&channel, aid).await?.tool_sets().await?;
+    let tool_sets = channel.participant(aid).await?.tool_sets().await?;
     Ok(Json(AgentToolsResponse { tool_sets }))
 }
 
@@ -875,11 +842,11 @@ pub(super) async fn agent_tools(
 /// (issue 270), for whoever may see them (`ReadAgentComponents`).
 pub(super) async fn agent_components(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
+    Path((id, cid, ActorPath(aid))): Path<(Uuid, Uuid, ActorPath)>,
     user: AuthenticatedUser,
 ) -> Result<Json<AgentComponentsResponse>, ApiError> {
     let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let components = participant_of(&channel, aid).await?.components().await?;
+    let components = channel.participant(aid).await?.components().await?;
     Ok(Json(AgentComponentsResponse { components }))
 }
 
@@ -942,6 +909,7 @@ mod tests {
     use caelumora_api::command::CommandError;
     use caelumora_api::reader::ViewError;
     use caelumora_domain::agent::testing::make_personality;
+    use caelumora_domain::agent::AgentId;
     use caelumora_domain::channel::Participant;
     use caelumora_domain::security::Refused;
     use caelumora_kernel::channel::ChannelError;
@@ -1176,7 +1144,8 @@ mod tests {
     }
 
     /// Issue 573: what an agent's calls used is read alone, as its state holds it; a user has
-    /// none, and one who takes no part in the channel is not found.
+    /// none, and one who takes no part in the channel is not found. Issue 590: the participant is
+    /// named by its kind and id, and a bare UUID names none.
     #[tokio::test]
     async fn what_a_participants_calls_used_is_read_alone() {
         let state = state();
@@ -1201,17 +1170,26 @@ mod tests {
         states.put_agent_channel_state(helper.id, channel_id, &mut agent_state).await.unwrap();
         let participants =
             format!("/sessions/{}/channels/{}/participants", session_id.0, channel_id.0);
-        let usage_of = |id: Uuid| format!("{participants}/{id}/usage");
+        let usage_of = |actor: ActorId| format!("{participants}/{}/usage", ActorPath(actor));
 
-        let (status, usage) = send(&api, &cookie, Method::GET, &usage_of(helper.id.0), None).await;
+        let helper = ActorId::Agent(helper.id);
+        let (status, usage) = send(&api, &cookie, Method::GET, &usage_of(helper), None).await;
         assert_eq!((status, usage), (StatusCode::OK, serde_json::to_value(used).unwrap()));
-        let (status, usage) = send(&api, &cookie, Method::GET, &usage_of(alice.0), None).await;
+        let (status, usage) =
+            send(&api, &cookie, Method::GET, &usage_of(ActorId::User(alice)), None).await;
         assert_eq!((status, usage), (StatusCode::OK, Value::Null), "a user's calls are none");
-        let (status, missing) =
-            send(&api, &cookie, Method::GET, &usage_of(Uuid::new_v4()), None).await;
+        let stranger = ActorId::Agent(AgentId::new());
+        let (status, missing) = send(&api, &cookie, Method::GET, &usage_of(stranger), None).await;
         assert_eq!(
             (status, missing["code"].clone()),
             (StatusCode::NOT_FOUND, json!("actor_not_found"))
+        );
+        let bare = format!("{participants}/{}/usage", Uuid::new_v4());
+        let (status, refused) = send(&api, &cookie, Method::GET, &bare, None).await;
+        assert_eq!(
+            (status, refused["code"].clone()),
+            (StatusCode::BAD_REQUEST, json!("invalid_path")),
+            "a bare UUID names no actor"
         );
         state.session_manager.stop(&SecurityContext::system(), session_id).await.unwrap();
     }

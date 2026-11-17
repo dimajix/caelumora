@@ -109,7 +109,7 @@ import {AddParticipantDialog} from './AddParticipantDialog';
 import {ApprovalRuleOffer} from './ApprovalRuleOffer';
 import {QuestionCard} from './QuestionCard';
 import {approveEverything, approvingEverything, initialChoice, ruleOf, type RuleChoice} from '../approvalRules';
-import {APPROVER_NAME, actorKey, actorUuid, agentIdOf, isApprover, sameActor, userActor, userIdOf} from '../actor';
+import {APPROVER_NAME, actorKey, actorPath, agentIdOf, isApprover, sameActor, userActor, userIdOf} from '../actor';
 import {GROUP_HANDLES, handleOf, mentionQueryAt} from '../mention';
 import {commandQueryAt, completes, parseInput, usageOf} from '../command';
 import {openEventStream} from '../stream';
@@ -684,10 +684,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     !!msg.turn_id && !!msg.givenUp && mayBeAnsweredAgain(msg.givenUp) && mayRetry(msg);
 
   const retryGivenUp = async (msg: Message) => {
-    const uuid = msg.sender_id ? participantUuid(actorKey(msg.sender_id)) : undefined;
-    if (!uuid || !msg.turn_id) return;
+    const path = msg.sender_id ? participantPath(actorKey(msg.sender_id)) : undefined;
+    if (!path || !msg.turn_id) return;
     try {
-      await api.retryAnswer(sessionId, channelId, uuid, msg.turn_id);
+      await api.retryAnswer(sessionId, channelId, path, msg.turn_id);
     } catch (error) {
       reportError('Failed to ask for another answer', error);
     }
@@ -724,10 +724,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
    * it is restored.
    */
   const deleteAgent = async (participant: ChannelParticipant) => {
-    const uuid = actorUuid(participant.id);
-    if (!uuid) return;
+    const agent = agentIdOf(participant.id);
+    if (!agent) return;
     try {
-      await api.deleteAgent(uuid);
+      await api.deleteAgent(agent);
     } catch (error) {
       reportError(`Failed to delete ${participant.name}`, error);
     }
@@ -783,10 +783,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
 
   /** Takes `participant` out of the channel - `leave` by one's own act, or `remove` it. */
   const takeOut = async (participant: ChannelParticipant, how: 'leave' | 'remove') => {
-    const uuid = actorUuid(participant.id);
-    if (!uuid) return;
+    const path = actorPath(participant.id);
+    if (!path) return;
     try {
-      await (how === 'leave' ? api.leaveChannel : api.removeParticipant)(sessionId, channelId, uuid);
+      await (how === 'leave' ? api.leaveChannel : api.removeParticipant)(sessionId, channelId, path);
       setChannel(prev => prev && {...prev, participants: prev.participants.filter(m => !sameActor(m.id, participant.id))});
     } catch (error) {
       reportError(`Failed to take ${participant.name} out of the channel`, error);
@@ -827,9 +827,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
         // What the sender's calls used, as the server sums them once its
         // turn ended - also those whose messages were not published.
         const readUsage = () => {
-          const uuid = agentIdOf(envelope.context.sender_id);
-          if (!uuid) return;
-          api.getParticipantUsage(sessionId, channelId, uuid)
+          const sender = envelope.context.sender_id;
+          const agent = agentIdOf(sender) !== null ? actorPath(sender) : null;
+          if (!agent) return;
+          api.getParticipantUsage(sessionId, channelId, agent)
             .then(usage => { if (usage) setUsage(prev => ({...prev, [answerer]: usage})); })
             .catch(error => reportError('Failed to read what the agent used', error));
         };
@@ -1326,8 +1327,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     }
   };
 
-  /** The id the REST API addresses the participant `sender` (an `actorKey`) by. */
-  const participantUuid = (sender: string) => actorUuid(participants.find(m => actorKey(m.id) === sender)?.id);
+  /** How a path of the REST API names the participant `sender` (an `actorKey`): `actorPath`. */
+  const participantPath = (sender: string) => actorPath(participants.find(m => actorKey(m.id) === sender)?.id);
 
   /**
    * Whether the user may end the answer of `sender`: a participant whose `can_cancel` allows it
@@ -1337,10 +1338,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
 
   /** Stops the answer of the agent `sender` alone (issue 235); the others go on. */
   const stopAnswer = async (sender: string) => {
-    const uuid = participantUuid(sender);
-    if (!uuid) return;
+    const path = participantPath(sender);
+    if (!path) return;
     try {
-      await api.cancelParticipant(sessionId, channelId, uuid);
+      await api.cancelParticipant(sessionId, channelId, path);
     } catch (error) {
       reportError('Failed to stop the answer', error);
     }
@@ -1359,10 +1360,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
 
   /** Interrupts the call `call` of `msg` alone; the agent's turn goes on (issue 276). */
   const interruptCall = async (msg: Message, call: ToolCall) => {
-    const uuid = msg.sender_id ? participantUuid(actorKey(msg.sender_id)) : undefined;
-    if (!uuid || !msg.turn_id || !call.id) return;
+    const path = msg.sender_id ? participantPath(actorKey(msg.sender_id)) : undefined;
+    if (!path || !msg.turn_id || !call.id) return;
     try {
-      await api.interruptToolCall(sessionId, channelId, uuid, msg.turn_id, call.id);
+      await api.interruptToolCall(sessionId, channelId, path, msg.turn_id, call.id);
     } catch (error) {
       reportError('Failed to interrupt the tool call', error);
     }
@@ -1414,10 +1415,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
    * meanwhile; the retry icon on its last message is then the way.
    */
   const retryAnswer = async (answer: Answer) => {
-    const uuid = participantUuid(answer.sender);
-    if (!uuid || !answer.turnId) return;
+    const path = participantPath(answer.sender);
+    if (!path || !answer.turnId) return;
     try {
-      await api.retryAnswer(sessionId, channelId, uuid, answer.turnId);
+      await api.retryAnswer(sessionId, channelId, path, answer.turnId);
     } catch (error) {
       reportError('Failed to ask for another answer', error);
     }

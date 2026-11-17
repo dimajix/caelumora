@@ -156,9 +156,36 @@ Steps, each committed on its own:
 5. A history store answers who has a range of attendance open in a channel at once, so that a
    channel being built reads them in one question instead of one per former participant
    (`HistoryStore::attendance`, step 3), whose number grows with every sub-agent.
+6a. An actor is named in a path of the REST API by its kind and its id, not by a bare UUID (below):
+   before step 6, so that the routes of a session's participants do not need a lookup of the
+   kernel's that turns a UUID back into an actor. Its behaviour changes where the REST server's
+   own check of participation departed from the kernel's.
 6. The REST routes and the web UI; `SessionError::NotAParticipant`, answered as `invalid_channel`
    today, answered for a session.
 7. The exception of 564 rolled back.
+
+**Step 6a, actors in paths** (agreed): the routes of a channel's participants and actors
+(`…/participants/{aid}`, `…/actors/{aid}`, and the private notes of `/sessions/{id}/actors/{aid}`)
+take a bare UUID, which the REST server looks up among the channel's actors (`actor_in`) or
+participants (`participant_of`) to learn which kind of actor it is - two tasks in one, finding the
+kind and checking that they take part, of which the second is the kernel's and the views', which
+ask it anyway. Proposed: a path names an actor as `User:<uuid>` or `Agent:<uuid>` - the kind as the
+JSON of an `ActorId` names it, what the web UI keys an actor by already (`actorKey`) -, read by a
+type of the REST API:
+
+```rust
+// caelumora-rest-api
+/// An actor as a path of the REST API names it: its kind and its id, `User:<uuid>` or
+/// `Agent:<uuid>`.
+pub struct ActorPath(pub ActorId);
+impl FromStr for ActorPath { … }        // a user or an agent; anything else is refused
+impl fmt::Display for ActorPath { … }   // the same form
+impl<'de> Deserialize<'de> for ActorPath { … }   // by `FromStr`, for a path's extractor
+```
+
+The handlers hand the `ActorId` to the kernel and the views as it is; `actor_in` and
+`participant_of` go, the view answering a participant itself (`ChannelView::participant`, which
+already knows a former one). The web UI addresses an actor by `actorKey`; `actorUuid` goes.
 
 **Reconciling as a pattern** (the maintainer, 2026-11-17): a running object is the one writer of
 what it holds. What changes while it does not run is stored in its document alone - by a
@@ -255,3 +282,20 @@ agents deleted or restored meanwhile.
   JSON and the Postgres store, held by the store suite. A channel reads it once as it is built
   (`reconcile`) and as it removes one without an actor; `ChannelLoop::attending` answers all of
   them, no longer one. Postgres not tested here, without a database.
+- **2026-11-17** — Decided with the maintainer: before the routes of step 6, an actor is named in a
+  REST path by its kind and id (step 6a, *Plan*), so that no lookup of a UUID - finding the kind
+  and checking participation at once - is needed. The bare UUIDs of events, correlations and spans
+  are issue [592](592-event-span-and-correlation-ids-are-bare-uuids.md).
+- **2026-11-17** — Step 6a done, as proposed and agreed: `ActorPath` in `caelumora-rest-api` reads
+  and writes `User:<uuid>` and `Agent:<uuid>`; the routes of a channel's participants and actors
+  and the private notes of a session's agent take it; `actor_in` and `participant_of` are gone, the
+  handlers handing the actor to the kernel and to `ChannelView::participant`. The web UI names an
+  actor by `actorPath` (its `actorKey`) in place of `actorUuid`. Where the REST server checked
+  participation itself - among the running actors alone - and the kernel checks it otherwise, the
+  kernel's answer stands now: asking an actor that takes no part to answer again is answered `200`
+  and refused on the stream (`EventRejected`), not `404`; removing a participant listed without an
+  actor - a deleted agent resting, one left out as the channel started - removes it (`204`), as
+  issue 314 meant, where it was `404`, and so does its owner's leaving of an agent left out (a
+  resting one is refused, `403`); cancelling an actor's turn or a tool call asks `CancelChannel`
+  first, so that one who may not is answered `403` for an actor that takes no part as well. A user's
+  private notes are none, as before.

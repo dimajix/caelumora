@@ -92,6 +92,12 @@ commands in [COMMANDS.md](COMMANDS.md), notes in [MEMORY.md](MEMORY.md), the con
 [AGENT-TURN.md](AGENT-TURN.md#asking-what-an-agent-saw) - and the request and response of each in
 its handler's doc comment.
 
+An actor of a path - `{aid}` of `…/participants/{aid}` and `…/actors/{aid}` - is named by its kind
+and its id, `User:<uuid>` or `Agent:<uuid>` (`ActorPath`, issue
+[590](../issues/590-a-session-lets-nobody-go.md)): the server hands it on as it is, and whether it
+takes part is asked where it is asked anyway. Anything else, a bare UUID among it, is
+`400 invalid_path`.
+
 | Endpoint | Does |
 |---|---|
 | `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`, `POST /auth/refresh` | Log in and out, the logged-in user, renew the session |

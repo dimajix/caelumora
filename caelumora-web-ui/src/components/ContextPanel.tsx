@@ -13,7 +13,7 @@ import type {ActorId, ChannelParticipant, KnowledgeRef, Message, MessageContextR
 import {type Classification, classificationDescription, classificationLabel} from '../confidentiality';
 import {cn} from '../classNames';
 import {api, type ChannelAttachments} from '../api';
-import {actorUuid} from '../actor';
+import {actorPath} from '../actor';
 import {ApiRequestError, reportError} from '../errors';
 import {ToolSetList} from './ToolSetList';
 import {MessageView} from './MessageView';
@@ -201,7 +201,7 @@ interface ContextPanelProps {
 }
 
 export const ContextPanel: React.FC<ContextPanelProps> = ({sessionId, channelId, attachments, message, me, participants, onClose}) => {
-  const actor = actorUuid(message.sender_id);
+  const actor = actorPath(message.sender_id);
   const key = `${actor}:${message.id}`;
   const [context, setContext] = useState<MessageContextResponse | null>(() => cache.get(key) ?? null);
   const [notice, setNotice] = useState<string | null>(null);

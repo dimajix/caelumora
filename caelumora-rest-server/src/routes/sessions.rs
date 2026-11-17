@@ -8,7 +8,6 @@ use crate::routes::{change_error, ensure_session, session_response, views};
 use crate::state::AppState;
 use axum::response::{IntoResponse, Response};
 use axum::{extract::State, http::StatusCode};
-use caelumora_domain::agent::AgentId;
 use caelumora_domain::approval::ApprovalRule;
 use caelumora_domain::session::SessionId;
 use caelumora_domain::snapshot::Detail;
@@ -16,6 +15,7 @@ use caelumora_domain::template::SessionTemplateId;
 use caelumora_domain::value::name::NameMatch;
 use caelumora_kernel::session::SessionSpec;
 use caelumora_kernel::view::SessionView;
+use caelumora_rest_api::actor::ActorPath;
 use caelumora_rest_api::deleted::{DeletedResponse, ListOptions};
 use caelumora_rest_api::session::{
     AddSessionParticipantRequest, CandidateResponse, CandidatesQuery, CreateSessionRequest,
@@ -92,15 +92,17 @@ pub(super) async fn get_session(
 
 /// The private notes agent `aid` wrote in the channels of session `id` the
 /// user may read (issue 233), sorted by the channel's name, for whoever may
-/// read what it saw (`ReadAgentContext`).
+/// read what it saw (`ReadAgentContext`); none for a user.
 pub(super) async fn agent_private_notes(
     State(state): State<Arc<AppState>>,
-    Path((id, aid)): Path<(Uuid, Uuid)>,
+    Path((id, ActorPath(aid))): Path<(Uuid, ActorPath)>,
     user: AuthenticatedUser,
 ) -> Result<Json<Vec<PrivateNotesResponse>>, ApiError> {
+    // A user keeps no private notes, as it counts no calls (`get_participant_usage`).
+    let Some(agent) = aid.as_agent_id() else { return Ok(Json(Vec::new())) };
     let session_id = SessionId(id);
     let session = views(&state, &user).session(session_id).await?;
-    let found = session.private_notes_of(AgentId(aid)).await?;
+    let found = session.private_notes_of(agent).await?;
     Ok(Json(
         found
             .into_iter()

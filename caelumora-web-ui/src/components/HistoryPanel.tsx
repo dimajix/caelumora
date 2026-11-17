@@ -16,7 +16,7 @@ import type {ActorId, ChannelParticipant, GivenUpReason, HistoryItem, HistoryMes
 import {classificationLabel} from '../confidentiality';
 import {cn} from '../classNames';
 import {api, type ChannelAttachments} from '../api';
-import {actorUuid, sameActor} from '../actor';
+import {actorPath, sameActor} from '../actor';
 import {ApiRequestError, reportError} from '../errors';
 import {MessageView} from './MessageView';
 import {Timestamp} from './Timestamp';
@@ -140,7 +140,7 @@ function rowsOf(items: HistoryItem<HistoryMessage>[]): Row[] {
 }
 
 export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId, attachments, participant, me, participants, version, onShowContext, onClose}) => {
-  const actor = actorUuid(participant.id);
+  const actor = actorPath(participant.id);
   const [items, setItems] = useState<HistoryItem<HistoryMessage>[] | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   // What to read the page before those shown with; `null` once there is none.

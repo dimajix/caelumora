@@ -9,7 +9,7 @@ import React, {useEffect, useState} from 'react';
 import {Wrench, X} from 'lucide-react';
 import type {ChannelParticipant, ToolSet} from '../types';
 import {api} from '../api';
-import {actorUuid} from '../actor';
+import {actorPath} from '../actor';
 import {ApiRequestError, reportError} from '../errors';
 import {ToolSetList} from './ToolSetList';
 
@@ -22,7 +22,7 @@ interface ToolsPanelProps {
 }
 
 export const ToolsPanel: React.FC<ToolsPanelProps> = ({sessionId, channelId, participant, onClose}) => {
-  const actor = actorUuid(participant.id);
+  const actor = actorPath(participant.id);
   const [sets, setSets] = useState<ToolSet[] | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
