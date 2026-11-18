@@ -243,6 +243,8 @@ impl Chain<Recorded> {
             | HistoryEntry::ParticipantJoined { .. }
             | HistoryEntry::ParticipantLeft { .. }
             | HistoryEntry::HistoryShared { .. }
+            | HistoryEntry::ThreadOpened { .. }
+            | HistoryEntry::ThreadClosed { .. }
             | HistoryEntry::CommandFailed { .. }
             | HistoryEntry::RetryAccepted { .. }
             | HistoryEntry::RetryRefused { .. }

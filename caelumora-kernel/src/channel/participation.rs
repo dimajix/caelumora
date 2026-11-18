@@ -9,7 +9,7 @@ use anyhow::Result;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::{Agent, AgentId, Personality};
 use caelumora_domain::approval::Approver;
-use caelumora_domain::channel::{Channel, ChannelId, InternalActor, Participant, ThreadId};
+use caelumora_domain::channel::{Channel, ChannelId, InternalActor, Participant};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::role::RoleId;
 use caelumora_domain::scope::Scope;
@@ -162,12 +162,27 @@ impl Participation {
         action: ActionType<'_>,
         refusal: impl FnOnce(Refused) -> E + Send,
     ) -> Result<(), E> {
-        match resolved.context() {
-            Some(own) if own.owner_id == context.principal_id => {
-                self.policies.access_policy().require(&own, action, refusal).await
-            }
-            _ => Err(refusal(action.refused())),
+        match own_context(resolved, context) {
+            Some(own) => self.policies.access_policy().require(&own, action, refusal).await,
+            None => Err(refusal(action.refused())),
         }
+    }
+
+    /// Nothing if `resolved` is whom `context` acts for, or owned by them - themselves, or their
+    /// own agent (issue 341) -, for `action`, which is asked of `context` itself, not in the
+    /// participant's context: whom an opener founds a thread with (`OpenThread`, issue 557), as
+    /// `require_own_act` asks it of whoever takes part by their own act.
+    ///
+    /// # Errors
+    /// `refusal` of `action` if it is not.
+    pub(crate) fn require_own<E>(
+        &self,
+        resolved: &ResolvedParticipant,
+        context: &SecurityContext,
+        action: ActionType<'_>,
+        refusal: impl FnOnce(Refused) -> E,
+    ) -> Result<(), E> {
+        own_context(resolved, context).map(|_| ()).ok_or_else(|| refusal(action.refused()))
     }
 
     /// Nothing if `resolved` is cleared for its channel, classified
@@ -263,12 +278,6 @@ impl ResolvedParticipant {
         &self.kind
     }
 
-    /// The thread of its channel it takes part in (issue 557): the channel's line, the one thread a
-    /// channel has; none for one taken into the session alone.
-    pub(crate) fn thread(&self) -> Option<ThreadId> {
-        self.channel_id.map(ThreadId::line)
-    }
-
     pub(crate) fn actor_id(&self) -> ActorId {
         match &self.kind {
             ResolvedKind::User(user) => ActorId::User(user.id()),
@@ -341,6 +350,15 @@ impl ResolvedParticipant {
             Err(ChannelError::OutOfScope { participant: self.actor_id(), channel: channel_id })
         }
     }
+}
+
+/// The own context of `resolved` if it is whom `context` acts for, or owned by them - themselves,
+/// or their own agent (issue 341); `None` otherwise.
+fn own_context(
+    resolved: &ResolvedParticipant,
+    context: &SecurityContext,
+) -> Option<SecurityContext> {
+    resolved.context().filter(|own| own.owner_id == context.principal_id)
 }
 
 #[cfg(test)]

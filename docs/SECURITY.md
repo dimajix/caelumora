@@ -190,7 +190,8 @@ The `OwnershipPolicy` decides by those attributes and the context's principal - 
 themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name-an-agent-acts)):
 
 *   The owner may do everything. Whom an entry grants `Read` may read and use - write into a
-    session, cancel or wake a channel, ask an agent in it to answer again (`RetryMessage`), answer
+    session, cancel or wake a channel, open a thread in it (`OpenThread`, issue 557), ask an agent
+    in it to answer again (`RetryMessage`), answer
     the questions of an agent's call (`AnswerQuestion` - whether they were asked is the agent's to
     check, not the policy's). What belongs to the system, everybody may read and use.
 *   An agent reads (`Get`) what its owner may read, and what it takes part in itself - as the

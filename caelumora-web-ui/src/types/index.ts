@@ -951,6 +951,16 @@ export interface ActorEvent {
    */
   HistoryShared?: { participant: ActorId; from: number; by: ActorId; by_name: string };
   /**
+   * The thread `thread` was opened at the message `origin.message` of the thread `origin.thread`
+   * (issue 557), by the act of the envelope's sender. Part of the history; not shown yet.
+   */
+  ThreadOpened?: { thread: string; origin: { thread: string; message: string } };
+  /**
+   * The thread `thread` was closed (issue 557), by the act of the envelope's sender: nothing more
+   * is said in it. Part of the history; not shown yet.
+   */
+  ThreadClosed?: { thread: string };
+  /**
    * A chain between agents reached its limit (issue 200): the response ending
    * in `message` was delivered, but nobody was asked to respond to it -
    * `not_asked` are the agents it mentioned. Sent in the name of the system.
@@ -996,7 +1006,7 @@ export interface ActorEvent {
  * Why the channel did not let in what a user sent (issue 304): a known few,
  * which the UI words itself; one it does not know is shown as such.
  */
-export type Rejection = 'forbidden' | 'classification_refused' | 'message_not_found' | 'message_unchangeable' | 'invalid';
+export type Rejection = 'forbidden' | 'classification_refused' | 'message_not_found' | 'message_unchangeable' | 'thread_closed' | 'invalid';
 
 /**
  * What a request to answer again is about (issue 235): a message of the

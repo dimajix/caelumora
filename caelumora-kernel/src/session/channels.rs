@@ -644,14 +644,8 @@ impl SessionLoop {
             )
             .await?;
         // All of its participants held, in one order wherever several are, until it is listed.
-        let mut held: Vec<ActorId> =
-            channel.participants.iter().map(Participant::actor_id).collect();
-        held.sort_by_key(ActorId::id);
-        held.dedup();
-        let mut _changing = Vec::with_capacity(held.len());
-        for participant in held {
-            _changing.push(self.changing.lock(participant).await);
-        }
+        let held = channel.participants.iter().map(Participant::actor_id);
+        let _changing = self.changing.lock_all(held, ActorId::id).await;
         let session = self.session();
         let (staying, gone): (Vec<Participant>, Vec<Participant>) =
             channel.participants.iter().cloned().partition(|p| session.takes_part(p.actor_id()));

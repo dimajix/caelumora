@@ -392,7 +392,8 @@ fn taking_part(
 /// classification fitted into (issue 133), a turn's end (issue 258) and the
 /// start of a step of its plan (issue 263) in schemes of their own - the
 /// step by what it says, not when -, a command carried out (issue 269), a
-/// context compacted (issue 16), a change of who takes part (issue 408) and
+/// context compacted (issue 16), a change of who takes part (issue 408), a
+/// thread opened or closed (issue 557) and
 /// a message given withdrawn (issue 537) likewise - by what they say, not
 /// when; a message modified, taken back or
 /// reclassified as `message_modified`, `message_revoked` and
@@ -618,6 +619,23 @@ fn history_entry(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
             e.opt_digest(previous);
             e.json(&to_json(participant));
             e.json(&serde_json::json!(from));
+            e.json(&to_json(by));
+            e.str(by_name);
+            e.finish()
+        }
+        HistoryEntry::ThreadOpened { thread, origin, by, by_name, .. } => {
+            let mut e = Encoder::new("caelumora.history-thread-opened.v1");
+            e.opt_digest(previous);
+            e.json(&to_json(thread));
+            e.json(&to_json(origin));
+            e.json(&to_json(by));
+            e.str(by_name);
+            e.finish()
+        }
+        HistoryEntry::ThreadClosed { thread, by, by_name, .. } => {
+            let mut e = Encoder::new("caelumora.history-thread-closed.v1");
+            e.opt_digest(previous);
+            e.json(&to_json(thread));
             e.json(&to_json(by));
             e.str(by_name);
             e.finish()

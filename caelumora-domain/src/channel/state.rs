@@ -1,14 +1,15 @@
-//! What a channel holds while it runs (`ChannelState`): its history and from where it holds it, and
-//! what of it changed since it was stored (`ChannelStateChange`, issue 193).
+//! What a channel holds while it runs (`ChannelState`): its history and from where it holds it, its
+//! threads, and what of it changed since it was stored (`ChannelStateChange`, issue 193).
 
-use super::ChannelId;
+use super::{ChannelId, ThreadId, ThreadState};
 use crate::chain::Position;
 use crate::history::{History, WINDOW};
 use crate::store::Journaled;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
-/// What a channel holds while it runs: its history, and from where it holds
-/// it. Its document - what `Journaled` writes - is the small part alone; the
+/// What a channel holds while it runs: its history, from where it holds
+/// it, and its threads. Its document - what `Journaled` writes - is the small part alone; the
 /// history is a chain a store keeps apart (issue 379), written with the state
 /// and read on its own (`HistoryStore`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,11 +21,21 @@ pub struct ChannelState {
     /// The position from which on the channel keeps its history in memory;
     /// a store loads the history from there.
     pub history_from: Position,
+    /// The threads of the channel, its line among them, those closed too (issue 557): what it
+    /// builds the open ones from as it starts, and what tells a thread closed from one it never
+    /// had. Written by the channel as it records their opening and closing.
+    pub threads: BTreeMap<ThreadId, ThreadState>,
 }
 
 impl ChannelState {
+    /// The state of a channel that has said nothing yet: its line the one thread open.
     pub fn new(channel_id: ChannelId) -> Self {
-        Self { channel_id, history: History::default(), history_from: Position::START }
+        Self {
+            channel_id,
+            history: History::default(),
+            history_from: Position::START,
+            threads: BTreeMap::from([(ThreadId::line(channel_id), ThreadState::LINE)]),
+        }
     }
 
     /// Lets go of what its history holds before its window - the last
@@ -45,13 +56,18 @@ impl ChannelState {
 pub enum ChannelStateChange {
     /// From where the history is held, whole.
     HistoryFrom(Position),
+    /// The threads, whole (issue 557).
+    Threads(BTreeMap<ThreadId, ThreadState>),
 }
 
 impl Journaled for ChannelState {
     type Change = ChannelStateChange;
 
     fn changes(&self) -> Vec<Self::Change> {
-        vec![ChannelStateChange::HistoryFrom(self.history_from)]
+        vec![
+            ChannelStateChange::HistoryFrom(self.history_from),
+            ChannelStateChange::Threads(self.threads.clone()),
+        ]
     }
 
     /// The history is marked stored by the store that wrote it.
@@ -60,6 +76,7 @@ impl Journaled for ChannelState {
     fn apply(&mut self, change: Self::Change) -> Result<(), String> {
         match change {
             ChannelStateChange::HistoryFrom(from) => self.history_from = from,
+            ChannelStateChange::Threads(threads) => self.threads = threads,
         }
         Ok(())
     }
@@ -90,6 +107,18 @@ mod tests {
         );
     }
 
+    /// Issue 557: a channel's line is open from its start.
+    #[test]
+    fn a_new_channel_has_its_line_open() {
+        let channel = ChannelId::new();
+        let state = ChannelState::new(channel);
+        assert_eq!(
+            state.threads,
+            BTreeMap::from([(ThreadId::line(channel), ThreadState::LINE)]),
+            "its line, alone"
+        );
+    }
+
     #[test]
     fn a_channels_state_journals_its_small_part_and_leaves_its_history_to_the_store() {
         let mut state = ChannelState::new(ChannelId::new());
@@ -102,8 +131,10 @@ mod tests {
         );
 
         state.history_from = Position::new(1);
-        assert_eq!(state.changes().len(), 1, "the small part, whole");
+        state.threads.insert(ThreadId::new(), ThreadState::LINE);
+        assert_eq!(state.changes().len(), 2, "the small part, whole");
         replayed(&state, &mut copy);
         assert_eq!((copy.channel_id, copy.history_from.get()), (state.channel_id, 1));
+        assert_eq!(copy.threads, state.threads, "its threads with it");
     }
 }

@@ -180,15 +180,16 @@ A **channel** is one conversation within a session, such as a chat room. Its `Ch
 
 A channel's conversation is held in **threads** (issue 557): every event names the thread it
 happens in (`EventContext::thread_id`), and the history keeps it with the context every entry came
-in. A channel has one thread so far, its **line**, whose id is derived from the channel's
-(`ThreadId::line`): an event made for a channel (`EventContext::new`) happens there, and what
-follows an event (`EventContext::next`) stays in its thread. The running channel holds a `Thread`
-for each of its threads, with a moderator of its own (see [Moderators](#moderators)). What names a
-thread the channel does not have is not let in (see *The channel decides what enters it* below);
-the rejection is said, as every rejection, in the thread of what it rejects, and reaches its sender
-by name.
+in. Every channel has its **line**, whose id is derived from the channel's (`ThreadId::line`): an
+event made for a channel (`EventContext::new`) happens there, and what follows an event
+(`EventContext::next`) stays in its thread. The running channel holds a `Thread` for each of its
+threads, with a moderator of its own, built as the thread is opened (see [Moderators](#moderators)).
+What names a thread the channel does not have is not let in, nor what is sent into a thread
+closed (see *The channel decides what enters it* below); the rejection is said, as every rejection,
+in the thread of what it rejects, and reaches its sender by name.
 
-Every participant takes part in one thread of the channel - so far its line -, which its actor
+Every participant takes part in one thread of the channel - its line, or a thread it founded -,
+which its actor
 knows from its runtime (`ParticipantRuntime::thread_id`, an agent's `ActorRuntime::thread_id`):
 what it says of itself happens there, its join and its leave are announced there, and only that
 thread's moderator may ask it. Whether something happens in one thread or in the whole channel is
@@ -200,6 +201,31 @@ classification of the channel happen in the whole channel. By one rule (`Recipie
 what happens in its thread and in the whole channel - what it hears enters its context, and is paid
 for by every call after it -, a user everything of the channel, which a frontend sorts by thread;
 what goes to someone by name reaches them wherever it happens.
+
+A thread is **opened** at a message of another thread of its channel (`ThreadOrigin`), with its
+**founders** taking part in it alone (`SessionLoop::open_thread`). Opening goes through the session,
+as every way into a channel does (see
+[Taking someone into the session](#taking-someone-into-the-session)): a founder is mostly new to
+the session. Whoever reads the channel may open a thread (`OpenThread`),
+founded with whom they act for or agents of their own - taken into the session and the channel in
+the kernel's name, without the right to change either, so that a participant who does not own a
+shared session can start a sub-agent (issue 558); a founder takes part in the channel not yet,
+since an actor takes part in one thread. A person opens a thread only at the line; deeper threads
+come from agents. Whether the origin's message is in its thread is not asked: a tool opens a thread
+while the message with its call may still be on its way into the channel, which takes what was
+sent first and so records it before the opening. The opening and the closing of a thread are
+announced in the line (`ThreadOpened`, `ThreadClosed`), of the whole channel and told to its users;
+every thread is kept in the channel's state (`ChannelState::threads`), the closed ones as closed,
+from which the channel builds the open ones again as it starts; every actor starts again in the
+thread its range of attendance names, in the line if that thread was closed. One founder that
+cannot be taken in rolls the opening back: whoever was taken in is let go again, the thread closed.
+
+A thread is **closed** by whoever opened it, or whoever may change the channel
+(`ChannelLoop::close_thread`), once nobody takes part in it - no actor runs in it, no participant
+listed without an actor attends it, and its founders are all taken in -, so that nobody is left in
+a thread closed: whoever takes part is let go first. The channel closes it once whoever left it has
+left: what they still sent until their task ended enters the thread, and their leave is recorded
+there; from then on what is sent into it is not let in. The line is never closed.
 
 ### Building a channel
 
@@ -411,8 +437,8 @@ channel's loop, one after another, as it takes it in (`ChannelLoop::admission`) 
 channel as it is at that moment, so that nothing changes between a check and the entry. An actor
 asks nothing of the policy for what it sends; it reads of the channel only what it needs to build
 what it sends, or to address it. It rejects first whatever names a thread it does not have (issue
-557, `Rejection::Invalid`). The channel asks, in the sender's name, then whether the sender may act
-so, then whether what it carries may flow in:
+557, `Rejection::Invalid`), or one closed (`Rejection::ThreadClosed`). The channel asks, in the
+sender's name, then whether the sender may act so, then whether what it carries may flow in:
 
 | What enters | What the channel asks |
 |---|---|
@@ -609,7 +635,9 @@ Who is not in the session yet is taken into it first, and with a channel named i
 once - by whoever may change the session (`SessionLoop::add_participant`), or by their own act where
 an entry of the session's access list grants them `Join` (`SessionLoop::join`;
 `SessionManager::join` opens the session for one who may join but not read it). Who joins takes in
-themselves or their own agent, never someone else.
+themselves or their own agent, never someone else. A third way in is founding a thread
+(`SessionLoop::open_thread`, see [Its threads](#its-threads)): its founders, the opener's own, are
+taken into the session and the channel in the kernel's name, opening the thread being permitted.
 
 *   **Everything is asked before anything is stored**: changing the session and the channel - or,
     for one who joins, the `Join` entries of the session and the channel, in their own context -,

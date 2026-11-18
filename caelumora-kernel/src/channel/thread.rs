@@ -5,23 +5,65 @@ use crate::moderator::{Moderator, Routing};
 use caelumora_api::actor::Actor;
 use caelumora_api::component::ComponentImpl;
 use caelumora_domain::actor::{ActorId, Envelope};
+use caelumora_domain::channel::Opening;
 use caelumora_security::SecurityContext;
+use std::sync;
 use std::sync::Arc;
 
 /// A thread of a running channel (issue 557): the conversation of the events whose context names
 /// it (`EventContext::thread_id`), with a moderator of its own, built for it - so that what the
 /// moderator keeps of a conversation, and its policy of whose turn it is, are the thread's. The
 /// channel holds one for each of its threads, its line among them; it admits an event, has the
-/// event's thread decide its `Routing`, and records and delivers it.
+/// event's thread decide its `Routing`, and records and delivers it. A thread closed is no longer
+/// held: the channel's state tells it from one it never had (`ChannelState::threads`).
 #[derive(Debug)]
 pub(crate) struct Thread {
     moderator: ComponentImpl<dyn Moderator>,
+    /// How it was opened; `None` for the line.
+    opening: Option<Opening>,
+    phase: sync::Mutex<Phase>,
+}
+
+/// Where a thread stands between its opening and its closing (issue 557).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Phase {
+    /// Opened, its founders still being taken in: not to be closed yet.
+    Founding,
+    /// Open.
+    Open,
+    /// To be closed, once whoever left it has left (`run`): what is said in it still enters.
+    Closing,
 }
 
 impl Thread {
-    /// A thread moderated by `moderator`, built for it.
-    pub(crate) fn new(moderator: ComponentImpl<dyn Moderator>) -> Self {
-        Self { moderator }
+    /// A thread opened as `opening` says - `None` for the line -, standing at `phase`, moderated by
+    /// `moderator`, built for it.
+    pub(crate) fn new(
+        moderator: ComponentImpl<dyn Moderator>,
+        opening: Option<Opening>,
+        phase: Phase,
+    ) -> Self {
+        Self { moderator, opening, phase: sync::Mutex::new(phase) }
+    }
+
+    /// Who opened it; `None` for the line, which nobody opened.
+    pub(crate) fn opened_by(&self) -> Option<ActorId> {
+        self.opening.map(|opening| opening.by)
+    }
+
+    /// Where it stands.
+    pub(crate) fn phase(&self) -> Phase {
+        *self.phase.lock().unwrap_or_else(sync::PoisonError::into_inner)
+    }
+
+    /// Moves it from `from` to `to`; whether it stood at `from`.
+    pub(crate) fn advance(&self, from: Phase, to: Phase) -> bool {
+        let mut phase = self.phase.lock().unwrap_or_else(sync::PoisonError::into_inner);
+        let advanced = *phase == from;
+        if advanced {
+            *phase = to;
+        }
+        advanced
     }
 
     /// What becomes of `event`, which happens in this thread, admitted in `context`

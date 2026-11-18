@@ -259,6 +259,9 @@ impl<M> HistoryItemResponse<M> {
             // What a newcomer was given of the history records a delivery;
             // no client shows it (issue 417).
             HistoryEntry::HistoryShared { .. } => None,
+            // A thread opened or closed (issue 557) is shown once the frontends sort what happens
+            // by thread (557, step 6 of 2b).
+            HistoryEntry::ThreadOpened { .. } | HistoryEntry::ThreadClosed { .. } => None,
             HistoryEntry::Reclassified { .. }
             | HistoryEntry::Modified { .. }
             | HistoryEntry::Revoked { .. }

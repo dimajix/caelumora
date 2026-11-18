@@ -1,5 +1,5 @@
 //! A running channel: `ChannelLoop`, how it is built, and what it tells of itself and its actors;
-//! the threads within it are `thread`'s.
+//! a thread within it is `thread`'s, opening and closing one `threads`'.
 
 mod control;
 mod history;
@@ -13,7 +13,9 @@ pub mod testing;
 #[cfg(test)]
 mod tests;
 mod thread;
+mod threads;
 
+pub(crate) use participants::Entry;
 pub(crate) use participation::{Participation, ResolvedKind, ResolvedParticipant};
 
 use crate::actor::approval::ApproverActor;
@@ -30,12 +32,12 @@ use crate::session::SessionLoop;
 use anyhow::{Error, Result};
 use arc_swap::ArcSwap;
 use caelumora_api::actor::Actor;
-use caelumora_api::component::ComponentError;
+use caelumora_api::component::{ComponentError, ComponentImpl};
 use caelumora_domain::actor::ActorId;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_domain::actor::Envelope;
 use caelumora_domain::chain::Position;
-use caelumora_domain::channel::{Channel, ChannelId, ChannelState, Participant, ThreadId};
+use caelumora_domain::channel::{Channel, ChannelId, ChannelState, Opening, Participant, ThreadId};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::mention::MentionDirectory;
 use caelumora_domain::message::MessageId;
@@ -142,6 +144,17 @@ pub enum ChannelError {
     /// ask. The reason never repeats an answer.
     #[error("questions {question} in channel {channel} cannot be answered: {reason}")]
     Question { question: QuestionId, channel: ChannelId, reason: QuestionError },
+    /// A thread that is not open in the channel - never opened, or closed (issue 557).
+    #[error("thread {thread} is not open in channel {channel}")]
+    ThreadNotOpen { thread: ThreadId, channel: ChannelId },
+    /// A person opens a thread only at the channel's line (issue 557): deeper threads come from
+    /// agents alone.
+    #[error("a person opens a thread only at the line of channel {channel}")]
+    NotAtTheLine { channel: ChannelId },
+    /// A thread closed while someone still takes part in it (issue 557): whoever does is let go
+    /// first.
+    #[error("thread {thread} of channel {channel} is not closed while someone takes part in it")]
+    ThreadNotEmpty { thread: ThreadId, channel: ChannelId },
 }
 
 /// Whether `error` of `Participation::resolve` or of building its actor says
@@ -211,6 +224,13 @@ enum ActorChange {
     /// that has no actor but takes part in the history (issue 590) - left out as the channel
     /// started, or let go while it did not run (`reconcile`) -, which `run` announces at once.
     Leave(ActorId, String, SecurityContext, ThreadId),
+    /// The thread opened as `Opening` says, on whose behalf - in whose name `run` announces it
+    /// (`ThreadOpened`, issue 557), before anyone founding it joins it, and records it among the
+    /// channel's threads (`ChannelState::threads`).
+    Open(ThreadId, Opening, SecurityContext),
+    /// The thread to close, on whose behalf - in whose name `run` announces it (`ThreadClosed`),
+    /// once whoever left it has left, and records it closed.
+    Close(ThreadId, SecurityContext),
 }
 
 #[derive(Debug)]
@@ -247,9 +267,11 @@ pub struct ChannelLoop {
     /// changes of one participant do not cross: two takings-in would start two actors, and one
     /// that fails would roll back the listing of an actor the other started.
     changing: LocksById<ActorId>,
-    /// Its threads (issue 557), each with a moderator of its own: what an event's thread decides
-    /// of it is what the channel delivers. Its line alone, in which every actor takes part.
-    threads: HashMap<ThreadId, Thread>,
+    /// Its open threads (issue 557), each with a moderator of its own: what an event's thread
+    /// decides of it is what the channel delivers. Its line, in which every actor takes part but
+    /// those that founded another, and the threads opened since (`threads`); replaced as a whole
+    /// when one is opened or closed, as `actors` is.
+    threads: ArcSwap<HashMap<ThreadId, Arc<Thread>>>,
     mentions: ArcSwap<MentionDirectory>,
     /// Held while `mentions` is built and stored, so that a build from older actors - a join and
     /// a rename at once - does not replace a newer one (issue 585).
@@ -288,25 +310,6 @@ impl ChannelLoop {
         let session_id = channel.session_id;
         let state_store = Arc::clone(runtime.state_store());
         let history_store = Arc::clone(runtime.history_store());
-        // Its components (issue 174) are built in its owner's name, as an
-        // agent's are in the agent's, with the roles of now (issue 321):
-        // what they ask is asked as they are built; routing, they act in
-        // the context of the event they route.
-        let security_context = runtime
-            .controller_manager()
-            .owner_context(channel.security_attributes.owner_id, session_id, id)
-            .await?;
-        let components = runtime
-            .component_registry()
-            .build(
-                &channel.components,
-                Self::COMPONENT_FACETS,
-                &BuildContext::new(security_context, runtime.services().clone()),
-            )
-            .await
-            .map_err(SessionError::InvalidComponents)?;
-        let moderator =
-            components.one::<dyn Moderator>().await.map_err(SessionError::InvalidComponents)?;
 
         let state = match state_store.get_channel_state(id).await {
             Ok(s) => s,
@@ -317,6 +320,7 @@ impl ChannelLoop {
             }
             Err(e) => return Err(e.into()),
         };
+        let threads = state.threads.clone();
         let state = Mutex::new(state);
 
         let (changes_tx, changes_rx) = mpsc::unbounded_channel();
@@ -333,7 +337,7 @@ impl ChannelLoop {
             actors: ArcSwap::from_pointee(HashMap::new()),
             leaving: sync::Mutex::new(HashMap::new()),
             changing: LocksById::new(),
-            threads: HashMap::from([(ThreadId::line(id), Thread::new(moderator))]),
+            threads: ArcSwap::from_pointee(HashMap::new()),
             mentions: ArcSwap::from_pointee(MentionDirectory::default()),
             building_mentions: sync::Mutex::new(()),
             changes_tx,
@@ -347,15 +351,19 @@ impl ChannelLoop {
             run_lock: Mutex::new(()),
         });
         channel_loop.runtime.attach(&channel_loop);
-        // What changed while it did not run, brought in line before anyone starts (issue 590).
-        channel_loop.reconcile().await;
+        // Its threads first, which everything after takes part in (issue 557); then what changed
+        // while it did not run, brought in line before anyone starts (issue 590).
+        let attending = channel_loop.attending().await;
+        channel_loop.build_threads(&threads).await?;
+        channel_loop.reconcile(&attending).await;
+        let line = ThreadId::line(id);
         // Its internal actors (issue 420), which are its own: nothing to
         // resolve, nothing to leave out. `run` starts them with the
-        // participants'.
+        // participants', in its line.
         let internal_actors = channel_loop.channel.load().internal_actors.clone();
         for internal in &internal_actors {
             let resolved = ResolvedParticipant::internal(internal, session_id, id);
-            channel_loop.start_participant(resolved, None, None).await?;
+            channel_loop.start_participant(resolved, line, None, None).await?;
         }
         // The participants the channel has, which start again with it:
         // nothing to take in, no join to announce.
@@ -369,12 +377,14 @@ impl ChannelLoop {
             // keep everyone else out, nor can a third party - the
             // personality's owner, or the components' - stop someone's
             // channel so.
+            // In the thread it takes part in, as its attendance says (issue 557).
+            let thread = channel_loop.open_or_line(attending.get(&participant.actor_id()).copied());
             let started = async {
                 let Some(resolved) = channel_loop.resolve(participant).await? else {
                     return Ok(false);
                 };
                 channel_loop.participation.require_runnable(&resolved).await?;
-                channel_loop.start_participant(resolved, None, None).await?;
+                channel_loop.start_participant(resolved, thread, None, None).await?;
                 Ok(true)
             }
             .await;
@@ -395,6 +405,43 @@ impl ChannelLoop {
             }
         }
         Ok(channel_loop)
+    }
+
+    /// A moderator for a thread of the channel, built from its components (issue 174) in its
+    /// owner's name, as an agent's are in the agent's, with the roles of now (issue 321): what they
+    /// ask is asked as they are built; routing, they act in the context of the event they route.
+    /// One for each thread (issue 557), built as it is opened.
+    ///
+    /// # Errors
+    /// `SessionError::InvalidComponents` if the components make no moderator.
+    async fn moderator(&self) -> Result<ComponentImpl<dyn Moderator>> {
+        let runtime = &self.runtime;
+        let channel = self.channel.load();
+        let security_context = runtime
+            .controller_manager()
+            .owner_context(channel.security_attributes.owner_id, channel.session_id, channel.id)
+            .await?;
+        let components = runtime
+            .component_registry()
+            .build(
+                &channel.components,
+                Self::COMPONENT_FACETS,
+                &BuildContext::new(security_context, runtime.services().clone()),
+            )
+            .await
+            .map_err(SessionError::InvalidComponents)?;
+        Ok(components.one::<dyn Moderator>().await.map_err(SessionError::InvalidComponents)?)
+    }
+
+    /// The thread `thread` of the channel (issue 557), if it holds it - closed, it does not.
+    fn thread(&self, thread: ThreadId) -> Option<Arc<Thread>> {
+        self.threads.load().get(&thread).map(Arc::clone)
+    }
+
+    /// `thread` if it is open in the channel, its line otherwise - and for `None`: where someone
+    /// takes part who is to take part in `thread`, which may have been closed meanwhile.
+    fn open_or_line(&self, thread: Option<ThreadId>) -> ThreadId {
+        thread.filter(|thread| self.is_open(*thread)).unwrap_or(ThreadId::line(self.id))
     }
 
     /// `participant` with what its actor is built from
@@ -423,7 +470,7 @@ impl ChannelLoop {
         from: Option<Position>,
         joined: Option<SecurityContext>,
     ) {
-        match self.threads.get(&thread) {
+        match self.thread(thread) {
             Some(taking_part) => taking_part.add_actor(Arc::clone(&actor)),
             None => warn!(
                 "{} takes part in thread {} the channel {} has not",

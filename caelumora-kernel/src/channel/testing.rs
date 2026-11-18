@@ -333,6 +333,22 @@ impl ChannelLoop {
         items_of(&self.state.lock().await.history)
     }
 
+    /// The entries of the whole history once `done` holds of them, waited for as `run` records -
+    /// at most five seconds, after which the test fails.
+    pub async fn history_once(&self, done: impl Fn(&[HistoryEntry]) -> bool) -> Vec<HistoryEntry> {
+        time::timeout(Duration::from_secs(5), async {
+            loop {
+                let entries = self.history_entries().await;
+                if done(&entries) {
+                    return entries;
+                }
+                time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("recorded as wanted")
+    }
+
     /// The last entry of the history as it was recorded, unfolded.
     pub async fn last_history_entry(&self) -> Option<HistoryEntry> {
         self.state.lock().await.history.last().map(|node| node.entry.entry.clone())

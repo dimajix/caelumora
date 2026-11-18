@@ -231,8 +231,8 @@ Details: [CONFIGURATION.md](CONFIGURATION.md#backends).
 A **session** is one piece of work, such as a conversation about a topic. It has participants -
 users and agents - and one or more **channels**, in which some of them talk. A channel is a chat
 room with its own history and its own classification. Its conversation is held in **threads** -
-so far one, its line -, each with its own **moderator**, which decides who is asked to respond to a
-message.
+its line, and threads opened at a message of another -, each with its own **moderator**, which
+decides who is asked to respond to a message.
 
 Everything that takes part in a channel is an **actor**: a user (`UserActor`), an agent
 (`AgentActor`), an agent that runs elsewhere (`ExternalAgentActor`), or the channel's approver

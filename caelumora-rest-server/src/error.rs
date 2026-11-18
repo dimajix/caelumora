@@ -545,6 +545,9 @@ impl From<ChannelError> for ApiError {
                 Self::forbidden("not_asked", detail)
             }
             ChannelError::Question { .. } => Self::bad_request("invalid_answer", detail),
+            ChannelError::ThreadNotOpen { .. } => Self::not_found("thread_not_found", detail),
+            ChannelError::NotAtTheLine { .. } => Self::bad_request("not_at_the_line", detail),
+            ChannelError::ThreadNotEmpty { .. } => Self::conflict("thread_not_empty", detail),
         }
     }
 }

@@ -7,6 +7,7 @@ use super::{ActorId, ActorState};
 use crate::agent::{AgentId, RetryRefused};
 use crate::approval::{ApprovalDecision, ApprovalId, ApprovalRequest, ApprovalVerdict};
 use crate::chain::Position;
+use crate::channel::{ThreadId, ThreadOrigin};
 use crate::confidentiality::Classification;
 use crate::digest::Digest;
 use crate::message::{Message, MessageId};
@@ -269,6 +270,19 @@ pub enum ActorEvent {
         by: ActorId,
         by_name: String,
     },
+    /// The thread `thread` was opened at `origin` (issue 557). The envelope's sender is who opened
+    /// it. Sent by the channel alone, before anyone founding it joins it, and in no thread but the
+    /// whole channel's: recorded in its history (`HistoryEntry::ThreadOpened`) and told to its
+    /// users, whose frontends sort what happens by thread; an agent takes no note of it.
+    ThreadOpened {
+        thread: ThreadId,
+        origin: ThreadOrigin,
+    },
+    /// The thread `thread` was closed (issue 557): nothing more is said in it. The envelope's
+    /// sender is who closed it. Sent, recorded and told as `ThreadOpened` is.
+    ThreadClosed {
+        thread: ThreadId,
+    },
     /// A chain between agents reached its limit (issue 200): the response
     /// ending in `message` was delivered, but it made nobody respond, since
     /// that would have been more than `max_agent_hops` hops since the last
@@ -514,6 +528,8 @@ impl ActorEvent {
             | ActorEvent::ParticipantJoined { .. }
             | ActorEvent::ParticipantLeft { .. }
             | ActorEvent::HistoryShared { .. }
+            | ActorEvent::ThreadOpened { .. }
+            | ActorEvent::ThreadClosed { .. }
             | ActorEvent::MessageModified(_)
             | ActorEvent::MessageRevoked { .. }
             | ActorEvent::MessageReclassified { .. }
@@ -565,7 +581,7 @@ impl ActorEvent {
 
     /// Whether it is the channel's own word, which no actor sends: who
     /// joined or left (issue 408), what a newcomer was given of the history
-    /// (issue 417). It reaches whose name it is told in,
+    /// (issue 417), a thread opened or closed (issue 557). It reaches whose name it is told in,
     /// too - nothing of theirs is echoed back to them.
     pub fn is_announcement(&self) -> bool {
         matches!(
@@ -573,6 +589,8 @@ impl ActorEvent {
             ActorEvent::ParticipantJoined { .. }
                 | ActorEvent::ParticipantLeft { .. }
                 | ActorEvent::HistoryShared { .. }
+                | ActorEvent::ThreadOpened { .. }
+                | ActorEvent::ThreadClosed { .. }
         )
     }
 
@@ -621,6 +639,8 @@ impl ActorEvent {
             ActorEvent::ParticipantJoined { .. } => "ParticipantJoined",
             ActorEvent::ParticipantLeft { .. } => "ParticipantLeft",
             ActorEvent::HistoryShared { .. } => "HistoryShared",
+            ActorEvent::ThreadOpened { .. } => "ThreadOpened",
+            ActorEvent::ThreadClosed { .. } => "ThreadClosed",
             ActorEvent::ChainCutOff { .. } => "ChainCutOff",
             ActorEvent::ResponderUndecided { .. } => "ResponderUndecided",
             ActorEvent::MessageModified(_) => "MessageModified",
@@ -660,6 +680,9 @@ pub enum Rejection {
     /// The message it is about was taken back, or cannot be changed so.
     #[error("the message it is about was taken back or cannot be changed so")]
     MessageUnchangeable,
+    /// Sent into a thread that was closed (issue 557): nothing more is said in it.
+    #[error("the thread it is sent into is closed")]
+    ThreadClosed,
     /// It does not fit the channel as it is: sent in another's name, about
     /// someone who takes no part, in a thread the channel does not have
     /// (issue 557), or asking what cannot be asked.

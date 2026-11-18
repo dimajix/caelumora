@@ -9,6 +9,7 @@ use crate::approval::{
     ApprovalDecision, ApprovalId, ApprovalRequest, ApprovalStatus, ApprovalVerdict,
 };
 use crate::chain::Position;
+use crate::channel::{ThreadId, ThreadOrigin};
 use crate::confidentiality::Classification;
 use crate::digest::Digest;
 use crate::message::{Message, MessageId};
@@ -143,6 +144,19 @@ pub enum HistoryEntry {
         by_name: String,
         at: DateTime<Utc>,
     },
+    /// The thread `thread` was opened at `origin` at `at`, by `by`, called `by_name` then (issue
+    /// 557): from here on what is said in it is said there. Of the whole channel, told to its
+    /// users.
+    ThreadOpened {
+        thread: ThreadId,
+        origin: ThreadOrigin,
+        by: ActorId,
+        by_name: String,
+        at: DateTime<Utc>,
+    },
+    /// The thread `thread` was closed at `at`, by `by`, called `by_name` then (issue 557): nothing
+    /// more is said in it.
+    ThreadClosed { thread: ThreadId, by: ActorId, by_name: String, at: DateTime<Utc> },
     /// `actor`, an agent, did not carry out the command `command` asked by
     /// `to`, for `reason` (issues 269, 417), told to `to` alone at `at`;
     /// `turn_id` if it had begun it. Nothing it did stays.
@@ -282,6 +296,8 @@ impl HistoryEntry {
             | HistoryEntry::ParticipantJoined { .. }
             | HistoryEntry::ParticipantLeft { .. }
             | HistoryEntry::HistoryShared { .. }
+            | HistoryEntry::ThreadOpened { .. }
+            | HistoryEntry::ThreadClosed { .. }
             | HistoryEntry::CommandFailed { .. }
             | HistoryEntry::RetryAccepted { .. }
             | HistoryEntry::RetryRefused { .. }
@@ -310,8 +326,8 @@ impl HistoryEntry {
     /// Whether it happens in one thread of its channel (issue 557) - a message said or given, a
     /// turn's end, a command, a notice, a request, an approval or a question of a call, and who
     /// joined or left and what a newcomer was given, in the thread they joined - rather than in the
-    /// whole channel: a classification of the channel, and a change of a message, which reaches
-    /// whoever holds the message, as it does on every branch.
+    /// whole channel: a classification of the channel, a change of a message, which reaches
+    /// whoever holds the message, as it does on every branch, and a thread opened or closed.
     pub fn is_of_thread(&self) -> bool {
         match self {
             HistoryEntry::Said { .. }
@@ -342,7 +358,9 @@ impl HistoryEntry {
             | HistoryEntry::ParticipantJoined { .. }
             | HistoryEntry::ParticipantLeft { .. }
             | HistoryEntry::HistoryShared { .. } => true,
-            HistoryEntry::Fitted { .. }
+            HistoryEntry::ThreadOpened { .. }
+            | HistoryEntry::ThreadClosed { .. }
+            | HistoryEntry::Fitted { .. }
             | HistoryEntry::Modified { .. }
             | HistoryEntry::Revoked { .. }
             | HistoryEntry::Reclassified { .. } => false,
@@ -372,6 +390,8 @@ impl HistoryEntry {
             | HistoryEntry::Revoked { .. }
             | HistoryEntry::Fitted { .. } => true,
             HistoryEntry::HistoryShared { .. }
+            | HistoryEntry::ThreadOpened { .. }
+            | HistoryEntry::ThreadClosed { .. }
             | HistoryEntry::CommandFailed { .. }
             | HistoryEntry::RetryAccepted { .. }
             | HistoryEntry::RetryRefused { .. }
@@ -415,6 +435,8 @@ impl HistoryEntry {
             | HistoryEntry::ParticipantJoined { .. }
             | HistoryEntry::ParticipantLeft { .. }
             | HistoryEntry::HistoryShared { .. }
+            | HistoryEntry::ThreadOpened { .. }
+            | HistoryEntry::ThreadClosed { .. }
             | HistoryEntry::CommandFailed { .. }
             | HistoryEntry::RetryAccepted { .. }
             | HistoryEntry::RetryRefused { .. }
@@ -468,6 +490,8 @@ impl HistoryEntry {
             | HistoryEntry::ParticipantJoined { .. }
             | HistoryEntry::ParticipantLeft { .. }
             | HistoryEntry::HistoryShared { .. }
+            | HistoryEntry::ThreadOpened { .. }
+            | HistoryEntry::ThreadClosed { .. }
             | HistoryEntry::CommandFailed { .. }
             | HistoryEntry::RetryAccepted { .. }
             | HistoryEntry::RetryRefused { .. }
@@ -507,6 +531,8 @@ impl HistoryEntry {
             | HistoryEntry::ParticipantJoined { .. }
             | HistoryEntry::ParticipantLeft { .. }
             | HistoryEntry::HistoryShared { .. }
+            | HistoryEntry::ThreadOpened { .. }
+            | HistoryEntry::ThreadClosed { .. }
             | HistoryEntry::CommandFailed { .. }
             | HistoryEntry::RetryAccepted { .. }
             | HistoryEntry::RetryRefused { .. }
@@ -562,7 +588,9 @@ impl HistoryEntry {
             | HistoryEntry::CommandExecuted { to: None, .. }
             | HistoryEntry::ActivityFinished { .. }
             | HistoryEntry::RetryAccepted { .. }
-            | HistoryEntry::RetryRefused { .. } => Recipients::participants(false),
+            | HistoryEntry::RetryRefused { .. }
+            | HistoryEntry::ThreadOpened { .. }
+            | HistoryEntry::ThreadClosed { .. } => Recipients::participants(false),
             HistoryEntry::Compacted { .. }
             | HistoryEntry::Given { .. }
             | HistoryEntry::Withdrawn { .. }
@@ -653,6 +681,10 @@ impl HistoryEntry {
             HistoryEntry::HistoryShared { participant, from, by, by_name, .. } => {
                 ActorEvent::HistoryShared { participant, from, by, by_name }
             }
+            HistoryEntry::ThreadOpened { thread, origin, .. } => {
+                ActorEvent::ThreadOpened { thread, origin }
+            }
+            HistoryEntry::ThreadClosed { thread, .. } => ActorEvent::ThreadClosed { thread },
             HistoryEntry::CommandFailed { turn_id, command, reason, to, .. } => {
                 ActorEvent::CommandFailed { command, reason, to, turn_id }
             }
@@ -741,6 +773,8 @@ impl HistoryEntry {
             | HistoryEntry::ParticipantJoined { .. }
             | HistoryEntry::ParticipantLeft { .. }
             | HistoryEntry::HistoryShared { .. }
+            | HistoryEntry::ThreadOpened { .. }
+            | HistoryEntry::ThreadClosed { .. }
             | HistoryEntry::CommandFailed { .. }
             | HistoryEntry::RetryAccepted { .. }
             | HistoryEntry::RetryRefused { .. }
@@ -782,6 +816,8 @@ impl HistoryEntry {
             HistoryEntry::ParticipantJoined { by, .. }
             | HistoryEntry::ParticipantLeft { by, .. }
             | HistoryEntry::HistoryShared { by, .. }
+            | HistoryEntry::ThreadOpened { by, .. }
+            | HistoryEntry::ThreadClosed { by, .. }
             | HistoryEntry::CommandRequested { by, .. }
             | HistoryEntry::RetryRequested { by, .. }
             | HistoryEntry::ApprovalRequested { by, .. }
@@ -827,6 +863,8 @@ impl HistoryEntry {
             | HistoryEntry::ParticipantJoined { .. }
             | HistoryEntry::ParticipantLeft { .. }
             | HistoryEntry::HistoryShared { .. }
+            | HistoryEntry::ThreadOpened { .. }
+            | HistoryEntry::ThreadClosed { .. }
             | HistoryEntry::CommandFailed { .. }
             | HistoryEntry::RetryAccepted { .. }
             | HistoryEntry::RetryRefused { .. }
@@ -857,6 +895,31 @@ mod tests {
     use crate::history::testing::recorded_context;
     use crate::history::History;
     use crate::message::testing::{id, make_message};
+
+    /// Issue 557: a thread opened or closed is of the whole channel, an item of its history told to
+    /// its users - not to its agents, which take no note of it - and delivered again as it was.
+    #[test]
+    fn a_thread_opened_or_closed_is_the_whole_channels_and_told_to_its_users() {
+        let thread = ThreadId::new();
+        let by = ActorId::System;
+        let at = Utc::now();
+        let origin = ThreadOrigin { thread: ThreadId::new(), message: id(1) };
+        let by_name = "system".to_string();
+        let opened =
+            HistoryEntry::ThreadOpened { thread, origin, by, by_name: by_name.clone(), at };
+        let closed = HistoryEntry::ThreadClosed { thread, by, by_name, at };
+        for entry in [opened, closed] {
+            assert!(!entry.is_of_thread(), "of the whole channel: {entry:?}");
+            assert!(entry.is_item(), "an item: {entry:?}");
+            assert_eq!(entry.recipients(), Recipients::participants(false), "the users: {entry:?}");
+        }
+        let opened = HistoryEntry::ThreadOpened { thread, origin, by, by_name: String::new(), at };
+        assert!(
+            matches!(opened.event(), Some(ActorEvent::ThreadOpened { thread: t, origin: o })
+                if t == thread && o == origin),
+            "delivered again as it was"
+        );
+    }
 
     #[test]
     fn an_entry_folds_into_the_message_it_changes_and_says_whether_it_did() {

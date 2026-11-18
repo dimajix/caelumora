@@ -284,6 +284,19 @@ impl Envelope {
                     at,
                 }
             }
+            ActorEvent::ThreadOpened { thread, origin } => HistoryEntry::ThreadOpened {
+                thread: *thread,
+                origin: *origin,
+                by: actor,
+                by_name: self.context.sender_name.clone(),
+                at,
+            },
+            ActorEvent::ThreadClosed { thread } => HistoryEntry::ThreadClosed {
+                thread: *thread,
+                by: actor,
+                by_name: self.context.sender_name.clone(),
+                at,
+            },
             ActorEvent::MessageModified(modified) => {
                 HistoryEntry::Modified { message: modified.clone() }
             }
@@ -572,6 +585,18 @@ impl Envelope {
                 format!(
                     "HistoryShared(sender_id={}, participant={}, from={}, by={})",
                     ctx.sender_id, participant, from, by
+                )
+            }
+            ActorEvent::ThreadOpened { thread, origin } => {
+                format!(
+                    "ThreadOpened(sender_id={}, sender_name={}, thread={}, origin={}/{})",
+                    ctx.sender_id, ctx.sender_name, thread, origin.thread, origin.message
+                )
+            }
+            ActorEvent::ThreadClosed { thread } => {
+                format!(
+                    "ThreadClosed(sender_id={}, sender_name={}, thread={})",
+                    ctx.sender_id, ctx.sender_name, thread
                 )
             }
             ActorEvent::ChainCutOff { message, max_agent_hops, not_asked } => {

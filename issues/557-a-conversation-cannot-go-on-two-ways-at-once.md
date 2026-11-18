@@ -1197,3 +1197,17 @@ Decided with it, on the author's proposal:
 - **2026-11-17** — The steps of 2b decided by the maintainer (*The steps of 2b*), with the way
   into a thread through the session, who may be a founder, the origin's message not checked, a
   moderator per thread, closing an empty thread alone, and a person branching at the line.
+- **2026-11-17** — Step 1 of 2b implemented: `ThreadOrigin`, `Opening` and `ThreadState`, every
+  thread kept in `ChannelState::threads`, the closed ones as closed; `ThreadOpened` and
+  `ThreadClosed`, of the whole channel, announced in the line and told to the users;
+  `Rejection::ThreadClosed`; `OpenThread`, granted to whoever reads the channel; a moderator per
+  thread, built as it is opened; `SessionLoop::open_thread`, with the founders taken into the
+  session and the channel as founders (`Entry::Founding`, `Participation::require_own`) under the
+  session's locks (`LocksById::lock_all`), and the opening rolled back if one cannot be; actors
+  starting again in the thread their attendance names. Where it departs from *The steps of 2b*:
+  closing is `ChannelLoop::close_thread`, not the session's - it takes nobody in and needs no lock
+  of the session, which would only pass it on -; and the channel's `run` closes a thread only once
+  whoever left it has left, so that what a sub-agent let go mid-turn still sends enters its thread
+  and its leave is recorded there, while closing is refused as long as an actor runs in it, a
+  participant listed without one attends it, or its founders are still being taken in. Stored
+  data to delete: the state of every channel (`ChannelState::threads`).
