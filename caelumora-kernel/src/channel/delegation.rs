@@ -24,11 +24,13 @@ impl ChannelLoop {
     /// to them where the thread was opened; it waits behind a brief still open. Asked: that the
     /// giver reads the channel; that the thread is an open one opened at another; that the
     /// recipient runs in it and the giver where it was opened; that a thread delegated into
-    /// before is delegated by the same giver to the same recipient. The brief is classified as the
-    /// channel is, and both directions answer the chain `context` belongs to (its initiator).
+    /// before is delegated by the same giver to the same recipient; that the thread is not quiet
+    /// after a cancel. The brief is classified as the channel is, and both directions answer the
+    /// chain `context` belongs to (its initiator).
     ///
     /// # Errors
-    /// `ChannelError::Forbidden`, `ThreadNotOpen`, `NotInThread` or `DelegatedOtherwise`.
+    /// `ChannelError::Forbidden`, `ThreadNotOpen`, `NotInThread`, `ThreadQuiet` or
+    /// `DelegatedOtherwise`.
     pub async fn delegate(
         &self,
         context: &SecurityContext,
@@ -65,6 +67,10 @@ impl ChannelLoop {
         }
         if !runs_in(giver, origin) {
             return Err(not_in(giver, origin).into());
+        }
+        // Delegating does not wake a thread, so that a giver cannot undo a user's cancel.
+        if self.is_quiet(thread) {
+            return Err(ChannelError::ThreadQuiet { thread, channel: self.id }.into());
         }
         if !self.delegated_alike(thread, giver, recipient).await {
             return Err(ChannelError::DelegatedOtherwise { thread, channel: self.id }.into());

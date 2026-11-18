@@ -566,8 +566,8 @@ naming a message or a turn.
     its turn under way or its last turn given up that may be answered again
     (`ChannelLoop::retryable_turn`), and rejects any other (`EventRejected`, issue 567) - the
     actor of the user reaches into no other actor to know. The moderator routes it to the agent
-    alone, which the channel wakes first - ending being quiet, as for a nudge; no
-    `WakeupRequested` goes ahead of it, which would wake every agent. A turn
+    alone, which the channel wakes first - ending the quiet of the thread the agent takes part in,
+    as for a nudge; no `WakeupRequested` goes ahead of it, which would wake every agent. A turn
     under way is ended as the request is delivered (`Actor::retry_turn`), decided in one step under
     the turn's lock. Whether a retry is possible is decided before anything is interrupted: a
     request about an older message never ends the answer under way.
@@ -883,9 +883,11 @@ decision for the whole channel rather than one per actor.
 
 ### Cancelling
 
-`ChannelLoop::cancel` (`CancelChannel`) ends the current turn of every actor - the web UI's stop
-button. It is an operation on the channel, like renaming or deleting it, not an act of taking part:
-the policy decides who may, and nobody has to be a participant for it.
+`ChannelLoop::cancel` (`CancelChannel`) ends the current turn of every actor taking part in a
+thread, or in every thread of the channel - the web UI's stop button, which cancels them all (issue
+557). It is an operation on the channel, like renaming or deleting it, not an act of taking part:
+the policy decides who may, and nobody has to be a participant for it; a thread is part of its
+channel, and asks the same.
 
 It is not a kill. The agent takes its turn over, so that observers stop waiting even when the turn
 said nothing, and returns to a normal state with its history intact. But nothing under way is waited
@@ -897,12 +899,16 @@ the same way, and wins over a cancel.
 Lowering a channel's classification cancels its turns in the same way; each agent then gives its
 turn up instead of taking it over (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
 
-Afterwards the channel is *quiet* until it is woken. What is said is still delivered, so that every
-agent's transcript keeps up with the history, but nobody is asked to respond to it.
+Afterwards the thread - or each thread - is *quiet* until it is woken (`Thread::is_quiet`, held in
+memory alone: after a restart no thread is quiet). What is said in it is still delivered, so that
+every agent's transcript keeps up with the history, but nobody is asked to respond to it. A brief
+is not delegated into a quiet thread (`ThreadQuiet`), so that a giver cannot undo a user's cancel,
+and a brief that waited there is given back as one its recipient could not be asked; what a
+delegate gives back into a quiet thread is delivered, and nobody there is asked.
 
 `ChannelLoop::cancel_actor` ends the turn of one actor alone, under the same permission, asked
 before the actor is looked up, so that who may not learns nothing of who is in the channel. The
-channel does not become quiet: being quiet is the channel's state, not one actor's. The others go
+thread does not become quiet: being quiet is the thread's state, not one actor's. The others go
 on, and the answer the cancelled turn is taken over with reaches everyone as any answer does.
 
 `ChannelLoop::interrupt_tool_call` ends less: one tool call of an actor's turn, while it runs or
@@ -912,21 +918,24 @@ first. See [TOOLS.md](TOOLS.md#running-tool-calls).
 
 ### Waking
 
-A quiet channel is woken in one of two ways:
+A quiet thread is woken in one of two ways:
 
-*   **Deliberately**: `ChannelLoop::wakeup` (`WakeChannel`), as `/wakeup` does; `wakeup_actor`
-    wakes a single actor under the same permission. The channel moves a sleeping agent to `Idle`
+*   **Deliberately**: `ChannelLoop::wakeup` (`WakeChannel`), of a thread or of every one, as
+    `/wakeup` does for the whole channel; `wakeup_actor` wakes a single actor under the same
+    permission, and ends the quiet of its thread. The channel moves a sleeping agent to `Idle`
     itself; the agent announces it (see [AGENT-TURN.md](AGENT-TURN.md#the-cognitive-cycle)).
 *   **Because something is on its way**: a `WakeupRequested` that a user's actor sends ahead of its
-    next message. It asks nothing: it follows from an action that was already permitted, and a user
-    allowed to write but not to wake would otherwise be unable to write.
+    next message, which wakes the thread the message is said in alone - what is said in the line
+    does not wake a thread cancelled. It asks nothing: it follows from an action that was already
+    permitted, and a user allowed to write but not to wake would otherwise be unable to write.
 
 A single agent is also woken when the moderator asks it to respond: a sleeping agent ignores a
 request to respond, so the channel wakes everyone a decision asks before it delivers anything of
 that decision. The policies never choose a sleeping agent, so this wakes only agents a message
-mentions; an agent that is not addressed keeps sleeping. It does not end a quiet channel, and in a
-quiet channel, which asks nobody, it wakes nobody - unless a user nudges the agent or asks it to
-answer again, which ends being quiet as deliberately as a nudge, and wakes that agent alone.
+mentions; an agent that is not addressed keeps sleeping. It does not end a thread's being quiet,
+and in a quiet thread, which asks nobody, it wakes nobody - unless a user nudges the agent or asks
+it to answer again, which ends the quiet of that thread as deliberately as a nudge, and wakes that
+agent alone.
 
 ### Nudging someone
 
@@ -945,9 +954,9 @@ message of the user had mentioned them - no policy consulted, no chain between a
 *   **No permission of its own.** Whoever may write in the channel can ask anyone to respond by
     mentioning them; the nudge asks the same, so it asks nothing of the policy. Nudging oneself is
     refused: nobody would be asked.
-*   **Deliberate, like a `/wakeup` of an agent.** The channel ends being quiet as it routes the
-    nudge, and wakes whom it asks. No `WakeupRequested` goes ahead of it: that would wake every
-    agent.
+*   **Deliberate, like a `/wakeup` of an agent.** The channel ends the quiet of the thread the one
+    it asks takes part in as it routes the nudge, and wakes them. No `WakeupRequested` goes ahead of
+    it: that would wake every agent of the thread.
 *   **What remains of it** is the request to respond, recorded to the one asked (issue 417), and
     the answer: nobody but the one asked is shown the request, and the command answers the issuer
     alone.
@@ -1008,8 +1017,8 @@ What a delegate gives:
     hears it. The moderator asks the recipient alone to respond, as for a nudge - no policy
     consulted, no chain counted (`RequestReason::Given`, the strongest reason) -, so that it is
     woken, and the request recorded and read again from the history, as every request is. Unlike a
-    nudge it does not end the channel's being quiet: in a quiet channel the recipient is given it,
-    and asked once the channel is woken.
+    nudge it does not end its thread's being quiet: a brief into a quiet thread is refused, and what
+    is given back into one is delivered and asks nobody there.
 *   **What an agent makes of it.** It takes it in as what it was given (`Given`), as a skill given
     with `/skill` is: "@alice gave you this to read:" (see
     [AGENT-TURN.md](AGENT-TURN.md#what-is-given-to-read)), recorded once as its own record
@@ -1139,10 +1148,10 @@ task left working beside the channel's events. An open task is the external agen
 turn: it keeps the work of the request that began it, and is followed, cancelled and told of in it -
 as asked by whoever asked, with its owner's rights, and in the context of the answer to that
 request. One whose channel was lowered since it began is given up. It wakes nobody and does not end
-a quiet channel; only an agent it mentions is woken, to answer it. Only the end of a task is said: a
-failed task keeps nothing of what came before, and a stream that breaks before the task ends says
-nothing - the task stays open and is followed again on the next run. While it answers a request,
-what its other tasks send waits.
+a thread's being quiet; only an agent it mentions is woken, to answer it. Only the end of a task is
+said: a failed task keeps nothing of what came before, and a stream that breaks before the task
+ends says nothing - the task stays open and is followed again on the next run. While it answers a
+request, what its other tasks send waits.
 
 What an external agent heard and said is kept in its `AgentChannelState` as every agent's, with
 what ties it to the remote side (see [STORAGE.md](STORAGE.md)).

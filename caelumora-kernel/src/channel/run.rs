@@ -21,7 +21,6 @@ use caelumora_security::confidentiality::ConfidentialityQuestions;
 use caelumora_security::{ActionType, Enforcement, Reclassified, SecurityContext};
 use std::collections::HashMap;
 use std::iter;
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Weak};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
@@ -755,12 +754,11 @@ impl ChannelLoop {
     /// Nothing if `event`, sent in `context`, may give `recipient` `message` to read (issue 557);
     /// why not otherwise. It comes from the delegate of a thread opened - no thread delegates into
     /// the line - and gives what that thread's delegation says (`Delegation`): into the thread, the
-    /// open brief to the recipient; back into the thread it was opened at, what came of the open
-    /// brief - answered, refused, its recipient gone -, of the recipient to the giver; in the name
-    /// of the chain that delegated (its
-    /// initiator), to whom runs there; and the message is a text - no attachment, which only a
-    /// message said claims, no tool call or result -, classified so that it may enter the channel
-    /// (`require_parts`).
+    /// open brief to the recipient, unless the thread is quiet; back into the thread it was opened
+    /// at, what came of the open brief - answered, refused, its recipient gone -, of the recipient
+    /// to the giver; in the name of the chain that delegated (its initiator), to whom runs there;
+    /// and the message is a text - no attachment, which only a message said claims, no tool call or
+    /// result -, classified so that it may enter the channel (`require_parts`).
     async fn admit_given(
         &self,
         event: &Envelope,
@@ -780,8 +778,10 @@ impl ChannelLoop {
             let state = self.state.lock().await;
             let held = state.threads.get(&delegated).and_then(|held| held.delegation.as_ref());
             held.is_some_and(|delegation| {
+                // A brief into a quiet thread would ask nobody, not even once it is woken: refused,
+                // its delegate gives back that the recipient could not be asked (issue 557).
                 let gives = if thread == delegated {
-                    delegation.gives_brief(recipient, message)
+                    delegation.gives_brief(recipient, message) && !self.is_quiet(thread)
                 } else {
                     thread == opening.origin.thread && delegation.gives_back(recipient, message)
                 };
@@ -889,17 +889,18 @@ impl ChannelLoop {
         // Asked for by an actor - a user's actor asks with every message it
         // sends (issue 90); the channel does not decide by itself.
         if matches!(event.event, ActorEvent::WakeupRequested) {
-            self.wake_for_delivery();
+            self.wake(Some(event.context.thread_id));
         }
         // A nudge is deliberate, as `wakeup_actor` is (issue 278), and so is a
-        // request to answer again (issue 567): the channel is quiet no longer,
-        // so that the request is delivered, and whom it asks is woken with it,
-        // alone (`route_event_impl`).
-        if matches!(
-            event.event,
-            ActorEvent::NudgeRequested { .. } | ActorEvent::RetryRequested { .. }
-        ) {
-            self.quiet.store(false, Ordering::SeqCst);
+        // request to answer again (issue 567): the thread of whom it asks is
+        // quiet no longer (issue 557), so that the request is delivered, and
+        // whom it asks is woken with it, alone (`route_event_impl`).
+        if let ActorEvent::NudgeRequested { participant: asked }
+        | ActorEvent::RetryRequested { author: asked, .. } = event.event
+        {
+            let actors = self.actors.load();
+            let thread = actors.get(&asked).map_or(event.context.thread_id, |a| a.thread);
+            self.end_quiet(thread);
         }
 
         if let Some(routing) = routing {
@@ -916,7 +917,15 @@ impl ChannelLoop {
         routing: Routing,
         position: Option<Position>,
     ) {
-        let quiet = self.quiet.load(Ordering::SeqCst);
+        // Whether its thread is quiet after a cancel (issue 557). A brief was let in only into a
+        // thread that was not, and asks its recipient as decided then: a cancel meanwhile would
+        // leave it given and never asked, its giver waiting for nothing.
+        let thread = event.context.thread_id;
+        let brief = matches!(
+            (&event.event, event.context.sender_id),
+            (ActorEvent::GivenToRead { .. }, ActorId::Delegate(delegated)) if delegated == thread
+        );
+        let quiet = !brief && self.is_quiet(thread);
         let decision = self.deliveries(event, routing, position, quiet).await;
 
         // Whom the moderator asks to respond is woken first, before anything
@@ -924,7 +933,7 @@ impl ChannelLoop {
         // `ResponseRequested`, and one that took in the message still asleep
         // would ignore the request that follows it. Since the policies never
         // choose a sleeping agent (`actor_candidates`), only the agents a
-        // message mentions are woken this way (issue 45). A quiet channel
+        // message mentions are woken this way (issue 45). A quiet thread
         // asks nobody, and so wakes nobody.
         if !quiet {
             let actors = self.actors.load();
@@ -972,7 +981,7 @@ impl ChannelLoop {
     /// to whom it goes among the actors (`Envelope::recipients`) or whom
     /// the moderator named; each notice of the moderator's to whom it names,
     /// in the system's name; a request to respond to each it asks, in the
-    /// event's context, with the hops it counted - unless the channel is
+    /// event's context, with the hops it counted - unless its thread is
     /// `quiet` after a cancel: what was said still reaches everyone, so that
     /// every transcript keeps up with the history, but nobody is asked to
     /// answer it. Each notice and request is recorded, in the system's name,
@@ -1017,7 +1026,7 @@ impl ChannelLoop {
         }
         if quiet {
             if !ask.is_empty() {
-                debug!("Not asking for a response: the channel is quiet after a cancel");
+                debug!("Not asking for a response: the thread is quiet after a cancel");
             }
         } else if !ask.is_empty() {
             let mut request = event.forward(ActorEvent::ResponseRequested { reason });
@@ -1817,7 +1826,7 @@ mod tests {
 
         // A quiet channel asks nobody, and wakes nobody.
         asked.sleep();
-        channel.cancel(&context).await.expect("permitted");
+        channel.cancel(&context, None).await.expect("permitted");
         routed(&channel, &HashMap::new(), said()).await;
         assert!(!asked.woken(), "nobody is asked in a quiet channel");
     }
@@ -2690,7 +2699,7 @@ mod tests {
             kinds
         };
 
-        channel.cancel(&context).await.expect("permitted");
+        channel.cancel(&context, None).await.expect("permitted");
         routed(&channel, &actors, said()).await;
         assert_eq!(
             delivered(&mut rx).await,

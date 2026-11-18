@@ -76,10 +76,12 @@ impl SessionLoop {
 
 #[cfg(test)]
 mod tests {
+    use crate::channel::testing::settled;
     use crate::channel::{ChannelError, ChannelLoop};
     use crate::testing::{Script, ScriptedAgents, World};
     use anyhow::Error;
     use caelumora_domain::actor::ActorId;
+    use caelumora_domain::actor::ActorState;
     use caelumora_domain::channel::{ThreadId, ThreadOrigin};
     use caelumora_domain::history::HistoryEntry;
     use caelumora_domain::message::MessageId;
@@ -205,6 +207,72 @@ mod tests {
             entries.iter().any(|e| matches!(e, HistoryEntry::EventRejected { .. })),
             "what came of the first could not reach bob: {entries:?}"
         );
+        world.manager.stop(&alice, session.id()).await.unwrap();
+    }
+
+    /// Issue 557: a thread is cancelled on its own - the turns in it end, those of the line go on -
+    /// and stays quiet - a brief into it refused, those that waited given back as not asked - until
+    /// it is woken: by waking it or its agent, not by what is said in the line. A cancel of the
+    /// channel reaches every thread; a thread the channel has not is neither cancelled nor woken.
+    #[tokio::test]
+    async fn a_thread_is_cancelled_and_woken_on_its_own() {
+        let hanging = ScriptedAgents(Script::Hangs);
+        let world = World::with(&[], &[&hanging], |_| {}).await;
+        let personality = world.personality("helper", Some(world.alice), &[]).await;
+        let lead = world.agent("lead", world.alice, &personality).await;
+        let helper = ActorId::Agent(world.agent("helper", world.alice, &personality).await);
+        let alice = World::as_user(world.alice);
+        let hers = ActorId::User(world.alice);
+        let session = world.session_of(&[], &[lead], &[]).await;
+        let main = Arc::clone(&session.channels()[0]);
+        let lead = ActorId::Agent(lead);
+        let thread = session
+            .open_thread(&alice, main.id(), at_the_line(&main), vec![helper])
+            .await
+            .expect("opened");
+        main.delegate(&alice, thread, helper, "look it up".to_string()).await.expect("delegated");
+        main.delegate(&alice, thread, helper, "and this".to_string()).await.expect("waits");
+        let says = async |text: &str| {
+            let user = main.user_actor(world.alice).expect("alice runs");
+            user.send_message(Some(text.to_string()), None, Vec::new()).await.expect("said");
+        };
+        says("@lead, are you there?").await;
+        for working in [helper, lead] {
+            settled(&main.actor(working).expect("runs"), ActorState::Planning).await;
+        }
+
+        main.cancel(&alice, Some(thread)).await.expect("cancelled");
+        let ended = |actor: ActorId| move |e: &HistoryEntry| matches!(e, HistoryEntry::TurnFinished { actor: a, .. } if *a == actor);
+        let not_asked = |e: &HistoryEntry| {
+            matches!(e, HistoryEntry::GivenToRead { recipient, message, .. }
+                if *recipient == hers
+                    && message.content.as_deref() == Some("It could not be asked."))
+        };
+        let entries = main.history_once(|entries| entries.iter().any(not_asked)).await;
+        assert!(entries.iter().any(ended(helper)), "its turn ended: {entries:?}");
+        assert!(!entries.iter().any(ended(lead)), "the line's goes on: {entries:?}");
+        let quiet = |refused: &Error| {
+            matches!(channel_error(refused), Some(ChannelError::ThreadQuiet { .. }))
+        };
+        let brief = || main.delegate(&alice, thread, helper, "more".to_string());
+        assert!(quiet(&brief().await.unwrap_err()), "a brief into it is refused");
+        says("still there?").await;
+        assert!(quiet(&brief().await.unwrap_err()), "what is said in the line wakes it not");
+
+        main.wakeup_actor(&alice, helper).await.expect("its agent woken");
+        brief().await.expect("which ends the quiet of its thread");
+        main.cancel(&alice, None).await.expect("the whole channel cancelled");
+        main.history_once(|entries| entries.iter().any(ended(lead))).await;
+        assert!(quiet(&brief().await.unwrap_err()), "every thread with it");
+        main.wakeup(&alice, Some(thread)).await.expect("woken");
+        brief().await.expect("taken once it is woken");
+
+        let elsewhere = Some(ThreadId::new());
+        let not_open = |refused: Error| {
+            matches!(channel_error(&refused), Some(ChannelError::ThreadNotOpen { .. }))
+        };
+        assert!(not_open(main.cancel(&alice, elsewhere).await.unwrap_err()), "no such thread");
+        assert!(not_open(main.wakeup(&alice, elsewhere).await.unwrap_err()), "to wake either");
         world.manager.stop(&alice, session.id()).await.unwrap();
     }
 

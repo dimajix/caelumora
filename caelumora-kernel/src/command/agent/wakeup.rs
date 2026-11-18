@@ -47,7 +47,7 @@ impl ChannelCommand for WakeupCommand {
         if wanted.is_empty() {
             let mut woken = context
                 .channel
-                .wakeup(&context.issuer.security_context())
+                .wakeup(&context.issuer.security_context(), None)
                 .await
                 .map_err(|e| command_error(WAKEUP_COMMAND_NAME, &e))?;
             woken.sort();

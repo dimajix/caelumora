@@ -1391,7 +1391,7 @@ async fn an_agent_tells_the_users_where_it_stands_and_that_it_was_woken() {
         "each step it moves to, once"
     );
 
-    let woken = channel.wakeup(&context).await.expect("alice may wake it");
+    let woken = channel.wakeup(&context, None).await.expect("alice may wake it");
     assert_eq!(woken, ["helper"]);
     assert_eq!(
         told_states(&mut shown, agent, ActorState::Idle).await,
@@ -2258,7 +2258,7 @@ async fn a_cancel_ends_a_turn_waiting_for_approval_at_once() {
         with_an_agent(Arc::new(Scripted(Mutex::new([call].into()))), components).await;
     settled(&helper, ActorState::WaitingForUser).await;
 
-    channel.cancel(&context).await.expect("permitted");
+    channel.cancel(&context, None).await.expect("permitted");
 
     // Without anyone deciding on the call.
     settled(&helper, ActorState::Idle).await;
@@ -2565,7 +2565,7 @@ async fn a_cancel_while_a_tool_runs_interrupts_the_tool_and_ends_the_turn() {
     let (Stuck { channel, context, agent, helper, mut events, running }, model) =
         with_an_agent_in_a_long_tool().await;
 
-    channel.cancel(&context).await.expect("permitted");
+    channel.cancel(&context, None).await.expect("permitted");
 
     // The turn ends at once, not when the tool would have (issue 161),
     // and the model is not asked again.
@@ -2936,7 +2936,7 @@ async fn a_cancel_interrupts_a_model_call_that_is_in_flight() {
         stuck_in_a_model_call().await;
     let agent_id = ActorId::Agent(agent);
 
-    channel.cancel(&context).await.expect("permitted");
+    channel.cancel(&context, None).await.expect("permitted");
 
     // The turn ends at once - with an empty answer, so that observers
     // stop waiting - instead of when the model would have answered.
@@ -2964,7 +2964,7 @@ async fn a_user_learns_that_a_turn_cancelled_before_it_said_anything_ended() {
     let Stuck { channel, context, agent, running, .. } = stuck_in_a_model_call().await;
     let mut followed = channel.user_actor(alice_of(&context)).unwrap().watch();
 
-    channel.cancel(&context).await.expect("permitted");
+    channel.cancel(&context, None).await.expect("permitted");
 
     // Nothing to hear of it - but the end, for whoever shows the answer
     // as under way (issue 224).

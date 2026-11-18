@@ -160,8 +160,8 @@ pub enum ActorEvent {
     /// only the moderator asks for a response. The envelope's sender is the
     /// user, its security context theirs, so an agent's turn acts with their
     /// authority, as after a message of theirs; a user is shown the request.
-    /// It is deliberate, as a `/wakeup` is: the channel ends being quiet,
-    /// and an agent is woken as anyone the moderator asks is. Never written
+    /// It is deliberate, as a `/wakeup` is: its thread ends being quiet
+    /// (issue 557), and an agent is woken as anyone the moderator asks is. Never written
     /// to the history, never shown itself: what remains of it is the answer.
     NudgeRequested {
         participant: ActorId,

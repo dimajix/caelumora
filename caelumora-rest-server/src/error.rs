@@ -552,6 +552,7 @@ impl From<ChannelError> for ApiError {
             ChannelError::DelegatedOtherwise { .. } => {
                 Self::conflict("delegated_otherwise", detail)
             }
+            ChannelError::ThreadQuiet { .. } => Self::conflict("thread_quiet", detail),
         }
     }
 }

@@ -59,7 +59,6 @@ use futures::future;
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
 use thread::Thread;
@@ -167,6 +166,10 @@ pub enum ChannelError {
     /// made of it.
     #[error("thread {thread} of channel {channel} is delegated by another or to another")]
     DelegatedOtherwise { thread: ThreadId, channel: ChannelId },
+    /// A brief into a thread quiet after a cancel (issue 557): delegating does not wake it, so that
+    /// a giver cannot undo a user's cancel.
+    #[error("thread {thread} of channel {channel} is quiet after a cancel")]
+    ThreadQuiet { thread: ThreadId, channel: ChannelId },
 }
 
 /// Whether `error` of `Participation::resolve` or of building its actor says
@@ -300,10 +303,6 @@ pub struct ChannelLoop {
     /// The read side of the histories (issue 379): the channel's own, as it
     /// is stored with its state after every entry.
     history_store: Arc<dyn HistoryStore>,
-    /// Set by `cancel`, cleared when the channel is woken: while set, what is
-    /// said is still delivered, but nobody is asked to respond to it
-    /// (`route_event_impl`). The turns themselves are cancelled on the actors.
-    quiet: AtomicBool,
     /// Every event the channel took in, for tests that watch what happens
     /// in it beyond what a user is told; nobody follows a channel this way
     /// otherwise - a user follows their actor (issue 220).
@@ -361,7 +360,6 @@ impl ChannelLoop {
             state,
             state_store,
             history_store,
-            quiet: AtomicBool::new(false),
             #[cfg(any(test, feature = "test-support"))]
             observed: broadcast::channel(128).0,
             run_lock: Mutex::new(()),

@@ -32,7 +32,6 @@ use caelumora_store::testing::record_users;
 use caelumora_store::EntityStores;
 use caelumora_store::Persistence;
 use std::any::Any;
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Weak};
 
 /// A channel of `users`, who are recorded in the store its actors are

@@ -1138,7 +1138,7 @@ async fn a_cancel_ends_the_answer_of_an_external_agent_and_its_remote_task() {
     settled(&helper, ActorState::Planning).await;
     time::sleep(Duration::from_millis(50)).await;
 
-    channel.cancel(&context).await.expect("permitted");
+    channel.cancel(&context, None).await.expect("permitted");
     let ended = answered(&mut events, agent).await;
     assert_eq!(
         ended.first().and_then(|m| m.content.as_deref()),

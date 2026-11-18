@@ -1272,3 +1272,24 @@ Decided with it, on the author's proposal:
   answered it as taken. Stored data to delete: the state of every channel
   (`ThreadState::delegation`).
 - **2026-11-18** — Step 3 of 2b accepted by the maintainer, with its departures.
+- **2026-11-18** — The interface of step 4 decided as proposed: being quiet a `Thread`'s state,
+  no longer the channel's; `ChannelLoop::cancel` and `wakeup` of one thread or, with `None`, of
+  every one, under `CancelChannel` and `WakeChannel`; a user's message waking the thread it is
+  said in alone, a nudge and a request to answer again the thread of their event, `wakeup_actor`
+  the actor's thread; a brief into a quiet thread refused (`ChannelError::ThreadQuiet`), and the
+  briefs that wait in a thread made quiet given back as ones their recipient could not be asked;
+  being quiet kept in memory alone, as before.
+- **2026-11-18** — Step 4 of 2b implemented: being quiet a `Thread`'s state (`is_quiet`,
+  `set_quiet`), `ChannelLoop::quiet` gone; `cancel` and `wakeup` of a thread or of every one, a
+  thread named asked to be open (`ThreadNotOpen`); a user's message waking the thread it is said in
+  alone, a nudge and a request to answer again ending the quiet of the thread of whom they ask -
+  as the maintainer decided on review, in place of their event's -, `wakeup_actor` that of the
+  actor's; `delegate` refusing a quiet thread (`ThreadQuiet`), and the
+  channel refusing a brief into one, which its delegate gives back as not asked; a brief let in
+  asking its recipient though its thread was made quiet before it was routed, so that it is never
+  given and not asked. The existing callers - the REST route of cancelling, `/agent wakeup`,
+  lowering the channel - reach every thread. No stored data to delete.
+- **2026-11-18** — Step 4 of 2b accepted by the maintainer: a nudge and a request to answer again
+  end the quiet of the thread of whom they ask; a thread opened after a cancel of the whole channel
+  starts awake, until the frontends can wake one thread (step 6). Found on review, to be decided
+  apart: a user at the line can ask an agent of another thread to answer again.

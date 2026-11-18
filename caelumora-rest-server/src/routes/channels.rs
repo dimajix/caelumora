@@ -548,7 +548,7 @@ pub(super) async fn cancel_channel(
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    channel.cancel(&user.security_context()).await?;
+    channel.cancel(&user.security_context(), None).await?;
     Ok(StatusCode::OK)
 }
 
