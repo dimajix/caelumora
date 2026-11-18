@@ -154,7 +154,10 @@ with `from: none` an agent hears what was said when the turn has ended, as betwe
 ### What leaves the agent
 
 Every message passes the agent's `EmitOutProcessor`s and is published through the turn, which leaves
-out what only the agent's owner may see (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)). A complete
+out what only the agent's owner may see (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)). A message
+they drop is not said, and the calls it carries are not run: a call runs only with the message that
+carries it, which `Turn::calling_message` names while it runs (issue 557), labelled as it left the
+processors; a step whose message was dropped ends as one answered without calls does. A complete
 message is *said* (`Turn::say`): kept in the turn, then published, so that the channel learns of
 every message the turn keeps as it is made; its answer - a message of the model calling no tools,
 not a step of a plan, with words or without - carries what the turn put aside to attach

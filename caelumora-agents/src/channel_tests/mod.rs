@@ -11,7 +11,7 @@ mod questions;
 use crate::activity::{ActivityError, ActivityProvider};
 use crate::command::AgentCommand;
 use crate::library::AgentsLibrary;
-use crate::message::{MessageProcessor, PerceiveInProcessor, ProcessingError};
+use crate::message::{EmitOutProcessor, MessageProcessor, PerceiveInProcessor, ProcessingError};
 use crate::notes::{AgentNotes, NoteKind};
 use crate::prompt::{ContextError, PositionParams, Prompt, PromptPosition, PromptProvider};
 use crate::situation::Situation;
@@ -230,6 +230,7 @@ async fn agent_channel_hearing(
         register_marking_command(registry);
         register_activities(registry);
         register_first_only(registry);
+        register_dropping_calls(registry);
     };
     let defaults = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
@@ -341,6 +342,32 @@ impl PromptProvider for HeardCount {
 struct FirstOnly {
     position: PromptPosition,
 }
+
+/// Registers `test_dropping_calls`: emit processors that drop every message carrying tool calls
+/// (issue 557).
+fn register_dropping_calls(registry: &mut ComponentRegistry) {
+    registry.register(
+        ComponentKind::new("test_dropping_calls").provides::<dyn EmitOutProcessor>(),
+        |_descriptor, _context| {
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn EmitOutProcessor>(Arc::new(DroppingCalls));
+            Ok(facets)
+        },
+    );
+}
+
+/// What drops every message carrying tool calls on its way out of the agent.
+#[derive(Debug)]
+struct DroppingCalls;
+
+#[async_trait::async_trait]
+impl MessageProcessor for DroppingCalls {
+    async fn process_messages(&self, input: Vec<Message>) -> Result<Vec<Message>, ProcessingError> {
+        Ok(input.into_iter().filter(|message| message.tool_calls.is_empty()).collect())
+    }
+}
+
+impl EmitOutProcessor for DroppingCalls {}
 
 /// Registers `FirstOnly` as the kind `test_first_only`, at the position its
 /// parameters name, else at the start.

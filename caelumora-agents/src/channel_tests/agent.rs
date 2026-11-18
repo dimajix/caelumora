@@ -1287,6 +1287,45 @@ async fn an_agent_given_something_to_read_wakes_takes_it_in_and_answers() {
     running.abort();
 }
 
+/// Issue 557: a message the emit processors drop is not said, and the calls it carries are not run:
+/// the turn ends without them - a second call of the model would never be answered.
+#[tokio::test]
+async fn the_calls_of_a_message_dropped_on_its_way_out_are_not_run() {
+    use caelumora_domain::tool::ToolCall;
+
+    let calls = Message {
+        role: MessageRole::Assistant,
+        content: Some("Let me compute.".to_string()),
+        tool_calls: vec![ToolCall {
+            id: Some("1".to_string()),
+            arguments: serde_json::json!({}),
+            ..make_tool_call("calculator")
+        }],
+        ..Message::new(Classification::CHANNEL_DEFAULT)
+    };
+    let components = ComponentConfig {
+        component_nodes: vec![ComponentDescriptor {
+            id: "dropping".to_string(),
+            kind: "test_dropping_calls".to_string(),
+            params: Value::Null,
+            tags: vec![],
+            fail_policy: ComponentFailPolicy::FailClosed,
+        }],
+    };
+    let Stuck { channel, agent, mut events, running, .. } =
+        with_an_agent(Arc::new(Scripted(Mutex::new([calls].into()))), components).await;
+
+    answered(&mut events, agent).await;
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
+    assert!(stored.turn.is_none(), "the turn ended");
+    let said = stored.transcript.messages();
+    assert!(
+        said.iter().all(|m| m.tool_calls.is_empty() && m.role != MessageRole::Tool),
+        "neither the calls nor their results: {said:?}"
+    );
+    running.abort();
+}
+
 #[tokio::test]
 async fn an_agent_that_calls_stop_ends_its_turn_with_the_call_and_sleeps() {
     use caelumora_domain::tool::ToolCall;

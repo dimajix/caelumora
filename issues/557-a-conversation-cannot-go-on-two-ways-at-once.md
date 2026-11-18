@@ -1309,3 +1309,15 @@ Decided with it, on the author's proposal:
 - **2026-11-18** — Step 5a of 2b accepted by the maintainer. Its finding - a step whose message an
   `EmitOutProcessor` drops still runs its calls, so that `Turn::calling_message` names an earlier
   message - to be fixed in a step of its own before 5b.
+- **2026-11-18** — The finding of 5a fixed, as a step of its own: a step's calls are taken into the
+  turn only once the emit processors let the message carrying them through, so that a message they
+  drop runs no calls and `Turn::calling_message` always names the message whose calls run. No
+  stored data to delete.
+  On review: the calls are labelled again as they left the processors, so that a call they changed
+  runs with what its tool declares; a step whose message was dropped ends as one answered without
+  calls does. Found, to be decided apart: `AgentActor::respond` drops the error of a fail-closed
+  emit processor without a trace, which now also leaves the step's calls unrun.
+- **2026-11-18** — Accepted by the maintainer. Its two findings planned as steps of their own,
+  before 5b: first `AgentActor::respond` handing on the error of a fail-closed emit processor, so
+  that it gives the turn up as every error of a turn does; then the tests of a step whose message
+  was dropped in a plan, and of a processor that changes a call.
