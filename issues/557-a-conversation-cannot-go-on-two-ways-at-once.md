@@ -1,6 +1,6 @@
 # 557 — A conversation cannot go on in two directions at once
 
-**Status:** in progress
+**Status:** done
 **Type:** question
 **Priority:** medium
 **Area:** Sessions and channels
@@ -1376,3 +1376,7 @@ Decided with it, on the author's proposal:
   `Filter::all_given` joins the conditions given, in place of four matches doing so. On review: what
   is shown live and what a page holds held together by a test, a step of a plan left out of both; a
   message of another thread no answer `/retry` asks for again in the terminal.
+- **2026-11-18** — The mentions in other threads accepted by the maintainer. Follow-ups opened as
+  issues of their own: what concerns a user as a whole (594), a view of a thread in the frontends,
+  with waking and stopping one thread and the thread of what a frontend is given (595). With 2b
+  the model is decided and built, as *Done when* asks.

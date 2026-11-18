@@ -44,3 +44,8 @@ To be decided before it is built:
 
 **2026-11-14** - Opened from the review of step 3 of issue 569, on the maintainer's wish to see
 something of the activity in other channels.
+
+**2026-11-18** - Issue 557 decided that the terminal's notifications get a concept of their own,
+together with this issue: since 557 the line's view (`Envelope::is_shown_in_line`) shows the
+terminal of another thread its approvals, its questions and what mentions the user, told
+"elsewhere" in another channel. What concerns a user as a whole is issue 594.

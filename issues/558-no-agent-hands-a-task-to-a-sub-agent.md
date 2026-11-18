@@ -1,6 +1,6 @@
 # 558 — No agent can hand a task to a sub-agent and take back its result
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Sessions and channels
@@ -475,3 +475,8 @@ what the main agent may.
   an open brief as its sub-agent is ended. On review: a refusal worded by what was refused
   (`Refused`), the writer's own conditions in words of their own; a work that may not reach its own
   channel answered as not found, as `channel_for` answers it, and said so.
+- **2026-11-18** — The open points after the crate, opened as issues of their own: the command
+  (596), bounding a sub-agent's rights, their number and their depth (597), a sub-agent nobody
+  ends (598), and writing into its thread with the view of a thread in the frontends (595). With
+  them the steps are planned, as *Done when* asks; what is built is the crate and the building
+  blocks of 557's 2b.
