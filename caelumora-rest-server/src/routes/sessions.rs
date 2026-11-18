@@ -91,11 +91,11 @@ pub(super) async fn get_session(
 /// read what it saw (`ReadAgentContext`); none for a user.
 pub(super) async fn agent_private_notes(
     State(state): State<Arc<AppState>>,
-    Path((session_id, ActorPath(aid))): Path<(SessionId, ActorPath)>,
+    Path((session_id, ActorPath(actor_id))): Path<(SessionId, ActorPath)>,
     user: AuthenticatedUser,
 ) -> Result<Json<Vec<PrivateNotesResponse>>, ApiError> {
     // A user keeps no private notes, as it counts no calls (`get_participant_usage`).
-    let Some(agent) = aid.as_agent_id() else { return Ok(Json(Vec::new())) };
+    let Some(agent) = actor_id.as_agent_id() else { return Ok(Json(Vec::new())) };
     let session = views(&state, &user).session(session_id).await?;
     let found = session.private_notes_of(agent).await?;
     Ok(Json(
@@ -299,10 +299,10 @@ pub(super) async fn add_participant(
 /// part in neither.
 pub(super) async fn remove_participant(
     State(state): State<Arc<AppState>>,
-    Path((id, ActorPath(participant))): Path<(SessionId, ActorPath)>,
+    Path((session_id, ActorPath(participant))): Path<(SessionId, ActorPath)>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let session_loop = ensure_session(&state, &user, id).await?;
+    let session_loop = ensure_session(&state, &user, session_id).await?;
     session_loop.remove_participant(&user.security_context(), participant).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -311,10 +311,10 @@ pub(super) async fn remove_participant(
 /// and every channel of it by their own act (issue 590), without the right to change it.
 pub(super) async fn leave_session(
     State(state): State<Arc<AppState>>,
-    Path((id, ActorPath(participant))): Path<(SessionId, ActorPath)>,
+    Path((session_id, ActorPath(participant))): Path<(SessionId, ActorPath)>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let session_loop = ensure_session(&state, &user, id).await?;
+    let session_loop = ensure_session(&state, &user, session_id).await?;
     session_loop.leave(&user.security_context(), participant).await?;
     Ok(StatusCode::NO_CONTENT)
 }

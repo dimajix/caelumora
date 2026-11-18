@@ -60,3 +60,8 @@ tell them apart for free. And a reader meets two ways of doing the same thing, o
   `400 invalid_path`, held by a test; REST-SERVER.md says how ids are read. Left as they were: the
   names a handler binds its path's ids by, `id` and `cid` in some, `session_id` and `channel_id`
   in others.
+- **2026-11-18** — Two findings of the work done, as the maintainer asked: a handler binds the ids
+  of its path as the `…_id` of their kinds (`session_id`, `channel_id`, `actor_id`, ...) in every
+  route, where it bound `id` and `cid` in some and `session_id` and `channel_id` in others;
+  REST-SERVER.md states it. And `caelumora-compaction` and `caelumora-rest-client` no longer
+  declare `uuid`, which neither used.

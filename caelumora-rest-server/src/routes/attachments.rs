@@ -25,7 +25,7 @@ use std::sync::Arc;
 /// request's `Content-Length`, which is required (`411`).
 pub(super) async fn upload_attachment(
     State(state): State<Arc<AppState>>,
-    Path((id, cid)): Path<(SessionId, ChannelId)>,
+    Path((session_id, channel_id)): Path<(SessionId, ChannelId)>,
     Query(query): Query<AttachmentQuery>,
     user: AuthenticatedUser,
     headers: HeaderMap,
@@ -42,7 +42,7 @@ pub(super) async fn upload_attachment(
             )
         })?;
     let classification = classification_of(&query)?;
-    let (_, channel) = open_channel(&state, &user, id, cid).await?;
+    let (_, channel) = open_channel(&state, &user, session_id, channel_id).await?;
     let content = Box::pin(body.into_data_stream().map_err(Error::other));
     let uploaded = state
         .kernel
@@ -62,11 +62,16 @@ pub(super) async fn upload_attachment(
 /// an image a browser shows without running anything inline, anything else as a download.
 pub(super) async fn download_attachment(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, mid, aid)): Path<(SessionId, ChannelId, MessageId, ContentId)>,
+    Path((session_id, channel_id, message_id, content_id)): Path<(
+        SessionId,
+        ChannelId,
+        MessageId,
+        ContentId,
+    )>,
     user: AuthenticatedUser,
 ) -> Result<Response, ApiError> {
-    let channel = channel_view(&state, &user, id, cid).await?;
-    let (attachment, size, content) = channel.attachment_content(mid, aid).await?;
+    let channel = channel_view(&state, &user, session_id, channel_id).await?;
+    let (attachment, size, content) = channel.attachment_content(message_id, content_id).await?;
     Ok(content_response(
         size,
         content,

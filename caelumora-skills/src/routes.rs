@@ -134,91 +134,94 @@ async fn create_skill(
 /// Skill `id`, with its body.
 async fn get_skill(
     State(state): State<Skills>,
-    Path(id): Path<SkillId>,
+    Path(skill_id): Path<SkillId>,
     user: AuthenticatedUser,
 ) -> Result<Json<SkillResponse>, ApiError> {
-    Ok(Json(readable(&state, &user, id).await?))
+    Ok(Json(readable(&state, &user, skill_id).await?))
 }
 
 async fn rename_skill(
     State(state): State<Skills>,
-    Path(id): Path<SkillId>,
+    Path(skill_id): Path<SkillId>,
     user: AuthenticatedUser,
     Json(request): Json<RenameSkillRequest>,
 ) -> Result<Json<SkillResponse>, ApiError> {
-    state.manager.rename(&user.security_context(), id, &request.name).await?;
-    Ok(Json(readable(&state, &user, id).await?))
+    state.manager.rename(&user.security_context(), skill_id, &request.name).await?;
+    Ok(Json(readable(&state, &user, skill_id).await?))
 }
 
 /// Says anew what the skill is for.
 async fn describe_skill(
     State(state): State<Skills>,
-    Path(id): Path<SkillId>,
+    Path(skill_id): Path<SkillId>,
     user: AuthenticatedUser,
     Json(request): Json<SkillDescriptionRequest>,
 ) -> Result<Json<SkillResponse>, ApiError> {
-    state.manager.describe(&user.security_context(), id, &request.description).await?;
-    Ok(Json(readable(&state, &user, id).await?))
+    state.manager.describe(&user.security_context(), skill_id, &request.description).await?;
+    Ok(Json(readable(&state, &user, skill_id).await?))
 }
 
 /// Writes anew what the skill tells the model.
 async fn rewrite_skill(
     State(state): State<Skills>,
-    Path(id): Path<SkillId>,
+    Path(skill_id): Path<SkillId>,
     user: AuthenticatedUser,
     Json(request): Json<SkillBodyRequest>,
 ) -> Result<Json<SkillResponse>, ApiError> {
-    state.manager.rewrite(&user.security_context(), id, &request.body).await?;
-    Ok(Json(readable(&state, &user, id).await?))
+    state.manager.rewrite(&user.security_context(), skill_id, &request.body).await?;
+    Ok(Json(readable(&state, &user, skill_id).await?))
 }
 
 /// Reclassifies the skill as a whole.
 async fn reclassify_skill(
     State(state): State<Skills>,
-    Path(id): Path<SkillId>,
+    Path(skill_id): Path<SkillId>,
     user: AuthenticatedUser,
     Json(classification): Json<Classification>,
 ) -> Result<Json<SkillResponse>, ApiError> {
-    state.manager.reclassify(&user.security_context(), id, classification).await?;
-    Ok(Json(readable(&state, &user, id).await?))
+    state.manager.reclassify(&user.security_context(), skill_id, classification).await?;
+    Ok(Json(readable(&state, &user, skill_id).await?))
 }
 
 /// Deletes the skill: kept until it is purged.
 async fn delete_skill(
     State(state): State<Skills>,
-    Path(id): Path<SkillId>,
+    Path(skill_id): Path<SkillId>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let deleted = state.manager.delete(&user.security_context(), id).await?;
+    let deleted = state.manager.delete(&user.security_context(), skill_id).await?;
     match deleted {
         true => Ok(StatusCode::NO_CONTENT),
-        false => Err(ApiError::not_found("skill_not_found", format!("There is no skill {id}"))),
+        false => {
+            Err(ApiError::not_found("skill_not_found", format!("There is no skill {skill_id}")))
+        }
     }
 }
 
 /// Restores the deleted skill; `409` if another took its name meanwhile.
 async fn restore_skill(
     State(state): State<Skills>,
-    Path(id): Path<SkillId>,
+    Path(skill_id): Path<SkillId>,
     user: AuthenticatedUser,
 ) -> Result<Json<SkillResponse>, ApiError> {
-    state.manager.restore(&user.security_context(), id).await?;
-    Ok(Json(readable(&state, &user, id).await?))
+    state.manager.restore(&user.security_context(), skill_id).await?;
+    Ok(Json(readable(&state, &user, skill_id).await?))
 }
 
 /// Removes the deleted skill for good - as the policy allows, by default
 /// the system's alone.
 async fn purge_skill(
     State(state): State<Skills>,
-    Path(id): Path<SkillId>,
+    Path(skill_id): Path<SkillId>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let purged = state.manager.purge(&user.security_context(), id).await?;
+    let purged = state.manager.purge(&user.security_context(), skill_id).await?;
     match purged {
         true => Ok(StatusCode::NO_CONTENT),
-        false => {
-            Err(ApiError::not_found("skill_not_found", format!("There is no deleted skill {id}")))
-        }
+        false => Err(ApiError::not_found(
+            "skill_not_found",
+            format!("There is no deleted skill {skill_id}"),
+        )),
     }
 }
 

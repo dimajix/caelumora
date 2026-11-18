@@ -63,71 +63,74 @@ pub(super) async fn create_group(
 /// Group `id`, with its members.
 pub(super) async fn get_group(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<GroupId>,
+    Path(group_id): Path<GroupId>,
     user: AuthenticatedUser,
 ) -> Result<Json<GroupResponse>, ApiError> {
-    Ok(Json(readable(&state, &user, id).await?))
+    Ok(Json(readable(&state, &user, group_id).await?))
 }
 
 pub(super) async fn rename_group(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<GroupId>,
+    Path(group_id): Path<GroupId>,
     user: AuthenticatedUser,
     Json(request): Json<RenameGroupRequest>,
 ) -> Result<Json<GroupResponse>, ApiError> {
-    state.kernel.group_manager().rename(&user.security_context(), id, &request.name).await?;
-    Ok(Json(readable(&state, &user, id).await?))
+    state.kernel.group_manager().rename(&user.security_context(), group_id, &request.name).await?;
+    Ok(Json(readable(&state, &user, group_id).await?))
 }
 
 /// Makes the users the body names the members of the team, replacing who
 /// was in it.
 pub(super) async fn set_members(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<GroupId>,
+    Path(group_id): Path<GroupId>,
     user: AuthenticatedUser,
     Json(members): Json<Vec<UserId>>,
 ) -> Result<Json<GroupResponse>, ApiError> {
-    state.kernel.group_manager().set_members(&user.security_context(), id, members).await?;
-    Ok(Json(readable(&state, &user, id).await?))
+    state.kernel.group_manager().set_members(&user.security_context(), group_id, members).await?;
+    Ok(Json(readable(&state, &user, group_id).await?))
 }
 
 /// Deletes the team: kept until it is purged; who it was shared with
 /// through it reads it no longer.
 pub(super) async fn delete_group(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<GroupId>,
+    Path(group_id): Path<GroupId>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let deleted = state.kernel.group_manager().delete(&user.security_context(), id).await?;
+    let deleted = state.kernel.group_manager().delete(&user.security_context(), group_id).await?;
     match deleted {
         true => Ok(StatusCode::NO_CONTENT),
-        false => Err(ApiError::not_found("group_not_found", format!("There is no group {id}"))),
+        false => {
+            Err(ApiError::not_found("group_not_found", format!("There is no group {group_id}")))
+        }
     }
 }
 
 /// Restores the deleted team; `409` if another took its name meanwhile.
 pub(super) async fn restore_group(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<GroupId>,
+    Path(group_id): Path<GroupId>,
     user: AuthenticatedUser,
 ) -> Result<Json<GroupResponse>, ApiError> {
-    state.kernel.group_manager().restore(&user.security_context(), id).await?;
-    Ok(Json(readable(&state, &user, id).await?))
+    state.kernel.group_manager().restore(&user.security_context(), group_id).await?;
+    Ok(Json(readable(&state, &user, group_id).await?))
 }
 
 /// Removes the deleted team for good - as the policy allows, by default the
 /// system's alone.
 pub(super) async fn purge_group(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<GroupId>,
+    Path(group_id): Path<GroupId>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let purged = state.kernel.group_manager().purge(&user.security_context(), id).await?;
+    let purged = state.kernel.group_manager().purge(&user.security_context(), group_id).await?;
     match purged {
         true => Ok(StatusCode::NO_CONTENT),
-        false => {
-            Err(ApiError::not_found("group_not_found", format!("There is no deleted group {id}")))
-        }
+        false => Err(ApiError::not_found(
+            "group_not_found",
+            format!("There is no deleted group {group_id}"),
+        )),
     }
 }
 

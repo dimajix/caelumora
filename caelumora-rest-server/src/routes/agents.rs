@@ -63,10 +63,10 @@ pub(super) async fn create_agent(
 /// Agent `id`, with the channels it takes part in that the user may read.
 pub(super) async fn get_agent(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<AgentId>,
+    Path(agent_id): Path<AgentId>,
     user: AuthenticatedUser,
 ) -> Result<Json<AgentResponse>, ApiError> {
-    let agent = views(&state, &user).agent(id).await?;
+    let agent = views(&state, &user).agent(agent_id).await?;
     let channels = agent
         .channels()
         .await?
@@ -85,13 +85,13 @@ pub(super) async fn get_agent(
 /// agent that runs takes the new name at once.
 pub(super) async fn rename_agent(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<AgentId>,
+    Path(agent_id): Path<AgentId>,
     user: AuthenticatedUser,
     Json(request): Json<RenameAgentRequest>,
 ) -> Result<Json<AgentResponse>, ApiError> {
-    let agent = state.kernel.controller_manager().agent_controller(id).await?;
+    let agent = state.kernel.controller_manager().agent_controller(agent_id).await?;
     agent.update_name(&user.security_context(), &request.name).await?;
-    Ok(Json(readable(&state, &user, id).await?))
+    Ok(Json(readable(&state, &user, agent_id).await?))
 }
 
 /// Deletes agent `id`: it rests in the channels it takes part in, as a

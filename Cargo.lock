@@ -557,7 +557,6 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -799,7 +798,6 @@ dependencies = [
  "anyhow",
  "serde",
  "serde_json",
- "uuid",
 ]
 
 [[package]]
