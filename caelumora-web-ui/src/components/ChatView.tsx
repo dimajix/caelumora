@@ -89,7 +89,7 @@ import {MessageView, Reasoning} from './MessageView';
 import {Notice} from './Notice';
 import {Timestamp} from './Timestamp';
 import {ShownChannelContext, type ShownChannel} from '../shownChannel';
-import {activityNotice, activityUnderWay, attachedByTurn, chainCutOffNotice, responderUndecidedNotice, channelCommandNotice, chatMessages, chatRows, commandFailedNotice, commandNotice, eventRefusedNotice, eventRejectedNotice, nudgeNotice, retryRefusedNotice, endedCommands, formatArguments, givenBack, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, isShownInLine, joinsSteps, mayBeAnsweredAgain, mergeToolResults, participantNotice, threadNotice, withoutQuietCalls, planStepMark, rowTurn, turnGroups, type ChatRow} from '../messages';
+import {activityNotice, activityUnderWay, attachedByTurn, chainCutOffNotice, responderUndecidedNotice, channelCommandNotice, chatMessages, chatRows, commandFailedNotice, commandNotice, eventRefusedNotice, eventRejectedNotice, nudgeNotice, retryRefusedNotice, endedCommands, formatArguments, givenBack, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, isSaidInLine, isShownInLine, joinsSteps, mayBeAnsweredAgain, mergeToolResults, participantNotice, threadNotice, withoutQuietCalls, planStepMark, rowTurn, turnGroups, type ChatRow} from '../messages';
 import {PlanSteps} from './PlanSteps';
 import {TokenGauge} from './TokenGauge';
 import {HoverCard} from './HoverCard';
@@ -586,11 +586,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     if (takesPart !== false) return;
     return onGlobalEvent(event => {
       const said = saidInChannel(event);
-      if (!said || said.channelId !== channelId) return;
+      if (!said || said.channelId !== channelId || !isSaidInLine(said, me)) return;
       setMessages(prev => prev.some(m => m.id === said.message.id) ? prev : [...prev, said.message]);
       if (said.message.attachments?.length) setAttachmentsVersion(v => v + 1);
     });
-  }, [channelId, takesPart]);
+  }, [channelId, takesPart, me]);
 
   // A reclassified channel follows the global stream (issue 133): it may
   // have changed its messages too, which are fetched again. A reclassified
@@ -823,7 +823,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
         // What is said in another thread is left out of the line's view (issue 557): nothing of it
         // enters the chat, no answer of it is shown under way - while what the participants, the
         // usage and the workspace keep of it is kept.
-        const inLine = isShownInLine(envelope);
+        const inLine = isShownInLine(envelope, me);
         const chat: typeof setMessages = inLine ? setMessages : () => {};
         const answers: typeof setAnswers = inLine ? setAnswers : () => {};
         const actorEvent = envelope.event;
@@ -1117,7 +1117,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       onSnapshot: handleSnapshot,
       onEvent: handleMessage,
     });
-  }, [sessionId, channelId, takesPart, user.id]);
+  }, [sessionId, channelId, takesPart, user.id, me]);
 
 
   // A channel opened is shown from its end.

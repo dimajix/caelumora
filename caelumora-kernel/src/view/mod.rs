@@ -1679,8 +1679,9 @@ mod tests {
         for message in [&hers, &step, &notice, &asking] {
             state.history.enter(said_in_line(channel.id, message));
         }
-        // Said in another thread (issue 557): left out of the line's view, and counted nowhere.
-        let aside = said(&dave, "aside");
+        // Said in another thread (issue 557): left out of the line's view but where it mentions the
+        // viewer, and counted there alone.
+        let aside = Message { mentions: vec![ActorId::User(bob.id)], ..said(&dave, "@bob, aside") };
         let in_line = said_in_line(channel.id, &aside);
         let thread_id = ThreadId::new();
         let context = EventContext { thread_id, ..in_line.context };
@@ -1705,8 +1706,8 @@ mod tests {
         );
         assert_eq!(
             unread_of(&bob).await,
-            unread(1, false, None),
-            "hers, from where his view begins"
+            unread(2, true, None),
+            "hers, from where his view begins, and what mentions him in another thread"
         );
         let without = manager
             .views(as_user(alice.id))
@@ -1720,6 +1721,10 @@ mod tests {
         let page = line.history_page(None, 20).await.unwrap();
         let read: Vec<_> = page.entries().filter_map(HistoryEntry::said).map(|m| m.id).collect();
         assert!(read.contains(&asking.id) && !read.contains(&aside.id), "a page of the line");
+        let his = manager.views(as_user(bob.id)).channel(session.id, channel.id).await.unwrap();
+        let page = his.history_page(None, 20).await.unwrap();
+        let read: Vec<_> = page.entries().filter_map(HistoryEntry::said).map(|m| m.id).collect();
+        assert!(read.contains(&aside.id), "with what mentions him in another thread");
 
         let controller = |user: &User| {
             let (manager, user) = (&manager, user.id);

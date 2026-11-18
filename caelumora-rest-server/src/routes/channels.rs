@@ -21,6 +21,7 @@ use caelumora_domain::confidentiality::{Classification, LabelCauses};
 use caelumora_domain::context::{ContextItem, KnowledgeRef, KnowledgeSource};
 use caelumora_domain::history::HistoryEntry;
 use caelumora_domain::message::{Message, MessageId, TokenUsage};
+use caelumora_domain::query::Filter;
 use caelumora_domain::question::QuestionId;
 use caelumora_domain::session::SessionId;
 use caelumora_domain::snapshot::Detail;
@@ -157,17 +158,21 @@ const SNAPSHOT_ITEMS: usize = 20;
 
 /// A page of the history of the channel, as the user may see it (issues 46, 218): its messages and
 /// how turns ended (issue 258), oldest first - the last ones, or those before `?before=`; of the
-/// thread `?thread=`, the channel's line without it, with what happens in the whole channel (issue
-/// 557); with `?attachments=true`, the messages carrying attachments alone (issue 509).
+/// thread `?thread=`, with what happens in the whole channel, or else what the view of the line
+/// shows the user (`Filter::shown_in_line`, issue 557); with `?attachments=true`, the
+/// messages carrying attachments alone (issue 509).
 pub(super) async fn get_channel_history(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
-    Query(mut query): Query<HistoryQuery>,
+    Query(query): Query<HistoryQuery>,
     user: AuthenticatedUser,
 ) -> Result<Json<HistoryPageResponse<Message>>, ApiError> {
-    query.thread.get_or_insert(ThreadId::line(ChannelId(cid)));
     let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let page = channel.history_page_of(query.before, query.limit(), query.filter()).await?;
+    let line = ThreadId::line(ChannelId(cid));
+    let in_line =
+        query.thread.is_none().then(|| Filter::shown_in_line(line, ActorId::User(user.id)));
+    let filter = Filter::all_given([in_line, query.filter()]);
+    let page = channel.history_page_of(query.before, query.limit(), filter).await?;
     Ok(Json(HistoryPageResponse::of(page, |message, _| message)))
 }
 
@@ -919,6 +924,7 @@ mod tests {
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::channel::Participant;
     use caelumora_domain::history::{Audience, Recorded};
+    use caelumora_domain::message::MessageRole;
     use caelumora_domain::security::Refused;
     use caelumora_kernel::channel::ChannelError;
     use caelumora_kernel::view::{AgentContextError, Viewer};
@@ -1151,8 +1157,9 @@ mod tests {
         state.session_manager.stop(&SecurityContext::system(), session).await.unwrap();
     }
 
-    /// Issue 557: a page of the channel's history is of its line unless `?thread=` names another
-    /// thread - each with what happens in the whole channel.
+    /// Issue 557: a page of the channel's history is what the view of its line shows the user -
+    /// with what mentions them in another thread - unless `?thread=` names a thread; each with what
+    /// happens in the whole channel.
     #[tokio::test]
     async fn a_page_of_the_history_is_of_the_line_unless_a_thread_is_asked_for() {
         let state = state();
@@ -1160,7 +1167,10 @@ mod tests {
         let alice = ActorId::User(user_id(&api, &cookie).await);
         let other = ThreadId::new();
         let said_in = |thread_id, text: &str| {
+            let mentions = if text.contains("@alice") { vec![alice] } else { Vec::new() };
             let message = Message {
+                role: MessageRole::User,
+                mentions,
                 sender_id: alice,
                 content: Some(text.to_string()),
                 ..Message::new(Classification::CHANNEL_DEFAULT)
@@ -1174,11 +1184,13 @@ mod tests {
         let mut channel_state = states.get_channel_state(channel).await.unwrap();
         channel_state.history.enter(said_in(ThreadId::line(channel), "in the line"));
         channel_state.history.enter(said_in(other, "in another thread"));
+        channel_state.history.enter(said_in(other, "@alice, mentioned"));
         states.put_channel_state(channel, &mut channel_state).await.unwrap();
 
         let history = format!("/sessions/{}/channels/{}/history", session.0, channel.0);
         let line = page_of(&api, &cookie, &history).await.to_string();
         assert!(line.contains("in the line") && !line.contains("in another thread"), "{line}");
+        assert!(line.contains("mentioned"), "what mentions her: {line}");
         let of_other = page_of(&api, &cookie, &format!("{history}?thread={}", other.0)).await;
         let of_other = of_other.to_string();
         assert!(

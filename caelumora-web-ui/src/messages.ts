@@ -4,10 +4,27 @@ import type {ActorId, Envelope, GivenUpReason, HistoryItem, Message, PlanStep, R
 import {classificationLabel} from './confidentiality';
 import {actorKey, isSystem, sameActor} from './actor';
 import {handleOf} from './mention';
+import type {Said} from './globalEvents';
 
 /** Whether `message` was said by `me` (issue 407); one without a sender is no one's own. */
 export function isOwn(message: Message, me: ActorId): boolean {
   return message.sender_id !== undefined && sameActor(message.sender_id, me);
+}
+
+/**
+ * Whether a participant hears `message` when someone else said it, as the kernel's
+ * `Message::is_heard` says: said or answered in words or attachments, or calls a person made
+ * themselves - not a tool message, not a step of a plan.
+ */
+export function isHeard(message: Message): boolean {
+  const saysSomething = Boolean(message.content) || (message.attachments?.length ?? 0) > 0;
+  const personsCall = message.role === 'User' && (message.tool_calls?.length ?? 0) > 0;
+  return (message.role === 'User' || message.role === 'Assistant') && !message.internal && (saysSomething || personsCall);
+}
+
+/** Whether `message` mentions `me` - by name or as one of everyone. */
+export function mentions(message: Message, me: ActorId): boolean {
+  return (message.mentions ?? []).some(mentioned => sameActor(mentioned, me));
 }
 
 export function formatArguments(args: unknown): string {
@@ -407,13 +424,13 @@ export function givenBack(message: Message): Message[] {
 }
 
 /**
- * Whether the line's view of a channel shows `envelope` (issue 557), as the kernel's
+ * Whether the line's view of a channel shows `envelope` to `me` (issue 557), as the kernel's
  * `Envelope::is_shown_in_line` says: what happens in the line - whose id is the channel's - or in
  * the whole channel, and of every other thread its approvals and its questions, which its calls
- * wait for. Of those the events a user is delivered alone; what happens in the whole channel known
- * by its kind, since an event names only its context's thread.
+ * wait for, and a message that mentions `me`. Of those the events a user is delivered alone; what
+ * happens in the whole channel known by its kind, since an event names only its context's thread.
  */
-export function isShownInLine(envelope: Envelope): boolean {
+export function isShownInLine(envelope: Envelope, me: ActorId): boolean {
   const event = envelope.event;
   if (envelope.context.thread_id === envelope.context.channel_id) return true;
   if (typeof event === 'string') return false;
@@ -421,7 +438,17 @@ export function isShownInLine(envelope: Envelope): boolean {
     || event.ApprovalTimedOut || event.ApprovalRequestWithdrawn || event.QuestionRequested || event.QuestionClosed;
   const ofWholeChannel = event.ThreadOpened || event.ThreadClosed || event.MessageModified || event.MessageRevoked
     || event.MessageReclassified;
-  return Boolean(waitedFor || ofWholeChannel);
+  const said = event.CompleteMessageGenerated;
+  const mentionsMe = said !== undefined && isHeard(said) && mentions(said, me);
+  return Boolean(waitedFor || ofWholeChannel || mentionsMe);
+}
+
+/**
+ * Whether the line's view of its channel shows `said` to `me` (issue 557): a message announced as
+ * said in the line, or one that mentions `me` in another thread - as `isShownInLine` shows it live.
+ */
+export function isSaidInLine(said: Said, me: ActorId): boolean {
+  return said.thread === said.channelId || mentions(said.message, me);
 }
 
 /**

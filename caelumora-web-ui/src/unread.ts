@@ -3,14 +3,14 @@
 // The server counts it as a channel is listed or opened (`unread`), over what
 // the user may read: the messages others said that one hears, after the last
 // one the user read. The session list counts on from there with every such
-// message the global stream announces (`said`), and the chat view marks a
+// message the global stream announces (`said`) that the view of the line shows
+// the user (`isSaidInLine`, issue 557), and the chat view marks a
 // channel read as it shows its newest message of someone else. The mark only
 // moves forward on the server; what another tab or device read is seen here
 // on the next listing.
 
 import {api} from './api';
-import {sameActor} from './actor';
-import {isOwn} from './messages';
+import {isOwn, mentions} from './messages';
 import type {ActorId, Message, Unread} from './types';
 
 /** More new messages than this are shown as such. */
@@ -24,11 +24,6 @@ export function unreadLabel(count: number): string {
 /** Whether `message` was said by someone other than `me`. */
 export function isOthers(message: Message, me: ActorId): boolean {
   return message.sender_id !== undefined && !isOwn(message, me);
-}
-
-/** Whether `message` mentions `me` - by name or as one of everyone. */
-export function mentions(message: Message, me: ActorId): boolean {
-  return (message.mentions ?? []).some(mentioned => sameActor(mentioned, me));
 }
 
 /** `unread` with `message` of someone else counted: one more, and mentioned if it mentions `me`. */

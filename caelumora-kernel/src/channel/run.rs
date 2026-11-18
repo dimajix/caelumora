@@ -12,7 +12,7 @@ use caelumora_api::actor::Answering;
 use caelumora_api::logging::envelope_span;
 use caelumora_domain::actor::{ActorEvent, ActorId, Envelope, Rejection, RetryTarget};
 use caelumora_domain::chain::Position;
-use caelumora_domain::channel::{ChannelState, ThreadId, ThreadState};
+use caelumora_domain::channel::{ChannelState, Said, ThreadId, ThreadState};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::history::{Audience, Heard, Reader, Recorded};
 use caelumora_domain::message::Message;
@@ -1051,9 +1051,10 @@ impl ChannelLoop {
     /// what it did of its own accord (issue 284) before its turn's end, who
     /// joined or left where it happened (issue 408), and a change of a
     /// message, admitted, so that it applies (`admission`, issues 234, 304).
-    /// Stored at once; what others hear of a message in the line, as
-    /// everybody may see it, is announced as news once it is stored (issues
-    /// 404, 557): what a frontend shows of the channel. Returns the
+    /// Stored at once; what others hear of a message in the line, or of one
+    /// mentioning a user in another thread, as everybody may see it, is
+    /// announced as news once it is stored (issues 404, 557): what a frontend
+    /// shows of the channel. Returns the
     /// position of its entry, which what is delivered of it carries; `None`
     /// if nothing was recorded.
     async fn append_history(&self, envelope: &Envelope, audience: Audience) -> Option<Position> {
@@ -1065,12 +1066,14 @@ impl ChannelLoop {
     /// recorded - a change of a message that changes nothing. What a delegate gave is followed in
     /// its delegation (`Delegation::follow`), stored with it.
     async fn record(&self, recorded: Recorded) -> Option<Position> {
-        let in_line = recorded.thread().is_none_or(|thread| thread == ThreadId::line(self.id));
+        let thread = recorded.context.thread_id;
+        let in_line = recorded.thread().is_none_or(|of| of == ThreadId::line(self.id));
         let said = recorded
             .entry
             .published()
             .and_then(|entry| entry.said().cloned())
-            .filter(|message| in_line && message.is_heard());
+            .filter(|message| (in_line || mentions_a_user(message)) && message.is_heard())
+            .map(|message| Said { message, thread });
         let entry = recorded.entry.clone();
         let mut state = self.state.lock().await;
         if !state.history.enter(recorded) {
@@ -1168,6 +1171,12 @@ impl Behind for ChannelLoop {
         }
         Ok((delivered, to))
     }
+}
+
+/// Whether `message` mentions a user (issue 557): what the line's view shows them of another
+/// thread; an agent addressed there is told in its thread.
+fn mentions_a_user(message: &Message) -> bool {
+    message.mentions.iter().any(|mentioned| matches!(mentioned, ActorId::User(_)))
 }
 
 #[cfg(test)]
@@ -3341,13 +3350,13 @@ mod tests {
     }
 
     /// Issue 404: what others hear of a message is announced with the message once it is stored, as
-    /// news of the channel; a step of a plan, a notice of the kernel or what is said in another
-    /// thread than the line (issue 557) is not.
+    /// news of the channel, with its thread; a step of a plan, a notice of the kernel or what is
+    /// said in another thread than the line without mentioning a user (issue 557) is not.
     #[tokio::test]
     async fn what_others_hear_is_announced_once_it_is_stored() {
         use crate::session::testing::{running_session_of_a_user, spec, test_kernel};
         use crate::session::SessionManager;
-        use caelumora_domain::channel::{Channel, SAID};
+        use caelumora_domain::channel::{Channel, Said, SAID};
         let kernel = test_kernel();
         let manager = SessionManager::new(Arc::clone(&kernel));
         let (session, ctx, _) = running_session_of_a_user(&manager).await;
@@ -3369,27 +3378,37 @@ mod tests {
         let step = Message { id: MessageId::new(), internal: true, ..heard.clone() };
         let notice = Message { id: MessageId::new(), role: MessageRole::System, ..heard.clone() };
         let aside = Message { id: MessageId::new(), ..heard.clone() };
+        let mentioning = Message { id: MessageId::new(), mentions: vec![owner], ..heard.clone() };
+        let agent = ActorId::Agent(AgentId::new());
+        let addressing = Message { id: MessageId::new(), mentions: vec![agent], ..heard.clone() };
         let mut rx = kernel.event_bus().subscribe_all();
 
         for message in [&heard, &step, &notice] {
             channel.append_history(&said(message), Audience::Everybody).await;
         }
-        let in_thread = said(&aside);
         let thread_id = ThreadId::new();
-        let in_thread =
-            Envelope { context: EventContext { thread_id, ..in_thread.context }, ..in_thread };
-        channel.append_history(&in_thread, Audience::Everybody).await;
+        for message in [&aside, &mentioning, &addressing] {
+            let in_thread = said(message);
+            let context = EventContext { thread_id, ..in_thread.context };
+            channel.append_history(&Envelope { context, ..in_thread }, Audience::Everybody).await;
+        }
 
-        let announced: Vec<MessageId> = rx
+        let announced: Vec<(MessageId, ThreadId)> = rx
             .drain()
             .await
             .iter()
             .filter_map(|event| event.about::<Channel>().filter(|((_, id), _)| *id == channel.id()))
-            .filter_map(|(_, change)| change.data::<Message>(SAID))
-            .map(|message| message.id)
+            .filter_map(|(_, change)| change.data::<Said>(SAID))
+            .map(|said| (said.message.id, said.thread))
             .collect();
-        assert_eq!(announced, [heard.id], "the words others hear, with the message");
-        assert_eq!(channel.history().await.len(), 4, "though every one is kept");
+        let line = ThreadId::line(channel.id());
+        assert_eq!(
+            announced,
+            [(heard.id, line), (mentioning.id, thread_id)],
+            "the words others hear in the line, and a mention of a user in another thread, with its \
+             thread"
+        );
+        assert_eq!(channel.history().await.len(), 6, "though every one is kept");
     }
 
     #[tokio::test]

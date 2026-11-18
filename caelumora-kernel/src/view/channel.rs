@@ -345,8 +345,8 @@ impl ChannelView {
 
     /// A page of the channel's line as the viewer sees it (issues 46, 218,
     /// 379, 417, 557): the last `limit` items before the position `before` -
-    /// the last ones without it - of those they see in the line and in the
-    /// whole channel, as a frontend shows the channel; of a channel read
+    /// the last ones without it - of those they see in the view of the line
+    /// (`Filter::shown_in_line`), as a frontend shows the channel; of a channel read
     /// entry by entry, the messages released to where the viewer reads
     /// from, and nothing of how turns ended. Read from the store, whether the
     /// channel runs or not.
@@ -359,7 +359,7 @@ impl ChannelView {
         before: Option<Position>,
         limit: usize,
     ) -> ViewResult<HistoryPage> {
-        let line = Filter::in_thread(ThreadId::line(self.channel.id));
+        let line = Filter::shown_in_line(ThreadId::line(self.channel.id), self.reader());
         self.history_page_of(before, limit, Some(line)).await
     }
 
@@ -496,13 +496,8 @@ impl ChannelView {
     /// turns ended - that would tell of work in the channel whose messages
     /// are not released (issue 258).
     fn readable_items(&self, filter: Option<Filter<HistoryField>>) -> Option<Filter<HistoryField>> {
-        match (
-            Filter::readable(&self.reading, self.views().confidentiality().compartments()),
-            filter,
-        ) {
-            (Some(readable), Some(filter)) => Some(Filter::all_of([readable, filter])),
-            (readable, filter) => readable.or(filter),
-        }
+        let compartments = self.views().confidentiality().compartments();
+        Filter::all_given([Filter::readable(&self.reading, compartments), filter])
     }
 
     /// The notes every agent of the channel published (issue 17), read from
@@ -605,8 +600,8 @@ impl ChannelView {
     }
 
     /// What is new in the channel to the viewer (issue 404), if they are a
-    /// user: the messages others said in its line that the viewer hears and
-    /// may read (issue 557) - as a frontend shows them -, after the last one
+    /// user: the messages others said that the viewer hears in the view of
+    /// the line and may read (`Filter::shown_in_line`, issue 557), after the last one
     /// they read and from where their view of the
     /// history begins - counted up to `Unread::CAP` -, and whether one of
     /// them mentions them. Read from the store, whether the channel runs or
@@ -630,12 +625,11 @@ impl ChannelView {
             })?;
         let read_up_to = state.read.map(|read| read.message);
         let from = state.unread_from();
-        let line = ThreadId::line(self.channel.id);
         let heard_from_others = || {
             Filter::all_of([
                 Filter::heard(),
                 Filter::negated(Filter::said_by(viewer)),
-                Filter::in_thread(line),
+                Filter::shown_in_line(ThreadId::line(self.channel.id), viewer),
             ])
         };
         let new = self.readable_items(Some(heard_from_others()));

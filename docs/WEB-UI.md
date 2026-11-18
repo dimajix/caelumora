@@ -159,7 +159,8 @@ or restoring, whatever the kind.
 What is new in a channel (issue 404) is shown beside it: how many messages of others came since the
 user last read it, and an `@` where one of them mentions them; a folded session shows the sum of its
 channels. The list takes the numbers from the snapshot and counts on with every message the global
-stream announces (`said`) - except in the channel on screen while the tab is visible -, and the
+stream announces (`said`) that the view of the line shows the user (`isSaidInLine`, issue 557) -
+except in the channel on screen while the tab is visible -, and the
 chat view clears them as it marks the channel read (`unread.ts`). What another tab or device read
 is seen here on the next listing. A message that mentions the user is shown as a notification of
 the browser where they allowed it - asked for by the bell at the foot of the sidebar - unless its
@@ -351,13 +352,14 @@ it is fetched anew as it starts.
     panel shows it as well.
 *   **Threads.** The chat is the channel's line (issue 557): what is said in another thread - a
     sub-agent's - is left out, live (`isShownInLine`, as the kernel's `Envelope::is_shown_in_line`)
-    and from the history, which the server reads of the line; of another thread its approvals and
-    its questions are shown, since its calls wait for them. Left out of the chat alone: the
-    participants, what calls used and the workspace follow every thread. The unread count and the
-    chat of a reader who takes no part follow what is announced as said, which is of the line. That
-    a thread was opened or closed is a line of its own ("@lead has opened a thread"); what comes
-    back from a thread to read stands where it came, under "Given back to read from a thread:". A
-    view of a thread comes later.
+    and from the history, which the server reads as the line's view; of another thread its approvals
+    and its questions are shown, since its calls wait for them, and a message that mentions the
+    user. Left out of the chat alone: the participants, what calls used and the workspace follow
+    every thread. The unread count and the chat of a reader who takes no part follow what is
+    announced as said, as far as the view of the line shows it (`isSaidInLine`). That a thread was
+    opened or closed is a line of its own ("@lead has opened a thread"); what comes back from a
+    thread to read stands where it came, under "Given back to read from a thread:". A view of a
+    thread comes later.
 *   **A plan** is shown by its call, its steps numbered. While an agent works through it, each step
     is a block of its own, headed with the step, that holds what the step said; the step a turn is
     in is open while the turn is under way, every other one folded unless the user opened or closed

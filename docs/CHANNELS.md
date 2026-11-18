@@ -201,8 +201,9 @@ classification of the channel happen in the whole channel. By one rule (`Recipie
 what happens in its thread and in the whole channel - what it hears enters its context, and is paid
 for by every call after it -, a user everything of the channel, which a frontend sorts by thread;
 what goes to someone by name reaches them wherever it happens. The web UI and the TUI show the line
-(`Envelope::is_shown_in_line`, `ChannelView::history_page`): what happens in it and in the whole
-channel, and of another thread its approvals and its questions, which its calls wait for.
+(`Envelope::is_shown_in_line`, `ChannelView::shown_in_line`): what happens in it and in the whole
+channel, and of another thread its approvals and its questions, which its calls wait for, and what
+mentions the viewer.
 
 A thread is **opened** at a message of another thread of its channel (`ThreadOrigin`), with its
 **founders** taking part in it alone (`SessionLoop::open_thread`). Opening goes through the session,
@@ -374,15 +375,16 @@ in one step; so their positions in the history order them as the user sees them.
     takes only a message from where the user's view of the history begins. The mark only moves
     forward, so that two frontends of the user cannot move it back, and nobody else reads it.
 *   **Counted by the views.** What is new (`ChannelView::unread`, `Detail::UNREAD`) is what others
-    said in the line that a participant hears (`Message::is_heard`: no steps of a plan, no notices
-    of the kernel, nothing taken back), of what the user may read, after the mark and from where
+    said that a participant hears in the view of the line (`Message::is_heard`: no steps of a plan,
+    no notices of the kernel, nothing taken back; `ChannelView::shown_in_line`), of what the user
+    may read, after the mark and from where
     their view begins - counted up to a cap, and whether one of these messages mentions them,
     `@all` included.
-*   **Announced as it is said.** Every message others hear in the line is announced on the event
-    bus once it is stored (`channel::SAID`), with the message, classified as the channel: it reaches
-    who may read the channel and is cleared for it, which is who reads the message in the history.
-    A frontend counts on from what it listed; what is said in another thread it neither counts nor
-    shows (issue 557).
+*   **Announced as it is said.** Every message others hear in the line, and one mentioning a user
+    in another thread, is announced on the event bus once it is stored (`channel::SAID`), with the
+    message and its thread (`Said`), classified as the channel: it reaches who may read the channel
+    and is cleared for it, which is who reads the message in the history. A frontend counts on from
+    what it listed; of another thread only what mentions the user (issue 557).
 
 ## Acting in a channel
 

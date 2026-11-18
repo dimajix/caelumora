@@ -1362,3 +1362,17 @@ Decided with it, on the author's proposal:
   alone, the participants, the usage and the workspace following every thread; the TUI ending an
   answer under way of another thread with its turn; `ActorEvent::is_waited_for`, exhaustive; an
   agent's history holding what a delegate gave it as what it was given (`Given`) alone.
+- **2026-11-18** — Step 6 of 2b accepted by the maintainer. Decided with it: a mention of a user in
+  another thread is shown to them in the web UI - notifications as a whole to be taken up apart, the
+  terminal's with a concept of its own, together with channels followed side by side (issue
+  [572](572-the-full-screen-terminal-tells-nothing-of-other-channels-at-work.md)). Implemented as a
+  step of its own, as proposed: the line's view by viewer (`Envelope::is_shown_in_line(viewer)`,
+  mirrored in `isShownInLine`) shows a message heard that mentions them; `Filter::shown_in_line` - a
+  condition of the domain, beside the rule, not a method of the view, as the review found - is what
+  a page of the line holds and `unread` counts - the line, the whole channel, and what mentions the
+  viewer -, and what the REST API's channel history gives without `?thread=`; `channel::SAID` is
+  announced for the line and for a message of another thread that mentions a user, with its thread
+  (`Said`), which the web UI's unread count and the chat of a reader who takes no part go by;
+  `Filter::all_given` joins the conditions given, in place of four matches doing so. On review: what
+  is shown live and what a page holds held together by a test, a step of a plan left out of both; a
+  message of another thread no answer `/retry` asks for again in the terminal.

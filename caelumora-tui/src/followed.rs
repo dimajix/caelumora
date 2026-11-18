@@ -9,7 +9,7 @@ use caelumora_api::reader::ViewResult;
 use caelumora_domain::actor::{ActorEvent, ActorId, Envelope};
 use caelumora_domain::agent::AgentId;
 use caelumora_domain::approval::{ApprovalId, ApprovalRequest};
-use caelumora_domain::channel::ChannelId;
+use caelumora_domain::channel::{ChannelId, ThreadId};
 use caelumora_domain::command::{agents_commands, ParameterKind};
 use caelumora_domain::history::{HistoryEntry, HistoryPage};
 use caelumora_domain::mention::MentionDirectory;
@@ -275,7 +275,7 @@ impl Followed {
     /// answer given by a rule of theirs. Of another thread than the line, what the line's view
     /// leaves out concerns them nowhere (`Envelope::is_shown_in_line`, issue 557).
     pub(crate) fn concerns_user(&self, envelope: &Envelope) -> bool {
-        if !envelope.is_shown_in_line() {
+        if !envelope.is_shown_in_line(self.me()) {
             return false;
         }
         match &envelope.event {
@@ -313,6 +313,23 @@ impl Followed {
         }
     }
 
+    /// Takes in `message`, complete, as `envelope` shows it, and answers what the terminal prints
+    /// of it: each message as soon as it is complete, as the web UI shows it; the full response
+    /// that ends an answer holds them again (issue 220). One of another thread that mentions the
+    /// user (issue 557) is no answer of the line that `/retry` asks for again.
+    fn take_in_complete(&mut self, envelope: &Envelope, message: &Message) -> Vec<Printed> {
+        if envelope.context.thread_id == ThreadId::line(self.channel_id()) {
+            if matches!(message.sender_id, ActorId::Agent(_)) {
+                self.last_answer = Some(message.id);
+            }
+            self.given_up = None;
+        }
+        if let Some(answer) = self.answer_of(envelope.context.sender_id) {
+            answer.complete();
+        }
+        self.shown_message(message, Saying::Complete)
+    }
+
     /// Takes in `envelope`, of another thread than the line, which the terminal prints nothing of
     /// (issue 557): an answer under way read before it ended (`catch_up`) ends with its turn all
     /// the same.
@@ -340,7 +357,7 @@ impl Followed {
     /// name, what `take_in_own` prints; of another thread, only what the line's view shows of it
     /// (`Envelope::is_shown_in_line`, issue 557).
     pub(crate) fn take_in(&mut self, envelope: &Envelope) -> Vec<Printed> {
-        if !envelope.is_shown_in_line() {
+        if !envelope.is_shown_in_line(self.me()) {
             self.take_in_of_another_thread(envelope);
             return Vec::new();
         }
@@ -377,17 +394,8 @@ impl Followed {
                 self.end_under_way(sender_id);
                 Vec::new()
             }
-            // Each message as soon as it is complete, as the web UI shows it; the full response
-            // that ends an answer holds them again (issue 220).
             ActorEvent::CompleteMessageGenerated(message) => {
-                if matches!(message.sender_id, ActorId::Agent(_)) {
-                    self.last_answer = Some(message.id);
-                }
-                self.given_up = None;
-                if let Some(answer) = self.answer_of(sender_id) {
-                    answer.complete();
-                }
-                self.shown_message(message, Saying::Complete)
+                self.take_in_complete(envelope, message)
             }
             // A step of a plan under way, with the calls it made and their results.
             ActorEvent::IntermediateMessageGenerated(message) => {
@@ -977,7 +985,7 @@ mod tests {
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::approval::{ApprovalRuleId, ApprovalVerdict, ApproverId};
     use caelumora_domain::chain::Position;
-    use caelumora_domain::channel::{HistoryAccess, ThreadId, ThreadOrigin};
+    use caelumora_domain::channel::{HistoryAccess, ThreadOrigin};
     use caelumora_domain::content::testing::make_content_ref;
     use caelumora_domain::message::testing::make_message;
     use caelumora_domain::message::MessageRole;
@@ -1154,10 +1162,10 @@ mod tests {
         assert!(told[0].contains("calls run_command") && told[1].contains("answered"), "{told:?}");
     }
 
-    /// Issue 557: of another thread the line's view prints its approvals alone; what came back
-    /// from it is printed as given back, and a thread opened as such.
+    /// Issue 557: of another thread the line's view prints its approvals and what mentions the user
+    /// alone; what came back from it is printed as given back, and a thread opened as such.
     #[tokio::test]
-    async fn of_another_thread_only_what_its_calls_wait_for_is_printed() {
+    async fn of_another_thread_only_what_waits_or_mentions_the_user_is_printed() {
         let (mut followed, channel, me) = followed().await;
         let agent_id = AgentId::new();
         let agent = ActorId::Agent(agent_id);
@@ -1166,10 +1174,14 @@ mod tests {
             let envelope = from(&channel, agent, event);
             Envelope { context: EventContext { thread_id, ..envelope.context }, ..envelope }
         };
-        let mentioning = Message { mentions: vec![me], ..message(agent, "@owner, look") };
-        let said = ActorEvent::CompleteMessageGenerated(mentioning);
-        assert!(!followed.concerns_user(&in_other(said.clone())), "a mention the line leaves out");
+        let said = ActorEvent::CompleteMessageGenerated(message(agent, "aside"));
+        assert!(!followed.concerns_user(&in_other(said.clone())));
         assert!(followed.take_in(&in_other(said)).is_empty(), "said in another thread");
+        let mentioning = Message { mentions: vec![me], ..message(agent, "@owner, look") };
+        let mentioning = ActorEvent::CompleteMessageGenerated(mentioning);
+        assert!(followed.concerns_user(&in_other(mentioning.clone())), "it mentions them");
+        assert_eq!(lines(&followed.take_in(&in_other(mentioning))), ["other: @owner, look"]);
+        assert_eq!(followed.last_answer, None, "no answer of the line to ask for again");
         let request = ActorEvent::ApprovalRequested(approval(&channel, agent_id));
         assert!(followed.concerns_user(&in_other(request.clone())));
         assert_eq!(followed.take_in(&in_other(request)).len(), 1, "its call waits");

@@ -344,8 +344,9 @@ pub struct HistoryQuery {
     pub limit: Option<usize>,
     #[serde(default)]
     pub attachments: bool,
-    /// The thread whose page it is (issue 557), with what happens in the whole channel; every
-    /// thread if not asked - unless whoever reads the page names one.
+    /// The thread whose page it is (issue 557), with what happens in the whole channel; if not
+    /// asked, what whoever reads the page reads by - every thread of an agent's history, the line's
+    /// view of the channel's.
     #[serde(default)]
     pub thread: Option<ThreadId>,
 }
@@ -361,10 +362,7 @@ impl HistoryQuery {
     /// attachments, as far as asked for.
     pub fn filter(&self) -> Option<Filter<HistoryField>> {
         let thread = self.thread.map(Filter::in_thread);
-        match (thread, self.attachments.then(Filter::with_attachments)) {
-            (Some(thread), Some(attachments)) => Some(Filter::all_of([thread, attachments])),
-            (thread, attachments) => thread.or(attachments),
-        }
+        Filter::all_given([thread, self.attachments.then(Filter::with_attachments)])
     }
 }
 

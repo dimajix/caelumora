@@ -216,10 +216,7 @@ impl HistoryStore for PostgresStore {
         let (key, name) = key(channel);
         let head = HISTORIES.head(&mut conn, &key, &name).await?;
         let attended = read_attendance(&mut conn, &key, &name).await?.of_reader(reader);
-        let asked = match (Filter::seen_by(reader, &attended), filter) {
-            (Some(given), Some(filter)) => Some(Filter::all_of([given, filter.clone()])),
-            (given, filter) => given.or_else(|| filter.cloned()),
-        };
+        let asked = Filter::all_given([Filter::seen_by(reader, &attended), filter.cloned()]);
         let condition = asked.map(|asked| Condition::of(&asked.by_path(), "item", 5));
         let meeting = condition.as_ref().map_or("true", |condition| condition.sql.as_str());
         let statement = format!("SELECT seq, item FROM history_items WHERE channel_id = $1 AND seq >= $2 AND seq < $3 AND {meeting} ORDER BY seq DESC LIMIT $4");
