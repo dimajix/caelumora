@@ -1051,8 +1051,9 @@ impl ChannelLoop {
     /// what it did of its own accord (issue 284) before its turn's end, who
     /// joined or left where it happened (issue 408), and a change of a
     /// message, admitted, so that it applies (`admission`, issues 234, 304).
-    /// Stored at once; what others hear of a message, as everybody may see
-    /// it, is announced as news once it is stored (issue 404). Returns the
+    /// Stored at once; what others hear of a message in the line, as
+    /// everybody may see it, is announced as news once it is stored (issues
+    /// 404, 557): what a frontend shows of the channel. Returns the
     /// position of its entry, which what is delivered of it carries; `None`
     /// if nothing was recorded.
     async fn append_history(&self, envelope: &Envelope, audience: Audience) -> Option<Position> {
@@ -1064,11 +1065,12 @@ impl ChannelLoop {
     /// recorded - a change of a message that changes nothing. What a delegate gave is followed in
     /// its delegation (`Delegation::follow`), stored with it.
     async fn record(&self, recorded: Recorded) -> Option<Position> {
+        let in_line = recorded.thread().is_none_or(|thread| thread == ThreadId::line(self.id));
         let said = recorded
             .entry
             .published()
             .and_then(|entry| entry.said().cloned())
-            .filter(Message::is_heard);
+            .filter(|message| in_line && message.is_heard());
         let entry = recorded.entry.clone();
         let mut state = self.state.lock().await;
         if !state.history.enter(recorded) {
@@ -3339,7 +3341,8 @@ mod tests {
     }
 
     /// Issue 404: what others hear of a message is announced with the message once it is stored, as
-    /// news of the channel; a step of a plan or a notice of the kernel is not.
+    /// news of the channel; a step of a plan, a notice of the kernel or what is said in another
+    /// thread than the line (issue 557) is not.
     #[tokio::test]
     async fn what_others_hear_is_announced_once_it_is_stored() {
         use crate::session::testing::{running_session_of_a_user, spec, test_kernel};
@@ -3365,11 +3368,17 @@ mod tests {
         };
         let step = Message { id: MessageId::new(), internal: true, ..heard.clone() };
         let notice = Message { id: MessageId::new(), role: MessageRole::System, ..heard.clone() };
+        let aside = Message { id: MessageId::new(), ..heard.clone() };
         let mut rx = kernel.event_bus().subscribe_all();
 
         for message in [&heard, &step, &notice] {
             channel.append_history(&said(message), Audience::Everybody).await;
         }
+        let in_thread = said(&aside);
+        let thread_id = ThreadId::new();
+        let in_thread =
+            Envelope { context: EventContext { thread_id, ..in_thread.context }, ..in_thread };
+        channel.append_history(&in_thread, Audience::Everybody).await;
 
         let announced: Vec<MessageId> = rx
             .drain()
@@ -3380,7 +3389,7 @@ mod tests {
             .map(|message| message.id)
             .collect();
         assert_eq!(announced, [heard.id], "the words others hear, with the message");
-        assert_eq!(channel.history().await.len(), 3, "though every one is kept");
+        assert_eq!(channel.history().await.len(), 4, "though every one is kept");
     }
 
     #[tokio::test]

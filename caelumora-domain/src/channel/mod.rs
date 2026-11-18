@@ -75,7 +75,8 @@ pub const LEFT: &str = "left";
 pub const AGENT_STATE_CHANGED: &str = "agent_state_changed";
 
 /// Something new was said in the channel (issue 404): a message that others
-/// hear (`Message::is_heard`), in the change's data as it was said.
+/// hear (`Message::is_heard`), said in its line (issue 557) - what a frontend
+/// shows of the channel -, in the change's data as it was said.
 /// Published with the channel's attributes and classification, so that it
 /// reaches who may read the channel and is cleared for it - who would read
 /// the message in its history -, once the message is stored.

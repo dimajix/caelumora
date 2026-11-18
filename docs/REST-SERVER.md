@@ -314,28 +314,32 @@ a step of a plan began, how turns ended, commands carried out with what they ans
 (`command_executed`) or not (`command_failed`), what an agent did of its own accord and what came of
 it (`activity_finished`), who joined or left the channel, by whose act and named as they were then
 (`participant_joined`, `participant_left`), the notices its reader was given - an answer to a
-request to answer again (`retry_accepted`, `retry_refused`), a chain cut off (`chain_cut_off`),
-that it could not be decided who responds (`responder_undecided`), something of theirs not let in
+request to answer again (`retry_accepted`, `retry_refused`), a chain cut off (`chain_cut_off`), that
+it could not be decided who responds (`responder_undecided`), something of theirs not let in
 (`event_rejected`) or not taken (`event_refused`), a request to respond (`response_requested`) -,
-and - in an agent's history only - compactions of its context, what it was given to read, as said
-items, and where it stopped reading a prompt part given (`withdrawn`), an item of its own, since
-what it read stays as it read it. A reader is given what went to them: a private answer, a rejection
-or a refusal, a request to the one it went to. Read from another channel, a history holds only the
-messages released, and neither a turn's end nor the start of a step.
+what a thread's delegate gave to read (`given_to_read`, in the channel's history alone - an agent's
+holds it as what it was given), threads opened and closed (`thread_opened`, `thread_closed`, issue
+557), and - in an agent's history only - compactions of its context, what it was given to read, as
+said items, and where it stopped reading a prompt part given (`withdrawn`), an item of its own,
+since what it read stays as it read it. A reader is given what went to them: a private answer, a
+rejection or a refusal, a request to the one it went to. Read from another channel, a history holds
+only the messages released, and neither a turn's end nor the start of a step.
 
 Both histories are read in pages, alike (issue 218): `?limit=` items (50 unless asked, at most 200)
 before `?before=`, the last ones without it, as `{"items": […], "earlier": …}`. `earlier` is the
 position in the history of the oldest item of the page, what the page before it is read with
-(`?before=`), and `null` once there is none; a client passes it on and computes nothing with it.
-With `?attachments=true`, a page holds only the messages carrying attachments, and counts only them
-(issue 509) - what a tool's result gave its model is no attachment and not among them. A
-page holds what its reader sees and counts only that (issue 417): what went to every participant
-while they were one - from what was shared with them as they joined up to where they left -, what
-went to them by name, and what they sent. Its messages stand as they do now, with every change made
-since. A page is read from the store in the cost of the page (issue 379, see
-[STORAGE.md](STORAGE.md#histories)). On a page of an agent's history, whether each message reached
-the agent's transcript (`in_transcript`) is asked of the store once for the page, on whichever
-branch (issue 380).
+(`?before=`), and `null` once there is none; a client passes it on and computes nothing with it. A
+page of the channel's history is of its line, with what happens in the whole channel; with
+`?thread=`, of that thread instead (issue 557). A page of an agent's history is of every thread it
+took part in, of one with `?thread=`. With `?attachments=true`, a page holds only the messages
+carrying attachments, and counts only them (issue 509) - what a tool's result gave its model is no
+attachment and not among them. A page holds what its reader sees and counts only that (issue 417):
+what went to every participant while they were one - from what was shared with them as they joined
+up to where they left -, what went to them by name, and what they sent. Its messages stand as they
+do now, with every change made since. A page is read from the store in the cost of the page (issue
+379, see [STORAGE.md](STORAGE.md#histories)). On a page of an agent's history, whether each message
+reached the agent's transcript (`in_transcript`) is asked of the store once for the page, on
+whichever branch (issue 380).
 
 ### Who follows a channel
 
@@ -382,14 +386,15 @@ Both streams accept `?snapshot=true` and then begin with a named `snapshot` even
 state they start from:
 
 *   for a channel - at the start, and again whenever it stops or starts -, its participants, the
-    last page of its history with `earlier` (older ones over REST, from there on) and the notes its
-    agents published; for a participant, also the approvals and questions its agents wait for, read
-    from their stored turns, so that one asked before the client connected or before a restart is
-    shown - a sensitive question only to whom it was asked. A participant giving an answer carries
-    its turn (`turn_under_way`) and an agent participant where it stands (`state`), both read from
-    the running channel - none of a channel that does not run - and kept up by the stream; a client
-    that connects during an answer shows it as under way. Only here, not where channels are listed,
-    do participants carry what their model calls used, since that reads every agent's state;
+    last page of its line's history (issue 557) with `earlier` (older ones over REST, from there on)
+    and the notes its agents published; for a participant, also the approvals and questions its
+    agents wait for, read from their stored turns, so that one asked before the client connected or
+    before a restart is shown - a sensitive question only to whom it was asked. A participant giving
+    an answer carries its turn (`turn_under_way`) and an agent participant where it stands
+    (`state`), both read from the running channel - none of a channel that does not run - and kept
+    up by the stream; a client that connects during an answer shows it as under way. Only here, not
+    where channels are listed, do participants carry what their model calls used, since that reads
+    every agent's state;
 *   for the global stream, every session with its channels.
 
 The order matters: the server subscribes *first* and reads the state afterwards, so nothing that

@@ -139,6 +139,14 @@ impl Envelope {
         }
     }
 
+    /// Whether a frontend shows it in the view of its channel's line (issue 557): what happens in
+    /// the line or in the whole channel (`thread`), and of every other thread its approvals and its
+    /// questions, which its calls wait for (`ActorEvent::is_waited_for`).
+    pub fn is_shown_in_line(&self) -> bool {
+        let line = ThreadId::line(self.context.channel_id);
+        self.event.is_waited_for() || self.thread().is_none_or(|thread| thread == line)
+    }
+
     /// What a channel's history records of this envelope (issue 417): a
     /// message said, a step of it included (issue 258); how a turn ended;
     /// where a step of its plan began (issue 263); a command carried out,
@@ -680,7 +688,9 @@ mod tests {
     use super::*;
     use crate::actor::{ActorState, Rejection, RequestReason, RetryTarget};
     use crate::agent::{AgentId, RetryRefused};
+    use crate::approval::testing::make_approval_request;
     use crate::approval::ApproverId;
+    use crate::channel::ThreadOrigin;
     use crate::confidentiality::Classification;
     use crate::message::testing::{id, make_message};
     use crate::message::{Message, MessageId, MessageRole};
@@ -704,6 +714,28 @@ mod tests {
         let in_other = EventContext { thread_id: other, ..said };
         let answer = in_other.next(ActorId::Agent(AgentId::new()), "bob");
         assert_eq!(answer.thread_id, other, "what follows stays in the thread");
+    }
+
+    /// Issue 557: the line's view shows what happens in the line and in the whole channel, and of
+    /// another thread its approvals and questions alone.
+    #[test]
+    fn the_lines_view_shows_of_another_thread_what_its_calls_wait_for() {
+        let (session, channel) = (SessionId::new(), ChannelId::new());
+        let agent = AgentId::new();
+        let in_line = EventContext::new(session, channel, ActorId::Agent(agent), "bob");
+        let other = ThreadId::new();
+        let in_other = EventContext { thread_id: other, ..in_line.clone() };
+        let shown = |context: &EventContext, event: ActorEvent| {
+            Envelope { timestamp: Utc::now(), context: context.clone(), event }.is_shown_in_line()
+        };
+        let said = || ActorEvent::CompleteMessageGenerated(make_message(MessageId::new()));
+        assert!(shown(&in_line, said()));
+        assert!(!shown(&in_other, said()), "said in another thread");
+        let origin = ThreadOrigin { thread: ThreadId::line(channel), message: MessageId::new() };
+        let opened = ActorEvent::ThreadOpened { thread: other, origin };
+        assert!(shown(&in_other, opened), "of the whole channel");
+        let request = make_approval_request(session, channel, agent);
+        assert!(shown(&in_other, ActorEvent::ApprovalRequested(request)), "its call waits");
     }
 
     /// A channel's participants to deliver to: two agents, two users, an

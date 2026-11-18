@@ -1346,3 +1346,19 @@ Decided with it, on the author's proposal:
   by the writer. No stored data to delete.
 - **2026-11-18** — Step 5b of 2b accepted by the maintainer, to be committed as it is; what its
   review left to decide decided as recommended, as a step of its own (558's History).
+- **2026-11-18** — The interface of step 6 decided as proposed, with what comes back from a thread
+  shown where it comes (B), not at the call: the line's view by one rule
+  (`Envelope::is_shown_in_line`) - what happens in the line or in the whole channel, and of
+  another thread its approvals and questions -, in the TUI and, mirrored, in the web UI
+  (`isShownInLine`); `ChannelView::history_page` of the line, which the snapshot and the TUI read,
+  `history_page_of` of every thread; `ChannelView::unread` counting the line alone, since only what
+  the line showed is marked read; the REST API's `?thread=` (`HistoryQuery::thread`), the channel's
+  page of the line without it, and the items `given_to_read`, `thread_opened` and `thread_closed`.
+  Waking or cancelling one thread waits for a view of a thread. Found on the way: a history built
+  by hand (`History::push`, `Recorded::new`) names no thread of its channel - its entries are of
+  the nil thread -, so that two tests of the views had their messages said in the line instead. On
+  review: `channel::SAID` announced for the line alone, which the web UI's unread count and the
+  chat of a reader who takes no part follow; the web UI leaving another thread out of the chat
+  alone, the participants, the usage and the workspace following every thread; the TUI ending an
+  answer under way of another thread with its turn; `ActorEvent::is_waited_for`, exhaustive; an
+  agent's history holding what a delegate gave it as what it was given (`Given`) alone.

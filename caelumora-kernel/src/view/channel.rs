@@ -15,7 +15,7 @@ use caelumora_domain::actor::{ActorDescription, ActorId, ActorState};
 use caelumora_domain::agent::{AgentChannelState, PersonalityKind};
 use caelumora_domain::approval::ApprovalRequest;
 use caelumora_domain::chain::Position;
-use caelumora_domain::channel::{Channel, ChannelId, Participant};
+use caelumora_domain::channel::{Channel, ChannelId, Participant, ThreadId};
 use caelumora_domain::command::CommandDescription;
 use caelumora_domain::component::ComponentConfig;
 use caelumora_domain::confidentiality::Classification;
@@ -343,9 +343,10 @@ impl ChannelView {
         Ok(attended.first().map_or(Position::START, |at| at.range.start))
     }
 
-    /// A page of the history as the viewer sees it (issues 46, 218, 379,
-    /// 417): the last `limit` items before the position `before` - the last
-    /// ones without it - of those they see; of a channel read
+    /// A page of the channel's line as the viewer sees it (issues 46, 218,
+    /// 379, 417, 557): the last `limit` items before the position `before` -
+    /// the last ones without it - of those they see in the line and in the
+    /// whole channel, as a frontend shows the channel; of a channel read
     /// entry by entry, the messages released to where the viewer reads
     /// from, and nothing of how turns ended. Read from the store, whether the
     /// channel runs or not.
@@ -358,12 +359,14 @@ impl ChannelView {
         before: Option<Position>,
         limit: usize,
     ) -> ViewResult<HistoryPage> {
-        self.history_page_of(before, limit, None).await
+        let line = Filter::in_thread(ThreadId::line(self.channel.id));
+        self.history_page_of(before, limit, Some(line)).await
     }
 
-    /// A page of the items of the history that meet `filter`, as
-    /// `history_page` gives them: what a search of the history reads - the
-    /// last messages containing words, those of one sender.
+    /// A page of the items of the history that meet `filter`, of every
+    /// thread, as `history_page` gives them: what a search of the history
+    /// reads - the last messages containing words, those of one sender, those
+    /// of one thread.
     ///
     /// # Errors
     /// As `history_page`.
@@ -602,8 +605,9 @@ impl ChannelView {
     }
 
     /// What is new in the channel to the viewer (issue 404), if they are a
-    /// user: the messages others said that the viewer hears and may read,
-    /// after the last one they read and from where their view of the
+    /// user: the messages others said in its line that the viewer hears and
+    /// may read (issue 557) - as a frontend shows them -, after the last one
+    /// they read and from where their view of the
     /// history begins - counted up to `Unread::CAP` -, and whether one of
     /// them mentions them. Read from the store, whether the channel runs or
     /// not.
@@ -626,8 +630,14 @@ impl ChannelView {
             })?;
         let read_up_to = state.read.map(|read| read.message);
         let from = state.unread_from();
-        let heard_from_others =
-            || Filter::all_of([Filter::heard(), Filter::negated(Filter::said_by(viewer))]);
+        let line = ThreadId::line(self.channel.id);
+        let heard_from_others = || {
+            Filter::all_of([
+                Filter::heard(),
+                Filter::negated(Filter::said_by(viewer)),
+                Filter::in_thread(line),
+            ])
+        };
         let new = self.readable_items(Some(heard_from_others()));
         let mentioning = self.readable_items(Some(Filter::all_of([
             heard_from_others(),

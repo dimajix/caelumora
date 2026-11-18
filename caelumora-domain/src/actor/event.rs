@@ -504,6 +504,62 @@ impl ActorEvent {
         }
     }
 
+    /// Whether a call waits for it (issue 557): an approval or a question, from its request to its
+    /// end - what a frontend shows of a thread other than the one it shows
+    /// (`Envelope::is_shown_in_line`).
+    pub fn is_waited_for(&self) -> bool {
+        match self {
+            ActorEvent::ApprovalRequested(_)
+            | ActorEvent::ApprovalAnswered { .. }
+            | ActorEvent::ApprovalGranted(_)
+            | ActorEvent::ApprovalDenied(_)
+            | ActorEvent::ApprovalTimedOut(_)
+            | ActorEvent::ApprovalRequestWithdrawn { .. }
+            | ActorEvent::QuestionRequested(_)
+            | ActorEvent::QuestionAnswered { .. }
+            | ActorEvent::QuestionDeclined { .. }
+            | ActorEvent::QuestionClosed { .. } => true,
+            ActorEvent::PartialMessageGenerated(_)
+            | ActorEvent::IntermediatePartialGenerated(_)
+            | ActorEvent::StateChanged(_)
+            | ActorEvent::ResponseStarted { .. }
+            | ActorEvent::CommandStarted { .. }
+            | ActorEvent::ActivityStarted { .. }
+            | ActorEvent::PlanStepFinished { .. }
+            | ActorEvent::WakeupRequested
+            | ActorEvent::NudgeRequested { .. }
+            | ActorEvent::ResponseRequested { .. }
+            | ActorEvent::CompleteMessageGenerated(_)
+            | ActorEvent::TurnFinished { .. }
+            | ActorEvent::IntermediateMessageGenerated(_)
+            | ActorEvent::PlanStepStarted { .. }
+            | ActorEvent::TurnGivenUp { .. }
+            | ActorEvent::CommandRequested { .. }
+            | ActorEvent::CommandExecuted { .. }
+            | ActorEvent::CommandFailed { .. }
+            | ActorEvent::ActivityFinished { .. }
+            | ActorEvent::ParticipantJoined { .. }
+            | ActorEvent::ParticipantLeft { .. }
+            | ActorEvent::HistoryShared { .. }
+            | ActorEvent::ThreadOpened { .. }
+            | ActorEvent::ThreadClosed { .. }
+            | ActorEvent::MessageModified(_)
+            | ActorEvent::MessageRevoked { .. }
+            | ActorEvent::MessageReclassified { .. }
+            | ActorEvent::RetryRequested { .. }
+            | ActorEvent::RetryAccepted { .. }
+            | ActorEvent::RetryRefused { .. }
+            | ActorEvent::ChainCutOff { .. }
+            | ActorEvent::ResponderUndecided { .. }
+            | ActorEvent::EventRejected { .. }
+            | ActorEvent::EventRefused { .. }
+            | ActorEvent::MessageGiven { .. }
+            | ActorEvent::GivenToRead { .. }
+            | ActorEvent::MessageWithdrawn { .. }
+            | ActorEvent::ContextCompacted { .. } => false,
+        }
+    }
+
     /// Whether it may be lost on its way to an actor whose inbox has no
     /// room (issue 223): what streams, where an actor stands, the start of
     /// what ends with an event the history records, and what only asks to

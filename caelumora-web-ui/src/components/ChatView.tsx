@@ -89,7 +89,7 @@ import {MessageView, Reasoning} from './MessageView';
 import {Notice} from './Notice';
 import {Timestamp} from './Timestamp';
 import {ShownChannelContext, type ShownChannel} from '../shownChannel';
-import {activityNotice, activityUnderWay, attachedByTurn, chainCutOffNotice, responderUndecidedNotice, channelCommandNotice, chatMessages, chatRows, commandFailedNotice, commandNotice, eventRefusedNotice, eventRejectedNotice, nudgeNotice, retryRefusedNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, joinsSteps, mayBeAnsweredAgain, mergeToolResults, participantNotice, withoutQuietCalls, planStepMark, rowTurn, turnGroups, type ChatRow} from '../messages';
+import {activityNotice, activityUnderWay, attachedByTurn, chainCutOffNotice, responderUndecidedNotice, channelCommandNotice, chatMessages, chatRows, commandFailedNotice, commandNotice, eventRefusedNotice, eventRejectedNotice, nudgeNotice, retryRefusedNotice, endedCommands, formatArguments, givenBack, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, isShownInLine, joinsSteps, mayBeAnsweredAgain, mergeToolResults, participantNotice, threadNotice, withoutQuietCalls, planStepMark, rowTurn, turnGroups, type ChatRow} from '../messages';
 import {PlanSteps} from './PlanSteps';
 import {TokenGauge} from './TokenGauge';
 import {HoverCard} from './HoverCard';
@@ -820,6 +820,12 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     const handleMessage = (data: string) => {
       try {
         const envelope: Envelope = JSON.parse(data);
+        // What is said in another thread is left out of the line's view (issue 557): nothing of it
+        // enters the chat, no answer of it is shown under way - while what the participants, the
+        // usage and the workspace keep of it is kept.
+        const inLine = isShownInLine(envelope);
+        const chat: typeof setMessages = inLine ? setMessages : () => {};
+        const answers: typeof setAnswers = inLine ? setAnswers : () => {};
         const actorEvent = envelope.event;
         const answerer = actorKey(envelope.context.sender_id);
         const answererName = envelope.context.sender_name || null;
@@ -837,7 +843,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
         };
         // A notice the history records, shown once: live, and from the
         // history the snapshot or a page read (issue 417).
-        const showOnce = (notice: Message) => setMessages(prev => notice.id && prev.some(m => m.id === notice.id) ? prev : [...prev, notice]);
+        const showOnce = (notice: Message) => chat(prev => notice.id && prev.some(m => m.id === notice.id) ? prev : [...prev, notice]);
         const position = envelope.context.position;
         if (typeof actorEvent === 'string') {
           // The payload-less events have nothing to show.
@@ -848,7 +854,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
         } else if (actorEvent.ResponseStarted) {
           // A new answer begins after those under way, as the turn it names.
           const turnId = actorEvent.ResponseStarted.turn_id;
-          setAnswers(prev => withAnswer(prev.filter(a => a.sender !== answerer), answerer, answererName, a => ({...a, turnId})));
+          answers(prev => withAnswer(prev.filter(a => a.sender !== answerer), answerer, answererName, a => ({...a, turnId})));
         } else if (actorEvent.StateChanged) {
           // Where an agent stands now (issue 243), shown by its dot.
           const state = actorEvent.StateChanged;
@@ -857,7 +863,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           // A step of a plan streams in as the answer does (issue 258).
           const partial = (actorEvent.PartialMessageGenerated ?? actorEvent.IntermediatePartialGenerated)!;
           const internal = !!actorEvent.IntermediatePartialGenerated;
-          setAnswers(prev => withAnswer(prev, answerer, answererName, a => ({
+          answers(prev => withAnswer(prev, answerer, answererName, a => ({
             ...a,
             turnId: a.turnId ?? partial.turn_id ?? null,
             internal,
@@ -874,7 +880,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           // A message can arrive twice: in the snapshot and as an event. Kept
           // as it came, as the snapshot's are; a call and its result are shown
           // together as the chat is drawn (`mergeToolResults`).
-          setMessages(prev => newMsg.id && prev.some(m => m.id === newMsg.id) ? prev : [...prev, newMsg]);
+          chat(prev => newMsg.id && prev.some(m => m.id === newMsg.id) ? prev : [...prev, newMsg]);
           // What its call used, at once: a plan's steps are many calls of
           // one turn, whose end would come too late for the gauge.
           if (newMsg.id && !countedCalls.current.has(newMsg.id)) {
@@ -886,33 +892,33 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           }
           // Its sender may go on: what streams in next is its next message.
           const turnId = newMsg.turn_id ?? null;
-          setAnswers(prev => prev.map(a => a.sender === answerer ? {...a, turnId: a.turnId ?? turnId, reasoning: '', content: ''} : a));
+          answers(prev => prev.map(a => a.sender === answerer ? {...a, turnId: a.turnId ?? turnId, reasoning: '', content: ''} : a));
         } else if (actorEvent.MessageModified) {
           // In its place, as the server reads it (`Message::modify`, issue
           // 234): its words, attachments, classification and mentions, and when.
           const modified = actorEvent.MessageModified;
-          setMessages(prev => prev.map(m => m.id === modified.id
+          chat(prev => prev.map(m => m.id === modified.id
             ? {...m, content: modified.content, reasoning: modified.reasoning, attachments: modified.attachments, classification: modified.classification, mentions: modified.mentions, modified: modified.timestamp}
             : m));
           setAttachmentsVersion(v => v + 1);
         } else if (actorEvent.MessageRevoked) {
           // In its place without what it said (`Message::revoke`).
           const {message, at} = actorEvent.MessageRevoked;
-          setMessages(prev => prev.map(m => m.id === message
+          chat(prev => prev.map(m => m.id === message
             ? {...m, content: null, reasoning: undefined, attachments: [], tool_calls: [], tool_results: [], mentions: [], revoked: at}
             : m));
           setAttachmentsVersion(v => v + 1);
         } else if (actorEvent.MessageReclassified) {
           // In its place, classified anew (`Message::reclassify`, issue 239).
           const {message, classification} = actorEvent.MessageReclassified;
-          setMessages(prev => prev.map(m => m.id === message ? {...m, classification} : m));
+          chat(prev => prev.map(m => m.id === message ? {...m, classification} : m));
           setAttachmentsVersion(v => v + 1);
         } else if (actorEvent.RetryAccepted) {
           // A new answer begins: shown as under way from now on. An answer
           // under way was given up, and what of it was said stays, as the
           // history keeps it (issue 258); a completed answer is taken back
           // as `MessageRevoked` says.
-          setAnswers(prev => withAnswer(prev.filter(a => a.sender !== answerer), answerer, answererName, a => a));
+          answers(prev => withAnswer(prev.filter(a => a.sender !== answerer), answerer, answererName, a => a));
         } else if (actorEvent.RetryRefused) {
           showOnce(retryRefusedNotice(actorEvent.RetryRefused.reason, envelope.context.sender_name, envelope.timestamp, position));
         } else if (actorEvent.EventRejected) {
@@ -924,11 +930,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           // holds.
           const {rejected, message, reason} = actorEvent.EventRejected;
           if (message && rejected === 'CompleteMessageGenerated') {
-            setMessages(prev => prev.map(m => m.id === message ? {...m, rejected: reason} : m));
+            chat(prev => prev.map(m => m.id === message ? {...m, rejected: reason} : m));
           } else {
             if (message && ['MessageModified', 'MessageRevoked', 'MessageReclassified'].includes(rejected)) {
               api.getMessage(sessionId, channelId, message)
-                .then(standing => setMessages(prev => prev.map(m => m.id === message ? standing : m)))
+                .then(standing => chat(prev => prev.map(m => m.id === message ? standing : m)))
                 .catch(error => reportError('Failed to read the message back', error));
             }
             showOnce(eventRejectedNotice(rejected, reason, envelope.timestamp, position));
@@ -978,7 +984,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
         } else if (actorEvent.TurnFinished) {
           // Its messages were shown as they were said.
           const underWay = activityUnderWay(actorEvent.TurnFinished.turn_id);
-          setMessages(prev => prev.filter(m => m.id !== underWay));
+          chat(prev => prev.filter(m => m.id !== underWay));
           answerEnded();
           readUsage();
         } else if (actorEvent.TurnGivenUp) {
@@ -988,7 +994,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           const notice = givenUpNotice(turn_id, reason, envelope.context.sender_id, envelope.context.sender_name, envelope.timestamp, envelope.context.span_id);
           // What it did of its own accord ended with it (issue 284).
           const underWay = activityUnderWay(turn_id);
-          setMessages(prev => prev.some(m => m.id === notice.id) ? prev.filter(m => m.id !== underWay) : [...prev.filter(m => m.id !== underWay), notice]);
+          chat(prev => prev.some(m => m.id === notice.id) ? prev.filter(m => m.id !== underWay) : [...prev.filter(m => m.id !== underWay), notice]);
           answerEnded();
           readUsage();
         } else if (actorEvent.CommandExecuted) {
@@ -997,7 +1003,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
             // Carried out by an agent (issue 269): part of the history,
             // kept once by its turn, with what it answered, and to whom.
             const notice = commandNotice(turn_id, command, args, envelope.context.sender_id, envelope.context.sender_name, undefined, envelope.timestamp, {output, private: to !== null});
-            setMessages(prev => prev.some(m => m.id === notice.id) ? prev.map(m => m.id === notice.id ? notice : m) : [...prev, notice]);
+            chat(prev => prev.some(m => m.id === notice.id) ? prev.map(m => m.id === notice.id ? notice : m) : [...prev, notice]);
             // A command turn ends without `TurnFinished`, and may have
             // compacted the context (issue 405): what the agent uses is
             // read again.
@@ -1011,7 +1017,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           // notice shows it under way until it ends, and its dot says what.
           const {turn_id, activity} = actorEvent.ActivityStarted;
           const notice = activityNotice(turn_id, activity, envelope.context.sender_id, envelope.context.sender_name, envelope.timestamp);
-          setMessages(prev => prev.some(m => m.id === notice.id) ? prev : [...prev, notice]);
+          chat(prev => prev.some(m => m.id === notice.id) ? prev : [...prev, notice]);
           setActivities(prev => ({...prev, [answerer]: activity}));
         } else if (actorEvent.ActivityFinished) {
           // In the place of its start, with what came of it: part of the
@@ -1020,7 +1026,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           const {turn_id, activity, output} = actorEvent.ActivityFinished;
           const notice = activityNotice(turn_id, activity, envelope.context.sender_id, envelope.context.sender_name, envelope.timestamp, output);
           const underWay = activityUnderWay(turn_id);
-          setMessages(prev => prev.some(m => m.id === notice.id)
+          chat(prev => prev.some(m => m.id === notice.id)
             ? prev.filter(m => m.id !== underWay)
             : prev.some(m => m.id === underWay) ? prev.map(m => m.id === underWay ? notice : m) : [...prev, notice]);
           readUsage();
@@ -1030,19 +1036,19 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           const {command, args, turn_id} = actorEvent.CommandStarted;
           const begun = commandNotice(turn_id, command, args, envelope.context.sender_id, envelope.context.sender_name, undefined, envelope.timestamp);
           const notice = {...begun, commandOutput: {...begun.commandOutput!, underWay: true}};
-          setMessages(prev => prev.some(m => m.id === notice.id) ? prev : [...prev, notice]);
+          chat(prev => prev.some(m => m.id === notice.id) ? prev : [...prev, notice]);
         } else if (actorEvent.CommandFailed) {
           // An agent did not carry out a command (issue 269): for the issuer
           // alone, part of the history (issue 417). In the place of its
           // start, if it began.
           const {command, reason, turn_id} = actorEvent.CommandFailed;
           const notice = commandFailedNotice(turn_id, command, reason, envelope.context.sender_name, envelope.timestamp, position);
-          setMessages(prev => notice.id && prev.some(m => m.id === notice.id) ? prev.map(m => m.id === notice.id ? notice : m) : [...prev, notice]);
+          chat(prev => notice.id && prev.some(m => m.id === notice.id) ? prev.map(m => m.id === notice.id ? notice : m) : [...prev, notice]);
         } else if (actorEvent.ParticipantJoined) {
           // Part of the history (issue 408), kept once by whom and when.
           const {participant, name} = actorEvent.ParticipantJoined;
           const notice = participantNotice('joined', participant, name, envelope.context.sender_id, envelope.context.sender_name, envelope.timestamp);
-          setMessages(prev => prev.some(m => m.id === notice.id) ? prev : [...prev, notice]);
+          chat(prev => prev.some(m => m.id === notice.id) ? prev : [...prev, notice]);
         } else if (actorEvent.ParticipantLeft) {
           // Nothing of the participant that left follows (issue 162): what
           // it had under way has ended - its answer, its calls of tools.
@@ -1050,7 +1056,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           const {participant, name} = actorEvent.ParticipantLeft;
           const left = actorKey(participant);
           const notice = participantNotice('left', participant, name, envelope.context.sender_id, envelope.context.sender_name, envelope.timestamp);
-          setMessages(prev => {
+          chat(prev => {
             // Its calls without a result as the chat shows them.
             const unanswered = new Set(mergeToolResults(prev)
               .filter(m => m.sender_id && sameActor(m.sender_id, participant) && m.tool_calls?.some(c => !m.tool_results?.some(r => r.id === c.id)))
@@ -1059,6 +1065,16 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
             return ended.some(m => m.id === notice.id) ? ended : [...ended, notice];
           });
           setAnswers(prev => prev.filter(a => a.sender !== left));
+        } else if (actorEvent.GivenToRead) {
+          // What came back from a thread (issue 557), at its place in the line: part of the
+          // history, kept once by the message's id.
+          const given = givenBack(actorEvent.GivenToRead.message);
+          chat(prev => [...prev, ...given.filter(g => !prev.some(m => m.id === g.id))]);
+        } else if (actorEvent.ThreadOpened || actorEvent.ThreadClosed) {
+          // A thread of the channel (issue 557), whose messages the line leaves out.
+          const change = actorEvent.ThreadOpened ? 'opened' : 'closed';
+          const thread = (actorEvent.ThreadOpened ?? actorEvent.ThreadClosed)!.thread;
+          showOnce(threadNotice(change, thread, envelope.context.sender_id, envelope.context.sender_name, envelope.timestamp));
         } else if (actorEvent.ChainCutOff) {
           const {max_agent_hops, not_asked} = actorEvent.ChainCutOff;
           showOnce(chainCutOffNotice(max_agent_hops, not_asked, envelope.timestamp, position));
@@ -1069,7 +1085,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           // history's mark of it does after a reload.
           const {turn_id, ...step} = actorEvent.PlanStepStarted;
           const mark = planStepMark(turn_id, step, envelope.context.sender_id, envelope.context.sender_name, envelope.timestamp);
-          setMessages(prev => prev.some(m => m.id === mark.id) ? prev : [...prev, mark]);
+          chat(prev => prev.some(m => m.id === mark.id) ? prev : [...prev, mark]);
         }
       } catch (e) {
         console.error('Failed to parse SSE event', e);

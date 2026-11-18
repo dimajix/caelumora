@@ -953,17 +953,17 @@ export interface ActorEvent {
   HistoryShared?: { participant: ActorId; from: number; by: ActorId; by_name: string };
   /**
    * The thread `thread` was opened at the message `origin.message` of the thread `origin.thread`
-   * (issue 557), by the act of the envelope's sender. Part of the history; not shown yet.
+   * (issue 557), by the act of the envelope's sender. Of the whole channel, shown in the line.
    */
   ThreadOpened?: { thread: string; origin: { thread: string; message: string } };
   /**
    * The thread `thread` was closed (issue 557), by the act of the envelope's sender: nothing more
-   * is said in it. Part of the history; not shown yet.
+   * is said in it. Of the whole channel, shown in the line.
    */
   ThreadClosed?: { thread: string };
   /**
    * The delegate of a thread gave `recipient` `message` to read and asked it to respond (issue
-   * 557): the message's sender is whoever gave it. Part of the history; not shown yet.
+   * 557): the message's sender is whoever gave it. In the line, what came back from a thread.
    */
   GivenToRead?: { recipient: ActorId; message: Message };
   /**
@@ -1077,6 +1077,11 @@ export interface CommandReply {
 export interface EventContext {
   session_id: string;
   channel_id: string;
+  /**
+   * The thread of its channel it happens in (issue 557): the channel's line - whose id is the
+   * channel's - unless it was made for another.
+   */
+  thread_id: string;
   sender_id: ActorId;
   sender_name: string;
   event_id: string;
@@ -1474,6 +1479,15 @@ export type HistoryItemKind<M> =
   | {participant_joined: {participant: ActorId; name: string; by: ActorId; by_name: string; at: string}}
   /** Someone left the channel, by the act of `by` (issue 408). */
   | {participant_left: {participant: ActorId; name: string; by: ActorId; by_name: string; at: string}}
+  /**
+   * `by`, the delegate of a thread, gave `recipient` `message` to read (issue 557): in the line,
+   * what came back from a thread; the message's sender is whoever gave it.
+   */
+  | {given_to_read: {recipient: ActorId; by: ActorId; message: M; at: string}}
+  /** The thread `thread` was opened at `origin` by `by`, called `by_name` then (issue 557). */
+  | {thread_opened: {thread: string; origin: {thread: string; message: string}; by: ActorId; by_name: string; at: string}}
+  /** The thread `thread` was closed by `by`, called `by_name` then (issue 557). */
+  | {thread_closed: {thread: string; by: ActorId; by_name: string; at: string}}
   /** An agent did not carry out a command of `to`'s (issue 269). */
   | {command_failed: {turn_id: string | null; actor: ActorId; command: string; reason: string; to: ActorId; at: string}}
   /** An agent answers again instead of `target` (issue 234). */

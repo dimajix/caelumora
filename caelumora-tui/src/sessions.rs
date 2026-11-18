@@ -6,6 +6,7 @@ use crate::here::HERE;
 use crate::id_prefix::{beginning_with, NotNamed};
 use crate::printed::Printed;
 use crate::typeable::Typeable;
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::command::ParameterKind;
 use caelumora_domain::history::HistoryEntry;
 use caelumora_domain::message::Message;
@@ -368,10 +369,13 @@ fn newest_first(mut listed: Vec<Listed>) -> Vec<Listed> {
     listed
 }
 
-/// The last message heard in `channel` (`Filter::heard`), as its viewer reads it; `None` if
-/// nothing was said, or its history cannot be read - which is logged, and hides no session.
+/// The last message heard in the line of `channel` (`Filter::heard`, issue 557), as its viewer
+/// reads it; `None` if nothing was said, or its history cannot be read - which is logged, and hides
+/// no session.
 async fn last_heard(channel: &ChannelView) -> Option<Message> {
-    match channel.history_page_of(None, 1, Some(Filter::heard())).await {
+    let in_line = Filter::in_thread(ThreadId::line(channel.id()));
+    let heard = Filter::all_of([Filter::heard(), in_line]);
+    match channel.history_page_of(None, 1, Some(heard)).await {
         Ok(page) => page.items.into_iter().find_map(|(_, entry)| match entry {
             HistoryEntry::Said { message } => Some(message),
             _ => None,
