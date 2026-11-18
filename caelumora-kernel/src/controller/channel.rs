@@ -7,11 +7,10 @@ use arc_swap::Guard;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::AgentId;
 use caelumora_domain::approval::ApprovalRule;
-use caelumora_domain::channel::{self, Channel, ChannelId, ChannelUpdateEvent, Participant};
+use caelumora_domain::channel::{self, Channel, ChannelId, ChannelUpdateEvent, Participant, Said};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::event::{EventPublisher, GlobalEvent};
 use caelumora_domain::group::Group;
-use caelumora_domain::message::Message;
 use caelumora_domain::removal::Removal;
 use caelumora_domain::security::Subject;
 use caelumora_domain::store::{StoreError, StoreResult};
@@ -263,14 +262,15 @@ impl ChannelController {
         }
     }
 
-    /// Announces that `message` was said in the channel and is stored (issue
-    /// 404): to whoever reads the channel, as it is classified - who would
-    /// read the message in its history.
-    pub(crate) fn announce_said(&self, message: &Message) {
+    /// Announces that a message was said in the channel and is stored -
+    /// `said`, with its thread (issues 404, 557): to whoever reads the
+    /// channel, as it is classified - who would read the message in its
+    /// history.
+    pub(crate) fn announce_said(&self, said: &Said) {
         self.channel.announce(GlobalEvent::custom::<Channel>(
             self.channel.address(),
             channel::SAID,
-            message,
+            said,
         ));
     }
 

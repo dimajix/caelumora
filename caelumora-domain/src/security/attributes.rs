@@ -71,7 +71,7 @@ impl SecurityAttributes {
 
     /// Nothing if the attributes may be stored as they are: the owner is
     /// someone who answers for the entity - a user, an agent or the system,
-    /// never nobody or an approver (issue 491) -, and an entry names a
+    /// never nobody, an approver or a delegate (issue 491) -, and an entry names a
     /// person, never an agent - an agent acts with its owner's rights (issue
     /// 255), and an entry for it would let it reach what the person
     /// responsible for it may not - nor the system or nobody.

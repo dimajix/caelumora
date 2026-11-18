@@ -33,6 +33,24 @@ impl<K: Eq + Hash + Copy> LocksById<K> {
         IdLockGuard { _held: held, _claim: claim }
     }
 
+    /// Waits for the locks of all of `ids` - each once, in the order of their keys, so that two who
+    /// hold several at once never wait for each other in a circle - and holds them until the guards
+    /// are dropped.
+    pub(crate) async fn lock_all<O: Ord>(
+        &self,
+        ids: impl IntoIterator<Item = K>,
+        key: impl Fn(&K) -> O,
+    ) -> Vec<IdLockGuard<'_, K>> {
+        let mut ids: Vec<K> = ids.into_iter().collect();
+        ids.sort_by_key(&key);
+        ids.dedup();
+        let mut held = Vec::with_capacity(ids.len());
+        for id in ids {
+            held.push(self.lock(id).await);
+        }
+        held
+    }
+
     /// The ids whose lock is held or waited for now.
     pub(crate) fn ids(&self) -> Vec<K> {
         self.locks.iter().map(|entry| *entry.key()).collect()

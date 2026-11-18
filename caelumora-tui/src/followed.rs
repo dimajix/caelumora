@@ -9,7 +9,7 @@ use caelumora_api::reader::ViewResult;
 use caelumora_domain::actor::{ActorEvent, ActorId, Envelope};
 use caelumora_domain::agent::AgentId;
 use caelumora_domain::approval::{ApprovalId, ApprovalRequest};
-use caelumora_domain::channel::ChannelId;
+use caelumora_domain::channel::{ChannelId, ThreadId};
 use caelumora_domain::command::{agents_commands, ParameterKind};
 use caelumora_domain::history::{HistoryEntry, HistoryPage};
 use caelumora_domain::mention::MentionDirectory;
@@ -272,8 +272,12 @@ impl Followed {
     /// approval, questions put to them, a message that mentions them -, ends an approval for
     /// them - withdrawn, or answered by them (issue 566) -, or is a call they made (issue 587). Of
     /// the end of an approval, `take_in` tells what concerns them: a withdrawal of one pending, an
-    /// answer given by a rule of theirs.
+    /// answer given by a rule of theirs. Of another thread than the line, what the line's view
+    /// leaves out concerns them nowhere (`Envelope::is_shown_in_line`, issue 557).
     pub(crate) fn concerns_user(&self, envelope: &Envelope) -> bool {
+        if !envelope.is_shown_in_line(self.me()) {
+            return false;
+        }
         match &envelope.event {
             ActorEvent::ApprovalRequested(_) | ActorEvent::ApprovalRequestWithdrawn { .. } => true,
             ActorEvent::ApprovalAnswered { .. } => envelope.context.sender_id == self.me(),
@@ -309,6 +313,35 @@ impl Followed {
         }
     }
 
+    /// Takes in `message`, complete, as `envelope` shows it, and answers what the terminal prints
+    /// of it: each message as soon as it is complete, as the web UI shows it; the full response
+    /// that ends an answer holds them again (issue 220). One of another thread that mentions the
+    /// user (issue 557) is no answer of the line that `/retry` asks for again.
+    fn take_in_complete(&mut self, envelope: &Envelope, message: &Message) -> Vec<Printed> {
+        if envelope.context.thread_id == ThreadId::line(self.channel_id()) {
+            if matches!(message.sender_id, ActorId::Agent(_)) {
+                self.last_answer = Some(message.id);
+            }
+            self.given_up = None;
+        }
+        if let Some(answer) = self.answer_of(envelope.context.sender_id) {
+            answer.complete();
+        }
+        self.shown_message(message, Saying::Complete)
+    }
+
+    /// Takes in `envelope`, of another thread than the line, which the terminal prints nothing of
+    /// (issue 557): an answer under way read before it ended (`catch_up`) ends with its turn all
+    /// the same.
+    fn take_in_of_another_thread(&mut self, envelope: &Envelope) {
+        if matches!(
+            envelope.event,
+            ActorEvent::TurnFinished { .. } | ActorEvent::TurnGivenUp { .. }
+        ) {
+            self.end_under_way(envelope.context.sender_id);
+        }
+    }
+
     /// What shows again what waits for the user in the channel: the approvals pending and the open
     /// questions put to them that are known - one asked since, which the channel has yet to show,
     /// is shown as it shows it, and not twice.
@@ -321,8 +354,13 @@ impl Followed {
 
     /// Takes in what the channel showed: keeps what the user's commands and what is printed later
     /// need of it, and answers what the terminal prints of it - of what was sent in the user's
-    /// name, what `take_in_own` prints.
+    /// name, what `take_in_own` prints; of another thread, only what the line's view shows of it
+    /// (`Envelope::is_shown_in_line`, issue 557).
     pub(crate) fn take_in(&mut self, envelope: &Envelope) -> Vec<Printed> {
+        if !envelope.is_shown_in_line(self.me()) {
+            self.take_in_of_another_thread(envelope);
+            return Vec::new();
+        }
         let sender_id = envelope.context.sender_id;
         if sender_id == self.me() {
             return self.take_in_own(&envelope.event);
@@ -356,17 +394,8 @@ impl Followed {
                 self.end_under_way(sender_id);
                 Vec::new()
             }
-            // Each message as soon as it is complete, as the web UI shows it; the full response
-            // that ends an answer holds them again (issue 220).
             ActorEvent::CompleteMessageGenerated(message) => {
-                if matches!(message.sender_id, ActorId::Agent(_)) {
-                    self.last_answer = Some(message.id);
-                }
-                self.given_up = None;
-                if let Some(answer) = self.answer_of(sender_id) {
-                    answer.complete();
-                }
-                self.shown_message(message, Saying::Complete)
+                self.take_in_complete(envelope, message)
             }
             // A step of a plan under way, with the calls it made and their results.
             ActorEvent::IntermediateMessageGenerated(message) => {
@@ -420,6 +449,11 @@ impl Followed {
             ActorEvent::QuestionClosed { id, .. } => {
                 self.known_questions.remove(id);
                 Vec::new()
+            }
+            // What came back from a thread, given to read where it was opened (issue 557).
+            ActorEvent::GivenToRead { message, .. } => {
+                let printed = self.shown_message(message, Saying::Complete);
+                given_printed(printed)
             }
             // What another changed of what was said (issue 234).
             ActorEvent::MessageModified(message) => {
@@ -629,10 +663,11 @@ impl Followed {
         }
     }
 
-    /// What the terminal prints of `page` of the history: what was said (`message_printed`), told
-    /// as said earlier; nothing where nothing was said. Who joined or left, commands carried out
-    /// and turns given up are told live alone: they carry no id by which one the channel shows
-    /// after could be told from one printed here, and tell little after the fact. The messages
+    /// What the terminal prints of `page` of the history: what was said (`message_printed`) and
+    /// given back from a thread (issue 557), told as said earlier; nothing where nothing was said.
+    /// Who joined or left, threads opened or closed, commands carried out and turns given up are
+    /// told live alone: they carry no id by which one the channel shows after could be told from
+    /// one printed here, and tell little after the fact. The messages
     /// printed are remembered, in place of those of the page before, so that one the channel
     /// shows after - said as the history was read - is not printed twice; the quiet calls among
     /// them join those under way, so that a result that comes live finds its call. The last answer
@@ -641,6 +676,12 @@ impl Followed {
         let mut printed = Vec::new();
         self.from_history.clear();
         for entry in page.entries() {
+            if let HistoryEntry::GivenToRead { message, .. } = entry {
+                self.from_history.insert(message.id);
+                let given = self.message_printed(message, Saying::Complete);
+                printed.extend(given_printed(given));
+                continue;
+            }
             let HistoryEntry::Said { message } = entry else { continue };
             self.from_history.insert(message.id);
             if matches!(message.sender_id, ActorId::Agent(_)) && !message.internal {
@@ -745,9 +786,23 @@ fn shown(envelope: &Envelope) -> Vec<Printed> {
             ActorId::System => format!("{name} was removed from the channel"),
             _ => format!("{sender} removed {name} from the channel"),
         }),
+        // A thread of the channel (issue 557): what is said in it is left out of the line.
+        ActorEvent::ThreadOpened { .. } => plain(format!("{sender} opened a thread")),
+        ActorEvent::ThreadClosed { .. } => plain(format!("{sender} closed a thread")),
         _ => None,
     };
     printed.into_iter().collect()
+}
+
+/// What tells that `given`, printed of a message, came back from a thread to read (issue 557):
+/// nothing where nothing of it is printed.
+fn given_printed(given: Vec<Printed>) -> Vec<Printed> {
+    if given.is_empty() {
+        return given;
+    }
+    let mut printed = vec![Printed::Plain("Given back to read from a thread:".to_string())];
+    printed.extend(given);
+    printed
 }
 
 /// What tells that `sender` gave its answer up, and why: a failure as an error.
@@ -926,11 +981,11 @@ mod tests {
     use super::*;
     use crate::screen::testing::lines;
     use anyhow::Error;
-    use caelumora_domain::actor::{ActorState, Rejection};
+    use caelumora_domain::actor::{ActorState, EventContext, Rejection};
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::approval::{ApprovalRuleId, ApprovalVerdict, ApproverId};
     use caelumora_domain::chain::Position;
-    use caelumora_domain::channel::HistoryAccess;
+    use caelumora_domain::channel::{HistoryAccess, ThreadOrigin};
     use caelumora_domain::content::testing::make_content_ref;
     use caelumora_domain::message::testing::make_message;
     use caelumora_domain::message::MessageRole;
@@ -947,6 +1002,7 @@ mod tests {
     use caelumora_kernel::view::Viewer;
     use caelumora_security::confidentiality::ConfidentialityRules;
     use caelumora_security::SecurityContext;
+    use chrono::Utc;
     use std::time::Duration;
     use tokio::time;
 
@@ -1104,6 +1160,50 @@ mod tests {
         let told = lines(&followed.take_in(&event));
         assert_eq!(told.len(), 2, "{told:?}");
         assert!(told[0].contains("calls run_command") && told[1].contains("answered"), "{told:?}");
+    }
+
+    /// Issue 557: of another thread the line's view prints its approvals and what mentions the user
+    /// alone; what came back from it is printed as given back, and a thread opened as such.
+    #[tokio::test]
+    async fn of_another_thread_only_what_waits_or_mentions_the_user_is_printed() {
+        let (mut followed, channel, me) = followed().await;
+        let agent_id = AgentId::new();
+        let agent = ActorId::Agent(agent_id);
+        let thread_id = ThreadId::new();
+        let in_other = |event| {
+            let envelope = from(&channel, agent, event);
+            Envelope { context: EventContext { thread_id, ..envelope.context }, ..envelope }
+        };
+        let said = ActorEvent::CompleteMessageGenerated(message(agent, "aside"));
+        assert!(!followed.concerns_user(&in_other(said.clone())));
+        assert!(followed.take_in(&in_other(said)).is_empty(), "said in another thread");
+        let mentioning = Message { mentions: vec![me], ..message(agent, "@owner, look") };
+        let mentioning = ActorEvent::CompleteMessageGenerated(mentioning);
+        assert!(followed.concerns_user(&in_other(mentioning.clone())), "it mentions them");
+        assert_eq!(lines(&followed.take_in(&in_other(mentioning))), ["other: @owner, look"]);
+        assert_eq!(followed.last_answer, None, "no answer of the line to ask for again");
+        let request = ActorEvent::ApprovalRequested(approval(&channel, agent_id));
+        assert!(followed.concerns_user(&in_other(request.clone())));
+        assert_eq!(followed.take_in(&in_other(request)).len(), 1, "its call waits");
+        // An answer under way read as the channel was caught up with ends with its turn.
+        let turn_id = TurnId::new();
+        followed.under_way.push(UnderWay::began(agent, "sub".to_string(), turn_id, None));
+        let finished = ActorEvent::TurnFinished { turn_id, messages: Vec::new() };
+        assert!(followed.take_in(&in_other(finished)).is_empty());
+        assert!(followed.under_way().is_empty(), "ended, though in another thread");
+
+        let origin =
+            ThreadOrigin { thread: ThreadId::line(channel.id()), message: MessageId::new() };
+        let opened = ActorEvent::ThreadOpened { thread: thread_id, origin };
+        let printed = lines(&followed.take_in(&from(&channel, agent, opened)));
+        assert_eq!(printed, [format!("{agent} opened a thread")]);
+        let recipient = ActorId::Agent(AgentId::new());
+        let given = ActorEvent::GivenToRead { recipient, message: message(agent, "found it") };
+        let delegate = ActorId::Delegate(thread_id);
+        assert_eq!(
+            lines(&followed.take_in(&from(&channel, delegate, given))),
+            ["Given back to read from a thread:", "other: found it"]
+        );
     }
 
     /// An approval shown waits until the approver ends it - decided, timed out or withdrawn -, or
@@ -1756,6 +1856,27 @@ mod tests {
         let shown =
             followed.take_in(&from(&channel, agent, ActorEvent::CompleteMessageGenerated(late)));
         assert!(shown.is_empty(), "its call printed from the history, quiet: {:?}", lines(&shown));
+    }
+
+    /// Issue 557: what came back from a thread is printed from the history as given back, and not
+    /// again as it comes live.
+    #[tokio::test]
+    async fn what_came_back_from_a_thread_is_printed_from_the_history_once() {
+        let (mut followed, channel, _) = followed().await;
+        let agent = ActorId::Agent(AgentId::new());
+        let thread = ThreadId::new();
+        let (recipient, by) = (agent, ActorId::Delegate(thread));
+        let found = message(ActorId::Agent(AgentId::new()), "found it");
+        let given =
+            HistoryEntry::GivenToRead { recipient, message: found.clone(), by, at: Utc::now() };
+        let page =
+            HistoryPage { items: vec![(Position::START, given)], earlier: None, digest: None };
+        assert_eq!(
+            lines(&followed.history_printed(&page)),
+            ["Earlier in main", "Given back to read from a thread:", "other: found it"]
+        );
+        let live = ActorEvent::GivenToRead { recipient, message: found };
+        assert!(followed.take_in(&from(&channel, by, live)).is_empty(), "printed already");
     }
 
     #[tokio::test]

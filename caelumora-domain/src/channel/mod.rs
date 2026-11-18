@@ -14,13 +14,14 @@ mod thread;
 pub use history_access::{HistoryAccess, HistoryStart};
 pub use participant::{FormerParticipant, InternalActor, Participant};
 pub use state::{ChannelState, ChannelStateChange};
-pub use thread::ThreadId;
+pub use thread::{Brief, Delegation, Opening, ThreadId, ThreadOrigin, ThreadState};
 
 use crate::actor::ActorId;
 use crate::approval::ApprovalRule;
 use crate::component::{ComponentConfig, ComponentDescriptor};
 use crate::confidentiality::Classification;
 use crate::group::GroupId;
+use crate::message::Message;
 use crate::query::Field;
 use crate::removal::Removal;
 use crate::scope::{Scope, Scoped};
@@ -75,11 +76,22 @@ pub const LEFT: &str = "left";
 pub const AGENT_STATE_CHANGED: &str = "agent_state_changed";
 
 /// Something new was said in the channel (issue 404): a message that others
-/// hear (`Message::is_heard`), in the change's data as it was said.
-/// Published with the channel's attributes and classification, so that it
-/// reaches who may read the channel and is cleared for it - who would read
-/// the message in its history -, once the message is stored.
+/// hear (`Message::is_heard`), said in its line or mentioning a user in
+/// another thread (issue 557) - what a frontend shows of the channel to whom
+/// it mentions -, in the change's data as `Said`. Published with the
+/// channel's attributes and classification, so that it reaches who may read
+/// the channel and is cleared for it - who would read the message in its
+/// history -, once the message is stored.
 pub const SAID: &str = "said";
+
+/// What `SAID` announces (issues 404, 557): the message as it was said, and the thread it was said
+/// in - by which a frontend tells one of the line from one of another thread that mentions another
+/// user.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Said {
+    pub message: Message,
+    pub thread: ThreadId,
+}
 
 /// Whether a channel uses its session's workspace unless it says
 /// otherwise: it does (issue 251, decision 11).
@@ -327,9 +339,11 @@ impl Channel {
     }
 
     /// Whether `actor` is one of the channel's internal actors (issue 420),
-    /// which take no part in it.
+    /// which take no part in it: one it lists, or a delegate of one of its threads, which no
+    /// channel lists (issue 557).
     pub fn is_internal(&self, actor: ActorId) -> bool {
-        self.internal_actors.iter().any(|internal| internal.actor_id() == actor)
+        matches!(actor, ActorId::Delegate(_))
+            || self.internal_actors.iter().any(|internal| internal.actor_id() == actor)
     }
 
     /// Takes `participant` in, unless it is listed already, as `Session::take_in` takes one into

@@ -82,6 +82,16 @@ impl<F: Field> Filter<F> {
         Filter::And(conditions.into_iter().collect())
     }
 
+    /// Every one of the conditions of `given` that there is - each asked for or not -, the one
+    /// alone if there is one; `None` if there is none (issue 557).
+    pub fn all_given(given: impl IntoIterator<Item = Option<Filter<F>>>) -> Option<Self> {
+        let mut conditions: Vec<_> = given.into_iter().flatten().collect();
+        match conditions.len() {
+            0 | 1 => conditions.pop(),
+            _ => Some(Filter::And(conditions)),
+        }
+    }
+
     /// At least one of `conditions`; no document if there is none.
     pub fn any_of(conditions: impl IntoIterator<Item = Filter<F>>) -> Self {
         Filter::Or(conditions.into_iter().collect())
@@ -217,6 +227,19 @@ mod tests {
                 Doc::Itself => &[],
             }
         }
+    }
+
+    /// Issue 557: the conditions given are all asked for - one alone as it is, none as none.
+    #[test]
+    fn every_condition_given_is_asked_for() {
+        let owner = || Filter::eq(Doc::Owner, "alice");
+        let untagged = || Filter::IsNull(Doc::Tags);
+        assert_eq!(Filter::<Doc>::all_given([None, None]), None);
+        assert_eq!(Filter::all_given([None, Some(owner())]), Some(owner()));
+        assert_eq!(
+            Filter::all_given([Some(owner()), Some(untagged())]),
+            Some(Filter::all_of([owner(), untagged()]))
+        );
     }
 
     #[test]

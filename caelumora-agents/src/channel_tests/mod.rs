@@ -11,7 +11,7 @@ mod questions;
 use crate::activity::{ActivityError, ActivityProvider};
 use crate::command::AgentCommand;
 use crate::library::AgentsLibrary;
-use crate::message::{MessageProcessor, PerceiveInProcessor, ProcessingError};
+use crate::message::{EmitOutProcessor, MessageProcessor, PerceiveInProcessor, ProcessingError};
 use crate::notes::{AgentNotes, NoteKind};
 use crate::prompt::{ContextError, PositionParams, Prompt, PromptPosition, PromptProvider};
 use crate::situation::Situation;
@@ -40,7 +40,7 @@ use caelumora_domain::history::HistoryEntry;
 use caelumora_domain::message::{Message, MessageEvent, MessageId};
 use caelumora_domain::question::{Answers, Questions};
 use caelumora_domain::tool::testing::make_tool_description;
-use caelumora_domain::tool::ToolDescription;
+use caelumora_domain::tool::{ToolDescription, ToolVisibility};
 use caelumora_domain::user::UserId;
 use caelumora_domain::value::command_name::CommandName;
 use caelumora_domain::work::TurnId;
@@ -230,6 +230,10 @@ async fn agent_channel_hearing(
         register_marking_command(registry);
         register_activities(registry);
         register_first_only(registry);
+        register_dropping_calls(registry);
+        register_failing_emit(registry);
+        register_renaming_calls(registry);
+        register_whispering_tool(registry);
     };
     let defaults = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
@@ -341,6 +345,135 @@ impl PromptProvider for HeardCount {
 struct FirstOnly {
     position: PromptPosition,
 }
+
+/// Registers `test_dropping_calls`: emit processors that drop every message calling the tool
+/// `dropped` (issue 557).
+fn register_dropping_calls(registry: &mut ComponentRegistry) {
+    registry.register(
+        ComponentKind::new("test_dropping_calls").provides::<dyn EmitOutProcessor>(),
+        |_descriptor, _context| {
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn EmitOutProcessor>(Arc::new(DroppingCalls));
+            Ok(facets)
+        },
+    );
+}
+
+/// What drops every message calling the tool `dropped` on its way out of the agent.
+#[derive(Debug)]
+struct DroppingCalls;
+
+#[async_trait::async_trait]
+impl MessageProcessor for DroppingCalls {
+    async fn process_messages(&self, input: Vec<Message>) -> Result<Vec<Message>, ProcessingError> {
+        let calls_dropped = |m: &Message| m.tool_calls.iter().any(|c| c.function_name == "dropped");
+        Ok(input.into_iter().filter(|message| !calls_dropped(message)).collect())
+    }
+}
+
+impl EmitOutProcessor for DroppingCalls {}
+
+/// Registers `test_renaming_calls`: emit processors that make every call of the tool `draft` one of
+/// `whisper` (issue 557).
+fn register_renaming_calls(registry: &mut ComponentRegistry) {
+    registry.register(
+        ComponentKind::new("test_renaming_calls").provides::<dyn EmitOutProcessor>(),
+        |_descriptor, _context| {
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn EmitOutProcessor>(Arc::new(RenamingCalls));
+            Ok(facets)
+        },
+    );
+}
+
+/// What makes every call of the tool `draft` one of `whisper` on its way out of the agent.
+#[derive(Debug)]
+struct RenamingCalls;
+
+#[async_trait::async_trait]
+impl MessageProcessor for RenamingCalls {
+    async fn process_messages(&self, input: Vec<Message>) -> Result<Vec<Message>, ProcessingError> {
+        let mut output = input;
+        for call in output.iter_mut().flat_map(|m| m.tool_calls.iter_mut()) {
+            if call.function_name == "draft" {
+                call.function_name = "whisper".to_string();
+            }
+        }
+        Ok(output)
+    }
+}
+
+impl EmitOutProcessor for RenamingCalls {}
+
+/// Registers `test_whispering_tool`: the tool `whisper`, hidden - its call and its result its
+/// owner's - (issue 557).
+fn register_whispering_tool(registry: &mut ComponentRegistry) {
+    registry.register(
+        ComponentKind::new("test_whispering_tool").provides::<dyn ToolProvider>(),
+        |_descriptor, _context| {
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn ToolProvider>(Arc::new(Whispering::tools()));
+            Ok(facets)
+        },
+    );
+}
+
+/// The tool `whisper`, hidden, which answers "psst".
+#[derive(Debug)]
+struct Whispering {
+    description: ToolDescription,
+}
+
+impl Whispering {
+    /// The tool `whisper`, in a set of its own.
+    fn tools() -> FixedTools {
+        let description = ToolDescription {
+            visibility: ToolVisibility::HIDDEN,
+            ..make_tool_description("whisper")
+        };
+        FixedTools::new("whispers".to_string(), vec![Arc::new(Self { description })])
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for Whispering {
+    fn description(&self) -> &ToolDescription {
+        &self.description
+    }
+    async fn execute(
+        &self,
+        _params: &Value,
+        _answers: Option<&Answers>,
+        _turn: &mut Turn<'_>,
+    ) -> ToolResult<ToolOutput> {
+        Ok(serde_json::json!("psst").into())
+    }
+}
+
+/// Registers `test_failing_emit`: emit processors that fail, to be given a fail policy (issue 557).
+fn register_failing_emit(registry: &mut ComponentRegistry) {
+    registry.register(
+        ComponentKind::new("test_failing_emit").provides::<dyn EmitOutProcessor>(),
+        |_descriptor, _context| {
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn EmitOutProcessor>(Arc::new(FailingEmit));
+            Ok(facets)
+        },
+    );
+}
+
+/// What fails at every message on its way out of the agent.
+#[derive(Debug)]
+struct FailingEmit;
+
+#[async_trait::async_trait]
+impl MessageProcessor for FailingEmit {
+    async fn process_messages(&self, _: Vec<Message>) -> Result<Vec<Message>, ProcessingError> {
+        Err(ProcessingError::Failed("the filter is broken".to_string()))
+    }
+}
+
+impl EmitOutProcessor for FailingEmit {}
 
 /// Registers `FirstOnly` as the kind `test_first_only`, at the position its
 /// parameters name, else at the start.

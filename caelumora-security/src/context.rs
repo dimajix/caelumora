@@ -4,7 +4,7 @@
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::Agent;
 use caelumora_domain::approval::Approver;
-use caelumora_domain::channel::{Channel, ChannelId};
+use caelumora_domain::channel::{Channel, ChannelId, ThreadId};
 use caelumora_domain::role::RoleId;
 use caelumora_domain::session::SessionId;
 use serde::{Deserialize, Serialize};
@@ -82,6 +82,16 @@ impl SecurityContext {
         Self {
             owner_id: channel.security_attributes.owner_id,
             ..Self::new(ActorId::Approver(approver.id), channel.session_id, channel.id)
+        }
+    }
+
+    /// The context the delegate of `thread` acts in, in `channel` (issue 557): its own, answered
+    /// for by the owner of its channel, as the approver's is - what the channel admits its
+    /// envelopes in, which name the chain that delegated as their initiator.
+    pub fn of_delegate(thread: ThreadId, channel: &Channel) -> Self {
+        Self {
+            owner_id: channel.security_attributes.owner_id,
+            ..Self::new(ActorId::Delegate(thread), channel.session_id, channel.id)
         }
     }
 

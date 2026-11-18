@@ -20,7 +20,8 @@ entity's id as text, `within` the id of the entity it lies in, and `change` an `
 *   `Custom { name, data }` - something particular to the kind, under a name its module defines:
     `session::STARTED` and `STOPPED`, a channel's `STARTED`, `STOPPED`, `JOINED` and `LEFT` - with
     the `ActorId` of who joined or left -, `AGENT_STATE_CHANGED`, with the agent's id, and `SAID`,
-    with a message others hear as it was said (see
+    with a message others hear as it was said and its thread (`Said`: of the line, or of another
+    where it mentions a user, issue 557; see
     [CHANNELS.md](CHANNELS.md#what-is-new-to-a-user)).
 
 What happens to a channel's participants is a change of the channel: its readers are the ones who

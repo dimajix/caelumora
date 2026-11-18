@@ -1184,6 +1184,335 @@ async fn a_sleeping_agent_woken_by_a_mention_answers_it() {
     running.abort();
 }
 
+/// Issue 557: what a delegate gives an agent to read wakes it, and it takes it in as given to it -
+/// "alice gave you this to read:", as a skill given with `/skill` -, recorded once as what it
+/// was given, and answers it.
+#[tokio::test]
+async fn an_agent_given_something_to_read_wakes_takes_it_in_and_answers() {
+    use caelumora_domain::chain::Position;
+    use caelumora_domain::channel::{Brief, Delegation, ThreadId};
+    use caelumora_domain::tool::ToolCall;
+    use std::collections::VecDeque;
+
+    let answer = |text: &str, tool_calls| Message {
+        role: MessageRole::Assistant,
+        content: Some(text.to_string()),
+        tool_calls,
+        ..Message::new(Classification::CHANNEL_DEFAULT)
+    };
+    let stop = vec![ToolCall {
+        id: Some("1".to_string()),
+        arguments: serde_json::json!({}),
+        ..make_tool_call("stop")
+    }];
+    let components = ComponentConfig {
+        component_nodes: vec![ComponentDescriptor {
+            id: "stop".to_string(),
+            kind: TURN_END_KIND.to_string(),
+            params: Value::Null,
+            tags: vec![],
+            fail_policy: ComponentFailPolicy::FailClosed,
+        }],
+    };
+    let model =
+        Scripted(Mutex::new([answer("Good bye.", stop), answer("Found it.", Vec::new())].into()));
+    let Stuck { channel, context, agent, helper, mut events, running } =
+        with_an_agent(Arc::new(model), components).await;
+    settled(&helper, ActorState::Sleeping).await;
+    let alice = ActorId::User(alice_of(&context));
+    // Given back into the line by the delegate of a thread opened at it, which only the tests make.
+    let line = ThreadId::line(channel.id());
+    let brief = Message {
+        sender_id: alice,
+        sender_name: "alice".to_string(),
+        role: MessageRole::User,
+        content: Some("Look this up.".to_string()),
+        ..Message::new(Classification::CHANNEL_DEFAULT)
+    };
+    let given = |thread| {
+        let context = EventContext {
+            sender_id: ActorId::Delegate(thread),
+            initiator_id: alice,
+            thread_id: line,
+            ..channel.event_context()
+        };
+        let message = brief.clone();
+        let given = ActorEvent::GivenToRead { recipient: ActorId::Agent(agent), message };
+        vec![Envelope::new(context, given)]
+    };
+    // Delegated by the agent to alice, as far as its delegate goes: alice's answer comes back.
+    let briefed = Brief {
+        message: Message::new(Classification::CHANNEL_DEFAULT),
+        given_at: Some(Position::START),
+    };
+    let delegation = Delegation {
+        giver: ActorId::Agent(agent),
+        recipient: alice,
+        initiator: alice,
+        briefs: VecDeque::from([briefed]),
+    };
+    channel.forge_delegate(delegation, given).await;
+
+    let said = |messages: Vec<Message>| {
+        messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>()
+    };
+    while said(answered(&mut events, agent).await) != ["Found it."] {}
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
+    let given: Vec<_> = stored
+        .transcript
+        .entries()
+        .filter_map(|node| match &node.entry {
+            TranscriptEntry::Given { message, source: None } => Some(message.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(given.len(), 1, "taken in once, as given to it: {given:?}");
+    assert_eq!((given[0].id, given[0].sender_id), (brief.id, alice), "its giver its sender");
+    let recorded = channel.history_entries().await;
+    assert!(
+        recorded.iter().any(
+            |entry| matches!(entry, HistoryEntry::Given { message } if message.id == brief.id)
+        ),
+        "its record of what it was given: {recorded:?}"
+    );
+    // What it is given again from the history, as after a restart (issue 223): by name.
+    let readable = channel.visible_entries(ActorId::Agent(agent)).await;
+    assert!(
+        readable.iter().any(|entry| matches!(
+            entry,
+            HistoryEntry::GivenToRead { message, .. } if message.id == brief.id
+        )),
+        "read back from the history as its recipient: {readable:?}"
+    );
+    running.abort();
+}
+
+/// Issue 557: a message the emit processors drop is not said, and the calls it carries are not run:
+/// the turn ends without them - a second call of the model would never be answered.
+#[tokio::test]
+async fn the_calls_of_a_message_dropped_on_its_way_out_are_not_run() {
+    use caelumora_domain::tool::ToolCall;
+
+    let calls = Message {
+        role: MessageRole::Assistant,
+        content: Some("Let me compute.".to_string()),
+        tool_calls: vec![ToolCall {
+            id: Some("1".to_string()),
+            arguments: serde_json::json!({}),
+            ..make_tool_call("dropped")
+        }],
+        ..Message::new(Classification::CHANNEL_DEFAULT)
+    };
+    let components = ComponentConfig {
+        component_nodes: vec![ComponentDescriptor {
+            id: "dropping".to_string(),
+            kind: "test_dropping_calls".to_string(),
+            params: Value::Null,
+            tags: vec![],
+            fail_policy: ComponentFailPolicy::FailClosed,
+        }],
+    };
+    let Stuck { channel, agent, mut events, running, .. } =
+        with_an_agent(Arc::new(Scripted(Mutex::new([calls].into()))), components).await;
+
+    answered(&mut events, agent).await;
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
+    assert!(stored.turn.is_none(), "the turn ended");
+    let said = stored.transcript.messages();
+    assert!(
+        said.iter().all(|m| m.tool_calls.is_empty() && m.role != MessageRole::Tool),
+        "neither the calls nor their results: {said:?}"
+    );
+    running.abort();
+}
+
+/// Issue 557: a step of a plan whose message the emit processors drop ends as one answered without
+/// calls - nothing of it said, its calls not run - and the plan goes on with its next step.
+#[tokio::test]
+async fn a_step_whose_message_is_dropped_ends_and_the_plan_goes_on() {
+    use caelumora_domain::tool::ToolCall;
+
+    let said = |content: &str| Message {
+        role: MessageRole::Assistant,
+        content: Some(content.to_string()),
+        ..Message::new(Classification::CHANNEL_DEFAULT)
+    };
+    let calling = |name: &str, arguments| Message {
+        tool_calls: vec![ToolCall { id: Some("1".to_string()), arguments, ..make_tool_call(name) }],
+        ..said("")
+    };
+    let steps = serde_json::json!({
+        "summary": "two steps",
+        "steps": [{ "description": "first" }, { "description": "second" }]
+    });
+    let script = [
+        calling("create_plan", steps),
+        calling("dropped", serde_json::json!({})),
+        said("second done"),
+        said("all done"),
+    ];
+    let component_nodes =
+        [PLANNING_KIND, "test_dropping_calls"].map(|kind| ComponentDescriptor::new(kind, kind));
+    let components = ComponentConfig { component_nodes: component_nodes.into() };
+    let Stuck { channel, agent, mut events, running, .. } =
+        with_an_agent(Arc::new(Scripted(Mutex::new(script.into()))), components).await;
+
+    let mut seen = Vec::new();
+    time::timeout(Duration::from_secs(5), async {
+        loop {
+            let envelope = events.recv().await.expect("the channel is running");
+            if envelope.context.sender_id != ActorId::Agent(agent) {
+                continue;
+            }
+            match envelope.event {
+                ActorEvent::TurnFinished { .. } => break,
+                ActorEvent::IntermediateMessageGenerated(m) => {
+                    seen.push(format!("intermediate:{}", m.content.unwrap_or_default()))
+                }
+                ActorEvent::PlanStepStarted { step_index, .. } => {
+                    seen.push(format!("started:{step_index}"))
+                }
+                ActorEvent::PlanStepFinished { step_index, .. } => {
+                    seen.push(format!("finished:{step_index}"))
+                }
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("the turn ends");
+    assert_eq!(
+        seen,
+        ["started:0", "finished:0", "started:1", "intermediate:second done", "finished:1"],
+        "the first step ended with nothing said, the second went on"
+    );
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
+    let said = stored.transcript.messages();
+    let dropped = |m: &Message| {
+        m.tool_calls.iter().any(|c| c.function_name == "dropped")
+            || m.tool_results.iter().any(|r| r.tool_name == "dropped")
+    };
+    assert!(!said.iter().any(dropped), "the dropped call neither said nor run: {said:?}");
+    running.abort();
+}
+
+/// Issue 557: the call an emit processor makes of the model's is the one taken into the turn and
+/// run - said as it left the processor, labelled as its tool declares: hidden, its owner's.
+#[tokio::test]
+async fn a_call_an_emit_processor_changes_runs_as_it_changed_it() {
+    use caelumora_domain::tool::{ToolCall, ToolVisibility};
+
+    let drafted = Message {
+        role: MessageRole::Assistant,
+        tool_calls: vec![ToolCall {
+            id: Some("1".to_string()),
+            arguments: serde_json::json!({}),
+            ..make_tool_call("draft")
+        }],
+        ..Message::new(Classification::CHANNEL_DEFAULT)
+    };
+    let answer = Message {
+        role: MessageRole::Assistant,
+        content: Some("Done.".to_string()),
+        ..Message::new(Classification::CHANNEL_DEFAULT)
+    };
+    let component_nodes = ["test_whispering_tool", "test_renaming_calls"]
+        .map(|kind| ComponentDescriptor::new(kind, kind));
+    let components = ComponentConfig { component_nodes: component_nodes.into() };
+    let model = Scripted(Mutex::new([drafted, answer].into()));
+    let Stuck { channel, agent, mut events, running, .. } =
+        with_an_agent(Arc::new(model), components).await;
+
+    answered(&mut events, agent).await;
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
+    let said = stored.transcript.messages();
+    let called: Vec<_> = said
+        .iter()
+        .flat_map(|m| m.tool_calls.iter().map(|c| (c.function_name.clone(), c.visibility)))
+        .collect();
+    assert_eq!(
+        called,
+        [("whisper".to_string(), ToolVisibility::HIDDEN)],
+        "said as the processor made it, labelled as its tool declares: {said:?}"
+    );
+    let results: Vec<_> = said
+        .iter()
+        .flat_map(|m| m.tool_results.iter())
+        .map(|r| (r.tool_name.clone(), r.status))
+        .collect();
+    assert_eq!(results, [("whisper".to_string(), ToolResultStatus::Ok)], "and run");
+    running.abort();
+}
+
+/// Issue 557: an emit processor that fails closed gives the turn up, as every error of a turn does,
+/// as soon as a message streams; one that fails open is left out, and the message is said as it
+/// was.
+#[tokio::test]
+async fn an_emit_processor_that_fails_closed_gives_the_turn_up() {
+    let answer = |text: &str| Message {
+        role: MessageRole::Assistant,
+        content: Some(text.to_string()),
+        ..Message::new(Classification::CHANNEL_DEFAULT)
+    };
+    let failing = |fail_policy| ComponentConfig {
+        component_nodes: vec![ComponentDescriptor {
+            id: "failing".to_string(),
+            kind: "test_failing_emit".to_string(),
+            params: Value::Null,
+            tags: vec![],
+            fail_policy,
+        }],
+    };
+    let model = Scripted(Mutex::new([answer("Hello.")].into()));
+    let Stuck { agent, mut events, running, .. } =
+        with_an_agent(Arc::new(model), failing(ComponentFailPolicy::FailClosed)).await;
+    let reason = turn_given_up(&mut events, agent).await;
+    assert!(reason.contains("the filter is broken"), "given up, and why: {reason}");
+    running.abort();
+
+    let model = Scripted(Mutex::new([answer("Hello.")].into()));
+    let Stuck { agent, mut events, running, .. } =
+        with_an_agent(Arc::new(model), failing(ComponentFailPolicy::FailOpen)).await;
+    let said = answered(&mut events, agent).await;
+    assert_eq!(said[0].content.as_deref(), Some("Hello."), "said as it was");
+    running.abort();
+    // Already as a part of it streams: the rest of the stream, which never comes, is not waited
+    // for.
+    let Stuck { agent, mut events, running, .. } =
+        with_an_agent(Arc::new(StreamsAPart), failing(ComponentFailPolicy::FailClosed)).await;
+    let reason = turn_given_up(&mut events, agent).await;
+    assert!(reason.contains("the filter is broken"), "given up as it streams: {reason}");
+    running.abort();
+}
+
+/// A model that streams a part of its answer and then nothing more.
+#[derive(Debug)]
+struct StreamsAPart;
+
+#[async_trait::async_trait]
+impl LanguageModelClient for StreamsAPart {
+    async fn chat_completion(
+        &self,
+        _: ActorId,
+        _: &[Message],
+        _: &[ToolDescription],
+    ) -> BoxStream<'static, ModelResult<MessageEvent>> {
+        use futures::StreamExt;
+        let part = Message {
+            role: MessageRole::Assistant,
+            content: Some("Hel".to_string()),
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        };
+        stream::iter([Ok(MessageEvent::Partial(part))]).chain(stream::pending()).boxed()
+    }
+}
+
+impl ModelProfileProvider for StreamsAPart {
+    fn profile(&self) -> ModelProfile {
+        ModelProfile::default()
+    }
+}
+
 #[tokio::test]
 async fn an_agent_that_calls_stop_ends_its_turn_with_the_call_and_sleeps() {
     use caelumora_domain::tool::ToolCall;
@@ -1288,7 +1617,7 @@ async fn an_agent_tells_the_users_where_it_stands_and_that_it_was_woken() {
         "each step it moves to, once"
     );
 
-    let woken = channel.wakeup(&context).await.expect("alice may wake it");
+    let woken = channel.wakeup(&context, None).await.expect("alice may wake it");
     assert_eq!(woken, ["helper"]);
     assert_eq!(
         told_states(&mut shown, agent, ActorState::Idle).await,
@@ -2155,7 +2484,7 @@ async fn a_cancel_ends_a_turn_waiting_for_approval_at_once() {
         with_an_agent(Arc::new(Scripted(Mutex::new([call].into()))), components).await;
     settled(&helper, ActorState::WaitingForUser).await;
 
-    channel.cancel(&context).await.expect("permitted");
+    channel.cancel(&context, None).await.expect("permitted");
 
     // Without anyone deciding on the call.
     settled(&helper, ActorState::Idle).await;
@@ -2462,7 +2791,7 @@ async fn a_cancel_while_a_tool_runs_interrupts_the_tool_and_ends_the_turn() {
     let (Stuck { channel, context, agent, helper, mut events, running }, model) =
         with_an_agent_in_a_long_tool().await;
 
-    channel.cancel(&context).await.expect("permitted");
+    channel.cancel(&context, None).await.expect("permitted");
 
     // The turn ends at once, not when the tool would have (issue 161),
     // and the model is not asked again.
@@ -2833,7 +3162,7 @@ async fn a_cancel_interrupts_a_model_call_that_is_in_flight() {
         stuck_in_a_model_call().await;
     let agent_id = ActorId::Agent(agent);
 
-    channel.cancel(&context).await.expect("permitted");
+    channel.cancel(&context, None).await.expect("permitted");
 
     // The turn ends at once - with an empty answer, so that observers
     // stop waiting - instead of when the model would have answered.
@@ -2861,7 +3190,7 @@ async fn a_user_learns_that_a_turn_cancelled_before_it_said_anything_ended() {
     let Stuck { channel, context, agent, running, .. } = stuck_in_a_model_call().await;
     let mut followed = channel.user_actor(alice_of(&context)).unwrap().watch();
 
-    channel.cancel(&context).await.expect("permitted");
+    channel.cancel(&context, None).await.expect("permitted");
 
     // Nothing to hear of it - but the end, for whoever shows the answer
     // as under way (issue 224).

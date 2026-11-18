@@ -1,6 +1,6 @@
 # 557 — A conversation cannot go on in two directions at once
 
-**Status:** in progress
+**Status:** done
 **Type:** question
 **Priority:** medium
 **Area:** Sessions and channels
@@ -1024,6 +1024,61 @@ Proposed:
    sub-agent needs letting go from a session first (issue
    [590](590-a-session-lets-nobody-go.md)).
 
+### The steps of 2b
+
+Decided by the maintainer on 2026-11-17, each step a commit of its own, reviewed before the next.
+Who calls a building block comes in a later step - the crate in 5, the frontends in 6.
+
+1. **Threads opened and closed while the channel runs.** `ChannelState::threads`, with where a
+   thread hangs (`ThreadOrigin`) and who opened it; `ThreadOpened` and `ThreadClosed` in the
+   history, of the whole channel; `Rejection::ThreadClosed`; a moderator of its own for every
+   thread, built as it is opened; an actor starting again in its thread after a restart, as the
+   `Attendance` says (`HistoryStore::attending`); the action `OpenThread`.
+2. **Giving to read.** `ActorId::Delegate` and `ActorEvent::GivenToRead`, delivered to its
+   recipient by name, taken in by the agent as a `Given` entry ("@x gave you this to read:") with a
+   request to respond, waking an agent that sleeps; admitted from a delegate alone.
+3. **Delegating.** The delegate and `delegate`: the open brief in `ChannelState`, the next turn end
+   in the thread taken as its answer, given back to read in the origin; what is open set right as
+   the channel starts (`reconcile`), in the order: threads from the state, reconciling, delegates,
+   participants.
+4. **Cancelling and waking a thread.** Being quiet is a `Thread`'s state, no longer
+   `ChannelLoop::quiet`'s; a brief into a quiet thread is refused.
+5. **The crate `caelumora-subagents`.** Reaching the running session from a plugin
+   (`SessionView::session_loop`, today only the crate's `running`); the `SubAgentWriter` with
+   `start`, `ask` and `end`; names of an adjective and the personality; the tools, with the list of
+   personalities. Ending: let go from the session (590), the thread closed, the agent deleted.
+6. **The frontends.** The line's view in the web UI and the TUI leaves out what is said in other
+   threads - both ignore `thread_id` today -, `GivenToRead` is shown at the call, and the REST API
+   reads a page of one thread (`?thread=`).
+
+Decided with it, on the author's proposal:
+
+- **The way into a thread goes through the session** (`SessionLoop::open_thread`,
+  `close_thread`), not through `ChannelLoop::open_thread` as *The building blocks* proposed: every
+  way into a channel goes through the session, which holds the lock of a participant first (issue
+  590), and a founder is mostly new to the session - a sub-agent always. The locks of several
+  founders are taken sorted by id, as restoring a channel takes them.
+- **Who may be a founder**: whom the opener acts for, or an agent of their own (as
+  `Participation::require_own_act` asks), taken into the session and the channel in the kernel's
+  name once `OpenThread` was permitted - as founding a channel stores its founders -, so that an
+  agent of a user who does not own a shared session can start a sub-agent. Their clearance and
+  their scope are asked as for anyone taken in; one who takes part in the channel already is
+  refused (`AlreadyParticipant`), since an actor takes part in one thread.
+- **The origin's message is not checked against the history**, only that the origin's thread is
+  open: a tool opens the thread while the message with its call may still be on its way into the
+  channel. Opening goes through `run`'s ordered input, which takes the events first, so that the
+  message is recorded before `ThreadOpened`.
+- **A moderator per thread**, built as it is opened from the channel's components; a thread's own
+  policy comes with a user that needs one. The departure of *Step 2* - the sub-agent asked by a
+  mention instead of a policy of its own - is settled: the delegate asks by a request of its own,
+  which no policy decides.
+- **Closing** is refused while anyone takes part in the thread, so that no agent sits in a closed
+  one; it is asked of whoever opened it (the same caller) or whoever may change the channel
+  (`UpdateChannel`). Ending a sub-agent is therefore: let go (590), then closed. A user closing a
+  sub-agent's thread, which ends the sub-agent (558), stays open.
+- **A person branches once**, by the kernel's rule in `open_thread`: a thread a user opens hangs
+  at the line; an agent may open one at another thread.
+
 ## Done when
 
 - The model is decided - within one channel, as channels, or not at all - with the reasoning
@@ -1139,3 +1194,189 @@ Proposed:
   `Thread`, and waking goes the same two ways (*Plan: step 2*, 7). The rule of *Rules that go by
   the order of the whole channel* that kept being quiet the whole channel's changes with it. Part
   of 2b; ending a sub-agent needs letting go from a session first, issue 590.
+- **2026-11-17** — The steps of 2b decided by the maintainer (*The steps of 2b*), with the way
+  into a thread through the session, who may be a founder, the origin's message not checked, a
+  moderator per thread, closing an empty thread alone, and a person branching at the line.
+- **2026-11-17** — Step 1 of 2b implemented: `ThreadOrigin`, `Opening` and `ThreadState`, every
+  thread kept in `ChannelState::threads`, the closed ones as closed; `ThreadOpened` and
+  `ThreadClosed`, of the whole channel, announced in the line and told to the users;
+  `Rejection::ThreadClosed`; `OpenThread`, granted to whoever reads the channel; a moderator per
+  thread, built as it is opened; `SessionLoop::open_thread`, with the founders taken into the
+  session and the channel as founders (`Entry::Founding`, `Participation::require_own`) under the
+  session's locks (`LocksById::lock_all`), and the opening rolled back if one cannot be; actors
+  starting again in the thread their attendance names. Where it departs from *The steps of 2b*:
+  closing is `ChannelLoop::close_thread`, not the session's - it takes nobody in and needs no lock
+  of the session, which would only pass it on -; and the channel's `run` closes a thread only once
+  whoever left it has left, so that what a sub-agent let go mid-turn still sends enters its thread
+  and its leave is recorded there, while closing is refused as long as an actor runs in it, a
+  participant listed without one attends it, or its founders are still being taken in. Stored
+  data to delete: the state of every channel (`ChannelState::threads`).
+- **2026-11-18** — Step 1 of 2b accepted by the maintainer, with its departures. The interface of
+  step 2 decided as proposed: the delegate named by the thread it delegates into
+  (`ActorId::Delegate(ThreadId)`), shown as "Delegate"; `GivenToRead { recipient, message }`, the
+  message's sender the one who gives it, admitted from the delegate of the thread it is given in
+  or of a thread opened at it, to a recipient running there, from a giver the channel lists, of a
+  classification the channel may publish; the request to respond made by the moderator as for a
+  nudge (`RequestReason::Given`), so that waking, recording to the recipient by name and reading
+  it again from the history are those of every request; the delegate acting in a context of its
+  own, answered for by the channel's owner as the approver's is (`SecurityContext::of_delegate`),
+  naming the giver as the initiator of its events; and, until step 3 builds the delegate's actor,
+  its tests run a scripted actor in its place.
+- **2026-11-18** — Step 2 of 2b implemented: `ActorId::Delegate(ThreadId)`, shown as "Delegate";
+  `ActorEvent::GivenToRead` and `HistoryEntry::GivenToRead`, of the thread it is given in,
+  recorded to the recipient by name and to the users; admitted from the delegate of a thread
+  opened - none delegates into the line -, into that thread or back into the one it was opened at,
+  in the name of its giver (the message's sender is the event's initiator), to a recipient running
+  there, giver and recipient participants the channel lists, as a text that may flow in
+  (`ChannelLoop::admit_given`); the moderator asking the recipient alone, as for a nudge
+  (`PolicyModerator::asking`, `RequestReason::Given`, the strongest reason), without ending the
+  channel's being quiet; the delegate's context (`SecurityContext::of_delegate`,
+  `ResolvedKind::Delegate`); an agent and an external agent taking it in as what they were given
+  (`AgentChannelState::given`), not between the steps of a turn. Until step 3 builds the
+  delegate's actor, building one fails, and the tests run a forged one in its place, in a thread
+  opened at the line (`ChannelLoop::forge_delegate`, the `Forger` moved from the channel's tests
+  into its testing module). No stored data to delete: nothing stored changes its form. Owed with
+  step 3: `ResolvedParticipant::delegate` out of its `expect(dead_code)`; a test of the security
+  suite for delegating in the giver's name; giving only once the recipient's actor has started
+  (`admit_given` asks the actors adopted, delivery the ones started - as for a nudge); the kinds
+  of actor in ARCHITECTURE.md.
+- **2026-11-18** — Step 2 of 2b accepted by the maintainer, with what it adds to the interface: the
+  initiator the giver, a text alone, no delegate of the line, and `RequestReason::Given` the
+  strongest reason. `of_delegate` stays beside `of_approver`, as agreed.
+- **2026-11-18** — The interface of step 3 decided as proposed: a thread's `Delegation` (giver,
+  recipient, the initiator of the chain that delegated, its briefs, the first one open) and
+  `Brief` (the message, where it was given) in `ThreadState`; `ChannelLoop::delegate`, by whom the
+  caller acts for or an agent of their own, who reads the channel, to a recipient running in the
+  thread; the `DelegateActor`, built from the state and handed later briefs by `run`, reading on
+  after a restart from where its open brief was given (`Actor::heard`); a delegate given what a
+  user is given, of its thread alone; both directions in the delegating chain's initiator, the
+  channel admitting what the delegate gives against the delegation it holds - in place of step
+  2's "the initiator the giver"; the delegate let go with its thread, open briefs dropped, and
+  "left" given back when the recipient leaves; the answer given back as a text alone.
+- **2026-11-18** — Step 3 of 2b implemented: `Delegation` and `Brief` in `ThreadState`, with
+  the rule of one giver and one recipient (`ThreadState::delegate`); the channel following what
+  the delegate gives as it records it, with the entry in one store, and as it refuses it
+  (`ChannelState::follow_given`, `follow_refused`), and keeping the delegate in step (`sync`);
+  `ChannelLoop::delegate`; the `DelegateActor`, started with the first brief or as the channel
+  starts again - after its threads and reconciling, before its participants -, reading on from
+  where its open brief was given, taking the recipient's first turn that ends after the brief was
+  given, and giving back the answer, that the turn ended without one or was given up, that the
+  recipient could not be asked, or that it left (`kernel.delegation_*`); a delegate given what goes
+  to the users of its thread and of the whole channel, and internal to the channel
+  (`Channel::is_internal`); the admission of what it gives against the delegation; the delegate
+  let go as its thread is to be closed. Where it departs from the interface decided: the giver is
+  the caller alone - without a giver to name, an agent of one's own cannot be one -, and the
+  recipient an agent, whose turn is what comes of a brief; no reconciling of delegations as the
+  channel starts - following them with the entry they follow leaves nothing to set right. A brief
+  into a thread no longer open by the time `run` takes it is dropped, logged, though `delegate`
+  answered it as taken. Stored data to delete: the state of every channel
+  (`ThreadState::delegation`).
+- **2026-11-18** — Step 3 of 2b accepted by the maintainer, with its departures.
+- **2026-11-18** — The interface of step 4 decided as proposed: being quiet a `Thread`'s state,
+  no longer the channel's; `ChannelLoop::cancel` and `wakeup` of one thread or, with `None`, of
+  every one, under `CancelChannel` and `WakeChannel`; a user's message waking the thread it is
+  said in alone, a nudge and a request to answer again the thread of their event, `wakeup_actor`
+  the actor's thread; a brief into a quiet thread refused (`ChannelError::ThreadQuiet`), and the
+  briefs that wait in a thread made quiet given back as ones their recipient could not be asked;
+  being quiet kept in memory alone, as before.
+- **2026-11-18** — Step 4 of 2b implemented: being quiet a `Thread`'s state (`is_quiet`,
+  `set_quiet`), `ChannelLoop::quiet` gone; `cancel` and `wakeup` of a thread or of every one, a
+  thread named asked to be open (`ThreadNotOpen`); a user's message waking the thread it is said in
+  alone, a nudge and a request to answer again ending the quiet of the thread of whom they ask -
+  as the maintainer decided on review, in place of their event's -, `wakeup_actor` that of the
+  actor's; `delegate` refusing a quiet thread (`ThreadQuiet`), and the
+  channel refusing a brief into one, which its delegate gives back as not asked; a brief let in
+  asking its recipient though its thread was made quiet before it was routed, so that it is never
+  given and not asked. The existing callers - the REST route of cancelling, `/agent wakeup`,
+  lowering the channel - reach every thread. No stored data to delete.
+- **2026-11-18** — Step 4 of 2b accepted by the maintainer: a nudge and a request to answer again
+  end the quiet of the thread of whom they ask; a thread opened after a cancel of the whole channel
+  starts awake, until the frontends can wake one thread (step 6). Found on review, to be decided
+  apart: a user at the line can ask an agent of another thread to answer again.
+- **2026-11-18** — The interface of step 5 decided as proposed, in two commits: 5a opens what the
+  crate needs, without a change of behaviour - `SessionView::session_loop`,
+  `ChannelLoop::delegation`, `Situation::thread_id`, `Turn::calling_message` -; 5b is the crate
+  `caelumora-subagents` (558), its origin taken from the agent side - the thread its work happens
+  in, the message whose calls run -, its sub-agent found by the thread's delegation, named by an
+  adjective of a list of its own and the personality.
+- **2026-11-18** — Step 5a of 2b implemented: `SessionView::session_loop`, public, in place of the
+  crate's `running`; `ChannelLoop::delegation`, what was delegated into a thread as the channel's
+  state holds it; `Situation::thread_id`, the thread of the work's envelope; and
+  `Turn::calling_message`, the last message of the turn with calls while its calls run. No change of
+  behaviour, no stored data to delete. What PLUGINS.md and CODING-GUIDELINES.md say of a writer
+  acting through the running session (`session_loop`, `channel_for`) comes with its first user,
+  5b.
+- **2026-11-18** — Step 5a of 2b accepted by the maintainer. Its finding - a step whose message an
+  `EmitOutProcessor` drops still runs its calls, so that `Turn::calling_message` names an earlier
+  message - to be fixed in a step of its own before 5b.
+- **2026-11-18** — The finding of 5a fixed, as a step of its own: a step's calls are taken into the
+  turn only once the emit processors let the message carrying them through, so that a message they
+  drop runs no calls and `Turn::calling_message` always names the message whose calls run. No
+  stored data to delete.
+  On review: the calls are labelled again as they left the processors, so that a call they changed
+  runs with what its tool declares; a step whose message was dropped ends as one answered without
+  calls does. Found, to be decided apart: `AgentActor::respond` drops the error of a fail-closed
+  emit processor without a trace, which now also leaves the step's calls unrun.
+- **2026-11-18** — Accepted by the maintainer. Its two findings planned as steps of their own,
+  before 5b: first `AgentActor::respond` handing on the error of a fail-closed emit processor, so
+  that it gives the turn up as every error of a turn does; then the tests of a step whose message
+  was dropped in a plan, and of a processor that changes a call.
+- **2026-11-18** — The first of these steps implemented: `AgentActor::respond` hands on the error
+  of an emit processor that fails closed, which gives the turn up (`GivenUpReason::Failed`); one
+  that fails open is left out, as before - also as a part of a message streams. Found on review,
+  to be decided apart: a `PerceiveInProcessor` that fails closed is only logged, its messages
+  dropped, though COMPONENTS.md says a component failing closed fails the turn. No stored data to
+  delete.
+- **2026-11-18** — Accepted by the maintainer.
+- **2026-11-18** — The second of these steps implemented, tests alone: a step of a plan whose
+  message an emit processor drops ends, nothing of it said or run, and the plan goes on; a call an
+  emit processor changes is the one said and run, labelled as its tool declares
+  (`test_dropping_calls`, now of the tool `dropped` alone; `test_renaming_calls`,
+  `test_whispering_tool`, hidden). Both mutation-checked: the old order, and leaving out labelling
+  again.
+- **2026-11-18** — Accepted by the maintainer. Found on review, to be decided apart: about 25
+  component descriptors in the agents' channel tests written out field by field, where
+  `ComponentDescriptor::new` with a struct update would do.
+- **2026-11-18** — Step 5b of 2b implemented: the crate `caelumora-subagents`, as 558 records it,
+  its writer acting through the running session the work's `SessionView` gives out, reaching the
+  channel as a frontend does (`channel_for`) - what PLUGINS.md and CODING-GUIDELINES.md now say of
+  such a face. On review: `start` and `end` run in a task of their own, so that a turn cancelled
+  while they run leaves no sub-agent half started or ended; ending lets go first and closes and
+  deletes only once that is done; a name taken meanwhile is drawn again; the agents' manager is held
+  by the writer. No stored data to delete.
+- **2026-11-18** — Step 5b of 2b accepted by the maintainer, to be committed as it is; what its
+  review left to decide decided as recommended, as a step of its own (558's History).
+- **2026-11-18** — The interface of step 6 decided as proposed, with what comes back from a thread
+  shown where it comes (B), not at the call: the line's view by one rule
+  (`Envelope::is_shown_in_line`) - what happens in the line or in the whole channel, and of
+  another thread its approvals and questions -, in the TUI and, mirrored, in the web UI
+  (`isShownInLine`); `ChannelView::history_page` of the line, which the snapshot and the TUI read,
+  `history_page_of` of every thread; `ChannelView::unread` counting the line alone, since only what
+  the line showed is marked read; the REST API's `?thread=` (`HistoryQuery::thread`), the channel's
+  page of the line without it, and the items `given_to_read`, `thread_opened` and `thread_closed`.
+  Waking or cancelling one thread waits for a view of a thread. Found on the way: a history built
+  by hand (`History::push`, `Recorded::new`) names no thread of its channel - its entries are of
+  the nil thread -, so that two tests of the views had their messages said in the line instead. On
+  review: `channel::SAID` announced for the line alone, which the web UI's unread count and the
+  chat of a reader who takes no part follow; the web UI leaving another thread out of the chat
+  alone, the participants, the usage and the workspace following every thread; the TUI ending an
+  answer under way of another thread with its turn; `ActorEvent::is_waited_for`, exhaustive; an
+  agent's history holding what a delegate gave it as what it was given (`Given`) alone.
+- **2026-11-18** — Step 6 of 2b accepted by the maintainer. Decided with it: a mention of a user in
+  another thread is shown to them in the web UI - notifications as a whole to be taken up apart, the
+  terminal's with a concept of its own, together with channels followed side by side (issue
+  [572](572-the-full-screen-terminal-tells-nothing-of-other-channels-at-work.md)). Implemented as a
+  step of its own, as proposed: the line's view by viewer (`Envelope::is_shown_in_line(viewer)`,
+  mirrored in `isShownInLine`) shows a message heard that mentions them; `Filter::shown_in_line` - a
+  condition of the domain, beside the rule, not a method of the view, as the review found - is what
+  a page of the line holds and `unread` counts - the line, the whole channel, and what mentions the
+  viewer -, and what the REST API's channel history gives without `?thread=`; `channel::SAID` is
+  announced for the line and for a message of another thread that mentions a user, with its thread
+  (`Said`), which the web UI's unread count and the chat of a reader who takes no part go by;
+  `Filter::all_given` joins the conditions given, in place of four matches doing so. On review: what
+  is shown live and what a page holds held together by a test, a step of a plan left out of both; a
+  message of another thread no answer `/retry` asks for again in the terminal.
+- **2026-11-18** — The mentions in other threads accepted by the maintainer. Follow-ups opened as
+  issues of their own: what concerns a user as a whole (594), a view of a thread in the frontends,
+  with waking and stopping one thread and the thread of what a frontend is given (595). With 2b
+  the model is decided and built, as *Done when* asks.

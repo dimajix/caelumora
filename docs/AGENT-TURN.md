@@ -154,13 +154,17 @@ with `from: none` an agent hears what was said when the turn has ended, as betwe
 ### What leaves the agent
 
 Every message passes the agent's `EmitOutProcessor`s and is published through the turn, which leaves
-out what only the agent's owner may see (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)). A complete
-message is *said* (`Turn::say`): kept in the turn, then published, so that the channel learns of
-every message the turn keeps as it is made; its answer - a message of the model calling no tools,
-not a step of a plan, with words or without - carries what the turn put aside to attach
-(`Turn::put_aside`, issue 282), which the channel claims as it claims an upload. A partial one is
-only *shown* (`Turn::show`). Both take the actor's output as a parameter: the turn is handed to
-every component working in it, and none of them is to speak in the agent's name.
+out what only the agent's owner may see (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)). A message
+they drop is not said, and the calls it carries are not run: a call runs only with the message that
+carries it, which `Turn::calling_message` names while it runs (issue 557), labelled as it left the
+processors; a step whose message was dropped ends as one answered without calls does. A processor
+fails as every component does (see [COMPONENTS.md](COMPONENTS.md)): failing closed, it gives the
+turn up. A complete message is *said* (`Turn::say`): kept in the turn, then published, so that the
+channel learns of every message the turn keeps as it is made; its answer - a message of the model
+calling no tools, not a step of a plan, with words or without - carries what the turn put aside to
+attach (`Turn::put_aside`, issue 282), which the channel claims as it claims an upload. A partial
+one is only *shown* (`Turn::show`). Both take the actor's output as a parameter: the turn is handed
+to every component working in it, and none of them is to speak in the agent's name.
 
 While a plan runs, the messages of its steps are *internal*: kept like every message and published
 as intermediate, but heard by no other participant and not the answer. The answer after the last
@@ -551,9 +555,10 @@ What the agent is given to read rather than told - a skill, a compaction's summa
 whoever gave it (`ModelProfile::given_to_read`, issue 539): as a system message where the model
 keeps one, else as a user message, never marked as said by anyone. Its mark is its title in
 brackets - `[Skill: release-notes]` -, which every text given has, and the explanation of the
-markers says so (`kernel.framing`). One another participant gave - a skill given with `/skill` -
-says who: "@alice gave you this to read:", then the text, named as senders are; the transcript
-keeps the giver as the message's sender. An external agent's remote agent is given it so too.
+markers says so (`kernel.framing`). One another participant gave - a skill given with `/skill`,
+a message a delegate gave in their name (`GivenToRead`, issue 557) - says who: "@alice gave you
+this to read:", then the text, named as senders are; the transcript keeps the giver as the
+message's sender. An external agent's remote agent is given it so too.
 
 ### Attachments
 
@@ -916,17 +921,17 @@ again within its turn, never to later turns, which see the plan through the `cre
 ### Why the agent was asked
 
 Every turn records why it was asked (`Work::asked`, issue 439): the reason of the request it
-answers, the strongest of those it took in - `mentioned`, `nudged`, `undecided` when the channel's
-responder policy could not choose, `chosen` by it (see [CHANNELS.md](CHANNELS.md#moderators)) -,
-none for an answer given again. `request_reason` reads it (`Situation::asked`) and tells an agent
-that was only chosen so, before the turn's input: that it is asked because what was said last might
-concern it, and that with nothing to add - nothing new, only agreement, a greeting, thanks, that it
-waits - it calls `silence` and writes nothing, or, where `silence` is not offered, writes nothing.
-Without it, a model takes every request for an order to answer, and greets back or writes that it
-has nothing to say. A mentioned or nudged agent, or one asked because the policy could not choose,
-is told nothing: told when to stay silent, a mentioned agent judged the message that mentioned it
-rather than what was its own to do, and stopped working where it was only cheered on
-([work/quiet_agents](../work/quiet_agents/RESULTS.md)).
+answers, the strongest of those it took in - `given` something to read (issue 557), `mentioned`,
+`nudged`, `undecided` when the channel's responder policy could not choose, `chosen` by it (see
+[CHANNELS.md](CHANNELS.md#moderators)) -, none for an answer given again. `request_reason` reads it
+(`Situation::asked`) and tells an agent that was only chosen so, before the turn's input: that it is
+asked because what was said last might concern it, and that with nothing to add - nothing new, only
+agreement, a greeting, thanks, that it waits - it calls `silence` and writes nothing, or, where
+`silence` is not offered, writes nothing. Without it, a model takes every request for an order to
+answer, and greets back or writes that it has nothing to say. A mentioned, nudged or given agent, or
+one asked because the policy could not choose, is told nothing: told when to stay silent, a
+mentioned agent judged the message that mentioned it rather than what was its own to do, and stopped
+working where it was only cheered on ([work/quiet_agents](../work/quiet_agents/RESULTS.md)).
 
 ### System messages
 

@@ -12,7 +12,7 @@ use caelumora_api::actor::Answering;
 use caelumora_api::logging::envelope_span;
 use caelumora_domain::actor::{ActorEvent, ActorId, Envelope, Rejection, RetryTarget};
 use caelumora_domain::chain::Position;
-use caelumora_domain::channel::{ChannelState, ThreadId};
+use caelumora_domain::channel::{ChannelState, Said, ThreadId, ThreadState};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::history::{Audience, Heard, Reader, Recorded};
 use caelumora_domain::message::Message;
@@ -21,7 +21,6 @@ use caelumora_security::confidentiality::ConfidentialityQuestions;
 use caelumora_security::{ActionType, Enforcement, Reclassified, SecurityContext};
 use std::collections::HashMap;
 use std::iter;
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Weak};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
@@ -34,7 +33,7 @@ use tracing::{debug, error, info, trace, warn, Instrument};
 /// is read from anywhere; this one is `run`'s, whose `JoinSet` owns the
 /// tasks - so that they end with the channel's own task - and which starts and
 /// stops them as `ActorChange`s tell it (issue 91).
-struct RunningActor {
+pub(super) struct RunningActor {
     id: ActorId,
     abort_handle: AbortHandle,
     /// What to wait on for the task to end (`ChannelActor::task`).
@@ -67,12 +66,14 @@ impl ChannelLoop {
         let (event_tx, mut event_rx) = mpsc::channel(10);
         let mut join_set = JoinSet::new();
         let mut running = HashMap::new();
+        // The threads to close once whoever left them has left (issue 557), on whose behalf.
+        let mut closing = HashMap::new();
         // The actors taken in before it ran - as the channel was built, and
         // the founders of a channel just created (issue 420) - are started,
         // and who joined announced, before anything is routed: what one of
         // them says must come after the joins of all who hear it.
         while let Ok(change) = changes_rx.try_recv() {
-            self.apply_change(change, &mut running, &event_tx, &mut join_set).await;
+            self.apply_change(change, &mut running, &mut closing, &event_tx, &mut join_set).await;
         }
 
         loop {
@@ -88,7 +89,8 @@ impl ChannelLoop {
                     }
                 }
                 Some(change) = changes_rx.recv() => {
-                    self.apply_change(change, &mut running, &event_tx, &mut join_set).await;
+                    self.apply_change(change, &mut running, &mut closing, &event_tx, &mut join_set)
+                        .await;
                 }
                 // Finished tasks are dropped as they end - a removed actor's
                 // with its removal announced (issue 262); once the last one
@@ -102,6 +104,7 @@ impl ChannelLoop {
                     let ended = running.iter().find(|(_, actor)| actor.abort_handle.id() == task).map(|(id, _)| *id);
                     if let Some(RunningActor { id, leaving: Some(leaving), .. }) = ended.and_then(|id| running.remove(&id)) {
                         self.announce_removal(id, leaving, &running).await;
+                        self.close_settled(&mut closing, &running).await;
                     }
                     if join_set.is_empty() {
                         break;
@@ -115,11 +118,13 @@ impl ChannelLoop {
     }
 
     /// Starts an actor taken in, as the channel was built or as someone
-    /// joined, or stops one that left (issue 46).
+    /// joined, or stops one that left (issue 46); records a thread opened, or
+    /// closes one once whoever left it has left (`closing`, issue 557).
     async fn apply_change(
         &self,
         change: ActorChange,
         running: &mut HashMap<ActorId, RunningActor>,
+        closing: &mut HashMap<ThreadId, SecurityContext>,
         event_tx: &Sender<Envelope>,
         join_set: &mut JoinSet<ActorId>,
     ) {
@@ -209,6 +214,55 @@ impl ChannelLoop {
                     }
                 }
             }
+            // A thread opened or closed (issue 557) is of the whole channel: announced in its
+            // line, and recorded among the threads open with its entry, which stores them.
+            ActorChange::Open(thread, opening, by) => {
+                let state = ThreadState { opening: Some(opening), closed: false, delegation: None };
+                self.state.lock().await.threads.insert(thread, state);
+                let opened = ActorEvent::ThreadOpened { thread, origin: opening.origin };
+                self.announce(opened, by, ThreadId::line(self.id), running).await;
+            }
+            // Its delegate goes as soon as it is to be closed (issue 557): it has nothing more to
+            // give, and what was open is dropped.
+            ActorChange::Close(thread, by) => {
+                self.let_delegate_go(thread, running).await;
+                closing.insert(thread, by);
+                self.close_settled(closing, running).await;
+            }
+            ActorChange::Delegate(thread, delegation) => {
+                self.hand_to_delegate(thread, delegation).await;
+            }
+        }
+    }
+
+    /// Closes each thread of `closing` that nobody of `running` is still leaving (issue 557): what
+    /// whoever left it still sent until their task ended entered it, and their leave is recorded
+    /// there. Recorded closed among the channel's threads with its entry, which stores them, no
+    /// longer held, and announced in the line in the name of whoever closed it, on whose behalf it
+    /// waited in `closing`.
+    async fn close_settled(
+        &self,
+        closing: &mut HashMap<ThreadId, SecurityContext>,
+        running: &HashMap<ActorId, RunningActor>,
+    ) {
+        let left = |thread: ThreadId| {
+            !running
+                .values()
+                .any(|actor| actor.leaving.as_ref().is_some_and(|l| l.thread == thread))
+        };
+        let settled: Vec<ThreadId> = closing.keys().copied().filter(|t| left(*t)).collect();
+        for thread in settled {
+            let Some(by) = closing.remove(&thread) else { continue };
+            if let Some(state) = self.state.lock().await.threads.get_mut(&thread) {
+                state.closed = true;
+            }
+            self.threads.rcu(|threads| {
+                let mut threads = HashMap::clone(threads);
+                threads.remove(&thread);
+                threads
+            });
+            let closed = ActorEvent::ThreadClosed { thread };
+            self.announce(closed, by, ThreadId::line(self.id), running).await;
         }
     }
 
@@ -237,10 +291,11 @@ impl ChannelLoop {
         })
     }
 
-    /// Announces `event`, a change of who takes part (issue 408), in the channel in the name of
-    /// `by`'s caller, in the thread `thread` the participant takes part in (issue 557) - which
-    /// makes its attendance there: the channel's own word, which enters it without `admission` -
-    /// that lets no actor say it -, is recorded in its history and told to everybody.
+    /// Announces `event` in the channel in the name of `by`'s caller, in the thread `thread`: a
+    /// change of who takes part (issue 408) in the thread the participant takes part in (issue
+    /// 557) - which makes its attendance there -, a thread opened or closed in the line. The
+    /// channel's own word, which enters it without `admission` - that lets no actor say it -, is
+    /// recorded in its history and told to whom it goes.
     async fn announce(
         &self,
         event: ActorEvent,
@@ -293,6 +348,7 @@ impl ChannelLoop {
         trace!("Envelope: {:?}", event);
         let context = self.admitted_in(&event);
         if let Err(reason) = self.admission(&event, &context).await {
+            self.follow_refused(&event).await;
             self.reject(&event, reason, running).await;
             return;
         }
@@ -323,7 +379,7 @@ impl ChannelLoop {
         context: &SecurityContext,
         running: &HashMap<ActorId, RunningActor>,
     ) {
-        let Some(thread) = self.threads.get(&event.context.thread_id) else {
+        let Some(thread) = self.thread(event.context.thread_id) else {
             warn!(
                 "Dropped {}: the channel has no thread {}",
                 event.describe(),
@@ -510,6 +566,10 @@ impl ChannelLoop {
     /// - a command for an agent (issue 269) comes from a user, names an agent taking part that
     ///   carries it out, and is one the issuer may see and ask for (`admit_command`, issue 516);
     ///   a nudge (issue 278) comes from a user and names someone else taking part;
+    /// - something given to read (issue 557) comes from the delegate of a thread opened and gives
+    ///   what its delegation says - the open brief into the thread, what came of it back where the
+    ///   thread was opened -, in the delegating chain's name, to whom runs there; a text alone, as
+    ///   it is classified (`admit_given`);
     /// - what the channel records of a turn besides its messages - where a step of its plan began,
     ///   a command or an activity it carried out, how it ended - and the start of an activity come
     ///   from an agent in its own name (issue 284): nobody else has turns; so does what an agent
@@ -527,8 +587,12 @@ impl ChannelLoop {
         event: &Envelope,
         context: &SecurityContext,
     ) -> Result<(), Rejection> {
-        if !self.threads.contains_key(&event.context.thread_id) {
-            return Err(Rejection::Invalid);
+        // In a thread of the channel, and one still open (issue 557).
+        let thread = event.context.thread_id;
+        if self.thread(thread).is_none() {
+            let state = self.state.lock().await;
+            let closed = state.threads.get(&thread).is_some_and(|thread| thread.closed);
+            return Err(if closed { Rejection::ThreadClosed } else { Rejection::Invalid });
         }
         let messages = event.event.messages();
         let classification = self.classification();
@@ -649,6 +713,9 @@ impl ChannelLoop {
                 .then_some(())
                 .ok_or(Rejection::Invalid)
             }
+            ActorEvent::GivenToRead { recipient, message } => {
+                self.admit_given(event, *recipient, message, context, &classification).await
+            }
             ActorEvent::MessageGiven { message } => {
                 event.context.sender_id.as_agent_id().ok_or(Rejection::Invalid)?;
                 self.policies.confidentiality().require_publish(
@@ -682,6 +749,53 @@ impl ChannelLoop {
                 .ok_or(Rejection::Invalid),
             None => Ok(()),
         }
+    }
+
+    /// Nothing if `event`, sent in `context`, may give `recipient` `message` to read (issue 557);
+    /// why not otherwise. It comes from the delegate of a thread opened - no thread delegates into
+    /// the line - and gives what that thread's delegation says (`Delegation`): into the thread, the
+    /// open brief to the recipient, unless the thread is quiet; back into the thread it was opened
+    /// at, what came of the open brief - answered, refused, its recipient gone -, of the recipient
+    /// to the giver; in the name of the chain that delegated (its initiator), to whom runs there;
+    /// and the message is a text - no attachment, which only a message said claims, no tool call or
+    /// result -, classified so that it may enter the channel (`require_parts`).
+    async fn admit_given(
+        &self,
+        event: &Envelope,
+        recipient: ActorId,
+        message: &Message,
+        context: &SecurityContext,
+        classification: &Classification,
+    ) -> Result<(), Rejection> {
+        let thread = event.context.thread_id;
+        let ActorId::Delegate(delegated) = event.context.sender_id else {
+            return Err(Rejection::Invalid);
+        };
+        let Some(opening) = self.thread(delegated).and_then(|opened| opened.opening()) else {
+            return Err(Rejection::Invalid);
+        };
+        let as_delegated = {
+            let state = self.state.lock().await;
+            let held = state.threads.get(&delegated).and_then(|held| held.delegation.as_ref());
+            held.is_some_and(|delegation| {
+                // A brief into a quiet thread would ask nobody, not even once it is woken: refused,
+                // its delegate gives back that the recipient could not be asked (issue 557).
+                let gives = if thread == delegated {
+                    delegation.gives_brief(recipient, message) && !self.is_quiet(thread)
+                } else {
+                    thread == opening.origin.thread && delegation.gives_back(recipient, message)
+                };
+                gives && event.context.initiator_id == delegation.initiator
+            })
+        };
+        let running_there = self.actors.load().get(&recipient).is_some_and(|r| r.thread == thread);
+        let text = message.attachments.is_empty()
+            && message.tool_calls.is_empty()
+            && message.tool_results.is_empty();
+        if !(as_delegated && running_there && text) {
+            return Err(Rejection::Invalid);
+        }
+        self.require_parts(context, message, classification)
     }
 
     /// Nothing if every part of `message` - the message, its attachments, its tool results and what
@@ -775,17 +889,18 @@ impl ChannelLoop {
         // Asked for by an actor - a user's actor asks with every message it
         // sends (issue 90); the channel does not decide by itself.
         if matches!(event.event, ActorEvent::WakeupRequested) {
-            self.wake_for_delivery();
+            self.wake(Some(event.context.thread_id));
         }
         // A nudge is deliberate, as `wakeup_actor` is (issue 278), and so is a
-        // request to answer again (issue 567): the channel is quiet no longer,
-        // so that the request is delivered, and whom it asks is woken with it,
-        // alone (`route_event_impl`).
-        if matches!(
-            event.event,
-            ActorEvent::NudgeRequested { .. } | ActorEvent::RetryRequested { .. }
-        ) {
-            self.quiet.store(false, Ordering::SeqCst);
+        // request to answer again (issue 567): the thread of whom it asks is
+        // quiet no longer (issue 557), so that the request is delivered, and
+        // whom it asks is woken with it, alone (`route_event_impl`).
+        if let ActorEvent::NudgeRequested { participant: asked }
+        | ActorEvent::RetryRequested { author: asked, .. } = event.event
+        {
+            let actors = self.actors.load();
+            let thread = actors.get(&asked).map_or(event.context.thread_id, |a| a.thread);
+            self.end_quiet(thread);
         }
 
         if let Some(routing) = routing {
@@ -802,7 +917,15 @@ impl ChannelLoop {
         routing: Routing,
         position: Option<Position>,
     ) {
-        let quiet = self.quiet.load(Ordering::SeqCst);
+        // Whether its thread is quiet after a cancel (issue 557). A brief was let in only into a
+        // thread that was not, and asks its recipient as decided then: a cancel meanwhile would
+        // leave it given and never asked, its giver waiting for nothing.
+        let thread = event.context.thread_id;
+        let brief = matches!(
+            (&event.event, event.context.sender_id),
+            (ActorEvent::GivenToRead { .. }, ActorId::Delegate(delegated)) if delegated == thread
+        );
+        let quiet = !brief && self.is_quiet(thread);
         let decision = self.deliveries(event, routing, position, quiet).await;
 
         // Whom the moderator asks to respond is woken first, before anything
@@ -810,7 +933,7 @@ impl ChannelLoop {
         // `ResponseRequested`, and one that took in the message still asleep
         // would ignore the request that follows it. Since the policies never
         // choose a sleeping agent (`actor_candidates`), only the agents a
-        // message mentions are woken this way (issue 45). A quiet channel
+        // message mentions are woken this way (issue 45). A quiet thread
         // asks nobody, and so wakes nobody.
         if !quiet {
             let actors = self.actors.load();
@@ -858,7 +981,7 @@ impl ChannelLoop {
     /// to whom it goes among the actors (`Envelope::recipients`) or whom
     /// the moderator named; each notice of the moderator's to whom it names,
     /// in the system's name; a request to respond to each it asks, in the
-    /// event's context, with the hops it counted - unless the channel is
+    /// event's context, with the hops it counted - unless its thread is
     /// `quiet` after a cancel: what was said still reaches everyone, so that
     /// every transcript keeps up with the history, but nobody is asked to
     /// answer it. Each notice and request is recorded, in the system's name,
@@ -903,7 +1026,7 @@ impl ChannelLoop {
         }
         if quiet {
             if !ask.is_empty() {
-                debug!("Not asking for a response: the channel is quiet after a cancel");
+                debug!("Not asking for a response: the thread is quiet after a cancel");
             }
         } else if !ask.is_empty() {
             let mut request = event.forward(ActorEvent::ResponseRequested { reason });
@@ -928,8 +1051,10 @@ impl ChannelLoop {
     /// what it did of its own accord (issue 284) before its turn's end, who
     /// joined or left where it happened (issue 408), and a change of a
     /// message, admitted, so that it applies (`admission`, issues 234, 304).
-    /// Stored at once; what others hear of a message, as everybody may see
-    /// it, is announced as news once it is stored (issue 404). Returns the
+    /// Stored at once; what others hear of a message in the line, or of one
+    /// mentioning a user in another thread, as everybody may see it, is
+    /// announced as news once it is stored (issues 404, 557): what a frontend
+    /// shows of the channel. Returns the
     /// position of its entry, which what is delivered of it carries; `None`
     /// if nothing was recorded.
     async fn append_history(&self, envelope: &Envelope, audience: Audience) -> Option<Position> {
@@ -938,18 +1063,31 @@ impl ChannelLoop {
 
     /// Records `recorded` in the channel's history and stores it
     /// (`append_history`); returns its position, or `None` if it was not
-    /// recorded - a change of a message that changes nothing.
+    /// recorded - a change of a message that changes nothing. What a delegate gave is followed in
+    /// its delegation (`Delegation::follow`), stored with it.
     async fn record(&self, recorded: Recorded) -> Option<Position> {
+        let thread = recorded.context.thread_id;
+        let in_line = recorded.thread().is_none_or(|of| of == ThreadId::line(self.id));
         let said = recorded
             .entry
             .published()
             .and_then(|entry| entry.said().cloned())
-            .filter(Message::is_heard);
+            .filter(|message| (in_line || mentions_a_user(message)) && message.is_heard())
+            .map(|message| Said { message, thread });
+        let entry = recorded.entry.clone();
         let mut state = self.state.lock().await;
         if !state.history.enter(recorded) {
             return None;
         }
         let position = state.history.end().previous();
+        // What a delegate gave, followed in its delegation with its entry, stored together, and
+        // its delegate in step with it (issue 557).
+        let delegated = position.and_then(|at| state.follow_given(&entry, at));
+        if let Some(thread) = delegated {
+            if let Some(delegation) = state.delegation(thread) {
+                self.sync_delegate(thread, delegation);
+            }
+        }
         match self.store_state(&mut state).await {
             Ok(()) => {
                 if let Some(message) = said {
@@ -959,6 +1097,21 @@ impl ChannelLoop {
             Err(e) => warn!("Cannot store state of channel {}: {}", self.id, e),
         }
         position
+    }
+
+    /// Follows the channel refusing `event`, if a delegate gave something with it (issue 557,
+    /// `ChannelState::follow_refused`): stored, and its delegate in step with it - ahead of the
+    /// rejection it is told.
+    async fn follow_refused(&self, event: &Envelope) {
+        let Some(entry) = event.entry() else { return };
+        let mut state = self.state.lock().await;
+        let Some(thread) = state.follow_refused(&entry) else { return };
+        if let Err(e) = self.store_state(&mut state).await {
+            warn!("Cannot store the delegation into thread {}: {}", thread, e);
+        }
+        if let Some(delegation) = state.delegation(thread) {
+            self.sync_delegate(thread, delegation);
+        }
     }
 
     /// Stores `state`, the channel's, and then lets go of what its history
@@ -1020,6 +1173,12 @@ impl Behind for ChannelLoop {
     }
 }
 
+/// Whether `message` mentions a user (issue 557): what the line's view shows them of another
+/// thread; an agent addressed there is told in its thread.
+fn mentions_a_user(message: &Message) -> bool {
+    message.mentions.iter().any(|mentioned| matches!(mentioned, ActorId::User(_)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1041,7 +1200,7 @@ mod tests {
         RetryTarget,
     };
     use caelumora_domain::agent::AgentId;
-    use caelumora_domain::channel::{ChannelId, ThreadId};
+    use caelumora_domain::channel::{Brief, ChannelId, Delegation, ThreadId, ThreadOrigin};
     use caelumora_domain::confidentiality::{Classification, Confidentiality};
     use caelumora_domain::content::ContentRef;
     use caelumora_domain::history::{HistoryEntry, Recipients};
@@ -1050,13 +1209,13 @@ mod tests {
     use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolContent};
     use caelumora_domain::turn::GivenUpReason;
     use caelumora_domain::user::testing::make_user;
-    use caelumora_domain::user::UserId;
+    use caelumora_domain::user::{User, UserId};
     use caelumora_domain::value::name::Name;
     use caelumora_domain::work::TurnId;
     use caelumora_security::AllowAllPolicy;
     use caelumora_security::SecurityContext;
     use chrono::Utc;
-    use std::mem;
+    use std::collections::VecDeque;
     use std::slice;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
@@ -1096,7 +1255,7 @@ mod tests {
         running: &HashMap<ActorId, RunningActor>,
         event: Envelope,
     ) {
-        let thread = channel.threads.get(&event.context.thread_id).expect("its thread");
+        let thread = channel.thread(event.context.thread_id).expect("its thread");
         let routing = thread.route(&event, &channel.admitted_in(&event)).await;
         channel.route_event(running, event, Some(routing), None).await;
     }
@@ -1188,52 +1347,6 @@ mod tests {
             ["ChainCutOff"],
             "its own message is not sent back, but what the system tells it is (issue 200)"
         );
-    }
-
-    /// An actor that sends the envelopes it is given as it starts, as they are written - in
-    /// whatever name, with whatever hops - and waits: what no actor of the kernel can, which builds
-    /// its envelopes itself (`Answering`). For the tests of what the channel does with such
-    /// envelopes, and no fixture to reuse (issue 372).
-    #[derive(Debug)]
-    struct Forger {
-        id: ActorId,
-        envelopes: Mutex<Vec<Envelope>>,
-    }
-
-    impl Forger {
-        fn sending(id: ActorId, envelopes: Vec<Envelope>) -> Arc<Self> {
-            Arc::new(Self { id, envelopes: Mutex::new(envelopes) })
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl Actor for Forger {
-        fn id(&self) -> ActorId {
-            self.id
-        }
-        fn name(&self) -> Name {
-            Name::new("talker").expect("a name")
-        }
-        fn event_filter(&self) -> fn(&Envelope) -> bool {
-            |_| true
-        }
-        async fn run(
-            &self,
-            mut rx: Box<dyn EventReceiver>,
-            tx: Box<dyn EventSender>,
-        ) -> Result<()> {
-            let envelopes = mem::take(&mut *self.envelopes.lock().unwrap());
-            for envelope in envelopes {
-                let _ = tx.send(envelope).await;
-            }
-            while rx.recv().await.is_some() {}
-            Ok(())
-        }
-        fn state(&self) -> ActorState {
-            ActorState::Idle
-        }
-        fn stop(&self) {}
-        fn leave(&self) {}
     }
 
     #[tokio::test]
@@ -1457,6 +1570,16 @@ mod tests {
                 &actors,
             )
             .await;
+        // Nor a thread opened or closed (issue 557).
+        let line = ThreadId::line(channel.id);
+        let origin = ThreadOrigin { thread: line, message: MessageId::new() };
+        let thread = ThreadId::new();
+        channel
+            .process_envelope(from_her(ActorEvent::ThreadOpened { thread, origin }), &actors)
+            .await;
+        channel
+            .process_envelope(from_her(ActorEvent::ThreadClosed { thread: line }), &actors)
+            .await;
 
         let recorded = channel.history_entries().await;
         assert!(
@@ -1464,6 +1587,8 @@ mod tests {
                 recorded.as_slice(),
                 [
                     HistoryEntry::ParticipantJoined { .. },
+                    HistoryEntry::EventRejected { .. },
+                    HistoryEntry::EventRejected { .. },
                     HistoryEntry::EventRejected { .. },
                     HistoryEntry::EventRejected { .. }
                 ]
@@ -1490,7 +1615,9 @@ mod tests {
             rejected,
             [
                 ("ParticipantJoined".to_string(), Rejection::Invalid),
-                ("ParticipantLeft".to_string(), Rejection::Invalid)
+                ("ParticipantLeft".to_string(), Rejection::Invalid),
+                ("ThreadOpened".to_string(), Rejection::Invalid),
+                ("ThreadClosed".to_string(), Rejection::Invalid)
             ],
             "and she is told so"
         );
@@ -1710,7 +1837,7 @@ mod tests {
 
         // A quiet channel asks nobody, and wakes nobody.
         asked.sleep();
-        channel.cancel(&context).await.expect("permitted");
+        channel.cancel(&context, None).await.expect("permitted");
         routed(&channel, &HashMap::new(), said()).await;
         assert!(!asked.woken(), "nobody is asked in a quiet channel");
     }
@@ -2302,6 +2429,46 @@ mod tests {
         }
     }
 
+    /// Issue 557: a thread is closed once whoever left it has left - what a leaving actor still
+    /// sends enters it, and its leave is recorded there before the thread's closing.
+    #[tokio::test]
+    async fn a_thread_is_closed_once_whoever_left_it_has_left() {
+        let alice = make_user("alice");
+        let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
+        let system = SecurityContext::system();
+        let origin = ThreadOrigin { thread: ThreadId::line(channel.id), message: MessageId::new() };
+        let thread = channel.open_thread(&system, origin, &[]).await.expect("opened");
+        let (event_tx, _event_rx) = mpsc::channel(10);
+        let mut join_set = JoinSet::new();
+        let mut closing = HashMap::new();
+        let helper = ActorId::Agent(AgentId::new());
+        let mut running = HashMap::from([(helper, leaving_actor(helper, system.clone(), thread))]);
+        while let Ok(change) = channel.changes_rx.lock().await.try_recv() {
+            channel
+                .apply_change(change, &mut running, &mut closing, &event_tx, &mut join_set)
+                .await;
+        }
+
+        assert!(channel.close_thread(&system, thread).await.expect("closed"), "nobody runs in it");
+        while let Ok(change) = channel.changes_rx.lock().await.try_recv() {
+            channel
+                .apply_change(change, &mut running, &mut closing, &event_tx, &mut join_set)
+                .await;
+        }
+        assert!(channel.thread(thread).is_some(), "not while its helper is still leaving");
+
+        let Some(RunningActor { leaving: Some(leaving), .. }) = running.remove(&helper) else {
+            panic!("leaving");
+        };
+        channel.announce_removal(helper, leaving, &running).await;
+        channel.close_settled(&mut closing, &running).await;
+        assert!(channel.thread(thread).is_none(), "once it has left");
+        let entries = channel.history_entries().await;
+        let left = entries.iter().position(|e| matches!(e, HistoryEntry::ParticipantLeft { .. }));
+        let closed = entries.iter().position(|e| matches!(e, HistoryEntry::ThreadClosed { .. }));
+        assert!(left.is_some() && left < closed, "its leave, then the closing: {entries:?}");
+    }
+
     #[tokio::test]
     async fn what_a_leaving_actor_sends_enters_the_channel_until_its_task_has_ended() {
         let alice = make_user("alice");
@@ -2347,6 +2514,7 @@ mod tests {
             .apply_change(
                 ActorChange::Start(joined, Some(Position::START), Some(context.clone())),
                 &mut running,
+                &mut HashMap::new(),
                 &event_tx,
                 &mut join_set,
             )
@@ -2461,7 +2629,9 @@ mod tests {
         let start_all = async |running: &mut HashMap<ActorId, RunningActor>,
                                join_set: &mut JoinSet<ActorId>| {
             while let Ok(change) = channel.changes_rx.lock().await.try_recv() {
-                channel.apply_change(change, running, &event_tx, join_set).await;
+                channel
+                    .apply_change(change, running, &mut HashMap::new(), &event_tx, join_set)
+                    .await;
             }
         };
         start_all(&mut running, &mut join_set).await;
@@ -2540,7 +2710,7 @@ mod tests {
             kinds
         };
 
-        channel.cancel(&context).await.expect("permitted");
+        channel.cancel(&context, None).await.expect("permitted");
         routed(&channel, &actors, said()).await;
         assert_eq!(
             delivered(&mut rx).await,
@@ -2707,6 +2877,238 @@ mod tests {
             recorded,
             [(Some("in the line".to_string()), line), (None, elsewhere)],
             "what is said in the line, recorded there, then the rejection of the other, in its thread"
+        );
+    }
+
+    /// Issue 557: what is said in a thread opened enters there; once it is closed - by `run`, as it
+    /// records it - nothing more is let in, its sender told why. An agent opens a thread at
+    /// another thread, a person at the line alone.
+    #[tokio::test]
+    async fn a_thread_takes_in_what_is_said_until_it_is_closed() {
+        let alice = make_user("alice");
+        let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
+        let alice_id = ActorId::User(alice.id);
+        let system = SecurityContext::system();
+        let line = ThreadId::line(channel.id);
+        let origin = ThreadOrigin { thread: line, message: MessageId::new() };
+        let thread = channel.open_thread(&system, origin, &[]).await.expect("opened");
+        // What `run` does with the changes the channel hands it.
+        let (event_tx, _event_rx) = mpsc::channel(10);
+        let applied = async || {
+            let mut running = HashMap::new();
+            let mut join_set = JoinSet::new();
+            let mut closing = HashMap::new();
+            while let Ok(change) = channel.changes_rx.lock().await.try_recv() {
+                channel
+                    .apply_change(change, &mut running, &mut closing, &event_tx, &mut join_set)
+                    .await;
+            }
+        };
+        applied().await;
+        let said = |text: &str| {
+            Envelope::new(
+                EventContext { sender_id: alice_id, thread_id: thread, ..channel.event_context() },
+                ActorEvent::CompleteMessageGenerated(Message {
+                    sender_id: alice_id,
+                    role: MessageRole::User,
+                    content: Some(text.to_string()),
+                    ..Message::new(Classification::CHANNEL_DEFAULT)
+                }),
+            )
+        };
+        assert_eq!(channel.admit(&said("while open")).await, Ok(()), "let in while it is open");
+        let agent =
+            SecurityContext::new(ActorId::Agent(AgentId::new()), Default::default(), channel.id);
+        let deeper = ThreadOrigin { thread, message: MessageId::new() };
+        channel.require_opening(&agent, deeper).await.expect("an agent opens one at a thread");
+        let person = SecurityContext::new(alice_id, Default::default(), channel.id);
+        let refused = channel.require_opening(&person, deeper).await.expect_err("not at the line");
+        assert!(
+            matches!(
+                refused.downcast_ref::<ChannelError>(),
+                Some(ChannelError::NotAtTheLine { .. })
+            ),
+            "{refused}"
+        );
+
+        assert!(channel.close_thread(&system, thread).await.expect("closed"), "by its opener");
+        assert!(!channel.close_thread(&system, thread).await.unwrap(), "closed once");
+        assert_eq!(channel.admit(&said("being closed")).await, Ok(()), "until `run` closes it");
+        applied().await;
+        assert_eq!(
+            channel.admit(&said("once closed")).await,
+            Err(Rejection::ThreadClosed),
+            "nothing more once it is closed"
+        );
+        assert!(!channel.close_thread(&system, line).await.unwrap(), "and the line never");
+    }
+
+    /// A channel of alice and bob with a thread at its line delegated into by bob, to alice, in
+    /// her chain, its brief given, whose delegate is forged (`ChannelLoop::forge_delegate`): what
+    /// the delegate gives back is admitted as the delegation says (issue 557).
+    async fn with_a_delegate(alice: &User, bob: &User) -> (Arc<ChannelLoop>, ThreadId) {
+        let channel = channel_with(&[alice, bob], Arc::new(AllowAllPolicy::new())).await;
+        let (hers, his) = (ActorId::User(alice.id), ActorId::User(bob.id));
+        let message = Message {
+            sender_id: his,
+            content: Some("look this up".to_string()),
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        };
+        let brief = Brief { message, given_at: Some(Position::START) };
+        let briefs = VecDeque::from([brief]);
+        let delegation = Delegation { giver: his, recipient: hers, initiator: hers, briefs };
+        let thread = channel.forge_delegate(delegation, |_| Vec::new()).await;
+        (channel, thread)
+    }
+
+    /// `sender` gives `recipient` in `thread_id` a message of `giver`, classified
+    /// `classification`, to read, in the chain of `giver` (issue 557).
+    fn given(
+        channel: &ChannelLoop,
+        sender: ActorId,
+        thread_id: ThreadId,
+        recipient: ActorId,
+        giver: ActorId,
+        classification: Classification,
+    ) -> Envelope {
+        let context = EventContext {
+            sender_id: sender,
+            initiator_id: giver,
+            thread_id,
+            ..channel.event_context()
+        };
+        let message = Message {
+            sender_id: giver,
+            role: MessageRole::User,
+            content: Some("found it".to_string()),
+            ..Message::new(classification)
+        };
+        Envelope::new(context, ActorEvent::GivenToRead { recipient, message })
+    }
+
+    /// Issue 557: what a delegate gives is admitted as its thread's delegation says - what came of
+    /// a brief given, back where the thread was opened, of its recipient to its giver, in the
+    /// delegating chain's name -, from the delegate of a thread opened alone, to whom runs there,
+    /// as a text of a classification the channel may hold.
+    #[tokio::test]
+    async fn a_delegate_gives_what_its_delegation_says_alone() {
+        let (alice, bob) = (make_user("alice"), make_user("bob"));
+        let (channel, thread) = with_a_delegate(&alice, &bob).await;
+        let hers = ActorId::User(alice.id);
+        let his = ActorId::User(bob.id);
+        let line = ThreadId::line(channel.id);
+        let delegate = ActorId::Delegate(thread);
+        let given = |sender, thread_id, recipient, giver, classification| {
+            given(&channel, sender, thread_id, recipient, giver, classification)
+        };
+        let fits = Classification::CHANNEL_DEFAULT;
+        let back = given(delegate, line, his, hers, fits.clone());
+        assert_eq!(channel.admit(&back).await, Ok(()), "back where the thread was opened");
+        let refused = [
+            (given(hers, line, his, hers, fits.clone()), "from one who is no delegate"),
+            (
+                given(ActorId::Delegate(ThreadId::new()), line, his, hers, fits.clone()),
+                "from the delegate of a thread not opened at it",
+            ),
+            (given(ActorId::Delegate(line), line, his, hers, fits.clone()), "from the line's"),
+            (given(delegate, thread, his, hers, fits.clone()), "into its thread but the brief"),
+            (given(delegate, thread, delegate, hers, fits.clone()), "to itself"),
+            (given(delegate, line, hers, hers, fits.clone()), "back to another than its giver"),
+            (
+                given(delegate, line, his, ActorId::Agent(AgentId::new()), fits.clone()),
+                "of another than its recipient",
+            ),
+            (
+                Envelope {
+                    context: EventContext { initiator_id: his, ..back.context.clone() },
+                    ..back.clone()
+                },
+                "in another chain than the one that delegated",
+            ),
+            (
+                Envelope {
+                    event: ActorEvent::GivenToRead {
+                        recipient: his,
+                        message: Message {
+                            sender_id: hers,
+                            tool_calls: vec![make_tool_call("calculator")],
+                            ..Message::new(fits.clone())
+                        },
+                    },
+                    ..back.clone()
+                },
+                "but a text",
+            ),
+        ];
+        for (envelope, why) in refused {
+            assert_eq!(channel.admit(&envelope).await, Err(Rejection::Invalid), "not {why}");
+        }
+        let above = Classification::general(Confidentiality::StrictlyConfidential);
+        assert_eq!(
+            channel.admit(&given(delegate, line, his, hers, above)).await,
+            Err(Rejection::ClassificationRefused),
+            "nor what may not flow in"
+        );
+    }
+
+    /// Issue 557: what is given to read is recorded to its recipient by name and to the users, and
+    /// the recipient alone is asked to respond, for being given it.
+    #[tokio::test]
+    async fn something_given_to_read_asks_its_recipient_alone() {
+        let (alice, bob) = (make_user("alice"), make_user("bob"));
+        let (channel, thread) = with_a_delegate(&alice, &bob).await;
+        let hers = ActorId::User(alice.id);
+        let his = ActorId::User(bob.id);
+        let delegate = ActorId::Delegate(thread);
+        let (to_alice, mut alices) = opened();
+        let (to_bob, mut bobs) = opened();
+        let running = |id, inbox| RunningActor {
+            id,
+            abort_handle: tokio::spawn(async {}).abort_handle(),
+            task: TaskTracker::new(),
+            inbox: Some(inbox),
+            leaving: None,
+        };
+        let actors = HashMap::from([(hers, running(hers, to_alice)), (his, running(his, to_bob))]);
+        let line = ThreadId::line(channel.id);
+        let back = given(&channel, delegate, line, his, hers, Classification::CHANNEL_DEFAULT);
+        channel.process_envelope(back, &actors).await;
+        let kinds = async |inbox: &mut InboxReceiver| {
+            let mut kinds = Vec::new();
+            while let Some(envelope) = inbox.try_recv().await {
+                kinds.push(
+                    envelope.event.request_reason().map_or(envelope.event.kind(), |_| "asked"),
+                );
+            }
+            kinds
+        };
+        assert_eq!(kinds(&mut bobs).await, ["GivenToRead", "asked"], "given it, then asked");
+        assert_eq!(kinds(&mut alices).await, ["GivenToRead"], "shown it, and not asked");
+        let recorded = channel
+            .reading_history(|history| {
+                history
+                    .entries()
+                    .map(|node| (node.entry.entry.clone(), node.entry.recipients.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .await;
+        let to_him_and_the_users =
+            Recipients { named: vec![his], ..Recipients::participants(false) };
+        assert!(
+            matches!(
+                recorded.as_slice(),
+                [
+                    ..,
+                    (HistoryEntry::GivenToRead { by, .. }, to_both),
+                    (
+                        HistoryEntry::ResponseRequested { reason: RequestReason::Given, .. },
+                        to_him
+                    ),
+                ] if *by == delegate
+                    && *to_both == to_him_and_the_users
+                    && *to_him == Recipients::only(vec![his])
+            ),
+            "recorded to him by name and to the users, his request to him: {recorded:?}"
         );
     }
 
@@ -2948,12 +3350,13 @@ mod tests {
     }
 
     /// Issue 404: what others hear of a message is announced with the message once it is stored, as
-    /// news of the channel; a step of a plan or a notice of the kernel is not.
+    /// news of the channel, with its thread; a step of a plan, a notice of the kernel or what is
+    /// said in another thread than the line without mentioning a user (issue 557) is not.
     #[tokio::test]
     async fn what_others_hear_is_announced_once_it_is_stored() {
         use crate::session::testing::{running_session_of_a_user, spec, test_kernel};
         use crate::session::SessionManager;
-        use caelumora_domain::channel::{Channel, SAID};
+        use caelumora_domain::channel::{Channel, Said, SAID};
         let kernel = test_kernel();
         let manager = SessionManager::new(Arc::clone(&kernel));
         let (session, ctx, _) = running_session_of_a_user(&manager).await;
@@ -2974,22 +3377,38 @@ mod tests {
         };
         let step = Message { id: MessageId::new(), internal: true, ..heard.clone() };
         let notice = Message { id: MessageId::new(), role: MessageRole::System, ..heard.clone() };
+        let aside = Message { id: MessageId::new(), ..heard.clone() };
+        let mentioning = Message { id: MessageId::new(), mentions: vec![owner], ..heard.clone() };
+        let agent = ActorId::Agent(AgentId::new());
+        let addressing = Message { id: MessageId::new(), mentions: vec![agent], ..heard.clone() };
         let mut rx = kernel.event_bus().subscribe_all();
 
         for message in [&heard, &step, &notice] {
             channel.append_history(&said(message), Audience::Everybody).await;
         }
+        let thread_id = ThreadId::new();
+        for message in [&aside, &mentioning, &addressing] {
+            let in_thread = said(message);
+            let context = EventContext { thread_id, ..in_thread.context };
+            channel.append_history(&Envelope { context, ..in_thread }, Audience::Everybody).await;
+        }
 
-        let announced: Vec<MessageId> = rx
+        let announced: Vec<(MessageId, ThreadId)> = rx
             .drain()
             .await
             .iter()
             .filter_map(|event| event.about::<Channel>().filter(|((_, id), _)| *id == channel.id()))
-            .filter_map(|(_, change)| change.data::<Message>(SAID))
-            .map(|message| message.id)
+            .filter_map(|(_, change)| change.data::<Said>(SAID))
+            .map(|said| (said.message.id, said.thread))
             .collect();
-        assert_eq!(announced, [heard.id], "the words others hear, with the message");
-        assert_eq!(channel.history().await.len(), 3, "though every one is kept");
+        let line = ThreadId::line(channel.id());
+        assert_eq!(
+            announced,
+            [(heard.id, line), (mentioning.id, thread_id)],
+            "the words others hear in the line, and a mention of a user in another thread, with its \
+             thread"
+        );
+        assert_eq!(channel.history().await.len(), 6, "though every one is kept");
     }
 
     #[tokio::test]

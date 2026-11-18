@@ -1,12 +1,13 @@
 //! Who takes part in a running session after it was built: taken in (issue 221) by whoever may
-//! change it, or by their own act where its access list lets them join - into the session and, if
-//! one is named, into one of its channels at once -, and let go (issue 590) by whoever may change
-//! it, or by their own act - out of the session and every channel of it.
+//! change it, by their own act where its access list lets them join - into the session and, if one
+//! is named, into one of its channels at once -, or as a founder of a thread (issue 557,
+//! `threads`), and let go (issue 590) by whoever may change it, or by their own act - out of the
+//! session and every channel of it.
 
 use super::{ChannelRun, SessionError, SessionLoop};
-use crate::channel::{ChannelLoop, ResolvedParticipant};
+use crate::channel::{ChannelLoop, Entry, ResolvedParticipant};
 use crate::event::SubscriptionTopic;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::channel::{Channel, ChannelId, HistoryAccess, Participant};
 use caelumora_domain::session::Session;
@@ -68,7 +69,7 @@ impl SessionLoop {
             None => None,
         };
         let taken = channel.as_ref().map(|(channel, _)| channel);
-        let before = self.take_in(context, participant, taken, false).await?;
+        let before = self.take_in(context, participant, taken, Entry::Added).await?;
         if let Some((channel, history)) = channel {
             if let Err(error) = channel.add_participant(context, participant, history).await {
                 self.roll_back_taking_in(participant, before.as_ref()).await;
@@ -100,7 +101,7 @@ impl SessionLoop {
             Some(id) => Some(self.channel_to_join(id)?),
             None => None,
         };
-        let before = self.take_in(context, participant, channel.as_ref(), true).await?;
+        let before = self.take_in(context, participant, channel.as_ref(), Entry::Joining).await?;
         if let Some(channel) = channel {
             if let Err(error) = channel.join(context, participant).await {
                 self.roll_back_taking_in(participant, before.as_ref()).await;
@@ -110,9 +111,12 @@ impl SessionLoop {
         Ok(())
     }
 
-    /// Takes `actor` into the session on behalf of `context` - by their own act if `joining` -,
-    /// once it is asked whether they may join it, and `channel` if one is named, by themselves,
-    /// and then whether they can be taken in and take part in `channel` as well
+    /// Takes `actor` into the session on behalf of `context`, by the way `entry` says - by their
+    /// own act if joining, once it is asked whether they may join it, and `channel` if one is
+    /// named, by themselves; as a founder of a thread of `channel` if founding, once it is asked
+    /// whether they are whom `context` acts for or an agent of their own (issue 557), opening the
+    /// thread being permitted - and then whether they can be taken in and take part in `channel`
+    /// as well
     /// (`require_to_take_in`): whose participant it is first, then anything in its name (issue
     /// 562). Whoever takes them in reads them first, a user to find out that they exist (issue
     /// 120). The session announces it, and follows the one taken in from here on (`following`).
@@ -122,12 +126,12 @@ impl SessionLoop {
     /// `SessionError::AlreadyParticipant`, `CannotTakeIn`; `StoreError::PermissionDenied` if they
     /// may not join; `ChannelError::OutOfScope` or `NotCleared`; whatever reading them or
     /// storing the session reports.
-    async fn take_in(
+    pub(super) async fn take_in(
         &self,
         context: &SecurityContext,
         actor: ActorId,
         channel: Option<&Arc<ChannelLoop>>,
-        joining: bool,
+        entry: Entry,
     ) -> Result<Option<Session>> {
         let session = self.session();
         let in_session = session.participants.iter().any(|p| p.actor_id() == actor);
@@ -148,10 +152,25 @@ impl SessionLoop {
             other => return Err(SessionError::CannotTakeIn(other).into()),
         };
         let resolved = self.resolve_to_take_in(&participant, channel).await?;
-        // Joining was permitted; storing is the kernel's.
-        let storing = match (in_session, joining) {
+        // A founder of a thread of `channel` is whom the opener acts for, or their own agent
+        // (issue 557), in the session already or not; without a channel there is no thread, and
+        // nobody is taken in as its founder.
+        if entry == Entry::Founding {
+            let channel =
+                channel.ok_or_else(|| anyhow!("{actor} founds a thread of no channel"))?;
+            let attributes = channel.security_attributes();
+            let founding = ActionType::OpenThread(&attributes);
+            self.participation.require_own(
+                &resolved,
+                context,
+                founding,
+                StoreError::PermissionDenied,
+            )?;
+        }
+        // Joining or founding was permitted; storing is the kernel's.
+        let storing = match (in_session, entry) {
             (true, _) => None,
-            (false, true) => {
+            (false, Entry::Joining) => {
                 self.participation
                     .require_own_act(
                         &resolved,
@@ -162,9 +181,10 @@ impl SessionLoop {
                     .await?;
                 Some(SecurityContext::system())
             }
-            (false, false) => Some(context.clone()),
+            (false, Entry::Founding) => Some(SecurityContext::system()),
+            (false, Entry::Added) => Some(context.clone()),
         };
-        if let (Some(channel), true) = (channel, joining) {
+        if let (Some(channel), Entry::Joining) = (channel, entry) {
             let attributes = channel.security_attributes();
             self.participation
                 .require_own_act(
@@ -192,7 +212,7 @@ impl SessionLoop {
     /// before - had them, once its channel could not take them in (issue 590): out of it again,
     /// their invitation given back (`SessionController::roll_back_participant_addition`). Nothing
     /// for one who was in it before (`None`). What cannot be rolled back is logged and stays.
-    async fn roll_back_taking_in(&self, participant: ActorId, before: Option<&Session>) {
+    pub(super) async fn roll_back_taking_in(&self, participant: ActorId, before: Option<&Session>) {
         let Some(before) = before else { return };
         let rolled_back =
             self.session_controller.roll_back_participant_addition(participant, before);

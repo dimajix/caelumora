@@ -112,15 +112,27 @@ export function startedChannel(event: GlobalEvent): string | null {
 }
 
 /**
- * What was said where, for a channel's `said` (issue 404): a message others
- * hear, as it was said, sent to whoever reads the channel once it is stored;
- * `null` for any other event.
+ * What a channel's `said` announces (issues 404, 557): where a message others hear was said - its
+ * session, its channel and its thread, the line or another where it mentions a user - and the
+ * message as it was said.
  */
-export function saidInChannel(event: GlobalEvent): {sessionId: string; channelId: string; message: Message} | null {
+export interface Said {
+  sessionId: string;
+  channelId: string;
+  thread: string;
+  message: Message;
+}
+
+/**
+ * What was said where, for a channel's `said` (`Said`), sent to whoever reads the channel once it
+ * is stored; `null` for any other event.
+ */
+export function saidInChannel(event: GlobalEvent): Said | null {
   const channel = channelEvent(event);
-  const message = channel && dataOf(channel.change, 'said');
-  if (!channel || typeof message !== 'object' || message === null) return null;
-  return {sessionId: channel.sessionId, channelId: channel.channelId, message: message as Message};
+  const said = channel && dataOf(channel.change, 'said');
+  if (!channel || typeof said !== 'object' || said === null) return null;
+  const {message, thread} = said as {message: Message; thread: string};
+  return {sessionId: channel.sessionId, channelId: channel.channelId, message, thread};
 }
 
 /**

@@ -16,7 +16,7 @@ use caelumora_api::reader::{ChannelReader, SessionReader, ViewResult};
 use caelumora_api::runtime::ActorRuntime;
 use caelumora_domain::actor::{ActorId, RequestReason};
 use caelumora_domain::agent::{AgentChannelState, AgentId};
-use caelumora_domain::channel::ChannelId;
+use caelumora_domain::channel::{ChannelId, ThreadId};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::{ContextResolver, ModelProfile};
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
@@ -63,6 +63,12 @@ impl<'a> Situation<'a> {
     /// The session of the agent's channel, as `channel_id`.
     pub fn session_id(&self) -> SessionId {
         self.work.event_context.session_id
+    }
+
+    /// The thread of its channel the work happens in (issue 557): where the envelope it answers
+    /// happened, and what the work says is said (`Answering::continuing`).
+    pub fn thread_id(&self) -> ThreadId {
+        self.work.event_context.thread_id
     }
 
     /// Why the work was asked for (issue 439): the reason of the request

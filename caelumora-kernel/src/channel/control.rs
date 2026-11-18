@@ -1,72 +1,103 @@
 //! Controlling the actors of a channel: cancelling, waking, interrupting and stopping them.
 
+use super::thread::Thread;
 use super::{stopped, ChannelActor, ChannelError, ChannelLoop};
 use anyhow::Result;
 use caelumora_api::actor::Actor;
 use caelumora_domain::actor::{ActorId, ActorState};
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::work::TurnId;
 use caelumora_security::{ActionType, SecurityContext};
-use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use tokio_util::task::TaskTracker;
 use tracing::warn;
 
 impl ChannelLoop {
-    /// Ends the current turn of every actor in the channel, on behalf of
-    /// `context`'s initiator, and keeps the channel quiet - nobody is asked
-    /// to respond - until it is woken again, usually by the next message.
+    /// Ends the current turn of every actor taking part in `thread` - in every thread of the
+    /// channel if `None` -, on behalf of `context`'s initiator, and keeps the thread quiet - nobody
+    /// is asked to respond in it - until it is woken again, usually by the next message said in it
+    /// (issue 557).
     ///
     /// # Errors
-    /// `ChannelError::Forbidden` if the `AccessPolicy` refuses
-    /// `CancelChannel`; the channel is then untouched. Deliberately one
-    /// decision for the whole channel: a per-actor one could leave half of it
-    /// cancelled (issue 30).
-    pub async fn cancel(&self, context: &SecurityContext) -> Result<()> {
+    /// `ChannelError::Forbidden` if the `AccessPolicy` refuses `CancelChannel` - a thread is part
+    /// of its channel -; the channel is then untouched. Deliberately one decision for the whole
+    /// scope: a per-actor one could leave half of it cancelled (issue 30). `ThreadNotOpen` if
+    /// `thread` is not open.
+    pub async fn cancel(&self, context: &SecurityContext, thread: Option<ThreadId>) -> Result<()> {
         self.require(context, |attributes| ActionType::CancelChannel(attributes), "cancelling")
             .await?;
-        self.cancel_actors();
+        self.require_open(thread)?;
+        self.cancel_actors(thread);
         Ok(())
     }
 
-    /// Ends the current turn of every actor and keeps the channel quiet:
-    /// what `cancel` does once permitted, and `reclassify` as a consequence
-    /// of lowering the channel.
-    pub(super) fn cancel_actors(&self) {
-        self.quiet.store(true, Ordering::SeqCst);
-        for ChannelActor { actor, .. } in self.actors.load().values() {
+    /// Ends the current turn of every actor taking part in `thread`, or in every thread if
+    /// `None`, and keeps the thread quiet: what `cancel` does once permitted, and `reclassify` as
+    /// a consequence of lowering the channel.
+    pub(super) fn cancel_actors(&self, thread: Option<ThreadId>) {
+        for held in self.threads_in(thread) {
+            held.set_quiet(true);
+        }
+        let in_scope = |actor: &&ChannelActor| thread.is_none_or(|thread| actor.thread == thread);
+        for ChannelActor { actor, .. } in self.actors.load().values().filter(in_scope) {
             actor.cancel();
         }
     }
 
-    /// Wakes the channel's sleeping actors because someone asked for it -
-    /// a `/wakeup` and nothing else. Returns the names of the actors that
-    /// were asleep.
+    /// Wakes the sleeping actors of `thread` - of every thread if `None` - because someone asked
+    /// for it - a `/wakeup` and nothing else -, and ends its being quiet. Returns the names of the
+    /// actors that were asleep.
     ///
     /// # Errors
-    /// `ChannelError::Forbidden` if the `AccessPolicy` refuses
-    /// `WakeChannel`.
-    pub async fn wakeup(&self, context: &SecurityContext) -> Result<Vec<String>> {
+    /// `ChannelError::Forbidden` if the `AccessPolicy` refuses `WakeChannel`; `ThreadNotOpen` if
+    /// `thread` is not open.
+    pub async fn wakeup(
+        &self,
+        context: &SecurityContext,
+        thread: Option<ThreadId>,
+    ) -> Result<Vec<String>> {
         self.require(
             context,
             |attributes| ActionType::WakeChannel(attributes),
             "waking the agents of",
         )
         .await?;
+        self.require_open(thread)?;
         let asleep = self
             .actors
             .load()
             .values()
+            .filter(|a| thread.is_none_or(|thread| a.thread == thread))
             .map(|a| &a.actor)
             .filter(|a| a.state() == ActorState::Sleeping)
             .map(|a| a.name().to_string())
             .collect();
-        self.wake_for_delivery();
+        self.wake(thread);
         Ok(asleep)
+    }
+
+    /// Nothing if `thread`, if one is named, is open in the channel.
+    fn require_open(&self, thread: Option<ThreadId>) -> Result<()> {
+        match thread {
+            Some(thread) if !self.is_open(thread) => {
+                Err(ChannelError::ThreadNotOpen { thread, channel: self.id }.into())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// The threads `thread` names: that one, if the channel holds it, or every one if `None`.
+    fn threads_in(&self, thread: Option<ThreadId>) -> Vec<Arc<Thread>> {
+        match thread {
+            Some(thread) => self.thread(thread).into_iter().collect(),
+            None => self.threads.load().values().map(Arc::clone).collect(),
+        }
     }
 
     /// Ends the current turn of one actor deliberately (issue 235), like
     /// `cancel` and under the same permission: the policy that lets someone
-    /// stop the channel lets them stop one of its actors. The channel is not
-    /// kept quiet - that is the channel's state, not the actor's: the others
+    /// stop the channel lets them stop one of its actors. Its thread is not
+    /// kept quiet - that is the thread's state, not the actor's: the others
     /// are still asked to respond, and the answer the actor's turn is taken
     /// over with reaches everyone as any answer does.
     ///
@@ -135,11 +166,14 @@ impl ChannelLoop {
             "waking the agents of",
         )
         .await?;
-        let actor = self
-            .actor(actor)
+        let ChannelActor { actor, thread, .. } = self
+            .actors
+            .load()
+            .get(&actor)
+            .cloned()
             .ok_or(ChannelError::NotAParticipant { participant: actor, channel: self.id })?;
         let was_asleep = actor.state() == ActorState::Sleeping;
-        self.quiet.store(false, Ordering::SeqCst);
+        self.end_quiet(thread);
         actor.wakeup();
         Ok(was_asleep)
     }
@@ -179,17 +213,33 @@ impl ChannelLoop {
         }
     }
 
-    /// Wakes the channel's actors because something is on its way to them:
-    /// a `WakeupRequested`, which a user's actor sends with every message. A
-    /// mention wakes only whom it addresses (`route_event_impl`). That is the
-    /// consequence of an action already permitted, so it carries no
-    /// permission of its own - otherwise a user allowed to write but not to
-    /// wake could not write.
-    pub(super) fn wake_for_delivery(&self) {
-        self.quiet.store(false, Ordering::SeqCst);
-        for ChannelActor { actor, .. } in self.actors.load().values() {
+    /// Wakes the actors of `thread` - of every thread if `None` - and ends its being quiet: what
+    /// `wakeup` does once permitted, and what a `WakeupRequested` asks for, which a user's actor
+    /// sends with every message, in the thread it is said in (issue 557). A mention wakes only
+    /// whom it addresses (`route_event_impl`). That is the consequence of an action already
+    /// permitted, so it carries no permission of its own - otherwise a user allowed to write but
+    /// not to wake could not write.
+    pub(super) fn wake(&self, thread: Option<ThreadId>) {
+        for held in self.threads_in(thread) {
+            held.set_quiet(false);
+        }
+        let in_scope = |actor: &&ChannelActor| thread.is_none_or(|thread| actor.thread == thread);
+        for ChannelActor { actor, .. } in self.actors.load().values().filter(in_scope) {
             actor.wakeup();
         }
+    }
+
+    /// Ends `thread`'s being quiet, waking nobody: what a deliberate request of one ends - a nudge,
+    /// a request to answer again, waking one actor -, whom it asks being woken alone.
+    pub(super) fn end_quiet(&self, thread: ThreadId) {
+        if let Some(held) = self.thread(thread) {
+            held.set_quiet(false);
+        }
+    }
+
+    /// Whether `thread` is quiet after a cancel: nobody is asked to respond in it.
+    pub(super) fn is_quiet(&self, thread: ThreadId) -> bool {
+        self.thread(thread).is_some_and(|held| held.is_quiet())
     }
 }
 
@@ -227,12 +277,12 @@ mod tests {
         // of who is in the channel.
         let somebody = ActorId::Agent(AgentId::new());
         for error in [
-            refused.cancel(&context).await.expect_err("cancelling is refused"),
+            refused.cancel(&context, None).await.expect_err("cancelling is refused"),
             refused
                 .cancel_actor(&context, somebody)
                 .await
                 .expect_err("cancelling one actor is refused"),
-            refused.wakeup(&context).await.expect_err("waking is refused"),
+            refused.wakeup(&context, None).await.expect_err("waking is refused"),
             refused
                 .wakeup_actor(&context, somebody)
                 .await
@@ -246,11 +296,11 @@ mod tests {
         }
         // Waking because something is on its way is not a wakeup of its own:
         // it follows from an action that was permitted.
-        refused.wake_for_delivery();
+        refused.wake(None);
 
         let allowed = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
-        allowed.cancel(&context).await.expect("permitted");
-        allowed.wakeup(&context).await.expect("permitted");
+        allowed.cancel(&context, None).await.expect("permitted");
+        allowed.wakeup(&context, None).await.expect("permitted");
     }
 
     #[tokio::test]

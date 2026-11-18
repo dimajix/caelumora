@@ -27,7 +27,7 @@ impl AgentBody {
     /// What is heard is never the agent's own: the channel delivers nothing
     /// back to its sender (`ChannelLoop::route_event_impl`), live or from its
     /// history, and every message an envelope carries is its sender's
-    /// (`OriginEventSender`).
+    /// (`OriginEventSender`); what a delegate gives it to read is not heard but given.
     async fn perceive(&self, state: &mut AgentChannelState, heard: Vec<Message>) {
         let Some(last) = heard.last() else {
             return;
@@ -222,7 +222,8 @@ impl AgentBody {
     /// person (`AgentActor::handle_waiting_for_user`, issue 482): what others said is perceived as
     /// it comes (`perceive`), and so is a message modified or taken back since (issue 234); a
     /// reclassification is recorded as it is (issue 239), in the transcript where it holds the
-    /// message on its active path, and so is who joined or left (issue 408). A modification or
+    /// message on its active path, and so is who joined or left (issue 408); what a delegate gives
+    /// it to read is what it was given (`AgentChannelState::given`, issue 557). A modification or
     /// revocation the transcript did not take is handed over (`AgentBody::hand_over`, issue 236),
     /// as the agent hears it. Returns any other event, for the caller to handle.
     pub(super) async fn take_in_said(
@@ -252,6 +253,11 @@ impl AgentBody {
             }
             ActorEvent::MessageReclassified { message, classification } => {
                 state.transcript.reclassify(message, classification);
+            }
+            // Given to read by a delegate (issue 557), as a skill loaded for it is given: its giver
+            // is the message's sender, and the request to respond follows it.
+            ActorEvent::GivenToRead { message, .. } => {
+                state.given(message, None);
             }
             // Who joined or left (issue 408): noted where it came, asking
             // nothing of the agent.

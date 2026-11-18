@@ -22,11 +22,12 @@ import {
   Users,
   UsersRound
 } from 'lucide-react';
-import type {AgentResponse, ArtifactResponse, ChannelResponse, GlobalEvent, GroupResponse, Message, ProjectResponse, SessionSnapshot, SkillResponse, Unread, UserResponse, WorkspaceResponse} from '../types';
+import type {AgentResponse, ArtifactResponse, ChannelResponse, GlobalEvent, GroupResponse, ProjectResponse, SessionSnapshot, SkillResponse, Unread, UserResponse, WorkspaceResponse} from '../types';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
-import {asGlobalEvent, dispatchGlobalEvent, saidInChannel, sessionChange} from '../globalEvents';
-import {askForNotifications, countedIn, isOthers, mayAskForNotifications, mentions, notifyMention, onChannelRead, unreadLabel} from '../unread';
+import {asGlobalEvent, dispatchGlobalEvent, saidInChannel, sessionChange, type Said} from '../globalEvents';
+import {isSaidInLine, mentions} from '../messages';
+import {askForNotifications, countedIn, isOthers, mayAskForNotifications, notifyMention, onChannelRead, unreadLabel} from '../unread';
 import {openEventStream} from '../stream';
 import {actorPath, sameActor, userActor} from '../actor';
 import {ActionMenu} from './ActionMenu';
@@ -256,9 +257,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const agentsChangedFromStream = useEffectEvent(() => agents.reload());
   const refreshSessionFromStream = useEffectEvent((sessionId: string) => void refreshSession(sessionId));
   // Something new was said (issue 404): counted where the user does not see
-  // it now, and shown as a notification where it mentions them.
-  const saidFromStream = useEffectEvent((sessionId: string, channelId: string, message: Message) => {
-    if (!isOthers(message, me)) return;
+  // it now, and shown as a notification where it mentions them - what the
+  // line's view leaves out is nothing new there (issue 557).
+  const saidFromStream = useEffectEvent((said: Said) => {
+    const {sessionId, channelId, message} = said;
+    if (!isOthers(message, me) || !isSaidInLine(said, me)) return;
     const seen = channelId === selectedChannelId && page === null && document.visibilityState === 'visible';
     if (seen) return;
     setSessions(prev => withChannel(prev, channelId, channel => ({...channel, unread: countedIn(channel.unread, message, me)})));
@@ -300,7 +303,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         dispatchGlobalEvent(event);
         const said = saidInChannel(event);
         if (said) {
-          saidFromStream(said.sessionId, said.channelId, said.message);
+          saidFromStream(said);
           return;
         }
         if (deletedChangedBy(event)) deletedChangedFromStream();

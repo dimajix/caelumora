@@ -38,8 +38,8 @@ pub(crate) struct ResolvedParticipant {
 
 /// What a participant is resolved to: the instance's controller of its
 /// user or agent (issue 121) - or, for an internal actor of the channel
-/// (issue 420), the approver itself. An agent comes with
-/// the controller of its personality (issue 406), whose kind says how its
+/// (issue 420), the approver itself, or the thread a delegate delegates into (issue 557). An
+/// agent comes with the controller of its personality (issue 406), whose kind says how its
 /// actor is built (issue 179, `AgentKinds`). What it is cleared for follows
 /// from it as well (`ResolvedParticipant::clearances`).
 #[derive(Debug, Clone)]
@@ -47,6 +47,7 @@ pub(crate) enum ResolvedKind {
     User(Arc<UserController>),
     Agent(Arc<AgentController>, Arc<PersonalityController>),
     Approver(Approver),
+    Delegate(ThreadId),
 }
 
 /// The question who takes part in a channel and whether they may, with the
@@ -162,12 +163,27 @@ impl Participation {
         action: ActionType<'_>,
         refusal: impl FnOnce(Refused) -> E + Send,
     ) -> Result<(), E> {
-        match resolved.context() {
-            Some(own) if own.owner_id == context.principal_id => {
-                self.policies.access_policy().require(&own, action, refusal).await
-            }
-            _ => Err(refusal(action.refused())),
+        match own_context(resolved, context) {
+            Some(own) => self.policies.access_policy().require(&own, action, refusal).await,
+            None => Err(refusal(action.refused())),
         }
+    }
+
+    /// Nothing if `resolved` is whom `context` acts for, or owned by them - themselves, or their
+    /// own agent (issue 341) -, for `action`, which is asked of `context` itself, not in the
+    /// participant's context: whom an opener founds a thread with (`OpenThread`, issue 557), as
+    /// `require_own_act` asks it of whoever takes part by their own act.
+    ///
+    /// # Errors
+    /// `refusal` of `action` if it is not.
+    pub(crate) fn require_own<E>(
+        &self,
+        resolved: &ResolvedParticipant,
+        context: &SecurityContext,
+        action: ActionType<'_>,
+        refusal: impl FnOnce(Refused) -> E,
+    ) -> Result<(), E> {
+        own_context(resolved, context).map(|_| ()).ok_or_else(|| refusal(action.refused()))
     }
 
     /// Nothing if `resolved` is cleared for its channel, classified
@@ -258,15 +274,16 @@ impl ResolvedParticipant {
         Self { kind, session_id, channel_id: Some(channel_id) }
     }
 
+    /// The delegate of `thread`, of channel `channel_id` of session `session_id` (issue 557): an
+    /// internal actor of the channel, which nothing lists - the thread it delegates into is what
+    /// its actor is built from.
+    pub(crate) fn delegate(thread: ThreadId, session_id: SessionId, channel_id: ChannelId) -> Self {
+        Self { kind: ResolvedKind::Delegate(thread), session_id, channel_id: Some(channel_id) }
+    }
+
     /// What its actor is built from.
     pub(crate) fn kind(&self) -> &ResolvedKind {
         &self.kind
-    }
-
-    /// The thread of its channel it takes part in (issue 557): the channel's line, the one thread a
-    /// channel has; none for one taken into the session alone.
-    pub(crate) fn thread(&self) -> Option<ThreadId> {
-        self.channel_id.map(ThreadId::line)
     }
 
     pub(crate) fn actor_id(&self) -> ActorId {
@@ -274,14 +291,15 @@ impl ResolvedParticipant {
             ResolvedKind::User(user) => ActorId::User(user.id()),
             ResolvedKind::Agent(agent, _) => ActorId::Agent(agent.id()),
             ResolvedKind::Approver(approver) => ActorId::Approver(approver.id),
+            ResolvedKind::Delegate(thread) => ActorId::Delegate(*thread),
         }
     }
 
     /// The context the participant acts in, in its place: a user's own, an
     /// agent's with its owner's rights and roles, limited by its
     /// personality's (issue 179) - as the controllers hold them now (issues
-    /// 304, 306). None for an approver. A participant of the session alone acts
-    /// in no channel, which a `SecurityContext` names as the default id.
+    /// 304, 306). None for an internal actor of the channel. A participant of the session alone
+    /// acts in no channel, which a `SecurityContext` names as the default id.
     pub(super) fn context(&self) -> Option<SecurityContext> {
         let (session, channel) = (self.session_id, self.channel_id.unwrap_or_default());
         match &self.kind {
@@ -289,14 +307,15 @@ impl ResolvedParticipant {
             ResolvedKind::Agent(agent, personality) => {
                 Some(agent.security_context(session, channel, personality.load().limiting_roles()))
             }
-            ResolvedKind::Approver(_) => None,
+            ResolvedKind::Approver(_) | ResolvedKind::Delegate(_) => None,
         }
     }
 
     /// The context the participant acts in, in `channel`, for `initiator` (issue 516): a user's
     /// own, an agent's with its owner's rights and roles, limited by its personality, as the
-    /// controllers hold them now, the approver's - an internal actor of the channel - answered for
-    /// by the channel's owner (`SecurityContext::of_approver`).
+    /// controllers hold them now, the approver's and a delegate's - internal actors of the
+    /// channel - answered for by the channel's owner (`SecurityContext::of_approver`,
+    /// `of_delegate`).
     pub(crate) fn context_in(&self, channel: &Channel, initiator: ActorId) -> SecurityContext {
         let own = match &self.kind {
             ResolvedKind::User(user) => user.security_context(channel.session_id, channel.id),
@@ -306,6 +325,7 @@ impl ResolvedParticipant {
                 personality.load().limiting_roles(),
             ),
             ResolvedKind::Approver(approver) => SecurityContext::of_approver(approver, channel),
+            ResolvedKind::Delegate(thread) => SecurityContext::of_delegate(*thread, channel),
         };
         SecurityContext { initiator_id: initiator, ..own }
     }
@@ -314,7 +334,7 @@ impl ResolvedParticipant {
     /// (issues 133, 179): a user's own; an agent's owner's - it must not
     /// see more than the person responsible for it - and, if its
     /// personality limits it, those roles too, which narrow the owner's and
-    /// never widen them. None for an approver.
+    /// never widen them. None for an internal actor of the channel.
     fn clearances(&self) -> Vec<Vec<RoleId>> {
         let Some(context) = self.context() else { return Vec::new() };
         iter::once(context.roles).chain(context.limiting_roles).collect()
@@ -341,6 +361,15 @@ impl ResolvedParticipant {
             Err(ChannelError::OutOfScope { participant: self.actor_id(), channel: channel_id })
         }
     }
+}
+
+/// The own context of `resolved` if it is whom `context` acts for, or owned by them - themselves,
+/// or their own agent (issue 341); `None` otherwise.
+fn own_context(
+    resolved: &ResolvedParticipant,
+    context: &SecurityContext,
+) -> Option<SecurityContext> {
+    resolved.context().filter(|own| own.owner_id == context.principal_id)
 }
 
 #[cfg(test)]

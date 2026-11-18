@@ -15,11 +15,13 @@ use axum::response::{IntoResponse, Response, Sse};
 use axum::{extract::State, http::StatusCode};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::approval::{ApprovalId, ApprovalRule};
-use caelumora_domain::channel::{moderation_components, ChannelId};
+use caelumora_domain::channel::{moderation_components, ChannelId, ThreadId};
 use caelumora_domain::command::{CommandDescription, CommandVisibility};
 use caelumora_domain::confidentiality::{Classification, LabelCauses};
 use caelumora_domain::context::{ContextItem, KnowledgeRef, KnowledgeSource};
+use caelumora_domain::history::HistoryEntry;
 use caelumora_domain::message::{Message, MessageId, TokenUsage};
+use caelumora_domain::query::Filter;
 use caelumora_domain::question::QuestionId;
 use caelumora_domain::session::SessionId;
 use caelumora_domain::snapshot::Detail;
@@ -155,8 +157,10 @@ pub(super) async fn get_channel(
 const SNAPSHOT_ITEMS: usize = 20;
 
 /// A page of the history of the channel, as the user may see it (issues 46, 218): its messages and
-/// how turns ended (issue 258), oldest first - the last ones, or those before `?before=`; with
-/// `?attachments=true`, the messages carrying attachments alone (issue 509).
+/// how turns ended (issue 258), oldest first - the last ones, or those before `?before=`; of the
+/// thread `?thread=`, with what happens in the whole channel, or else what the view of the line
+/// shows the user (`Filter::shown_in_line`, issue 557); with `?attachments=true`, the
+/// messages carrying attachments alone (issue 509).
 pub(super) async fn get_channel_history(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
@@ -164,7 +168,11 @@ pub(super) async fn get_channel_history(
     user: AuthenticatedUser,
 ) -> Result<Json<HistoryPageResponse<Message>>, ApiError> {
     let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let page = channel.history_page_of(query.before, query.limit(), query.filter()).await?;
+    let line = ThreadId::line(ChannelId(cid));
+    let in_line =
+        query.thread.is_none().then(|| Filter::shown_in_line(line, ActorId::User(user.id)));
+    let filter = Filter::all_given([in_line, query.filter()]);
+    let page = channel.history_page_of(query.before, query.limit(), filter).await?;
     Ok(Json(HistoryPageResponse::of(page, |message, _| message)))
 }
 
@@ -548,7 +556,7 @@ pub(super) async fn cancel_channel(
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    channel.cancel(&user.security_context()).await?;
+    channel.cancel(&user.security_context(), None).await?;
     Ok(StatusCode::OK)
 }
 
@@ -805,8 +813,10 @@ async fn knowledge_response(
 
 /// A page of all that was offered to actor `aid` in the channel and what it said itself (issues
 /// 207, 218), and how its turns ended (issue 258), oldest first - the last ones, or those before
-/// `?before=` -, for whoever may read what it saw; with `?attachments=true`, the messages carrying
-/// attachments alone (issue 509).
+/// `?before=` -, for whoever may read what it saw; of the thread `?thread=` if asked, with what
+/// happens in the whole channel (issue 557); with `?attachments=true`, the messages carrying
+/// attachments alone (issue 509). What a thread's delegate gave it to read stands as what it was
+/// given (`Given`, issue 557), not twice.
 pub(super) async fn agent_history(
     State(state): State<Arc<AppState>>,
     Path((id, cid, ActorPath(aid))): Path<(Uuid, Uuid, ActorPath)>,
@@ -815,7 +825,8 @@ pub(super) async fn agent_history(
 ) -> Result<Json<HistoryPageResponse<HistoryMessageResponse>>, ApiError> {
     let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let view = channel.participant(aid).await?.context().await?;
-    let page = view.history_page_of(query.before, query.limit(), query.filter()).await?;
+    let mut page = view.history_page_of(query.before, query.limit(), query.filter()).await?;
+    page.items.retain(|(_, entry)| !matches!(entry, HistoryEntry::GivenToRead { .. }));
     let heard: Vec<MessageId> =
         page.entries().filter_map(|item| item.said().map(|m| m.id)).collect();
     let passed_on = view.in_transcript(&heard).await?;
@@ -908,9 +919,12 @@ mod tests {
     use axum::Router;
     use caelumora_api::command::CommandError;
     use caelumora_api::reader::ViewError;
+    use caelumora_domain::actor::{ActorEvent, Envelope, EventContext};
     use caelumora_domain::agent::testing::make_personality;
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::channel::Participant;
+    use caelumora_domain::history::{Audience, Recorded};
+    use caelumora_domain::message::MessageRole;
     use caelumora_domain::security::Refused;
     use caelumora_kernel::channel::ChannelError;
     use caelumora_kernel::view::{AgentContextError, Viewer};
@@ -1141,6 +1155,95 @@ mod tests {
             "words alone carry nothing: {carrying}"
         );
         state.session_manager.stop(&SecurityContext::system(), session).await.unwrap();
+    }
+
+    /// Issue 557: a page of the channel's history is what the view of its line shows the user -
+    /// with what mentions them in another thread - unless `?thread=` names a thread; each with what
+    /// happens in the whole channel.
+    #[tokio::test]
+    async fn a_page_of_the_history_is_of_the_line_unless_a_thread_is_asked_for() {
+        let state = state();
+        let (api, cookie, session, channel) = stopped_session_of_alice(&state).await;
+        let alice = ActorId::User(user_id(&api, &cookie).await);
+        let other = ThreadId::new();
+        let said_in = |thread_id, text: &str| {
+            let mentions = if text.contains("@alice") { vec![alice] } else { Vec::new() };
+            let message = Message {
+                role: MessageRole::User,
+                mentions,
+                sender_id: alice,
+                content: Some(text.to_string()),
+                ..Message::new(Classification::CHANNEL_DEFAULT)
+            };
+            let context =
+                EventContext { thread_id, ..EventContext::new(session, channel, alice, "alice") };
+            let event = ActorEvent::CompleteMessageGenerated(message);
+            Recorded::of(&Envelope::new(context, event), alice, Audience::Everybody).unwrap()
+        };
+        let states = state.kernel.state_store();
+        let mut channel_state = states.get_channel_state(channel).await.unwrap();
+        channel_state.history.enter(said_in(ThreadId::line(channel), "in the line"));
+        channel_state.history.enter(said_in(other, "in another thread"));
+        channel_state.history.enter(said_in(other, "@alice, mentioned"));
+        states.put_channel_state(channel, &mut channel_state).await.unwrap();
+
+        let history = format!("/sessions/{}/channels/{}/history", session.0, channel.0);
+        let line = page_of(&api, &cookie, &history).await.to_string();
+        assert!(line.contains("in the line") && !line.contains("in another thread"), "{line}");
+        assert!(line.contains("mentioned"), "what mentions her: {line}");
+        let of_other = page_of(&api, &cookie, &format!("{history}?thread={}", other.0)).await;
+        let of_other = of_other.to_string();
+        assert!(
+            of_other.contains("in another thread") && !of_other.contains("in the line"),
+            "{of_other}"
+        );
+    }
+
+    /// Issue 557: a page of an agent's history is of the thread `?thread=` if asked, and holds what
+    /// a thread's delegate gave it to read as what it was given alone, not twice.
+    #[tokio::test]
+    async fn an_agents_history_is_of_a_thread_if_asked_and_holds_what_it_was_given_once() {
+        let state = state();
+        let api = api(Arc::clone(&state), &[]);
+        let cookie = login(&api, "alice").await;
+        let alice = ActorId::User(user_id(&api, &cookie).await);
+        let stores = state.kernel.entity_stores();
+        let helper = stored_agent(stores, "helper", make_personality("plain"), alice).await;
+        let (session, channel) =
+            session_of(&state, alice.as_user_id().unwrap(), &[Participant::Agent(helper.id)]).await;
+        state.session_manager.stop(&SecurityContext::system(), session).await.unwrap();
+        let in_line = |sender, event| {
+            let context = EventContext::new(session, channel, sender, "someone");
+            Recorded::of(&Envelope::new(context, event), sender, Audience::Everybody).unwrap()
+        };
+        let said = Message {
+            sender_id: alice,
+            content: Some("in the line".to_string()),
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        };
+        let given = Message { content: Some("given".to_string()), ..said.clone() };
+        let recipient = ActorId::Agent(helper.id);
+        let delegate = ActorId::Delegate(ThreadId::new());
+        let states = state.kernel.state_store();
+        let mut channel_state = states.get_channel_state(channel).await.unwrap();
+        let history = &mut channel_state.history;
+        history.enter(in_line(alice, ActorEvent::CompleteMessageGenerated(said)));
+        let given_to_read = ActorEvent::GivenToRead { recipient, message: given.clone() };
+        history.enter(in_line(delegate, given_to_read));
+        history.enter(in_line(recipient, ActorEvent::MessageGiven { message: given }));
+        states.put_channel_state(channel, &mut channel_state).await.unwrap();
+
+        let actor = ActorPath(recipient);
+        let agents =
+            format!("/sessions/{}/channels/{}/actors/{actor}/history", session.0, channel.0);
+        let page = page_of(&api, &cookie, &agents).await;
+        let items = page["items"].as_array().unwrap();
+        assert!(!items.iter().any(|item| item["given_to_read"].is_object()), "{page}");
+        let given = items.iter().filter(|item| item["said"].to_string().contains("given"));
+        assert_eq!(given.count(), 1, "once, as what it was given: {page}");
+        let of_other =
+            page_of(&api, &cookie, &format!("{agents}?thread={}", ThreadId::new().0)).await;
+        assert!(!of_other.to_string().contains("in the line"), "{of_other}");
     }
 
     /// Issue 573: what an agent's calls used is read alone, as its state holds it; a user has

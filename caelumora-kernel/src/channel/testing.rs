@@ -8,8 +8,8 @@
     reason = "test code: what fails here fails the test that runs it"
 )]
 
+use crate::channel::thread::{Phase, Thread};
 use crate::channel::ChannelLoop;
-#[cfg(test)]
 use crate::channel::ResolvedParticipant;
 use crate::controller::SessionController;
 use crate::kernel::{ChannelRuntime, Kernel, ParticipantRuntime};
@@ -18,6 +18,7 @@ use crate::view::AgentContextView;
 use anyhow::{Error, Result};
 use caelumora_api::actor::Actor;
 use caelumora_api::command::CommandError;
+use caelumora_api::transport::{EventReceiver, EventSender};
 use caelumora_domain::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_domain::agent::{AgentChannelState, AgentId, Personality};
 use caelumora_domain::approval::{ApprovalStrategy, Approver};
@@ -25,7 +26,9 @@ use caelumora_domain::chain::Position;
 use caelumora_domain::channel::testing::{founded, make_channel};
 #[cfg(test)]
 use caelumora_domain::channel::ChannelId;
-use caelumora_domain::channel::{Channel, InternalActor, Participant};
+use caelumora_domain::channel::{
+    Channel, Delegation, InternalActor, Opening, Participant, ThreadId, ThreadOrigin, ThreadState,
+};
 use caelumora_domain::content::ContentId;
 use caelumora_domain::history::testing::{items_of, messages_of};
 use caelumora_domain::history::{Attended, Audience, History, HistoryEntry, Reader, Recorded};
@@ -37,17 +40,63 @@ use caelumora_domain::session::SessionId;
 use caelumora_domain::store::StoreResult;
 use caelumora_domain::user::testing::make_user;
 use caelumora_domain::user::UserId;
+use caelumora_domain::value::name::Name;
 use caelumora_domain::work::TurnId;
 use caelumora_security::{AccessPolicy, ActionType, Policies, SecurityContext};
 use caelumora_store::testing::record_users;
 use caelumora_store::testing::stored_agent;
 use caelumora_store::{EntityStores, Persistence};
+use std::collections::HashMap;
+use std::mem;
+use std::sync;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::Receiver;
 use tokio::task::JoinHandle;
 use tokio::time;
+
+/// An actor that sends the envelopes it is given as it starts, as they are written - in whatever
+/// name, with whatever hops - and waits: what no actor of the kernel can, which builds its
+/// envelopes itself (`Answering`). For the tests of what the channel does with such envelopes
+/// (issue 372), and in place of a delegate until its own actor is built (issue 557).
+#[derive(Debug)]
+pub(crate) struct Forger {
+    id: ActorId,
+    envelopes: sync::Mutex<Vec<Envelope>>,
+}
+
+impl Forger {
+    pub(crate) fn sending(id: ActorId, envelopes: Vec<Envelope>) -> Arc<Self> {
+        Arc::new(Self { id, envelopes: sync::Mutex::new(envelopes) })
+    }
+}
+
+#[async_trait::async_trait]
+impl Actor for Forger {
+    fn id(&self) -> ActorId {
+        self.id
+    }
+    fn name(&self) -> Name {
+        Name::new("talker").expect("a name")
+    }
+    fn event_filter(&self) -> fn(&Envelope) -> bool {
+        |_| true
+    }
+    async fn run(&self, mut rx: Box<dyn EventReceiver>, tx: Box<dyn EventSender>) -> Result<()> {
+        let envelopes = mem::take(&mut *self.envelopes.lock().unwrap());
+        for envelope in envelopes {
+            let _ = tx.send(envelope).await;
+        }
+        while rx.recv().await.is_some() {}
+        Ok(())
+    }
+    fn state(&self) -> ActorState {
+        ActorState::Idle
+    }
+    fn stop(&self) {}
+    fn leave(&self) {}
+}
 
 /// Decides by a rule over the action alone, to refuse one thing and
 /// allow the rest.
@@ -190,6 +239,36 @@ impl ResolvedParticipant {
 /// alone, under names of their own - the channel's API is not widened by
 /// them.
 impl ChannelLoop {
+    /// A thread at the line, delegated into as `delegation` says, whose delegate is forged
+    /// (issue 557): an actor in its place that sends what `envelopes` makes for the thread as it
+    /// is written (`Forger`) - what the channel admits of a delegate, tested without one. The
+    /// thread is held and kept in the channel's state at once, as the channel builds it as it
+    /// starts, opened by nobody and announced nowhere. Returns the thread.
+    pub async fn forge_delegate(
+        &self,
+        delegation: Delegation,
+        envelopes: impl FnOnce(ThreadId) -> Vec<Envelope>,
+    ) -> ThreadId {
+        let thread = ThreadId::new();
+        let origin = ThreadOrigin { thread: ThreadId::line(self.id), message: MessageId::new() };
+        let opening = Opening { origin, by: ActorId::System };
+        let held =
+            ThreadState { opening: Some(opening), closed: false, delegation: Some(delegation) };
+        self.state.lock().await.threads.insert(thread, held);
+        let moderator = self.moderator().await.expect("a moderator");
+        let opened = Arc::new(Thread::new(moderator, Some(opening), Phase::Open));
+        self.threads.rcu(|threads| {
+            let mut threads = HashMap::clone(threads);
+            threads.insert(thread, Arc::clone(&opened));
+            threads
+        });
+        let delegate = ActorId::Delegate(thread);
+        let resolved = ResolvedParticipant::delegate(thread, self.session_id, self.id);
+        let forger = Forger::sending(delegate, envelopes(thread));
+        self.adopt(forger, resolved, thread, None, None).await;
+        thread
+    }
+
     /// Every event the channel takes in from now on (see `observed`).
     pub fn observe(&self) -> broadcast::Receiver<Envelope> {
         self.observed.subscribe()
@@ -331,6 +410,22 @@ impl ChannelLoop {
     /// The entries of the whole history, its messages folded as they stand.
     pub async fn history_entries(&self) -> Vec<HistoryEntry> {
         items_of(&self.state.lock().await.history)
+    }
+
+    /// The entries of the whole history once `done` holds of them, waited for as `run` records -
+    /// at most five seconds, after which the test fails.
+    pub async fn history_once(&self, done: impl Fn(&[HistoryEntry]) -> bool) -> Vec<HistoryEntry> {
+        time::timeout(Duration::from_secs(5), async {
+            loop {
+                let entries = self.history_entries().await;
+                if done(&entries) {
+                    return entries;
+                }
+                time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("recorded as wanted")
     }
 
     /// The last entry of the history as it was recorded, unfolded.

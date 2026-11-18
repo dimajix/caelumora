@@ -58,7 +58,9 @@ impl ChannelCommand for ListCommand {
                     }
                 }
                 // A channel's participants are users and agents alone (`Participant`).
-                ActorId::Approver(_) | ActorId::System | ActorId::None => "participant".to_string(),
+                ActorId::Approver(_) | ActorId::Delegate(_) | ActorId::System | ActorId::None => {
+                    "participant".to_string()
+                }
             };
             text.push_str(&format!("- {name}{handle}, {kind}\n"));
         }

@@ -19,7 +19,7 @@ Who may do what is decided by four concepts. Since issue 304 each has its own fu
 
 | No. | Concept | Decided by | Asked as |
 |---|---|---|---|
-| 1 | **Ownership and access lists**: who may read, use, change or delete a stored thing | the `AccessPolicy`, from `SecurityAttributes` (`owner_id`, `acl` naming actors, roles and groups) and the context's principal; the `Admission` the policy gives for a verb (issue 332) | `Get*`, `Create*`, `Update*`, `Delete*`, `Write*`, `UseSkill`, `ReadDeleted`, `HearDeleted`, `Restore`, and the acts in a conversation (`CancelChannel`, `WakeChannel`, `RetryMessage`, `AnswerQuestion`) |
+| 1 | **Ownership and access lists**: who may read, use, change or delete a stored thing | the `AccessPolicy`, from `SecurityAttributes` (`owner_id`, `acl` naming actors, roles and groups) and the context's principal; the `Admission` the policy gives for a verb (issue 332) | `Get*`, `Create*`, `Update*`, `Delete*`, `Write*`, `UseSkill`, `ReadDeleted`, `HearDeleted`, `Restore`, and the acts in a conversation (`CancelChannel`, `WakeChannel`, `OpenThread`, `RetryMessage`, `AnswerQuestion`) |
 | 2 | **Flow and clearance**: whether information may go where the act takes it, and who is cleared for it | the `ConfidentialityPolicy` (`ConfidentialityRules`), from the roles in the context, the classifications and the places | `may_publish`, `may_copy_information`, `cleared_for`, and their `require_*` forms; `require_classifiable` is validation |
 | 3 | **Rules of particular actions**: what is neither ownership nor flow | a rule written into the policy for the variant: authorship, who answers for an agent, the system alone; or nothing, the action being a hook | `ModifyMessage`, `RevokeMessage`, `Reclassify`, `ApproveToolCall`, `ShowAgentCommand`, `ExecuteAgentCommand`, `ShowCommand`, `ExecuteCommand`, `Purge`, `LeaveChannel`, `LeaveSession`; `CallTool`, `ReadSecret` |
 | 4 | **Reach**: whether a thing can be reached from where one stands | reading it (1) followed by the flow (2), one question (`confidentiality::may_reach`, issue 322): the store's for what is classified - `Get*` or `ReadDeleted`, then `cleared_for` (`Stored::classification`); for a channel read from a place `view::channel_reading` over a document read in S - `GetChannel`, then for a user the clearance, for an agent the copy into its place; for an artifact the store's, the views cutting the versions by their own lists (issue 316) | no action of its own; answered "not found" |
@@ -38,7 +38,7 @@ stored entity is decided by the verb, never by the kind (issue
 | `Get` of every kind (`GetSession`, `GetSkill`, …); a kind's own verb requiring `Read` (`UseSkill`) | system-owned, or owned by the principal or the caller, or an entry grants `Read` to the principal or the caller (`Actor`, `Group`, `Role`) - the caller for an agent reading what it takes part in (issue 264) | 1 |
 | `HearDeleted` of every kind | as reading, an entry for a deleted group counting as well | 1 |
 | a kind's own verb requiring `Write` (`WriteWorkspace`, `WriteArtifact`) | as reading, with `Write` | 1 |
-| `CancelChannel`, `WakeChannel`, `RetryMessage`, `AnswerQuestion` | the principal reads the channel | 1: reading grants acting in the conversation |
+| `CancelChannel`, `WakeChannel`, `OpenThread`, `RetryMessage`, `AnswerQuestion` | the principal reads the channel | 1: reading grants acting in the conversation |
 | `LeaveChannel`, `LeaveSession` | always, asked in the context of the one who leaves; that they are the caller's own is the kernel's to ask before (issues 562, 590) | 3: leaving takes nothing from anyone |
 | `ReadAgentTools` | the principal reads the agent or the channel | 1, two objects |
 | `ApproveToolCall` | `answers_for`: the principal reads the agent | 3, built from 1 |
@@ -82,16 +82,16 @@ call from the participant the channel resolved and the initiator the work names 
 the agent's own (the agent itself as initiator), built so too; **E** an envelope's, built by the
 channel as it admits it (issue 516): the sender's context as the channel knows it then - a user's
 own, an agent's with its owner's rights and roles as the controllers hold them, limited by its
-personality, the approver's answered for by the channel's owner -, with the initiator the event
-names, and one without rights if the sender takes no part; never what the sender set. An envelope
-read back from the history (issue 223) carries the recorded initiator and is admitted again only as
-a command asked of an agent; **V** a viewer's (U, or T with the place the agent reads from); **C**
-the owner's of a channel or session, with their roles as they are when it is built (its components,
-its commands - only while they are built); **S** the system's, which asks nothing. After the name
-the concept. The rule column names the reason it is asked (R1-R5, SECURITY.md); "store" is the store
-layer, in the context the caller passes. Every Read of the store of what is classified - a channel,
-a workspace, a skill, an artifact - is followed by `cleared_for` in the same context (issue 322),
-named in the rows where it is the reason of a refusal.
+personality, the approver's and a delegate's answered for by the channel's owner -, with the
+initiator the event names, and one without rights if the sender takes no part; never what the sender
+set. An envelope read back from the history (issue 223) carries the recorded initiator and is
+admitted again only as a command asked of an agent; **V** a viewer's (U, or T with the place the
+agent reads from); **C** the owner's of a channel or session, with their roles as they are when it
+is built (its components, its commands - only while they are built); **S** the system's, which asks
+nothing. After the name the concept. The rule column names the reason it is asked (R1-R5,
+SECURITY.md); "store" is the store layer, in the context the caller passes. Every Read of the store
+of what is classified - a channel, a workspace, a skill, an artifact - is followed by `cleared_for`
+in the same context (issue 322), named in the rows where it is the reason of a refusal.
 
 The column *Again* names where a question of the operation is asked once more on the way: *(pair)*
 asked by the operation itself before it acts (R2) and again by the store as it writes (R1);
@@ -139,8 +139,11 @@ manager's - counts once: it is one write.
 | Join (`join`, after the session's join, which `/channel join` goes through - issue 590) | structural; the participant the caller's own (structural, `require_own_act`); `JoinChannel` in the participant's context (M,1); `GetPersonality` (A,1); scope; `require_cleared` (U,2); store in S | R2 + R1 | - | `Forbidden`, `NotCleared`, `OutOfScope`, `PermissionDenied` |
 | Remove a participant (`remove_participant`, also from `/participant remove`) | structural (`NotAParticipant`); store `GetChannel` + `UpdateChannel` (U,1) | R1 | - | `PermissionDenied` |
 | Leave (`leave`, also from `/channel leave`, issue 562) | structural (`NotAParticipant`); the participant the caller's own (structural, `require_own_act`); `LeaveChannel` in the participant's context (M,1); store in S - whether it could run is not asked | R2 + R1 | - | `Forbidden` |
-| Cancel the channel, one actor, one tool call (`cancel`, `cancel_actor`, `interrupt_tool_call`) | `CancelChannel` (U,1) | R4 | - | `Forbidden` |
-| Wake the channel, one actor (`wakeup`, `wakeup_actor`, from `/agent wakeup`) | `WakeChannel` (U,1) | R4 | `/agent wakeup` asked its own command questions first | `Forbidden` |
+| Cancel the channel or a thread of it, one actor, one tool call (`cancel`, `cancel_actor`, `interrupt_tool_call`) | `CancelChannel` (U,1); a thread named open (structural) | R4 | - | `Forbidden`, `ThreadNotOpen` |
+| Wake the channel or a thread of it, one actor (`wakeup`, `wakeup_actor`, from `/agent wakeup`) | `WakeChannel` (U,1); a thread named open (structural) | R4 | `/agent wakeup` asked its own command questions first | `Forbidden`, `ThreadNotOpen` |
+| Open a thread (`SessionLoop::open_thread`, issue 557) | reached as `channel_for` reaches it: `GetChannel` (U,1), `cleared_for` (U,2); `OpenThread` (U,1), before the others; a person at the line alone, the origin's thread open (structural); each founder new to the channel (structural); then each taken into the session: read (`GetUser`, `GetAgent`, U,1), the caller's own (structural, `Participation::require_own`), `GetPersonality` (A,1), scope, `require_cleared` (U,2), stored in S - no `UpdateSession`; then into the channel as a founder: `GetPersonality` (A,1), cleared again (U,2), stored in S - no `UpdateChannel`; one that cannot: those taken in let go again in S, the thread closed, the session rolled back in S | R2 + R1 | `GetPersonality` and the clearance as they are taken into the session, then the channel | `ChannelNotFound`, `Forbidden`, `NotAtTheLine`, `ThreadNotOpen`, `AlreadyParticipant`, `PermissionDenied`, `NotCleared`, `OutOfScope` |
+| Delegate into a thread (`ChannelLoop::delegate`, issue 557) | in the giver's - the caller's - name: `GetChannel` (U,1); the thread open and opened at another, the recipient an agent running in it, the giver where it was opened, a delegation of the thread before by the same giver to the same recipient, the thread not quiet (structural); recorded by `run`, the brief given by the thread's delegate and admitted as `GivenToRead` | R1 | the admission of what the delegate gives | `Forbidden`, `ThreadNotOpen`, `NotInThread`, `ThreadQuiet`, `DelegatedOtherwise` |
+| Close a thread (`ChannelLoop::close_thread`) | whoever opened it: nothing; anyone else `UpdateChannel` (U,1); nobody taking part in it, its founders all taken in (structural); closed and recorded by `run` once whoever left it has left | R1 | - | `Forbidden`, `ThreadNotEmpty` |
 
 ### What enters a channel
 
@@ -162,6 +165,7 @@ permission first, then the flow of what it carries.
 | `QuestionAnswered`, `QuestionDeclined` | `AnswerQuestion` (E,1); whether its sender was asked is the agent's | `Forbidden` |
 | `CommandRequested` | from a user (structural); the agent named takes part and carries the command out (structural); `ShowAgentCommand`, `ExecuteAgentCommand` (E,3) with the agent's attributes and the channel's - asked again, with the issuer's rights as they are then, when the request is read back from the history for the agent (issue 516) | `Invalid`, `Forbidden` |
 | `NudgeRequested` | form only: from a user, naming someone taking part | `Invalid` |
+| `GivenToRead` (issue 557) | from the delegate of a thread opened, as the thread's delegation says: into it the open brief to its recipient, back where the thread was opened what came of the open brief, of the recipient to the giver; in the delegating chain's name; to whom runs in that thread; a text, without attachments, tool calls or results (structural); the flow of the message as for a message said (E,2) | `Invalid`, `ClassificationRefused` |
 | `ApprovalAnswered` | from a user, saying their own part alone (`decision`, issue 419, structural); which agent asked and `ApproveToolCall` are the approver's (issue 567) | `Invalid` |
 | `ApprovalGranted`, `ApprovalDenied`, `ApprovalTimedOut` | from an approver alone (structural) | `Invalid` |
 | `EventRefused` | to someone else taking part (structural, issue 567) | `Invalid` |
@@ -260,6 +264,14 @@ An agent's views are built per piece of work, with the agent's place, and handed
 | Describe (`describe`) | store `GetArtifact`, `cleared_for`; store `GetArtifact`, `cleared_for` + `UpdateArtifact` | reach (store) + R1 | `GetArtifact`, `cleared_for` (store) | `NotFound`, `PermissionDenied`, `Invalid` |
 | Delete, restore (`ArtifactManager`) | the store: `GetArtifact` or `ReadDeleted`, `cleared_for`, then the verb; a deletion reads first to announce it; a restoring reads its mark in S first and asks the project in S afterwards (issue 458) - gone, marked again as it was | reach (store) + R1 | `GetArtifact`, `cleared_for` (store) for a deletion | `PermissionDenied`, `NotFound` |
 | Purge (`purge`) | store `ReadDeleted` + `Purge`, the purge begun (issue 492); content removed; store `ReadDeleted` + `Purge` | R1 | `ReadDeleted`, `cleared_for` + `Purge` (store) | `PermissionDenied` |
+
+### Sub-agents
+
+| Operation | Questions in order | Rule | Again | Refusal |
+|---|---|---|---|---|
+| Start (`SubAgentWriter::start`, the plugin `caelumora-subagents`, issue 558) | the work's channel reached as a frontend reaches it (`SessionLoop::channel_for`): `GetChannel` (T,1), `cleared_for` (T,2); the personality found from the channel's place as the kernel finds one by name (`Views::personality_named`: `GetPersonality`, V,1), an internal one (structural); the agent made (`AgentManager::create`): `CreateAgent` (T,1) for the work's owner, the channel's scope (`GetChannel`, T,1), `GetPersonality` (T,1); the thread opened with it as its founder (*Open a thread*: `OpenThread`, the founder the owner's own); the brief delegated (*Delegate into a thread*); a step that fails rolls back what was done, in the work's name | R2 + R1 | as each building block asks | `UnknownPersonality`, `External`, `Forbidden` - what the access policy refused, without the rule -, `Failed` - the channel not reached answered as not found, as `channel_for` answers it |
+| Ask (`ask`) | the channel reached as above; the thread's delegation given by the work's agent (structural); delegated again (*Delegate into a thread*) | R1 | - | `NoSubAgent`, `Forbidden`, `Failed` |
+| End (`end`) | the channel reached as above; the thread's delegation given by the work's agent (structural); the sub-agent let go from the session by its owner's own act (`LeaveSession`, *Leave a session*), the thread closed by its opener (nothing asked), the agent deleted (`DeleteAgent`, T,1) - each only once the one before it is done | R1 | - | `NoSubAgent`, `Forbidden`, `Failed` |
 
 ### Attachments
 

@@ -17,7 +17,9 @@ use caelumora_api::workspace::WorkspaceError;
 use caelumora_domain::actor::{ActorEvent, ActorId, Rejection};
 use caelumora_domain::agent::{Agent, AgentId, Personality};
 use caelumora_domain::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
-use caelumora_domain::channel::{Channel, ChannelId, HistoryAccess, Participant, LEFT};
+use caelumora_domain::channel::{
+    Channel, ChannelId, HistoryAccess, Participant, ThreadId, ThreadOrigin, LEFT,
+};
 use caelumora_domain::command::CommandVisibility;
 use caelumora_domain::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::{Classification, Confidentiality};
@@ -25,6 +27,7 @@ use caelumora_domain::config::AppConfig;
 use caelumora_domain::content::ContentRef;
 use caelumora_domain::event::GlobalEvent;
 use caelumora_domain::group::{Group, GroupId, GroupUpdateEvent};
+use caelumora_domain::message::MessageId;
 use caelumora_domain::privacy::PrivacyConfig;
 use caelumora_domain::project::{Project, ProjectId, ProjectUpdateEvent};
 use caelumora_domain::query::Query;
@@ -322,7 +325,7 @@ async fn a_participant_takes_part_but_changes_nothing() {
         .send_message(Some("hello".to_string()), None, Vec::new())
         .await
         .expect("and writes into it");
-    main.cancel(&bob).await.expect("and may cancel what runs in it");
+    main.cancel(&bob, None).await.expect("and may cancel what runs in it");
 
     assert!(denied(&session.update_name(&bob, "his").await.expect_err("not his to rename")));
     assert!(
@@ -807,6 +810,131 @@ async fn taking_someone_in_is_for_whoever_may_change_the_session_and_the_channel
         "and takes part in the channel"
     );
     world.manager.stop(&alice, session.id()).await.unwrap();
+}
+
+/// Issue 557: whoever reads a channel opens a thread in it (`OpenThread`), founded with their own
+/// agents - taken into the session and the channel without the right to change either, so that a
+/// participant who does not own the session can start a sub-agent - and never with another's. A
+/// thread is closed by whoever opened it, or whoever may change the channel.
+#[tokio::test]
+async fn a_thread_is_opened_by_a_reader_with_their_own_and_closed_by_its_opener_or_owner() {
+    let answering = ScriptedAgents(Script::Answers("ok".to_string()));
+    let world = World::with(&[], &[&answering], |_| {}).await;
+    let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
+    let bobs_helper = ActorId::Agent(world.agent("bobs-helper", world.bob, &shared).await);
+    let session = world.shared_session(&[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
+    let line = ThreadOrigin { thread: ThreadId::line(main.id()), message: MessageId::new() };
+
+    let carol_id = ActorId::User(world.carol);
+    let (refused, asked) =
+        world.asked(session.open_thread(&bob, main.id(), line, vec![carol_id])).await;
+    assert!(denied(&refused.expect_err("carol is not bob's own")));
+    assert!(asked.contains(&"bob: OpenThread(alice's) yes".to_string()), "{asked:?}");
+    assert!(!session.session().takes_part(carol_id), "nothing was stored");
+
+    let (opened, asked) =
+        world.asked(session.open_thread(&bob, main.id(), line, vec![bobs_helper])).await;
+    let bobs = opened.expect("bob reads the channel and founds it with his own");
+    assert_eq!(asked.first().map(String::as_str), Some("bob: GetChannel(alice's) yes"));
+    assert!(
+        !asked.iter().any(|line| line.starts_with("bob: Update")),
+        "neither the session nor the channel is changed in his name: {asked:?}"
+    );
+    assert!(session.session().takes_part(bobs_helper), "his agent is in the session");
+
+    let (closed, asked) = world.asked(main.close_thread(&alice, bobs)).await;
+    let refused = closed.expect_err("someone takes part in it");
+    assert!(
+        matches!(refused.downcast_ref::<ChannelError>(), Some(ChannelError::ThreadNotEmpty { .. })),
+        "{refused}"
+    );
+    assert_eq!(asked, checks(&["alice: UpdateChannel(alice's) yes"]), "the channel's owner may");
+    session.leave(&bob, bobs_helper).await.expect("bob takes his agent out");
+    let (closed, asked) = world.asked(main.close_thread(&bob, bobs)).await;
+    assert!(closed.expect("his to close"), "closed");
+    assert_eq!(asked, checks(&[]), "whoever opened it is asked nothing");
+    let hers = session.open_thread(&alice, main.id(), line, vec![]).await.expect("alice's own");
+    let (refused, asked) = world.asked(main.close_thread(&bob, hers)).await;
+    assert!(denied(&refused.expect_err("neither his nor his channel to change")));
+    assert_eq!(asked, checks(&["bob: UpdateChannel(alice's) no"]), "asked as changing the channel");
+
+    let carol = World::as_user(world.carol);
+    let (refused, asked) = world.asked(session.open_thread(&carol, main.id(), line, vec![])).await;
+    let refused = refused.expect_err("carol does not read it");
+    assert!(
+        matches!(
+            refused.downcast_ref::<SessionError>(),
+            Some(SessionError::ChannelNotFound { .. })
+        ),
+        "answered as not there: {refused}"
+    );
+    assert!(!asked.iter().any(|line| line.contains("OpenThread")), "{asked:?}");
+    world.manager.stop(&alice, session.id()).await.unwrap();
+}
+
+/// Issue 557: whoever reads a channel delegates into a thread of it, in their own name - its brief
+/// given by the thread's delegate, which nothing asks again -, and nobody who does not read it.
+#[tokio::test]
+async fn a_brief_is_delegated_by_a_reader_of_the_channel_in_their_own_name() {
+    let answering = ScriptedAgents(Script::Answers("ok".to_string()));
+    let world = World::with(&[], &[&answering], |_| {}).await;
+    let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
+    let bobs_helper = ActorId::Agent(world.agent("bobs-helper", world.bob, &shared).await);
+    let session = world.shared_session(&[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let bob = World::as_user(world.bob);
+    let line = ThreadOrigin { thread: ThreadId::line(main.id()), message: MessageId::new() };
+    let thread = session.open_thread(&bob, main.id(), line, vec![bobs_helper]).await.unwrap();
+
+    let carol = World::as_user(world.carol);
+    let (refused, asked) =
+        world.asked(main.delegate(&carol, thread, bobs_helper, "mine".to_string())).await;
+    assert!(denied(&refused.expect_err("carol does not read the channel")));
+    assert_eq!(asked, checks(&["carol: GetChannel(alice's) no"]), "asked as reading it");
+
+    let (delegated, asked) =
+        world.asked(main.delegate(&bob, thread, bobs_helper, "look it up".to_string())).await;
+    delegated.expect("bob reads the channel");
+    assert_eq!(asked, checks(&["bob: GetChannel(alice's) yes"]), "and nothing else: {asked:?}");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// Issue 557: a thread is cancelled and woken under what cancelling and waking its channel ask - a
+/// thread is part of its channel -, asked first, before anything of the thread is looked at.
+#[tokio::test]
+async fn a_thread_is_cancelled_and_woken_as_its_channel_is() {
+    let answering = ScriptedAgents(Script::Answers("ok".to_string()));
+    let world = World::with(&[], &[&answering], |_| {}).await;
+    let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
+    let bobs_helper = ActorId::Agent(world.agent("bobs-helper", world.bob, &shared).await);
+    let session = world.shared_session(&[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let bob = World::as_user(world.bob);
+    let line = ThreadOrigin { thread: ThreadId::line(main.id()), message: MessageId::new() };
+    let thread = session.open_thread(&bob, main.id(), line, vec![bobs_helper]).await.unwrap();
+
+    let carol = World::as_user(world.carol);
+    let (refused, asked) = world.asked(main.cancel(&carol, Some(thread))).await;
+    assert!(denied(&refused.expect_err("carol may not cancel it")));
+    assert_eq!(asked, checks(&["carol: CancelChannel(alice's) no"]));
+    let (refused, asked) = world.asked(main.wakeup(&carol, Some(thread))).await;
+    assert!(denied(&refused.expect_err("nor wake it")));
+    assert_eq!(asked, checks(&["carol: WakeChannel(alice's) no"]));
+    let elsewhere = Some(ThreadId::new());
+    let refused = main.cancel(&carol, elsewhere).await.expect_err("nor any other");
+    assert!(denied(&refused), "refused before the thread is looked at: {refused}");
+    let refused = main.wakeup(&carol, elsewhere).await.expect_err("nor wake any other");
+    assert!(denied(&refused), "refused before the thread is looked at: {refused}");
+
+    let (cancelled, asked) = world.asked(main.cancel(&bob, Some(thread))).await;
+    cancelled.expect("bob may");
+    assert_eq!(asked, checks(&["bob: CancelChannel(alice's) yes"]));
+    let (woken, asked) = world.asked(main.wakeup(&bob, Some(thread))).await;
+    woken.expect("bob may");
+    assert_eq!(asked, checks(&["bob: WakeChannel(alice's) yes"]));
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// An agent is taken in only by who may read it (issue 14): nobody brings

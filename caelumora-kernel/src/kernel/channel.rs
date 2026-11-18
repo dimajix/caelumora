@@ -15,7 +15,6 @@ use caelumora_domain::actor::ActorId;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_domain::channel::Channel;
 use caelumora_domain::channel::ThreadId;
-#[cfg(any(test, feature = "test-support"))]
 use caelumora_domain::prompt_catalogue::PromptCatalogue;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_domain::session::Session;
@@ -186,11 +185,17 @@ impl ChannelRuntime {
     pub(crate) fn attachment_manager(&self) -> &Arc<AttachmentManager> {
         self.kernel.attachment_manager()
     }
+
+    /// The texts given to models (issue 57): what a delegate tells of what came of a brief (issue
+    /// 557), and what the views of a test read.
+    pub(crate) fn prompts(&self) -> &Arc<PromptCatalogue> {
+        self.kernel.prompts()
+    }
 }
 
 /// What the tests do with a channel's runtime past its own API: make one outside a session, and
-/// the runtime of a participant in it, and read the session's controller and the stores and texts
-/// the views of a test read.
+/// the runtime of a participant in it, and read the session's controller and the stores the views
+/// of a test read.
 #[cfg(any(test, feature = "test-support"))]
 impl ChannelRuntime {
     /// A runtime for `channel` of `session`, which is not running - in
@@ -240,10 +245,5 @@ impl ChannelRuntime {
     /// Where the transcripts of the agents' contexts are kept, for the tests' views.
     pub(crate) fn transcript_store(&self) -> &Arc<dyn TranscriptStore> {
         self.kernel.transcript_store()
-    }
-
-    /// The texts given to models (issue 57), for the tests' views.
-    pub(crate) fn prompts(&self) -> &Arc<PromptCatalogue> {
-        self.kernel.prompts()
     }
 }

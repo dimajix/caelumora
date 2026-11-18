@@ -496,6 +496,7 @@ dependencies = [
  "caelumora-store",
  "caelumora-store-json",
  "caelumora-store-postgres",
+ "caelumora-subagents",
  "caelumora-tool-attachment",
  "caelumora-tool-image",
  "caelumora-tool-mcp",
@@ -948,6 +949,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "caelumora-subagents"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "caelumora-agents",
+ "caelumora-api",
+ "caelumora-domain",
+ "caelumora-kernel",
+ "caelumora-security",
+ "caelumora-store",
+ "rand 0.10.3",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "caelumora-tool-attachment"
 version = "0.1.0"
 dependencies = [
@@ -1080,6 +1101,7 @@ dependencies = [
  "caelumora-store-home",
  "caelumora-store-json",
  "caelumora-store-postgres",
+ "caelumora-subagents",
  "caelumora-tool-attachment",
  "caelumora-tool-image",
  "caelumora-tool-mcp",

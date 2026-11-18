@@ -46,6 +46,7 @@ impl fmt::Display for ActorPath {
             ActorId::User(id) => write!(f, "User:{}", id.0),
             ActorId::Agent(id) => write!(f, "Agent:{}", id.0),
             ActorId::Approver(id) => write!(f, "Approver:{}", id.0),
+            ActorId::Delegate(id) => write!(f, "Delegate:{}", id.0),
             ActorId::System => f.write_str("System"),
             ActorId::None => f.write_str("None"),
         }

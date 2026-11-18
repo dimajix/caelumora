@@ -76,6 +76,10 @@ drawn in [CRATES.md](CRATES.md):
     is: the memory of each agent as a document of its kind, its keeper, the reader and the writer of
     an agent's work, and the component `agent_memory` (issue 518). See
     [MEMORY.md](MEMORY.md#agent-memory).
+*   **`caelumora-subagents`** - sub-agents, a plugin and a library built as `caelumora-memory` is:
+    the writer of an agent's work that starts an agent on a brief in a thread of its own, asks it
+    again and ends it, made of the kernel's threads and delegating, and the component `subagents`
+    with its tools (issue 558). See [TOOLS.md](TOOLS.md#sub-agents).
 *   **`caelumora-tool-mcp`** - the tools of MCP servers, a library that brings nothing but its
     component kind `mcp_server`, and with it `rmcp` (issue 325). See
     [TOOLS.md](TOOLS.md#mcp-servers).
@@ -162,10 +166,10 @@ lists of its kind one on `ChannelView`. Which plugins are in is the program's ch
 the model; the kernel knows none. A plugin is one crate; one that brings a library beside it is cut
 into layers by Cargo features rather than crates. The first is `caelumora-skills`
 ([SKILLS.md](SKILLS.md#where-the-code-lives)), the second `caelumora-artifacts`, which depends on
-the kernel's workspaces, the third `caelumora-memory`; `caelumora-decision` brings a component of a
-channel alone, and `caelumora-open-terminal`, `caelumora-store-json`, `caelumora-store-home` and
-`caelumora-store-postgres` bring backends alone. What runs an agent or serves its facets is no
-plugin but a **library** of the
+the kernel's workspaces, the third `caelumora-memory`, the fourth `caelumora-subagents`;
+`caelumora-decision` brings a component of a channel alone, and `caelumora-open-terminal`,
+`caelumora-store-json`, `caelumora-store-home` and `caelumora-store-postgres` bring backends alone.
+What runs an agent or serves its facets is no plugin but a **library** of the
 agent side (issue [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)), registered
 as a plugin is, but with a builder that offers nothing of the kernel (`Library`, `LibraryBuilder`).
 The agents are the essential one (issue 370): `caelumora-agents` registers the kinds of agent, whose
@@ -231,12 +235,14 @@ Details: [CONFIGURATION.md](CONFIGURATION.md#backends).
 A **session** is one piece of work, such as a conversation about a topic. It has participants -
 users and agents - and one or more **channels**, in which some of them talk. A channel is a chat
 room with its own history and its own classification. Its conversation is held in **threads** -
-so far one, its line -, each with its own **moderator**, which decides who is asked to respond to a
-message.
+its line, and threads opened at a message of another -, each with its own **moderator**, which
+decides who is asked to respond to a message.
 
 Everything that takes part in a channel is an **actor**: a user (`UserActor`), an agent
-(`AgentActor`), an agent that runs elsewhere (`ExternalAgentActor`), or the channel's approver
-(`ApproverActor`), which collects the users' decisions on tool calls that need approval. Actors
+(`AgentActor`), an agent that runs elsewhere (`ExternalAgentActor`), the channel's approver
+(`ApproverActor`), which collects the users' decisions on tool calls that need approval, or a
+thread's delegate (`DelegateActor`), which gives the recipient of what is delegated into its thread
+the brief and brings back what came of it. Actors
 communicate only through **envelopes** - an event with who sent it and in reply to what
 (`EventContext`); on whose authority it is checked (`SecurityContext`) the channel builds from the
 sender as it admits it.

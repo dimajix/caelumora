@@ -5,13 +5,15 @@ use super::{
     ActorChange, Actors, ChannelActor, ChannelError, ChannelLoop, ChannelParticipant,
     ResolvedParticipant, LEAVE_GRACE,
 };
-use anyhow::{anyhow, Error, Result};
+use anyhow::{Error, Result};
+use caelumora_api::actor::Actor;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::AgentId;
 use caelumora_domain::chain::Position;
 use caelumora_domain::channel::Channel;
 use caelumora_domain::channel::HistoryAccess;
 use caelumora_domain::channel::Participant;
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::command::CommandDescription;
 use caelumora_domain::mention::MentionDirectory;
 use caelumora_domain::question::{QuestionError, Questions};
@@ -24,23 +26,25 @@ use std::sync::Arc;
 use tokio::time;
 use tracing::{info, warn};
 
-/// How someone comes into a channel (`ChannelLoop::take_in`): the one way
-/// in, asked for in three ways.
+/// How someone comes into a channel (`ChannelLoop::take_in`) or a session (`SessionLoop::take_in`):
+/// the one way in, asked for in three ways.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Entry {
-    /// Added by whoever may change the channel (`UpdateChannel`).
+pub(crate) enum Entry {
+    /// Added by whoever may change the channel (`UpdateChannel`), or the session.
     Added,
-    /// By their own act, where the channel lets them join (`JOIN`).
+    /// By their own act, where the channel or the session lets them join (`JOIN`).
     Joining,
-    /// As a founder of a channel just created (issue 420), named by whoever
-    /// created it: creating it (`CreateChannel`) was what was asked.
+    /// As a founder of a channel just created (issue 420), named by whoever created it: creating
+    /// it (`CreateChannel`) was what was asked; or of a thread just opened (issue 557), named by
+    /// whoever opened it - whom they act for, or an agent of their own -: opening it
+    /// (`OpenThread`) was what was asked.
     Founding,
 }
 
 /// How someone goes out of a channel (`ChannelLoop::let_go`): the one way out, asked for in three
 /// ways.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Exit {
+pub(super) enum Exit {
     /// Removed by whoever may change the channel (`UpdateChannel`).
     Removed,
     /// By their own act, themselves or their own agent (`LeaveChannel`, issue 562).
@@ -74,7 +78,8 @@ impl ChannelLoop {
             "adding a participant to",
         )
         .await?;
-        self.take_in(context, participant, history, Entry::Added).await
+        let line = ThreadId::line(self.id);
+        self.take_in(context, participant, history, Entry::Added, line).await
     }
 
     /// Takes `participant` - a participant of the session, and whom `context` acts for: themselves,
@@ -87,7 +92,8 @@ impl ChannelLoop {
     /// # Errors
     /// `ChannelError::Forbidden` if they may not join; as [`Self::take_in`].
     pub(crate) async fn join(&self, context: &SecurityContext, participant: ActorId) -> Result<()> {
-        self.take_in(context, participant, HistoryAccess::All, Entry::Joining).await
+        let line = ThreadId::line(self.id);
+        self.take_in(context, participant, HistoryAccess::All, Entry::Joining, line).await
     }
 
     /// Takes `participant` - a participant of the session - into the channel as one of its founders
@@ -105,13 +111,14 @@ impl ChannelLoop {
         context: &SecurityContext,
         participant: ActorId,
     ) -> Result<()> {
-        self.take_in(context, participant, HistoryAccess::None, Entry::Founding).await
+        let line = ThreadId::line(self.id);
+        self.take_in(context, participant, HistoryAccess::None, Entry::Founding, line).await
     }
 
     /// Takes `participant` into the channel, on behalf of `context`, seeing as much of the history
-    /// as `history` grants, by the way `entry` says: joining is asked once the participant is
-    /// resolved, before anything in its name - whether it can run (`require_runnable`), where it
-    /// lies and whether it is cleared. Stored first (also asked as
+    /// as `history` grants, to take part in `thread` (issue 557), by the way `entry` says: joining
+    /// is asked once the participant is resolved, before anything in its name - whether it can run
+    /// (`require_runnable`), where it lies and whether it is cleared. Stored first (also asked as
     /// `ConfidentialityPolicy::cleared`), then its actor started (`start_participant`) - the
     /// addition rolled back if it cannot be, as the channel had them before
     /// (`ChannelController::roll_back_participant_addition`) - and the join announced, on the event
@@ -125,12 +132,13 @@ impl ChannelLoop {
     /// `ChannelError::NotInSession`, `OutOfScope`, `AlreadyParticipant`, `StillLeaving`,
     /// `NotCleared` or `Forbidden`; a `StoreError` if `context` may not change the channel,
     /// `PermissionDenied` for an agent that cannot run.
-    async fn take_in(
+    pub(super) async fn take_in(
         &self,
         context: &SecurityContext,
         participant: ActorId,
         history: HistoryAccess,
         entry: Entry,
+        thread: ThreadId,
     ) -> Result<()> {
         let _changing = self.changing.lock(participant).await;
         if self.actors.load().contains_key(&participant) {
@@ -175,7 +183,7 @@ impl ChannelLoop {
         };
         let before = self.channel.add_participant(&storing, found.clone()).await?;
 
-        if let Err(error) = self.start_participant(resolved, from, Some(context)).await {
+        if let Err(error) = self.start_participant(resolved, thread, from, Some(context)).await {
             // Stored, but it cannot run: the addition rolled back, as the channel had them before.
             if let Err(undo) =
                 self.channel.roll_back_participant_addition(participant, &before).await
@@ -259,7 +267,7 @@ impl ChannelLoop {
     /// need not list -, `Forbidden`; what resolving the one who leaves reports
     /// (`Participation::resolve`); a `StoreError` if `context` may not change the channel, where
     /// that is what is asked.
-    async fn let_go(
+    pub(super) async fn let_go(
         &self,
         context: &SecurityContext,
         participant: ActorId,
@@ -363,9 +371,10 @@ impl ChannelLoop {
                             return Ok(false);
                         };
                         self.participation.require_runnable(&resolved).await?;
-                        let from = self.rejoining_from(actor).await?;
+                        let (from, thread) = self.rejoining(actor).await?;
+                        let thread = self.open_or_line(Some(thread));
                         let joined = SecurityContext::system();
-                        self.start_participant(resolved, Some(from), Some(&joined)).await?;
+                        self.start_participant(resolved, thread, Some(from), Some(&joined)).await?;
                         Ok::<_, Error>(true)
                     }
                     .await;
@@ -388,17 +397,15 @@ impl ChannelLoop {
         }
     }
 
-    /// Starts the actor of `resolved` - the one way every actor of the
-    /// channel is started: as the channel is built (`ChannelLoop::new`), as
-    /// a participant is added or joins (`take_in`), as an agent is restored
-    /// (`follow_agents`). Once the actor it had before has ended (`left`),
-    /// built, taken in (`adopt`) and handed to `run` to start, which gives
-    /// it the part of the history it may see - from the position `from` on,
-    /// nothing if `None`: what is said from its start on -, records what it
-    /// was given and announces its join in the name of `joined`'s caller
-    /// (issues 408, 417, 423) - nothing if `None`, for an actor that starts
-    /// again with its channel. `take_in` waits for `left` before it stores
-    /// anything already; here it then finds nothing left to wait for.
+    /// Starts the actor of `resolved` to take part in `thread` (issue 557) - the one way every
+    /// actor of the channel is started: as the channel is built (`ChannelLoop::new`), as a
+    /// participant is added, joins or founds a thread (`take_in`), as an agent is restored
+    /// (`follow_agents`). Once the actor it had before has ended (`left`), built, taken in
+    /// (`adopt`) and handed to `run` to start, which gives it the part of the history it may see -
+    /// from the position `from` on, nothing if `None`: what is said from its start on -, records
+    /// what it was given and announces its join in the name of `joined`'s caller (issues 408, 417,
+    /// 423) - nothing if `None`, for an actor that starts again with its channel. `take_in` waits
+    /// for `left` before it stores anything already; here it then finds nothing left to wait for.
     ///
     /// # Errors
     /// `ChannelError::StillLeaving`, or what building the actor reports; it
@@ -406,15 +413,11 @@ impl ChannelLoop {
     pub(super) async fn start_participant(
         &self,
         resolved: ResolvedParticipant,
+        thread: ThreadId,
         from: Option<Position>,
         joined: Option<&SecurityContext>,
     ) -> Result<()> {
         self.left(resolved.actor_id()).await?;
-        // Where it takes part, decided once (issue 557): what its runtime speaks in, and what the
-        // channel delivers to it and asks it in.
-        let thread = resolved
-            .thread()
-            .ok_or_else(|| anyhow!("{} takes part in no channel", resolved.actor_id()))?;
         let actor = self.create_actor(&resolved, thread).await?;
         self.adopt(Arc::from(actor), resolved, thread, from, joined.cloned()).await;
         Ok(())
@@ -431,18 +434,25 @@ impl ChannelLoop {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .insert(participant, task);
+        self.drop_actor(participant, &actor, thread);
+        let leave = ActorChange::Leave(participant, name, remover.clone(), thread);
+        let _ = self.changes_tx.send(leave);
+    }
+
+    /// Takes `actor`, of `id`, out of the channel's actors, of `thread` it takes part in and of the
+    /// mentions, and makes it leave (`Actor::leave`): what letting it go means for the running
+    /// channel, a participant's actor (`leave_actor`) or a thread's delegate (`let_delegate_go`).
+    pub(super) fn drop_actor(&self, id: ActorId, actor: &Arc<dyn Actor>, thread: ThreadId) {
         self.actors.rcu(|actors| {
             let mut actors = HashMap::clone(actors);
-            actors.remove(&participant);
+            actors.remove(&id);
             actors
         });
-        if let Some(taking_part) = self.threads.get(&thread) {
-            taking_part.remove_actor(participant);
+        if let Some(taking_part) = self.thread(thread) {
+            taking_part.remove_actor(id);
         }
         self.rebuild_mentions();
         actor.leave();
-        let leave = ActorChange::Leave(participant, name, remover.clone(), thread);
-        let _ = self.changes_tx.send(leave);
     }
 
     /// Waits until the actor `participant` had in the channel before has
@@ -1054,17 +1064,7 @@ mod tests {
             channel: &ChannelLoop,
             wanted: fn(&HistoryEntry) -> bool,
         ) -> Vec<HistoryEntry> {
-            time::timeout(Duration::from_secs(5), async {
-                loop {
-                    let entries = channel.history_entries().await;
-                    if entries.last().is_some_and(wanted) {
-                        break entries;
-                    }
-                    time::sleep(Duration::from_millis(10)).await;
-                }
-            })
-            .await
-            .expect("recorded")
+            channel.history_once(|entries| entries.last().is_some_and(wanted)).await
         }
         async fn shown(watch: &mut ChannelWatch, wanted: fn(&ActorEvent) -> bool) -> Envelope {
             time::timeout(Duration::from_secs(5), async {

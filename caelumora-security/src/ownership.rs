@@ -33,7 +33,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 /// - Changing, deleting and stopping are the owner's alone, and so is reading what an
 ///   agent saw: its context holds more than the conversation - its system
 ///   prompt, internal steps, tool results.
-/// - Cancelling or waking a channel is allowed to whoever may read it.
+/// - Cancelling or waking a channel, and opening a thread in it, is allowed to whoever may read
+///   it.
 /// - Leaving a channel or a session (`LeaveChannel`, `LeaveSession`) is allowed to everybody,
 ///   asked in the context of the one who leaves: whether they are the caller's own is the
 ///   kernel's to ask.
@@ -192,6 +193,7 @@ impl AccessPolicy for OwnershipPolicy {
             ActionType::List(_) => true,
             ActionType::CancelChannel(a)
             | ActionType::WakeChannel(a)
+            | ActionType::OpenThread(a)
             | ActionType::RetryMessage(a)
             | ActionType::AnswerQuestion(a) => self.granted(a, Grant::Read, context).await,
             // What an agent can do is read by whoever reads the agent, and by
@@ -422,6 +424,16 @@ mod tests {
             !access_policy.check(&for_alice, ActionType::get(Session::KIND, &his)).await,
             "and hers alone"
         );
+    }
+
+    /// Issue 557: a thread is opened in a channel by whoever reads it, and by nobody else.
+    #[tokio::test]
+    async fn whoever_reads_a_channel_opens_a_thread_in_it() {
+        let (alice, bob, carol) = (user(), user(), user());
+        let hers = shared(alice, &[bob]);
+        assert!(allows(alice, ActionType::OpenThread(&hers)).await, "its owner");
+        assert!(allows(bob, ActionType::OpenThread(&hers)).await, "whom it is shared with");
+        assert!(!allows(carol, ActionType::OpenThread(&hers)).await, "not who does not read it");
     }
 
     #[tokio::test]

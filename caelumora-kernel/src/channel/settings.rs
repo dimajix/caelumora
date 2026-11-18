@@ -138,7 +138,7 @@ impl ChannelLoop {
         let lowered =
             !self.policies.confidentiality().may_publish(context, &channel, &classification);
         if lowered {
-            self.cancel_actors();
+            self.cancel_actors(None);
         }
         let mut state = self.state.lock().await;
         state.history.fit_into(&classification);

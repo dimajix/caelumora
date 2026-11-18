@@ -160,6 +160,15 @@ impl Filter<HistoryField> {
         ])
     }
 
+    /// What the view of a channel's line `line` shows `viewer` of its history (issue 557): what
+    /// happens in the line and in the whole channel, and of another thread a message heard that
+    /// mentions the viewer - as `Envelope::is_shown_in_line` shows it live; approvals and
+    /// questions, which a page never holds, aside.
+    pub fn shown_in_line(line: ThreadId, viewer: ActorId) -> Self {
+        let mentioning_viewer = Filter::all_of([Filter::heard(), Filter::mentioning(viewer)]);
+        Filter::any_of([Filter::in_thread(line), mentioning_viewer])
+    }
+
     /// A message mentioning `actor`.
     pub fn mentioning(actor: ActorId) -> Self {
         Filter::any(HistoryField::Mentions, Filter::eq(HistoryField::Element, actor))
@@ -208,6 +217,12 @@ impl Filter<HistoryField> {
                     ActorId::User(_) => while_taking_part(HistoryField::ToUsers, &positions),
                     ActorId::Agent(_) => while_taking_part(HistoryField::ToAgents, &in_its_thread),
                     ActorId::Approver(_) => Filter::eq(HistoryField::ToApprovers, true),
+                    // What goes to the users and happened in its thread or the whole channel
+                    // (`Recipients::reaches`).
+                    ActorId::Delegate(thread) => Filter::all_of([
+                        Filter::eq(HistoryField::ToUsers, true),
+                        Filter::in_thread(*thread),
+                    ]),
                     ActorId::System | ActorId::None => Filter::nothing(),
                 };
                 let reaching = Filter::Or(vec![

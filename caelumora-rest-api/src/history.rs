@@ -3,6 +3,7 @@
 use caelumora_domain::actor::{ActorId, Rejection, RequestReason, RetryTarget};
 use caelumora_domain::agent::RetryRefused;
 use caelumora_domain::chain::Position;
+use caelumora_domain::channel::{ThreadId, ThreadOrigin};
 use caelumora_domain::digest::Digest;
 use caelumora_domain::history::{HistoryEntry, HistoryField, HistoryPage};
 use caelumora_domain::message::{Message, MessageId};
@@ -17,7 +18,8 @@ use serde::{Deserialize, Serialize};
 /// 263) or how a turn ended, and whose it was. Written as an object named by its kind:
 /// `{"said": …}`, `{"plan_step_started": {…}}`, `{"turn_finished": {…}}`, `{"turn_given_up": {…}}`,
 /// `{"command_executed": {…}}`, `{"compacted": {…}}`, `{"withdrawn": {…}}`,
-/// `{"participant_joined": {…}}`, `{"participant_left": {…}}`, and the notices a reader was given
+/// `{"participant_joined": {…}}`, `{"participant_left": {…}}`, `{"given_to_read": {…}}`,
+/// `{"thread_opened": {…}}`, `{"thread_closed": {…}}`, and the notices a reader was given
 /// (issue 417): `{"command_failed": {…}}`, `{"retry_accepted": {…}}`, `{"retry_refused": {…}}`,
 /// `{"chain_cut_off": {…}}`, `{"responder_undecided": {…}}`, `{"event_rejected": {…}}`,
 /// `{"event_refused": {…}}`, `{"response_requested": {…}}`.
@@ -94,6 +96,30 @@ pub enum HistoryItemResponse<M> {
     ParticipantLeft {
         participant: ActorId,
         name: String,
+        by: ActorId,
+        by_name: String,
+        at: DateTime<Utc>,
+    },
+    /// `by`, the delegate of a thread, gave `recipient` `message` to read and asked it to respond
+    /// (issue 557): a brief, or what came of one given back; the message's sender is whoever gave
+    /// it.
+    GivenToRead {
+        recipient: ActorId,
+        by: ActorId,
+        message: M,
+        at: DateTime<Utc>,
+    },
+    /// The thread `thread` was opened at `origin` by `by`, called `by_name` then (issue 557).
+    ThreadOpened {
+        thread: ThreadId,
+        origin: ThreadOrigin,
+        by: ActorId,
+        by_name: String,
+        at: DateTime<Utc>,
+    },
+    /// The thread `thread` was closed by `by`, called `by_name` then (issue 557).
+    ThreadClosed {
+        thread: ThreadId,
         by: ActorId,
         by_name: String,
         at: DateTime<Utc>,
@@ -226,12 +252,11 @@ impl<M> HistoryItemResponse<M> {
             HistoryEntry::ActivityFinished { turn_id, actor, activity, output, at } => {
                 Some(Self::ActivityFinished { turn_id, actor, activity, output, at })
             }
-            HistoryEntry::ParticipantJoined { participant, name, by, by_name, at } => {
-                Some(Self::ParticipantJoined { participant, name, by, by_name, at })
-            }
-            HistoryEntry::ParticipantLeft { participant, name, by, by_name, at, .. } => {
-                Some(Self::ParticipantLeft { participant, name, by, by_name, at })
-            }
+            told @ (HistoryEntry::ParticipantJoined { .. }
+            | HistoryEntry::ParticipantLeft { .. }
+            | HistoryEntry::GivenToRead { .. }
+            | HistoryEntry::ThreadOpened { .. }
+            | HistoryEntry::ThreadClosed { .. }) => Self::told(told, said),
             HistoryEntry::CommandFailed { turn_id, actor, command, reason, to, at } => {
                 Some(Self::CommandFailed { turn_id, actor, command, reason, to, at })
             }
@@ -274,6 +299,31 @@ impl<M> HistoryItemResponse<M> {
             | HistoryEntry::QuestionClosed { .. } => None,
         }
     }
+
+    /// The item of `entry`, one the channel tells of who took part and what was given to read in
+    /// it (`of`): who joined or left (issue 408), what a thread's delegate gave to read, a thread
+    /// opened or closed (issue 557); its message given as `said` makes it.
+    fn told(entry: HistoryEntry, said: impl FnOnce(Message) -> M) -> Option<Self> {
+        match entry {
+            HistoryEntry::ParticipantJoined { participant, name, by, by_name, at } => {
+                Some(Self::ParticipantJoined { participant, name, by, by_name, at })
+            }
+            HistoryEntry::ParticipantLeft { participant, name, by, by_name, at, .. } => {
+                Some(Self::ParticipantLeft { participant, name, by, by_name, at })
+            }
+            HistoryEntry::GivenToRead { recipient, message, by, at } => {
+                Some(Self::GivenToRead { recipient, by, message: said(message), at })
+            }
+            HistoryEntry::ThreadOpened { thread, origin, by, by_name, at } => {
+                Some(Self::ThreadOpened { thread, origin, by, by_name, at })
+            }
+            HistoryEntry::ThreadClosed { thread, by, by_name, at } => {
+                Some(Self::ThreadClosed { thread, by, by_name, at })
+            }
+            // `of` hands the entries above alone.
+            _ => None,
+        }
+    }
 }
 
 /// How many items a page of a history holds unless asked for fewer or more.
@@ -283,8 +333,9 @@ const PAGE_ITEMS: usize = 50;
 const MAX_PAGE_ITEMS: usize = 200;
 
 /// Which page of a history to read (issue 218): `?before=<position>` - the `earlier` of the page
-/// after it; without it, the last page - and `&limit=<items>`; with `&attachments=true`, a page of
-/// the messages carrying attachments alone (issue 509).
+/// after it; without it, the last page - and `&limit=<items>`; with `&thread=<id>`, a page of one
+/// thread (issue 557); with `&attachments=true`, a page of the messages carrying attachments alone
+/// (issue 509).
 #[derive(Debug, Default, Deserialize)]
 pub struct HistoryQuery {
     #[serde(default)]
@@ -293,6 +344,11 @@ pub struct HistoryQuery {
     pub limit: Option<usize>,
     #[serde(default)]
     pub attachments: bool,
+    /// The thread whose page it is (issue 557), with what happens in the whole channel; if not
+    /// asked, what whoever reads the page reads by - every thread of an agent's history, the line's
+    /// view of the channel's.
+    #[serde(default)]
+    pub thread: Option<ThreadId>,
 }
 
 impl HistoryQuery {
@@ -302,9 +358,11 @@ impl HistoryQuery {
         self.limit.map_or(PAGE_ITEMS, |limit| limit.clamp(1, MAX_PAGE_ITEMS))
     }
 
-    /// The condition the page is read by: the messages carrying attachments, if asked for.
+    /// The condition the page is read by: the items of the thread and the messages carrying
+    /// attachments, as far as asked for.
     pub fn filter(&self) -> Option<Filter<HistoryField>> {
-        self.attachments.then(Filter::with_attachments)
+        let thread = self.thread.map(Filter::in_thread);
+        Filter::all_given([thread, self.attachments.then(Filter::with_attachments)])
     }
 }
 
@@ -361,6 +419,43 @@ mod tests {
         assert_eq!(
             HistoryQuery { attachments: true, ..Default::default() }.filter(),
             Some(Filter::with_attachments())
+        );
+        let thread = ThreadId::new();
+        assert_eq!(
+            HistoryQuery { thread: Some(thread), ..Default::default() }.filter(),
+            Some(Filter::in_thread(thread)),
+            "issue 557: a page of one thread"
+        );
+        assert_eq!(
+            HistoryQuery { thread: Some(thread), attachments: true, ..Default::default() }.filter(),
+            Some(Filter::all_of([Filter::in_thread(thread), Filter::with_attachments()]))
+        );
+    }
+
+    /// Issue 557: what came back from a thread and which threads were opened and closed are items,
+    /// named by their kind.
+    #[test]
+    fn what_came_back_from_a_thread_and_its_opening_and_closing_are_items() {
+        let thread = ThreadId::new();
+        let by = ActorId::Delegate(ThreadId::new());
+        let at = Utc::now();
+        let message = Message::new(Classification::CHANNEL_DEFAULT);
+        let kind_of = |entry| {
+            let item = HistoryItemResponse::of(entry, |m| m).expect("an item");
+            let json = serde_json::to_value(item).unwrap();
+            json.as_object().unwrap().keys().next().unwrap().clone()
+        };
+        let recipient = ActorId::default();
+        let given = HistoryEntry::GivenToRead { recipient, message, by, at };
+        assert_eq!(kind_of(given), "given_to_read");
+        let origin = ThreadOrigin { thread: ThreadId::new(), message: MessageId::new() };
+        let by_name = "lead".to_string();
+        let opened =
+            HistoryEntry::ThreadOpened { thread, origin, by, by_name: by_name.clone(), at };
+        assert_eq!(kind_of(opened), "thread_opened");
+        assert_eq!(
+            kind_of(HistoryEntry::ThreadClosed { thread, by, by_name, at }),
+            "thread_closed"
         );
     }
 

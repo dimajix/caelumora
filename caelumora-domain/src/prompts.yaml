@@ -20,6 +20,19 @@ given_by: |-
   {{ by }} gave you this to read:
   {{ text }}
 
+# What came of a brief delegated (issue 557) when the turn answering it said nothing, was given
+# up - why, `cause`, one of `given_up_cause` -, the brief could not be given, or its recipient left
+# before it answered: given back to the giver to read, as the recipient's, after who gave it
+# (`given_by`).
+delegation_unanswered: |-
+  It ended its turn without an answer.
+delegation_given_up: |-
+  Its turn was given up before it answered, because {{ cause }}.
+delegation_not_asked: |-
+  It could not be asked.
+delegation_left: |-
+  It left before it answered.
+
 # What a person did themselves in the channel (issue 587) - a command they ran in the workspace -,
 # as the others are given it in words: what they said with it, `text`, if anything, then each of
 # their `calls`, by its tool's `name`, its `arguments` as JSON, and what it answered, `result`, if

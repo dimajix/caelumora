@@ -6,6 +6,8 @@ use crate::here::HERE;
 use crate::id_prefix::{beginning_with, NotNamed};
 use crate::printed::Printed;
 use crate::typeable::Typeable;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::command::ParameterKind;
 use caelumora_domain::history::HistoryEntry;
 use caelumora_domain::message::Message;
@@ -97,7 +99,7 @@ impl Sessions {
         for session in self.of_directory().await? {
             let mut last: Option<Message> = None;
             for channel in session.channels().await {
-                if let Some(message) = last_heard(&channel).await {
+                if let Some(message) = last_heard(&channel, ActorId::User(self.owner)).await {
                     if last.as_ref().is_none_or(|last| message.timestamp > last.timestamp) {
                         last = Some(message);
                     }
@@ -368,10 +370,13 @@ fn newest_first(mut listed: Vec<Listed>) -> Vec<Listed> {
     listed
 }
 
-/// The last message heard in `channel` (`Filter::heard`), as its viewer reads it; `None` if
-/// nothing was said, or its history cannot be read - which is logged, and hides no session.
-async fn last_heard(channel: &ChannelView) -> Option<Message> {
-    match channel.history_page_of(None, 1, Some(Filter::heard())).await {
+/// The last message heard in `channel` (`Filter::heard`) that the view of its line shows `viewer`
+/// (`Filter::shown_in_line`, issue 557), as they read it; `None` if nothing was said, or its
+/// history cannot be read - which is logged, and hides no session.
+async fn last_heard(channel: &ChannelView, viewer: ActorId) -> Option<Message> {
+    let in_line = Filter::shown_in_line(ThreadId::line(channel.id()), viewer);
+    let heard = Filter::all_of([Filter::heard(), in_line]);
+    match channel.history_page_of(None, 1, Some(heard)).await {
         Ok(page) => page.items.into_iter().find_map(|(_, entry)| match entry {
             HistoryEntry::Said { message } => Some(message),
             _ => None,

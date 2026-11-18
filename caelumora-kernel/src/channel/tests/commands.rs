@@ -295,7 +295,7 @@ async fn a_nudge_wakes_the_agent_it_names_and_ends_a_quiet_channel() {
         start(scripted_channel(Script::Answers("Awake.".to_string())).await).await;
     answered(&mut events, agent).await;
     settled(&helper, ActorState::Idle).await;
-    channel.cancel(&context).await.expect("permitted");
+    channel.cancel(&context, None).await.expect("permitted");
 
     nudge(&channel, alice_of(&context), "helper").await.expect("/nudge runs");
 
@@ -307,7 +307,7 @@ async fn a_nudge_wakes_the_agent_it_names_and_ends_a_quiet_channel() {
         "asked, though the channel was quiet"
     );
     assert!(scripted(&helper).woken(), "and woken");
-    assert!(!channel.quiet.load(Ordering::SeqCst), "the channel is quiet no longer");
+    assert!(!channel.is_quiet(ThreadId::line(channel.id())), "its thread is quiet no longer");
     running.abort();
 }
 

@@ -510,16 +510,12 @@ impl Views {
 
     /// The personality named `name` that the viewer finds from `place` (issue 178): of those of
     /// that name they may read (`GetPersonality`), the innermost seen from there - what an agent
-    /// is made of by name (issue 555).
+    /// is made of by name (issue 555), by a command or a plugin's sub-agents (issue 558).
     ///
     /// # Errors
     /// `NoPersonalityNamed` if there is none they may read seen from there; `Failed` if the store
     /// cannot list them.
-    pub(crate) async fn personality_named(
-        &self,
-        name: &Name,
-        place: &Scope,
-    ) -> ViewResult<Personality> {
+    pub async fn personality_named(&self, name: &Name, place: &Scope) -> ViewResult<Personality> {
         let user = self.viewer.context().principal_id.as_user_id();
         let named = Filter::all_of([
             Filter::seen_from(place, user),
@@ -1036,11 +1032,11 @@ mod tests {
     use crate::testing::{Script, ScriptedAgents, TestKernel, World};
     use caelumora_api::error::AttachmentError;
     use caelumora_api::reader::{ChannelReader, SessionReader};
-    use caelumora_domain::actor::Rejection;
+    use caelumora_domain::actor::{EventContext, Rejection};
     use caelumora_domain::agent::testing::{make_personality, waiting_for_approval};
     use caelumora_domain::agent::{Agent, AgentChannelState, Personality, PersonalityKind};
     use caelumora_domain::channel::testing::{founded, main_channel};
-    use caelumora_domain::channel::{Channel, ChannelState, Participant};
+    use caelumora_domain::channel::{Channel, ChannelState, Participant, ThreadId};
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::context::{ContextItem, ContextRef};
     use caelumora_domain::history::{Audience, HistoryEntry, HistoryPage, Recorded};
@@ -1066,6 +1062,19 @@ mod tests {
     use std::slice;
     use std::time::Duration;
     use tokio::time;
+
+    /// `recorded`, of the line of `channel` - as what enters it in an envelope made for it is
+    /// (`EventContext::new`, issue 557), where a history built by hand names no thread.
+    fn in_line_of(channel: ChannelId, recorded: Recorded) -> Recorded {
+        let context = EventContext { thread_id: ThreadId::line(channel), ..recorded.context };
+        Recorded { context, ..recorded }
+    }
+
+    /// `message`, said by its sender in the line of `channel` (`in_line_of`).
+    fn said_in_line(channel: ChannelId, message: &Message) -> Recorded {
+        let said = HistoryEntry::Said { message: message.clone() };
+        in_line_of(channel, Recorded::new(said, message.sender_id, Audience::Everybody))
+    }
 
     /// All of the history `view` shows, as one page.
     async fn whole(view: &dyn ChannelReader) -> ViewResult<HistoryPage> {
@@ -1662,11 +1671,21 @@ mod tests {
             )
         };
         let mut state = ChannelState::new(channel.id);
-        state.history.enter(joined(&alice));
-        state.history.enter(joined(&dave));
-        state.history.push(hello.clone());
-        state.history.enter(joined(&bob));
-        state.history.extend(vec![hers.clone(), step.clone(), notice, asking.clone()]);
+        let in_line = |recorded| in_line_of(channel.id, recorded);
+        state.history.enter(in_line(joined(&alice)));
+        state.history.enter(in_line(joined(&dave)));
+        state.history.enter(said_in_line(channel.id, &hello));
+        state.history.enter(in_line(joined(&bob)));
+        for message in [&hers, &step, &notice, &asking] {
+            state.history.enter(said_in_line(channel.id, message));
+        }
+        // Said in another thread (issue 557): left out of the line's view but where it mentions the
+        // viewer, and counted there alone.
+        let aside = Message { mentions: vec![ActorId::User(bob.id)], ..said(&dave, "@bob, aside") };
+        let in_line = said_in_line(channel.id, &aside);
+        let thread_id = ThreadId::new();
+        let context = EventContext { thread_id, ..in_line.context };
+        state.history.enter(Recorded { context, ..in_line });
         manager.kernel().state_store().put_channel_state(channel.id, &mut state).await.unwrap();
 
         let unread_of = |viewer: &User| {
@@ -1682,12 +1701,13 @@ mod tests {
         assert_eq!(
             unread_of(&alice).await,
             unread(2, true, None),
-            "the others' words, not her own, bob's steps or the kernel's notices"
+            "the others' words in the line, not her own, bob's steps, the kernel's notices or what \
+             was said in another thread"
         );
         assert_eq!(
             unread_of(&bob).await,
-            unread(1, false, None),
-            "hers, from where his view begins"
+            unread(2, true, None),
+            "hers, from where his view begins, and what mentions him in another thread"
         );
         let without = manager
             .views(as_user(alice.id))
@@ -1697,6 +1717,14 @@ mod tests {
             .snapshot(Detail::empty())
             .await;
         assert_eq!(without.unread, None, "only where it is asked for");
+        let line = manager.views(as_user(alice.id)).channel(session.id, channel.id).await.unwrap();
+        let page = line.history_page(None, 20).await.unwrap();
+        let read: Vec<_> = page.entries().filter_map(HistoryEntry::said).map(|m| m.id).collect();
+        assert!(read.contains(&asking.id) && !read.contains(&aside.id), "a page of the line");
+        let his = manager.views(as_user(bob.id)).channel(session.id, channel.id).await.unwrap();
+        let page = his.history_page(None, 20).await.unwrap();
+        let read: Vec<_> = page.entries().filter_map(HistoryEntry::said).map(|m| m.id).collect();
+        assert!(read.contains(&aside.id), "with what mentions him in another thread");
 
         let controller = |user: &User| {
             let (manager, user) = (&manager, user.id);
@@ -1816,11 +1844,12 @@ mod tests {
             )
         };
         let mut state = ChannelState::new(channel.id);
-        state.history.enter(joined(alice_id));
-        state.history.push(first.clone());
-        state.history.enter(joined(ActorId::User(bob.id)));
-        state.history.enter(joined(ActorId::Agent(helper.id)));
-        state.history.push(second.clone());
+        let in_line = |recorded| in_line_of(channel.id, recorded);
+        state.history.enter(in_line(joined(alice_id)));
+        state.history.enter(said_in_line(channel.id, &first));
+        state.history.enter(in_line(joined(ActorId::User(bob.id))));
+        state.history.enter(in_line(joined(ActorId::Agent(helper.id))));
+        state.history.enter(said_in_line(channel.id, &second));
         kernel.state_store().put_channel_state(channel.id, &mut state).await.unwrap();
         // What the agent noted and saw.
         let mut agent_state = AgentChannelState::default();

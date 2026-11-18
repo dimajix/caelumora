@@ -495,6 +495,18 @@ mod tests {
                 ),
                 false,
             ),
+            (
+                "something given to read (issue 557), left for the turn's end",
+                hears(HearsFrom::All, hear),
+                in_authority_of(
+                    alice,
+                    ActorEvent::GivenToRead {
+                        recipient: ActorId::None,
+                        message: Message::new(Classification::CHANNEL_DEFAULT),
+                    },
+                ),
+                false,
+            ),
         ];
         for (what, hears, envelope, taken) in cases {
             assert_eq!(hears.takes(&work, &envelope), taken, "{what}");

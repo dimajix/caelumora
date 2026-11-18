@@ -142,6 +142,7 @@ mod tests {
             Some(RequestReason::Undecided),
             Some(RequestReason::Mentioned),
             Some(RequestReason::Nudged),
+            Some(RequestReason::Given),
             None,
         ] {
             assert_eq!(told(asked, &[SILENCE_TOOL_NAME]).await, "", "{asked:?}");

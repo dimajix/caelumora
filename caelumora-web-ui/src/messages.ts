@@ -1,13 +1,30 @@
 // Helpers for showing messages, shared by the chat and the context panel.
 
-import type {ActorId, GivenUpReason, HistoryItem, Message, PlanStep, Rejection, RetryRefused, TokenUsage, ToolCall, ToolPresentation, ToolResult, ToolVisibility} from './types';
+import type {ActorId, Envelope, GivenUpReason, HistoryItem, Message, PlanStep, Rejection, RetryRefused, TokenUsage, ToolCall, ToolPresentation, ToolResult, ToolVisibility} from './types';
 import {classificationLabel} from './confidentiality';
 import {actorKey, isSystem, sameActor} from './actor';
 import {handleOf} from './mention';
+import type {Said} from './globalEvents';
 
 /** Whether `message` was said by `me` (issue 407); one without a sender is no one's own. */
 export function isOwn(message: Message, me: ActorId): boolean {
   return message.sender_id !== undefined && sameActor(message.sender_id, me);
+}
+
+/**
+ * Whether a participant hears `message` when someone else said it, as the kernel's
+ * `Message::is_heard` says: said or answered in words or attachments, or calls a person made
+ * themselves - not a tool message, not a step of a plan.
+ */
+export function isHeard(message: Message): boolean {
+  const saysSomething = Boolean(message.content) || (message.attachments?.length ?? 0) > 0;
+  const personsCall = message.role === 'User' && (message.tool_calls?.length ?? 0) > 0;
+  return (message.role === 'User' || message.role === 'Assistant') && !message.internal && (saysSomething || personsCall);
+}
+
+/** Whether `message` mentions `me` - by name or as one of everyone. */
+export function mentions(message: Message, me: ActorId): boolean {
+  return (message.mentions ?? []).some(mentioned => sameActor(mentioned, me));
 }
 
 export function formatArguments(args: unknown): string {
@@ -377,13 +394,72 @@ export function participantNotice(change: 'joined' | 'left', participant: ActorI
 }
 
 /**
+ * The notice that `byName` opened or closed the thread `thread` (issue 557), as the chat shows it -
+ * live and from the history alike, named for the thread so that it is shown once. What is said in
+ * the thread is left out of the line.
+ */
+export function threadNotice(change: 'opened' | 'closed', thread: string, by: ActorId, byName: string, at: string): Message {
+  return {
+    id: `thread-${change}:${thread}`,
+    role: 'System',
+    content: `${named(byName)} has ${change} a thread`,
+    sender_id: by,
+    sender_name: byName,
+    timestamp: at,
+  };
+}
+
+/**
+ * The chat's messages for `message`, given back to read from a thread (issue 557): a notice that
+ * it came back, and the message itself - both kept once by the message's id.
+ */
+export function givenBack(message: Message): Message[] {
+  const notice: Message = {
+    id: `given-back:${message.id}`,
+    role: 'System',
+    content: 'Given back to read from a thread:',
+    timestamp: message.timestamp,
+  };
+  return [notice, message];
+}
+
+/**
+ * Whether the line's view of a channel shows `envelope` to `me` (issue 557), as the kernel's
+ * `Envelope::is_shown_in_line` says: what happens in the line - whose id is the channel's - or in
+ * the whole channel, and of every other thread its approvals and its questions, which its calls
+ * wait for, and a message that mentions `me`. Of those the events a user is delivered alone; what
+ * happens in the whole channel known by its kind, since an event names only its context's thread.
+ */
+export function isShownInLine(envelope: Envelope, me: ActorId): boolean {
+  const event = envelope.event;
+  if (envelope.context.thread_id === envelope.context.channel_id) return true;
+  if (typeof event === 'string') return false;
+  const waitedFor = event.ApprovalRequested || event.ApprovalAnswered || event.ApprovalGranted || event.ApprovalDenied
+    || event.ApprovalTimedOut || event.ApprovalRequestWithdrawn || event.QuestionRequested || event.QuestionClosed;
+  const ofWholeChannel = event.ThreadOpened || event.ThreadClosed || event.MessageModified || event.MessageRevoked
+    || event.MessageReclassified;
+  const said = event.CompleteMessageGenerated;
+  const mentionsMe = said !== undefined && isHeard(said) && mentions(said, me);
+  return Boolean(waitedFor || ofWholeChannel || mentionsMe);
+}
+
+/**
+ * Whether the line's view of its channel shows `said` to `me` (issue 557): a message announced as
+ * said in the line, or one that mentions `me` in another thread - as `isShownInLine` shows it live.
+ */
+export function isSaidInLine(said: Said, me: ActorId): boolean {
+  return said.thread === said.channelId || mentions(said.message, me);
+}
+
+/**
  * The chat's messages for `items` of a channel's history (issue 258): each
  * message said, the mark of each step of a plan begun (issue 263), the
  * notice of a turn given up, that of a command carried out or not (issue
  * 269), that of what an agent did of its own accord (issue 284) - whose, as
  * `nameOf` names them -, that of who joined or left (issue 408), named as
- * they were then, and the notices the reader was given (issue 417). A turn
- * that finished, and an agent answering again, show nothing of their own.
+ * they were then, the notices the reader was given (issue 417), what came
+ * back from a thread and which threads were opened and closed (issue 557). A
+ * turn that finished, and an agent answering again, show nothing of their own.
  */
 export function chatMessages(items: HistoryItem<Message>[], nameOf: (actor: ActorId) => string | undefined): Message[] {
   return items.flatMap((item): Message[] => {
@@ -440,6 +516,15 @@ export function chatMessages(items: HistoryItem<Message>[], nameOf: (actor: Acto
     if ('participant_left' in item) {
       const {participant, name, by, by_name, at} = item.participant_left;
       return [participantNotice('left', participant, name, by, by_name, at)];
+    }
+    if ('given_to_read' in item) return givenBack(item.given_to_read.message);
+    if ('thread_opened' in item) {
+      const {thread, by, by_name, at} = item.thread_opened;
+      return [threadNotice('opened', thread, by, by_name, at)];
+    }
+    if ('thread_closed' in item) {
+      const {thread, by, by_name, at} = item.thread_closed;
+      return [threadNotice('closed', thread, by, by_name, at)];
     }
     return [];
   });

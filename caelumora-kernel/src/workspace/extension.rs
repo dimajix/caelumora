@@ -33,7 +33,7 @@ impl UsableWorkspace {
     /// reading the workspace failed, which is logged.
     pub(crate) async fn of_work(session: &SessionView) -> Option<Self> {
         let at = session.views().viewer().place()?.channel;
-        let controller = session.running()?.workspace().ok()?;
+        let controller = session.session_loop()?.workspace().ok()?;
         let channel = session.channel(at).await.ok()?;
         let workspace = match channel.workspace().await {
             Ok(workspace) => workspace?,
@@ -94,7 +94,7 @@ impl WorkspaceUse {
         let views = session.views();
         Some(Self {
             context: views.context().clone(),
-            session: Arc::clone(session.running()?),
+            session: Arc::clone(session.session_loop()?),
             channel: views.viewer().place()?.channel,
         })
     }

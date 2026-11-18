@@ -7,6 +7,7 @@ use super::{ActorId, ActorState};
 use crate::agent::{AgentId, RetryRefused};
 use crate::approval::{ApprovalDecision, ApprovalId, ApprovalRequest, ApprovalVerdict};
 use crate::chain::Position;
+use crate::channel::{ThreadId, ThreadOrigin};
 use crate::confidentiality::Classification;
 use crate::digest::Digest;
 use crate::message::{Message, MessageId};
@@ -159,8 +160,8 @@ pub enum ActorEvent {
     /// only the moderator asks for a response. The envelope's sender is the
     /// user, its security context theirs, so an agent's turn acts with their
     /// authority, as after a message of theirs; a user is shown the request.
-    /// It is deliberate, as a `/wakeup` is: the channel ends being quiet,
-    /// and an agent is woken as anyone the moderator asks is. Never written
+    /// It is deliberate, as a `/wakeup` is: its thread ends being quiet
+    /// (issue 557), and an agent is woken as anyone the moderator asks is. Never written
     /// to the history, never shown itself: what remains of it is the answer.
     NudgeRequested {
         participant: ActorId,
@@ -269,6 +270,19 @@ pub enum ActorEvent {
         by: ActorId,
         by_name: String,
     },
+    /// The thread `thread` was opened at `origin` (issue 557). The envelope's sender is who opened
+    /// it. Sent by the channel alone, before anyone founding it joins it, and in no thread but the
+    /// whole channel's: recorded in its history (`HistoryEntry::ThreadOpened`) and told to its
+    /// users, whose frontends sort what happens by thread; an agent takes no note of it.
+    ThreadOpened {
+        thread: ThreadId,
+        origin: ThreadOrigin,
+    },
+    /// The thread `thread` was closed (issue 557): nothing more is said in it. The envelope's
+    /// sender is who closed it. Sent, recorded and told as `ThreadOpened` is.
+    ThreadClosed {
+        thread: ThreadId,
+    },
     /// A chain between agents reached its limit (issue 200): the response
     /// ending in `message` was delivered, but it made nobody respond, since
     /// that would have been more than `max_agent_hops` hops since the last
@@ -358,6 +372,16 @@ pub enum ActorEvent {
     MessageGiven {
         message: Message,
     },
+    /// The delegate of a thread gives `recipient` `message` to read and asks it to respond (issue
+    /// 557): the message's sender is whoever gives it, a participant of the channel, not the
+    /// delegate that sends the event; given, not said, it is no message the event carries
+    /// (`messages`). Recorded to the recipient by name and published to the users; no other agent
+    /// hears it. The moderator asks the recipient alone to respond, as for a nudge
+    /// (`RequestReason::Given`), and the recipient takes it in as given to it (`MessageGiven`).
+    GivenToRead {
+        recipient: ActorId,
+        message: Message,
+    },
     /// The agent no longer has `message` to read, given to it before
     /// (`MessageGiven`), from `at` on (issue 537) - a prompt part that no
     /// longer holds -, as its transcript records it: sent by the agent
@@ -418,6 +442,9 @@ pub enum RequestReason {
     Nudged,
     /// What it responds to mentions it, by its handle or with `@all`.
     Mentioned,
+    /// It was given something to read (`GivenToRead`, issue 557): the strongest reason, since a
+    /// delegate asks it for what came of a brief, and waits for nothing else.
+    Given,
 }
 
 /// What a request to answer again is about (issue 235).
@@ -462,6 +489,9 @@ impl ActorEvent {
                 publish(m, ActorEvent::IntermediateMessageGenerated)
             }
             ActorEvent::MessageModified(m) => publish(m, ActorEvent::MessageModified),
+            ActorEvent::GivenToRead { recipient, message } => {
+                message.published().map(|message| ActorEvent::GivenToRead { recipient, message })
+            }
             ActorEvent::TurnFinished { turn_id, messages } => Some(ActorEvent::TurnFinished {
                 turn_id,
                 messages: messages.iter().filter_map(Message::published).collect(),
@@ -471,6 +501,62 @@ impl ActorEvent {
             | ActorEvent::MessageWithdrawn { .. }
             | ActorEvent::ContextCompacted { .. } => None,
             other => Some(other),
+        }
+    }
+
+    /// Whether a call waits for it (issue 557): an approval or a question, from its request to its
+    /// end - what a frontend shows of a thread other than the one it shows
+    /// (`Envelope::is_shown_in_line`).
+    pub fn is_waited_for(&self) -> bool {
+        match self {
+            ActorEvent::ApprovalRequested(_)
+            | ActorEvent::ApprovalAnswered { .. }
+            | ActorEvent::ApprovalGranted(_)
+            | ActorEvent::ApprovalDenied(_)
+            | ActorEvent::ApprovalTimedOut(_)
+            | ActorEvent::ApprovalRequestWithdrawn { .. }
+            | ActorEvent::QuestionRequested(_)
+            | ActorEvent::QuestionAnswered { .. }
+            | ActorEvent::QuestionDeclined { .. }
+            | ActorEvent::QuestionClosed { .. } => true,
+            ActorEvent::PartialMessageGenerated(_)
+            | ActorEvent::IntermediatePartialGenerated(_)
+            | ActorEvent::StateChanged(_)
+            | ActorEvent::ResponseStarted { .. }
+            | ActorEvent::CommandStarted { .. }
+            | ActorEvent::ActivityStarted { .. }
+            | ActorEvent::PlanStepFinished { .. }
+            | ActorEvent::WakeupRequested
+            | ActorEvent::NudgeRequested { .. }
+            | ActorEvent::ResponseRequested { .. }
+            | ActorEvent::CompleteMessageGenerated(_)
+            | ActorEvent::TurnFinished { .. }
+            | ActorEvent::IntermediateMessageGenerated(_)
+            | ActorEvent::PlanStepStarted { .. }
+            | ActorEvent::TurnGivenUp { .. }
+            | ActorEvent::CommandRequested { .. }
+            | ActorEvent::CommandExecuted { .. }
+            | ActorEvent::CommandFailed { .. }
+            | ActorEvent::ActivityFinished { .. }
+            | ActorEvent::ParticipantJoined { .. }
+            | ActorEvent::ParticipantLeft { .. }
+            | ActorEvent::HistoryShared { .. }
+            | ActorEvent::ThreadOpened { .. }
+            | ActorEvent::ThreadClosed { .. }
+            | ActorEvent::MessageModified(_)
+            | ActorEvent::MessageRevoked { .. }
+            | ActorEvent::MessageReclassified { .. }
+            | ActorEvent::RetryRequested { .. }
+            | ActorEvent::RetryAccepted { .. }
+            | ActorEvent::RetryRefused { .. }
+            | ActorEvent::ChainCutOff { .. }
+            | ActorEvent::ResponderUndecided { .. }
+            | ActorEvent::EventRejected { .. }
+            | ActorEvent::EventRefused { .. }
+            | ActorEvent::MessageGiven { .. }
+            | ActorEvent::GivenToRead { .. }
+            | ActorEvent::MessageWithdrawn { .. }
+            | ActorEvent::ContextCompacted { .. } => false,
         }
     }
 
@@ -514,6 +600,8 @@ impl ActorEvent {
             | ActorEvent::ParticipantJoined { .. }
             | ActorEvent::ParticipantLeft { .. }
             | ActorEvent::HistoryShared { .. }
+            | ActorEvent::ThreadOpened { .. }
+            | ActorEvent::ThreadClosed { .. }
             | ActorEvent::MessageModified(_)
             | ActorEvent::MessageRevoked { .. }
             | ActorEvent::MessageReclassified { .. }
@@ -526,13 +614,15 @@ impl ActorEvent {
             | ActorEvent::EventRefused { .. }
             | ActorEvent::ApprovalAnswered { .. }
             | ActorEvent::MessageGiven { .. }
+            | ActorEvent::GivenToRead { .. }
             | ActorEvent::MessageWithdrawn { .. }
             | ActorEvent::ContextCompacted { .. } => false,
         }
     }
 
     /// The message the event is or is about, if any: a message said, or one it changes, takes back,
-    /// reclassifies or asks to be answered again - what a rejection of it names (`EventRejected`).
+    /// reclassifies, asks to be answered again or gives to read - what a rejection of it names
+    /// (`EventRejected`).
     pub fn subject_message(&self) -> Option<MessageId> {
         match self {
             ActorEvent::PartialMessageGenerated(m)
@@ -545,6 +635,7 @@ impl ActorEvent {
             ActorEvent::RetryRequested { target: RetryTarget::Message(message), .. } => {
                 Some(*message)
             }
+            ActorEvent::GivenToRead { message, .. } => Some(message.id),
             _ => None,
         }
     }
@@ -565,7 +656,7 @@ impl ActorEvent {
 
     /// Whether it is the channel's own word, which no actor sends: who
     /// joined or left (issue 408), what a newcomer was given of the history
-    /// (issue 417). It reaches whose name it is told in,
+    /// (issue 417), a thread opened or closed (issue 557). It reaches whose name it is told in,
     /// too - nothing of theirs is echoed back to them.
     pub fn is_announcement(&self) -> bool {
         matches!(
@@ -573,6 +664,8 @@ impl ActorEvent {
             ActorEvent::ParticipantJoined { .. }
                 | ActorEvent::ParticipantLeft { .. }
                 | ActorEvent::HistoryShared { .. }
+                | ActorEvent::ThreadOpened { .. }
+                | ActorEvent::ThreadClosed { .. }
         )
     }
 
@@ -621,6 +714,8 @@ impl ActorEvent {
             ActorEvent::ParticipantJoined { .. } => "ParticipantJoined",
             ActorEvent::ParticipantLeft { .. } => "ParticipantLeft",
             ActorEvent::HistoryShared { .. } => "HistoryShared",
+            ActorEvent::ThreadOpened { .. } => "ThreadOpened",
+            ActorEvent::ThreadClosed { .. } => "ThreadClosed",
             ActorEvent::ChainCutOff { .. } => "ChainCutOff",
             ActorEvent::ResponderUndecided { .. } => "ResponderUndecided",
             ActorEvent::MessageModified(_) => "MessageModified",
@@ -632,6 +727,7 @@ impl ActorEvent {
             ActorEvent::EventRejected { .. } => "EventRejected",
             ActorEvent::EventRefused { .. } => "EventRefused",
             ActorEvent::MessageGiven { .. } => "MessageGiven",
+            ActorEvent::GivenToRead { .. } => "GivenToRead",
             ActorEvent::MessageWithdrawn { .. } => "MessageWithdrawn",
             ActorEvent::ContextCompacted { .. } => "ContextCompacted",
         }
@@ -660,6 +756,9 @@ pub enum Rejection {
     /// The message it is about was taken back, or cannot be changed so.
     #[error("the message it is about was taken back or cannot be changed so")]
     MessageUnchangeable,
+    /// Sent into a thread that was closed (issue 557): nothing more is said in it.
+    #[error("the thread it is sent into is closed")]
+    ThreadClosed,
     /// It does not fit the channel as it is: sent in another's name, about
     /// someone who takes no part, in a thread the channel does not have
     /// (issue 557), or asking what cannot be asked.

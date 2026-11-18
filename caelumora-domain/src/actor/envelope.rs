@@ -139,6 +139,23 @@ impl Envelope {
         }
     }
 
+    /// Whether a frontend shows it to `viewer` in the view of its channel's line (issue 557): what
+    /// happens in the line or in the whole channel (`thread`), and of every other thread its
+    /// approvals and its questions, which its calls wait for (`ActorEvent::is_waited_for`), and a
+    /// message heard that mentions the viewer - as a page of the line holds them
+    /// (`Filter::shown_in_line`).
+    pub fn is_shown_in_line(&self, viewer: ActorId) -> bool {
+        let line = ThreadId::line(self.context.channel_id);
+        let mentions_viewer = matches!(
+            &self.event,
+            ActorEvent::CompleteMessageGenerated(message)
+                if message.is_heard() && message.mentions.contains(&viewer)
+        );
+        self.event.is_waited_for()
+            || mentions_viewer
+            || self.thread().is_none_or(|thread| thread == line)
+    }
+
     /// What a channel's history records of this envelope (issue 417): a
     /// message said, a step of it included (issue 258); how a turn ended;
     /// where a step of its plan began (issue 263); a command carried out,
@@ -168,6 +185,12 @@ impl Envelope {
             ActorEvent::MessageGiven { message } => {
                 HistoryEntry::Given { message: message.clone() }
             }
+            ActorEvent::GivenToRead { recipient, message } => HistoryEntry::GivenToRead {
+                recipient: *recipient,
+                message: message.clone(),
+                by: actor,
+                at,
+            },
             ActorEvent::ContextCompacted { turn_id, from, to } => {
                 HistoryEntry::Compacted { turn_id: *turn_id, actor, from: *from, to: *to, at }
             }
@@ -284,6 +307,19 @@ impl Envelope {
                     at,
                 }
             }
+            ActorEvent::ThreadOpened { thread, origin } => HistoryEntry::ThreadOpened {
+                thread: *thread,
+                origin: *origin,
+                by: actor,
+                by_name: self.context.sender_name.clone(),
+                at,
+            },
+            ActorEvent::ThreadClosed { thread } => HistoryEntry::ThreadClosed {
+                thread: *thread,
+                by: actor,
+                by_name: self.context.sender_name.clone(),
+                at,
+            },
             ActorEvent::MessageModified(modified) => {
                 HistoryEntry::Modified { message: modified.clone() }
             }
@@ -574,6 +610,24 @@ impl Envelope {
                     ctx.sender_id, participant, from, by
                 )
             }
+            ActorEvent::ThreadOpened { thread, origin } => {
+                format!(
+                    "ThreadOpened(sender_id={}, sender_name={}, thread={}, origin={}/{})",
+                    ctx.sender_id, ctx.sender_name, thread, origin.thread, origin.message
+                )
+            }
+            ActorEvent::ThreadClosed { thread } => {
+                format!(
+                    "ThreadClosed(sender_id={}, sender_name={}, thread={})",
+                    ctx.sender_id, ctx.sender_name, thread
+                )
+            }
+            ActorEvent::GivenToRead { recipient, message } => {
+                format!(
+                    "GivenToRead(sender_id={}, recipient={}, giver={}, mid={})",
+                    ctx.sender_id, recipient, message.sender_id, message.id
+                )
+            }
             ActorEvent::ChainCutOff { message, max_agent_hops, not_asked } => {
                 format!(
                     "ChainCutOff(sender_id={}, message={}, max_agent_hops={}, not_asked={})",
@@ -643,10 +697,14 @@ mod tests {
     use super::*;
     use crate::actor::{ActorState, Rejection, RequestReason, RetryTarget};
     use crate::agent::{AgentId, RetryRefused};
+    use crate::approval::testing::make_approval_request;
     use crate::approval::ApproverId;
+    use crate::channel::ThreadOrigin;
     use crate::confidentiality::Classification;
+    use crate::history::{Audience, KeptItem, Recorded};
     use crate::message::testing::{id, make_message};
     use crate::message::{Message, MessageId, MessageRole};
+    use crate::query::Filter;
     use crate::question::QuestionId;
     use crate::tool::testing::make_tool_call;
     use crate::turn::GivenUpReason;
@@ -667,6 +725,78 @@ mod tests {
         let in_other = EventContext { thread_id: other, ..said };
         let answer = in_other.next(ActorId::Agent(AgentId::new()), "bob");
         assert_eq!(answer.thread_id, other, "what follows stays in the thread");
+    }
+
+    /// Issue 557: the line's view shows what happens in the line and in the whole channel, and of
+    /// another thread its approvals and questions and what mentions the viewer alone.
+    #[test]
+    fn the_lines_view_shows_of_another_thread_what_waits_or_mentions_the_viewer() {
+        let (session, channel) = (SessionId::new(), ChannelId::new());
+        let agent = AgentId::new();
+        let in_line = EventContext::new(session, channel, ActorId::Agent(agent), "bob");
+        let other = ThreadId::new();
+        let in_other = EventContext { thread_id: other, ..in_line.clone() };
+        let viewer = ActorId::User(UserId::new());
+        let shown = |context: &EventContext, event: ActorEvent| {
+            let envelope = Envelope { timestamp: Utc::now(), context: context.clone(), event };
+            envelope.is_shown_in_line(viewer)
+        };
+        let said = || ActorEvent::CompleteMessageGenerated(make_message(MessageId::new()));
+        assert!(shown(&in_line, said()));
+        assert!(!shown(&in_other, said()), "said in another thread");
+        let mentioning = Message { mentions: vec![viewer], ..make_message(MessageId::new()) };
+        let mentioning = ActorEvent::CompleteMessageGenerated(mentioning);
+        assert!(shown(&in_other, mentioning), "mentioning the viewer");
+        let step =
+            Message { internal: true, mentions: vec![viewer], ..make_message(MessageId::new()) };
+        let step = ActorEvent::IntermediateMessageGenerated(step);
+        assert!(!shown(&in_other, step), "a step of a plan is not heard");
+        let origin = ThreadOrigin { thread: ThreadId::line(channel), message: MessageId::new() };
+        let opened = ActorEvent::ThreadOpened { thread: other, origin };
+        assert!(shown(&in_other, opened), "of the whole channel");
+        let request = make_approval_request(session, channel, agent);
+        assert!(shown(&in_other, ActorEvent::ApprovalRequested(request)), "its call waits");
+    }
+
+    /// Issue 557: what the line's view shows live of a message is what a page of the line holds of
+    /// it (`Filter::shown_in_line`) - said in the line or in another thread, mentioning the viewer
+    /// or not, heard or a step of a plan.
+    #[test]
+    fn the_lines_view_shows_live_what_a_page_of_it_holds() {
+        let (session, channel) = (SessionId::new(), ChannelId::new());
+        let sender = ActorId::Agent(AgentId::new());
+        let viewer = ActorId::User(UserId::new());
+        let line = ThreadId::line(channel);
+        let page = Filter::shown_in_line(line, viewer);
+        for thread_id in [line, ThreadId::new()] {
+            for (internal, mentions) in
+                [(false, vec![]), (false, vec![viewer]), (true, vec![viewer])]
+            {
+                let message = Message {
+                    sender_id: sender,
+                    internal,
+                    mentions,
+                    ..make_message(MessageId::new())
+                };
+                let event = match internal {
+                    true => ActorEvent::IntermediateMessageGenerated(message),
+                    false => ActorEvent::CompleteMessageGenerated(message),
+                };
+                let context = EventContext {
+                    thread_id,
+                    ..EventContext::new(session, channel, sender, "bob")
+                };
+                let envelope = Envelope::new(context, event);
+                let recorded = Recorded::of(&envelope, sender, Audience::Everybody).unwrap();
+                let kept = serde_json::to_value(KeptItem::of(Position::START, recorded)).unwrap();
+                assert_eq!(
+                    envelope.is_shown_in_line(viewer),
+                    page.matches(&kept),
+                    "{:?}",
+                    envelope.event
+                );
+            }
+        }
     }
 
     /// A channel's participants to deliver to: two agents, two users, an

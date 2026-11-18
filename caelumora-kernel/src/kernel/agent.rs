@@ -154,7 +154,7 @@ impl AgentRuntime {
                 ResolvedKind::Agent(agent, personality) => {
                     (Arc::clone(agent), Arc::clone(personality))
                 }
-                ResolvedKind::User(_) | ResolvedKind::Approver(_) => {
+                ResolvedKind::User(_) | ResolvedKind::Approver(_) | ResolvedKind::Delegate(_) => {
                     panic!("{} takes part as no agent", participant.actor)
                 }
             },

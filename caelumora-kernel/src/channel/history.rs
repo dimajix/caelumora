@@ -93,25 +93,28 @@ impl ChannelLoop {
         })
     }
 
-    /// The position from which on `participant`, a participant before - an
-    /// agent restored, which rested in the channel (issue 314) -, is given
-    /// the history as it takes part again: where its last range of
-    /// attendance began, as when it joined (issue 417); all of it if it
-    /// never took part.
+    /// Where `participant`, a participant before - an agent restored, which rested in the channel
+    /// (issue 314) -, takes part again: the position from which on it is given the history, where
+    /// its last range of attendance began, as when it joined (issue 417), and the thread of that
+    /// range (issue 557); all of the history, in the line, if it never took part.
     ///
     /// # Errors
     /// If the store cannot be read.
-    pub(crate) async fn rejoining_from(&self, participant: ActorId) -> StoreResult<Position> {
+    pub(crate) async fn rejoining(
+        &self,
+        participant: ActorId,
+    ) -> StoreResult<(Position, ThreadId)> {
         Ok(self
             .history_store
             .attendance(self.id, participant)
             .await?
             .last()
-            .map_or(Position::START, |at| at.range.start))
+            .map_or((Position::START, ThreadId::line(self.id)), |at| (at.range.start, at.thread)))
     }
 
     /// Who takes part in the channel's history now, and in which thread: whoever has a range of
-    /// attendance still open (`HistoryStore::attending`); nobody if it cannot be read, which is
+    /// attendance still open (`HistoryStore::attending`) - what the channel builds its threads and
+    /// starts its actors by, and reconciles, as it is built; nobody if it cannot be read, which is
     /// logged.
     pub(super) async fn attending(&self) -> HashMap<ActorId, ThreadId> {
         self.history_store.attending(self.id).await.unwrap_or_else(|e| {
@@ -129,8 +132,7 @@ impl ChannelLoop {
     /// (`FormerParticipant::left`). Where the history was recorded on after they were let go - an
     /// actor removed whose task had not ended as its session stopped - their attendance ends only
     /// here.
-    pub(super) async fn reconcile(&self) {
-        let attending = self.attending().await;
+    pub(super) async fn reconcile(&self, attending: &HashMap<ActorId, ThreadId>) {
         for former in &self.channel().former {
             let participant = former.participant.actor_id();
             let Some(&thread) = attending.get(&participant) else { continue };

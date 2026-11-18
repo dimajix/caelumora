@@ -233,6 +233,7 @@ impl Chain<Recorded> {
             HistoryEntry::Fitted { .. }
             | HistoryEntry::Said { .. }
             | HistoryEntry::Given { .. }
+            | HistoryEntry::GivenToRead { .. }
             | HistoryEntry::Withdrawn { .. }
             | HistoryEntry::TurnFinished { .. }
             | HistoryEntry::TurnGivenUp { .. }
@@ -243,6 +244,8 @@ impl Chain<Recorded> {
             | HistoryEntry::ParticipantJoined { .. }
             | HistoryEntry::ParticipantLeft { .. }
             | HistoryEntry::HistoryShared { .. }
+            | HistoryEntry::ThreadOpened { .. }
+            | HistoryEntry::ThreadClosed { .. }
             | HistoryEntry::CommandFailed { .. }
             | HistoryEntry::RetryAccepted { .. }
             | HistoryEntry::RetryRefused { .. }

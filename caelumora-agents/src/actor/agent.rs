@@ -109,13 +109,13 @@ impl AgentActor {
     /// A message as it leaves the agent, through the emit processors - a
     /// complete one to be said, a partial one only shown. `None` if the
     /// processors dropped it.
-    async fn respond(&self, message: Message) -> Option<Message> {
-        let mut output =
-            apply_stage_processors(&self.emit_out_processors, vec![message]).await.ok()?;
-        if output.is_empty() {
-            return None;
-        }
-        Some(output.remove(0))
+    ///
+    /// # Errors
+    /// What a processor that fails closed reports: an error of the turn, which gives it up (issue
+    /// 557) - one that fails open is left out (`apply_stage_processors`).
+    async fn respond(&self, message: Message) -> Result<Option<Message>> {
+        let mut output = apply_stage_processors(&self.emit_out_processors, vec![message]).await?;
+        Ok((!output.is_empty()).then(|| output.remove(0)))
     }
 
     /// The turn under way in `state`, as its steps work with it; `None`
@@ -573,10 +573,10 @@ impl AgentActor {
         events
     }
 
-    /// Takes the model's `tool_calls` into the turn as the tool guard admits them
-    /// (`ToolExecutor::admit`), stamped with their descriptions as the message carrying them is
-    /// said, and asks for the approvals they wait for. Only records them: whether the turn goes on
-    /// to run them or waits is `handle_executing_tools`'s to decide.
+    /// Takes the `tool_calls` of a message as it leaves the agent into the turn as the tool guard
+    /// admits them (`ToolExecutor::admit`), stamped with their descriptions as the message carrying
+    /// them is said, and asks for the approvals they wait for. Only records them: whether the turn
+    /// goes on to run them or waits is `handle_executing_tools`'s to decide.
     async fn request_approvals(
         &self,
         tool_calls: &mut [ToolCall],
@@ -687,16 +687,22 @@ impl AgentActor {
             match event {
                 MessageEvent::Partial(mut message) => {
                     stamp(&mut message, turn, self.body.reasoning_visibility(), false);
-                    if let Some(msg) = self.respond(message).await {
+                    if let Some(msg) = self.respond(message).await? {
                         turn.show(msg, output).await?;
                     }
                 }
                 MessageEvent::Complete(mut message) => {
                     stamp(&mut message, turn, self.body.reasoning_visibility(), true);
-                    self.request_approvals(&mut message.tool_calls, turn, output).await?;
-                    let converged = message.tool_calls.is_empty();
-                    if let Some(msg) = self.respond(message).await {
-                        turn.say(msg, output).await?;
+                    // A message the emit processors drop is not said, and its calls are not run:
+                    // a call runs only with the message that carries it (issue 557).
+                    // Labelled again as it left them, so that the calls that run carry what their
+                    // tools declare. One dropped ends a step as an answer without calls does.
+                    let processed = self.respond(message).await?;
+                    let converged = processed.as_ref().is_none_or(|m| m.tool_calls.is_empty());
+                    if let Some(mut message) = processed {
+                        label(&mut message, turn, self.body.reasoning_visibility(), true);
+                        self.request_approvals(&mut message.tool_calls, turn, output).await?;
+                        turn.say(message, output).await?;
                     }
                     // An answer without tool calls ends a step of a plan -
                     // the next one begins with another model call - or the
@@ -976,6 +982,7 @@ impl Actor for AgentActor {
                     | ActorEvent::MessageReclassified { .. }
                     | ActorEvent::RetryRequested { .. }
                     | ActorEvent::ResponseRequested { .. }
+                    | ActorEvent::GivenToRead { .. }
                     | ActorEvent::CommandRequested { .. }
                     | ActorEvent::ParticipantJoined { .. }
                     | ActorEvent::ParticipantLeft { .. }
