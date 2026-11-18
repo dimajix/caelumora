@@ -5,15 +5,19 @@
 
 use caelumora_agents::library::AgentsLibrary;
 use caelumora_agents::testing::{agent_runtime, calling, register_scripted};
+use caelumora_agents::tool::ToolProvider;
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::agent::{Agent, Personality, PersonalityKind};
+use caelumora_domain::agent::{Agent, Personality, PersonalityId, PersonalityKind};
 use caelumora_domain::channel::{ThreadId, ThreadOrigin};
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::{Classification, Confidentiality};
 use caelumora_domain::history::HistoryEntry;
 use caelumora_domain::message::{Message, MessageId, MessageRole};
+use caelumora_domain::scope::Scope;
 use caelumora_domain::user::UserId;
+use caelumora_domain::value::name::ScopedName;
 use caelumora_kernel::channel::ChannelLoop;
+use caelumora_kernel::component::testing::{built, descriptor};
 use caelumora_kernel::testing::{participant_runtime_in, World};
 use caelumora_subagents::component::{START_SUBAGENT, SUBAGENTS_KIND};
 use caelumora_subagents::extension::{SubAgentError, SubAgentWriter};
@@ -210,4 +214,69 @@ async fn an_agent_of_one_who_does_not_own_the_session_starts_a_sub_agent() {
         "ended without changing the session or the channel in bob's name: {asked:?}"
     );
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// Issue 558: the personality of a sub-agent is found as the kernel finds one by name from the
+/// work's channel - the innermost its owner may read, one of the channel's over a global one; one
+/// they may not read is none.
+#[tokio::test]
+async fn a_personality_is_found_from_the_channel_innermost_first() {
+    let world = world().await;
+    let model = |kind: &str| ComponentDescriptor::new("model", kind);
+    let internal = PersonalityKind::Internal;
+    let outer =
+        personality(&world, "researcher", world.alice, internal, vec![model("researching")]).await;
+    personality(&world, "secret", world.bob, internal, vec![model("researching")]).await;
+    let leading =
+        personality(&world, "leading", world.alice, internal, vec![model("leading")]).await;
+    let lead = world.agent("lead", world.alice, &leading).await;
+    let session = world.session_of(&[], &[lead], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let lead = ActorId::Agent(lead);
+    let place = Scope::ChannelScope { session_id: session.id(), channel_id: main.id() };
+    let mut inner = Personality {
+        id: PersonalityId::new(),
+        name: ScopedName::new("researcher", place).unwrap(),
+        ..outer
+    };
+    let personalities = &world.kernel.entity_stores().personalities;
+    personalities.create(&World::system(), &mut inner).await.unwrap();
+
+    let runtime = agent_runtime(participant_runtime_in(&main, lead));
+    let internal = Classification::general(Confidentiality::Internal);
+    let alice = ActorId::User(world.alice);
+    let writer = runtime.writer::<dyn SubAgentWriter>(alice, internal).await.expect("bound");
+    let origin = ThreadOrigin { thread: ThreadId::line(main.id()), message: MessageId::new() };
+    let refused = writer.start("secret", origin, "Find it.".to_string()).await.unwrap_err();
+    assert!(matches!(refused, SubAgentError::UnknownPersonality(_)), "not hers: {refused}");
+    let thread = writer.start("researcher", origin, "Find it.".to_string()).await.expect("started");
+    let sub_agent = main.delegation(thread).await.and_then(|held| held.recipient.as_agent_id());
+    let agents = world.entity_store::<Agent>();
+    let stored = agents.get(&World::system(), sub_agent.expect("started")).await.unwrap();
+    assert_eq!(stored.personality_id, inner.id, "the channel's researcher, not the global one");
+
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// Issue 558: starting a sub-agent asks for approval only where the component is configured so;
+/// asking and ending one never do; a component without a personality to start is no component.
+#[tokio::test]
+async fn starting_a_sub_agent_asks_for_approval_as_configured() {
+    let world = world().await;
+    let tools = async |params: serde_json::Value| {
+        built::<dyn ToolProvider>(&world.kernel, descriptor("subagents", SUBAGENTS_KIND, params))
+            .await
+    };
+    let asks = async |mode: serde_json::Value| {
+        let params =
+            serde_json::json!({ "personalities": ["researcher"], "requires_approval": mode });
+        let provider = tools(params).await.unwrap();
+        provider.tools().iter().map(|tool| tool.description().requires_approval).collect::<Vec<_>>()
+    };
+    assert_eq!(asks(serde_json::json!(true)).await, [true, false, false], "start alone");
+    assert_eq!(asks(serde_json::json!("unless_read_only")).await, [true, false, false]);
+    assert_eq!(asks(serde_json::json!(false)).await, [false, false, false]);
+    let unconfigured = tools(serde_json::json!({ "personalities": ["researcher"] })).await.unwrap();
+    assert!(!unconfigured.tools()[0].description().requires_approval, "unless configured");
+    assert!(tools(serde_json::json!({ "personalities": [] })).await.is_err(), "one to start");
 }

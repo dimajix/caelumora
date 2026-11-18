@@ -1,7 +1,7 @@
 //! The component kind `subagents` (issue 558): what it is configured with - the personalities its
-//! tools may start an agent of -; its tools `start_subagent`, `ask_subagent` and `end_subagent`
-//! are `tool`'s; the component is their `ToolProvider`, which offers them where the work can start
-//! a sub-agent.
+//! tools may start an agent of, and whether starting one asks for approval -; its tools
+//! `start_subagent`, `ask_subagent` and `end_subagent` are `tool`'s; the component is their
+//! `ToolProvider`, which offers them where the work can start a sub-agent.
 
 mod tool;
 
@@ -10,7 +10,7 @@ pub use tool::{ASK_SUBAGENT, END_SUBAGENT, START_SUBAGENT};
 use crate::extension::SubAgentWriter;
 use crate::NAMESPACE;
 use caelumora_agents::prompt::{texts_of, writing_for_the_model};
-use caelumora_agents::tool::{tool_text, Tool, ToolProvider};
+use caelumora_agents::tool::{tool_text, ApprovalMode, Tool, ToolProvider};
 use caelumora_api::component::{
     ComponentError, ComponentFacets, ComponentKind, ComponentResult, LibraryComponents, Params,
 };
@@ -28,6 +28,10 @@ struct SubagentsParams {
     /// The names of the personalities its tools may start an agent of, one at least: whose
     /// components bring the sub-agent's tools and everything else.
     personalities: Vec<Name>,
+    /// Whether starting a sub-agent needs approval: unless configured, it does not - the
+    /// personalities listed bound what may be started.
+    #[serde(default = "ApprovalMode::never")]
+    requires_approval: ApprovalMode,
 }
 
 impl Params for SubagentsParams {
@@ -56,7 +60,11 @@ impl SubagentsComponent {
     /// `PromptError` if one of its texts cannot be had.
     fn new(params: SubagentsParams, prompts: &PromptTexts) -> Result<Self, PromptError> {
         let tools: Vec<Arc<dyn Tool>> = vec![
-            Arc::new(tool::StartSubagentTool::new(prompts, params.personalities)?),
+            Arc::new(tool::StartSubagentTool::new(
+                prompts,
+                params.personalities,
+                params.requires_approval.required(false),
+            )?),
             Arc::new(tool::AskSubagentTool::new(prompts)?),
             Arc::new(tool::EndSubagentTool::new(prompts)?),
         ];

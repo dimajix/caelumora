@@ -9,6 +9,7 @@ use crate::extension::{SubAgentError, SubAgentResult, SubAgentWriter};
 use crate::names;
 use anyhow::Error;
 use async_trait::async_trait;
+use caelumora_api::reader::ViewError;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::{AgentId, PersonalityId, PersonalityKind};
 use caelumora_domain::channel::{ThreadId, ThreadOrigin};
@@ -17,10 +18,10 @@ use caelumora_domain::store::StoreError;
 use caelumora_domain::value::name::Name;
 use caelumora_kernel::agent::{AgentError, AgentManager, AgentSpec};
 use caelumora_kernel::channel::ChannelLoop;
+use caelumora_kernel::error::{refusal, user_message};
 use caelumora_kernel::session::{SessionError, SessionLoop};
 use caelumora_kernel::view::SessionView;
 use caelumora_security::SecurityContext;
-use std::fmt::Display;
 use std::future::Future;
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -50,30 +51,41 @@ impl SubAgents {
     /// The running session and the work's channel in it, reached as a frontend reaches a channel
     /// (`SessionLoop::channel_for`), which asks whether the work may.
     async fn running(&self) -> SubAgentResult<(Arc<SessionLoop>, Arc<ChannelLoop>)> {
-        let session = self.session.session_loop().ok_or_else(|| refused("no running session"))?;
+        let no_session = || SubAgentError::Failed("its session does not run".to_string());
+        let session = self.session.session_loop().ok_or_else(no_session)?;
         let context = self.context();
-        let channel = session.channel_for(context, context.channel_id).await.map_err(refused)?;
+        let channel = session.channel_for(context, context.channel_id).await.map_err(told)?;
         Ok((Arc::clone(session), channel))
     }
 
-    /// The personality `personality` an agent may be made of in the work's place: its id - one of
-    /// an internal agent alone.
+    /// The personality `personality` an agent may be made of in the work's channel: the one the
+    /// owner finds from there, as the kernel finds one by name (`Views::personality_named`) - one
+    /// of an internal agent alone.
     async fn personality(&self, personality: &Name) -> SubAgentResult<PersonalityId> {
-        let unknown = || SubAgentError::UnknownPersonality(personality.to_string());
-        let known = self.session.views().personalities().await.map_err(refused)?;
-        let found = known
-            .into_iter()
-            .find(|snapshot| Name::new(&snapshot.name).is_ok_and(|name| name == *personality))
-            .ok_or_else(unknown)?;
+        let place = self.scope();
+        let found = match self.session.views().personality_named(personality, &place).await {
+            Ok(found) => found,
+            Err(ViewError::NoPersonalityNamed(_)) => {
+                return Err(SubAgentError::UnknownPersonality(personality.to_string()))
+            }
+            Err(error) => return Err(told(error)),
+        };
         if found.kind == PersonalityKind::External {
             return Err(SubAgentError::External(personality.to_string()));
         }
         Ok(found.id)
     }
 
+    /// The scope of the work's channel: where a sub-agent lies, and where its personality is found
+    /// from.
+    fn scope(&self) -> Scope {
+        let context = self.context();
+        Scope::ChannelScope { session_id: context.session_id, channel_id: context.channel_id }
+    }
+
     /// The names the work's channel has had, among its participants and its former ones.
     async fn names_had(&self) -> SubAgentResult<Vec<Name>> {
-        let channel = self.session.channel(self.context().channel_id).await.map_err(refused)?;
+        let channel = self.session.channel(self.context().channel_id).await.map_err(told)?;
         let participants = channel.participants().await;
         let former = channel.former_participants().await;
         Ok(participants.iter().chain(&former).filter_map(|p| p.name().cloned()).collect())
@@ -88,8 +100,7 @@ impl SubAgents {
         personality: &Name,
     ) -> SubAgentResult<AgentId> {
         let context = self.context();
-        let scope =
-            Scope::ChannelScope { session_id: context.session_id, channel_id: context.channel_id };
+        let scope = self.scope();
         let mut had = self.names_had().await?;
         for _ in 0..NAMINGS {
             let name = names::draw(personality, |name| had.contains(name));
@@ -97,10 +108,10 @@ impl SubAgents {
             match self.agents.create(context, spec).await {
                 Ok(agent) => return Ok(agent.id),
                 Err(AgentError::Store(StoreError::NameTaken { .. })) => had.push(name),
-                Err(error) => return Err(refused(error)),
+                Err(error) => return Err(told(error)),
             }
         }
-        Err(refused("no free name for the sub-agent"))
+        Err(SubAgentError::Failed("no name for the sub-agent was free".to_string()))
     }
 
     /// The sub-agent of `thread` the work started: the recipient of the thread's delegation, whose
@@ -131,12 +142,12 @@ impl SubAgents {
             Ok(thread) => thread,
             Err(error) => {
                 self.roll_back_start(&session, &channel, agent, None).await;
-                return Err(refused(error));
+                return Err(told(error));
             }
         };
         if let Err(error) = channel.delegate(context, thread, founder, brief).await {
             self.roll_back_start(&session, &channel, agent, Some(thread)).await;
-            return Err(refused(error));
+            return Err(told(error));
         }
         info!("Sub-agent {} started in thread {} by {}", agent, thread, context.caller_id);
         Ok(thread)
@@ -154,7 +165,7 @@ impl SubAgents {
     ) {
         let undone = match thread {
             Some(thread) => self.wind_up(session, channel, thread, agent).await,
-            None => self.agents.delete(self.context(), agent).await.map(drop).map_err(refused),
+            None => self.agents.delete(self.context(), agent).await.map(drop).map_err(told),
         };
         if let Err(undo) = undone {
             warn!("Sub-agent {} not started was not removed again: {}", agent, undo);
@@ -176,10 +187,10 @@ impl SubAgents {
         match session.leave(context, ActorId::Agent(agent)).await {
             Ok(()) => {}
             Err(error) if let_go_already(&error) => {}
-            Err(error) => return Err(refused(error)),
+            Err(error) => return Err(told(error)),
         }
-        channel.close_thread(context, thread).await.map_err(refused)?;
-        self.agents.delete(context, agent).await.map_err(refused)?;
+        channel.close_thread(context, thread).await.map_err(told)?;
+        self.agents.delete(context, agent).await.map_err(told)?;
         info!("Sub-agent {} of thread {} ended", agent, thread);
         Ok(())
     }
@@ -212,7 +223,7 @@ impl SubAgentWriter for SubAgents {
         let (_, channel) = self.running().await?;
         let agent = self.sub_agent(&channel, thread).await?;
         let context = self.context();
-        channel.delegate(context, thread, ActorId::Agent(agent), text).await.map_err(refused)
+        channel.delegate(context, thread, ActorId::Agent(agent), text).await.map_err(told)
     }
 
     /// Run apart, as `start`, so that no sub-agent is left half ended.
@@ -226,7 +237,10 @@ impl SubAgentWriter for SubAgents {
 async fn apart<T: Send + 'static>(
     work: impl Future<Output = SubAgentResult<T>> + Send + 'static,
 ) -> SubAgentResult<T> {
-    tokio::spawn(work).await.map_err(refused)?
+    tokio::spawn(work).await.map_err(|ended| {
+        warn!("Sub-agents' work ended without an answer: {}", ended);
+        SubAgentError::Failed("it ended without an answer; the log tells why".to_string())
+    })?
 }
 
 /// Whether `error` says that the agent takes no part in the session any more.
@@ -234,7 +248,37 @@ fn let_go_already(error: &Error) -> bool {
     matches!(error.downcast_ref::<SessionError>(), Some(SessionError::NotAParticipant { .. }))
 }
 
-/// What the kernel refused or failed with, in words.
-fn refused(error: impl Display) -> SubAgentError {
-    SubAgentError::Refused(format!("{error:#}"))
+/// What the kernel refused the work or failed with, `error`, as a sub-agents' error: a refusal of
+/// the access policy as `Forbidden`, saying what was refused and not by which rule (`Refused`);
+/// anything else as `Failed`, as users are told it (`user_message`), its whole chain logged.
+fn told(error: impl Into<Error>) -> SubAgentError {
+    let error = error.into();
+    if let Some(refused) = refusal(&error) {
+        info!("Sub-agents were refused: {}", refused);
+        return SubAgentError::Forbidden(refused.to_string());
+    }
+    warn!("Sub-agents failed: {:#}", error);
+    let told = user_message(&error);
+    SubAgentError::Failed(told.unwrap_or_else(|| "it failed; the log tells why".to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use caelumora_domain::security::Refused;
+
+    /// Issue 558: what the access policy refused comes back as a refusal, saying what was refused
+    /// and not by which rule; anything else as a failure, as users are told it.
+    #[test]
+    fn a_refusal_is_told_from_a_failure() {
+        let refused = Refused { subject: "agent", action: "CreateAgent".to_string() };
+        let told_refused = told(AgentError::Store(StoreError::PermissionDenied(refused)));
+        assert!(
+            matches!(&told_refused, SubAgentError::Forbidden(text)
+                if text == "CreateAgent is not permitted"),
+            "{told_refused}"
+        );
+        let broken = told(AgentError::Store(StoreError::Backend("the disk is full".to_string())));
+        assert!(matches!(broken, SubAgentError::Failed(_)), "{broken}");
+    }
 }

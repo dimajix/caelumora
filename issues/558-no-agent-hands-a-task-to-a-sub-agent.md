@@ -468,4 +468,10 @@ what the main agent may.
   `PermissionDenied`; `Failed`, worded as users are told); `start_subagent` asking for approval as
   its component is configured (`requires_approval`, not by default); and an open brief dropped as
   its sub-agent is ended, said in TOOLS.md.
-
+- **2026-11-18** — These decisions implemented: `Views::personality_named` public, the writer
+  finding the personality from the channel's scope; `SubAgentError::Forbidden` and `Failed` in place
+  of `Refused`, worded by `caelumora_kernel::error::user_message`, the chain of a failure logged;
+  the component's `requires_approval` (`never` unless configured); TOOLS.md saying what becomes of
+  an open brief as its sub-agent is ended. On review: a refusal worded by what was refused
+  (`Refused`), the writer's own conditions in words of their own; a work that may not reach its own
+  channel answered as not found, as `channel_for` answers it, and said so.

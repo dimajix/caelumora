@@ -15,7 +15,8 @@ pub trait SubAgentWriter: Send + Sync {
     /// the thread was opened.
     ///
     /// # Errors
-    /// `UnknownPersonality`, `External`, or `Refused` with what the kernel refused or failed with.
+    /// `UnknownPersonality`, `External`, or `Forbidden` or `Failed` with what the kernel refused or
+    /// failed with.
     async fn start(
         &self,
         personality: &str,
@@ -27,7 +28,8 @@ pub trait SubAgentWriter: Send + Sync {
     /// what it was given before.
     ///
     /// # Errors
-    /// `NoSubAgent` if `thread` holds none the work started, `Refused` as for `start`.
+    /// `NoSubAgent` if `thread` holds none the work started, `Forbidden` or `Failed` as for
+    /// `start`.
     async fn ask(&self, thread: ThreadId, text: String) -> SubAgentResult<()>;
 
     /// Ends the sub-agent of `thread`: let go from its channel and its session, its thread closed,
@@ -50,9 +52,12 @@ pub enum SubAgentError {
     /// A thread that holds no sub-agent the work started.
     #[error("thread {0} holds no sub-agent of yours")]
     NoSubAgent(ThreadId),
-    /// What the kernel refused or failed with, in words.
+    /// What the kernel refused the work, worded as users are told it - not by which rule.
     #[error("{0}")]
-    Refused(String),
+    Forbidden(String),
+    /// What the kernel failed with, worded as users are told it; what may not be shown is logged.
+    #[error("{0}")]
+    Failed(String),
 }
 
 pub type SubAgentResult<T> = Result<T, SubAgentError>;

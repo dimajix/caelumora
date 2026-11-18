@@ -510,16 +510,12 @@ impl Views {
 
     /// The personality named `name` that the viewer finds from `place` (issue 178): of those of
     /// that name they may read (`GetPersonality`), the innermost seen from there - what an agent
-    /// is made of by name (issue 555).
+    /// is made of by name (issue 555), by a command or a plugin's sub-agents (issue 558).
     ///
     /// # Errors
     /// `NoPersonalityNamed` if there is none they may read seen from there; `Failed` if the store
     /// cannot list them.
-    pub(crate) async fn personality_named(
-        &self,
-        name: &Name,
-        place: &Scope,
-    ) -> ViewResult<Personality> {
+    pub async fn personality_named(&self, name: &Name, place: &Scope) -> ViewResult<Personality> {
         let user = self.viewer.context().principal_id.as_user_id();
         let named = Filter::all_of([
             Filter::seen_from(place, user),

@@ -577,11 +577,17 @@ block: the call returns the thread at once, and what the sub-agent answers is gi
 read where the thread was opened, once it is there - as the kernel's delegate gives it (see
 [CHANNELS.md](CHANNELS.md#delegating-into-a-thread)). `ask_subagent` gives it more to read,
 `end_subagent` ends it: let go from its channel and its session, its thread closed, the agent
-deleted, never purged.
+deleted, never purged. A brief still open as it is ended is dropped - if its leave came first, the
+agent is given back that it left before it answered.
 
 They are offered where the work's session runs, and act through the `SubAgentWriter` the plugin
 binds to the turn's work (issue 516), in its context: the agent gives, its owner owns the sub-agent,
-made in the channel's scope, of a personality the owner may read - an internal one alone (issue
-591) -, named by an adjective and the personality (`curious-researcher`), never by a name the
-channel has had. Only the agent that started a sub-agent asks or ends it.
+made in the channel's scope, of the personality of that name the owner finds from the channel - the
+innermost they may read, as `/agent create` finds one -, an internal one alone (issue 591), named by
+an adjective and the personality (`curious-researcher`), never by a name the channel has had. Only
+the agent that started a sub-agent asks or ends it. Starting one asks for approval only where the
+component is configured so (`requires_approval`). What the access policy refuses is answered as a
+refusal, saying what was refused and not by which rule; anything else as users are told it - a work
+that may not reach its own channel among them, which is not found, as a channel one may not reach
+is.
 

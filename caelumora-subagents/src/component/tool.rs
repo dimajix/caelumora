@@ -51,14 +51,16 @@ struct End {
 }
 
 /// What starting, asking or ending a sub-agent failed of, as the model is told it: what it can
-/// correct - a personality, a thread - is a parameter; what the kernel refused is not.
+/// correct - a personality, a thread - is a parameter; what the kernel refused is a refusal,
+/// without the rule; what failed a failure.
 impl From<SubAgentError> for ToolError {
     fn from(error: SubAgentError) -> Self {
         match error {
             SubAgentError::UnknownPersonality(_)
             | SubAgentError::External(_)
             | SubAgentError::NoSubAgent(_) => ToolError::InvalidParameter(error.to_string()),
-            SubAgentError::Refused(_) => ToolError::ExecutionFailed(error.to_string()),
+            SubAgentError::Forbidden(_) => ToolError::PermissionDenied(error.to_string()),
+            SubAgentError::Failed(_) => ToolError::ExecutionFailed(error.to_string()),
         }
     }
 }
@@ -70,19 +72,19 @@ async fn writer(turn: &Turn<'_>) -> ToolResult<Arc<dyn SubAgentWriter>> {
         .ok_or_else(|| ToolError::ExecutionFailed("no sub-agent can be started here".to_string()))
 }
 
-/// The description of the tool `name` with `parameters`, its texts from `prompts`, rendered with
-/// `values`.
+/// The description of the tool `name` with `parameters`, asked for as `requires_approval` says, its
+/// texts from `prompts`, rendered with `values`.
 fn tool(
     prompts: &PromptTexts,
-    name: &str,
-    parameters: ToolParameters,
+    (name, parameters): (&str, ToolParameters),
+    requires_approval: bool,
     values: impl Serialize,
 ) -> Result<ToolDescription, PromptError> {
     let tool = ToolDescription {
         name: name.to_string(),
         description: String::new(),
         parameters,
-        requires_approval: false,
+        requires_approval,
         visibility: ToolVisibility::SHOWN,
         classification: None,
         presentation: ToolPresentation::default(),
@@ -99,13 +101,15 @@ pub(super) struct StartSubagentTool {
 }
 
 impl StartSubagentTool {
-    /// The tool, starting agents of `personalities`, its texts from `prompts`.
+    /// The tool, starting agents of `personalities`, asked for as `requires_approval` says, its
+    /// texts from `prompts`.
     ///
     /// # Errors
     /// `PromptError` if one of its texts cannot be had.
     pub(super) fn new(
         prompts: &PromptTexts,
         personalities: Vec<Name>,
+        requires_approval: bool,
     ) -> Result<Self, PromptError> {
         let string = ToolParameters::string;
         let parameters = ToolParameters::object(
@@ -114,7 +118,7 @@ impl StartSubagentTool {
         );
         let names: Vec<&str> = personalities.iter().map(Name::as_str).collect();
         let values = context! { personalities => names, ask => ASK_SUBAGENT, end => END_SUBAGENT };
-        let description = tool(prompts, START_SUBAGENT, parameters, values)?;
+        let description = tool(prompts, (START_SUBAGENT, parameters), requires_approval, values)?;
         Ok(Self { description, personalities })
     }
 }
@@ -173,8 +177,8 @@ impl AskSubagentTool {
         Ok(Self {
             description: tool(
                 prompts,
-                ASK_SUBAGENT,
-                parameters,
+                (ASK_SUBAGENT, parameters),
+                false,
                 context! { start => START_SUBAGENT },
             )?,
         })
@@ -215,8 +219,8 @@ impl EndSubagentTool {
         Ok(Self {
             description: tool(
                 prompts,
-                END_SUBAGENT,
-                parameters,
+                (END_SUBAGENT, parameters),
+                false,
                 context! { start => START_SUBAGENT },
             )?,
         })
