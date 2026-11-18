@@ -168,6 +168,12 @@ impl Envelope {
             ActorEvent::MessageGiven { message } => {
                 HistoryEntry::Given { message: message.clone() }
             }
+            ActorEvent::GivenToRead { recipient, message } => HistoryEntry::GivenToRead {
+                recipient: *recipient,
+                message: message.clone(),
+                by: actor,
+                at,
+            },
             ActorEvent::ContextCompacted { turn_id, from, to } => {
                 HistoryEntry::Compacted { turn_id: *turn_id, actor, from: *from, to: *to, at }
             }
@@ -597,6 +603,12 @@ impl Envelope {
                 format!(
                     "ThreadClosed(sender_id={}, sender_name={}, thread={})",
                     ctx.sender_id, ctx.sender_name, thread
+                )
+            }
+            ActorEvent::GivenToRead { recipient, message } => {
+                format!(
+                    "GivenToRead(sender_id={}, recipient={}, giver={}, mid={})",
+                    ctx.sender_id, recipient, message.sender_id, message.id
                 )
             }
             ActorEvent::ChainCutOff { message, max_agent_hops, not_asked } => {

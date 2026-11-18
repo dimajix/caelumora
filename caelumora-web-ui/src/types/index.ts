@@ -74,7 +74,8 @@ export interface Description {
  * Serialized `ActorId`, as serde tags its variants: `"None"`, `"System"`, or an object holding
  * the id, like `{"Agent": "<uuid>"}`.
  */
-export type ActorId = 'None' | 'System' | {User: string} | {Agent: string} | {Approver: string};
+export type ActorId =
+  'None' | 'System' | {User: string} | {Agent: string} | {Approver: string} | {Delegate: string};
 
 /** What kind of participant an actor is; a channel's approver is none (issue 420). */
 export type ParticipantKind = 'user' | 'agent';
@@ -856,7 +857,7 @@ export interface PlanStepEvent extends PlanStep {
 export type UnitActorEvent = 'WakeupRequested';
 
 /** Why someone is asked to respond (issue 439). */
-export type RequestReason = 'chosen' | 'undecided' | 'nudged' | 'mentioned';
+export type RequestReason = 'chosen' | 'undecided' | 'nudged' | 'mentioned' | 'given';
 
 export interface ActorEvent {
   /**
@@ -960,6 +961,11 @@ export interface ActorEvent {
    * is said in it. Part of the history; not shown yet.
    */
   ThreadClosed?: { thread: string };
+  /**
+   * The delegate of a thread gave `recipient` `message` to read and asked it to respond (issue
+   * 557): the message's sender is whoever gave it. Part of the history; not shown yet.
+   */
+  GivenToRead?: { recipient: ActorId; message: Message };
   /**
    * A chain between agents reached its limit (issue 200): the response ending
    * in `message` was delivered, but nobody was asked to respond to it -

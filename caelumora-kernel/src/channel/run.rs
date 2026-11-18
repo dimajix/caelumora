@@ -560,6 +560,10 @@ impl ChannelLoop {
     /// - a command for an agent (issue 269) comes from a user, names an agent taking part that
     ///   carries it out, and is one the issuer may see and ask for (`admit_command`, issue 516);
     ///   a nudge (issue 278) comes from a user and names someone else taking part;
+    /// - something given to read (issue 557) comes from the delegate of a thread opened, given
+    ///   into that thread or the one it was opened at, in the name of its giver, a participant the
+    ///   channel lists; to a participant running there; a text alone, as it is classified
+    ///   (`admit_given`);
     /// - what the channel records of a turn besides its messages - where a step of its plan began,
     ///   a command or an activity it carried out, how it ended - and the start of an activity come
     ///   from an agent in its own name (issue 284): nobody else has turns; so does what an agent
@@ -703,6 +707,9 @@ impl ChannelLoop {
                 .then_some(())
                 .ok_or(Rejection::Invalid)
             }
+            ActorEvent::GivenToRead { recipient, message } => {
+                self.admit_given(event, *recipient, message, context, &classification)
+            }
             ActorEvent::MessageGiven { message } => {
                 event.context.sender_id.as_agent_id().ok_or(Rejection::Invalid)?;
                 self.policies.confidentiality().require_publish(
@@ -736,6 +743,48 @@ impl ChannelLoop {
                 .ok_or(Rejection::Invalid),
             None => Ok(()),
         }
+    }
+
+    /// Nothing if `event`, sent in `context`, may give `recipient` `message` to read (issue 557);
+    /// why not otherwise. It comes from the delegate of a thread opened - no thread delegates into
+    /// the line -, given into that thread or back into the one it was opened at; in the name of
+    /// whoever gives the message, its initiator; the recipient runs in that thread; both are
+    /// participants the channel lists; and the message is a text - no attachment, which only a
+    /// message said claims, no tool call or result -, classified so that it may enter the channel
+    /// (`require_parts`).
+    fn admit_given(
+        &self,
+        event: &Envelope,
+        recipient: ActorId,
+        message: &Message,
+        context: &SecurityContext,
+        classification: &Classification,
+    ) -> Result<(), Rejection> {
+        let thread = event.context.thread_id;
+        let ActorId::Delegate(delegated) = event.context.sender_id else {
+            return Err(Rejection::Invalid);
+        };
+        let Some(opening) = self.thread(delegated).and_then(|opened| opened.opening()) else {
+            return Err(Rejection::Invalid);
+        };
+        let its_own = thread == delegated || thread == opening.origin.thread;
+        let giver = message.sender_id;
+        let running_there = self.actors.load().get(&recipient).is_some_and(|r| r.thread == thread);
+        let listed = self.channel();
+        let lists = |actor| listed.participants.iter().any(|p| p.actor_id() == actor);
+        let text = message.attachments.is_empty()
+            && message.tool_calls.is_empty()
+            && message.tool_results.is_empty();
+        if !(its_own
+            && event.context.initiator_id == giver
+            && running_there
+            && lists(recipient)
+            && lists(giver)
+            && text)
+        {
+            return Err(Rejection::Invalid);
+        }
+        self.require_parts(context, message, classification)
     }
 
     /// Nothing if every part of `message` - the message, its attachments, its tool results and what
@@ -1104,13 +1153,12 @@ mod tests {
     use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolContent};
     use caelumora_domain::turn::GivenUpReason;
     use caelumora_domain::user::testing::make_user;
-    use caelumora_domain::user::UserId;
+    use caelumora_domain::user::{User, UserId};
     use caelumora_domain::value::name::Name;
     use caelumora_domain::work::TurnId;
     use caelumora_security::AllowAllPolicy;
     use caelumora_security::SecurityContext;
     use chrono::Utc;
-    use std::mem;
     use std::slice;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
@@ -1242,52 +1290,6 @@ mod tests {
             ["ChainCutOff"],
             "its own message is not sent back, but what the system tells it is (issue 200)"
         );
-    }
-
-    /// An actor that sends the envelopes it is given as it starts, as they are written - in
-    /// whatever name, with whatever hops - and waits: what no actor of the kernel can, which builds
-    /// its envelopes itself (`Answering`). For the tests of what the channel does with such
-    /// envelopes, and no fixture to reuse (issue 372).
-    #[derive(Debug)]
-    struct Forger {
-        id: ActorId,
-        envelopes: Mutex<Vec<Envelope>>,
-    }
-
-    impl Forger {
-        fn sending(id: ActorId, envelopes: Vec<Envelope>) -> Arc<Self> {
-            Arc::new(Self { id, envelopes: Mutex::new(envelopes) })
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl Actor for Forger {
-        fn id(&self) -> ActorId {
-            self.id
-        }
-        fn name(&self) -> Name {
-            Name::new("talker").expect("a name")
-        }
-        fn event_filter(&self) -> fn(&Envelope) -> bool {
-            |_| true
-        }
-        async fn run(
-            &self,
-            mut rx: Box<dyn EventReceiver>,
-            tx: Box<dyn EventSender>,
-        ) -> Result<()> {
-            let envelopes = mem::take(&mut *self.envelopes.lock().unwrap());
-            for envelope in envelopes {
-                let _ = tx.send(envelope).await;
-            }
-            while rx.recv().await.is_some() {}
-            Ok(())
-        }
-        fn state(&self) -> ActorState {
-            ActorState::Idle
-        }
-        fn stop(&self) {}
-        fn leave(&self) {}
     }
 
     #[tokio::test]
@@ -2882,6 +2884,163 @@ mod tests {
             "nothing more once it is closed"
         );
         assert!(!channel.close_thread(&system, line).await.unwrap(), "and the line never");
+    }
+
+    /// A channel of `users` with a thread opened at its line, whose delegate is forged
+    /// (`ChannelLoop::forge_delegate`): what something is given to read in (issue 557).
+    async fn with_a_delegate(users: &[&User]) -> (Arc<ChannelLoop>, ThreadId) {
+        let channel = channel_with(users, Arc::new(AllowAllPolicy::new())).await;
+        let thread = channel.forge_delegate(|_| Vec::new()).await;
+        (channel, thread)
+    }
+
+    /// `sender` gives `recipient` in `thread_id` a message of `giver`, classified
+    /// `classification`, to read (issue 557).
+    fn given(
+        channel: &ChannelLoop,
+        sender: ActorId,
+        thread_id: ThreadId,
+        recipient: ActorId,
+        giver: ActorId,
+        classification: Classification,
+    ) -> Envelope {
+        let context = EventContext {
+            sender_id: sender,
+            initiator_id: giver,
+            thread_id,
+            ..channel.event_context()
+        };
+        let message = Message {
+            sender_id: giver,
+            role: MessageRole::User,
+            content: Some("look this up".to_string()),
+            ..Message::new(classification)
+        };
+        Envelope::new(context, ActorEvent::GivenToRead { recipient, message })
+    }
+
+    /// Issue 557: something is given to read by the delegate of a thread opened alone - into it,
+    /// or back into the thread it was opened at -, in its giver's name, to a participant running
+    /// there, for a giver the channel lists, as a text of a classification the channel may hold.
+    #[tokio::test]
+    async fn something_is_given_to_read_by_a_delegate_alone() {
+        let (alice, bob) = (make_user("alice"), make_user("bob"));
+        let (channel, thread) = with_a_delegate(&[&alice, &bob]).await;
+        let hers = ActorId::User(alice.id);
+        let his = ActorId::User(bob.id);
+        let line = ThreadId::line(channel.id);
+        let delegate = ActorId::Delegate(thread);
+        let given = |sender, thread_id, recipient, giver, classification| {
+            given(&channel, sender, thread_id, recipient, giver, classification)
+        };
+        let fits = Classification::CHANNEL_DEFAULT;
+        let back = given(delegate, line, his, hers, fits.clone());
+        assert_eq!(channel.admit(&back).await, Ok(()), "back into the thread it was opened at");
+        let refused = [
+            (given(hers, line, his, hers, fits.clone()), "from one who is no delegate"),
+            (
+                given(ActorId::Delegate(ThreadId::new()), line, his, hers, fits.clone()),
+                "from the delegate of a thread not opened at it",
+            ),
+            (given(delegate, thread, his, hers, fits.clone()), "to one not running there"),
+            (given(delegate, thread, delegate, hers, fits.clone()), "to no participant"),
+            (
+                given(delegate, line, his, ActorId::Agent(AgentId::new()), fits.clone()),
+                "for a giver the channel does not list",
+            ),
+            (given(ActorId::Delegate(line), line, his, hers, fits.clone()), "from the line's"),
+            (
+                Envelope {
+                    context: EventContext { initiator_id: his, ..back.context.clone() },
+                    ..back.clone()
+                },
+                "in the name of another than its giver",
+            ),
+            (
+                Envelope {
+                    event: ActorEvent::GivenToRead {
+                        recipient: his,
+                        message: Message {
+                            sender_id: hers,
+                            tool_calls: vec![make_tool_call("calculator")],
+                            ..Message::new(fits.clone())
+                        },
+                    },
+                    ..back.clone()
+                },
+                "but a text",
+            ),
+        ];
+        for (envelope, why) in refused {
+            assert_eq!(channel.admit(&envelope).await, Err(Rejection::Invalid), "not {why}");
+        }
+        let above = Classification::general(Confidentiality::StrictlyConfidential);
+        assert_eq!(
+            channel.admit(&given(delegate, line, his, hers, above)).await,
+            Err(Rejection::ClassificationRefused),
+            "nor what may not flow in"
+        );
+    }
+
+    /// Issue 557: what is given to read is recorded to its recipient by name and to the users, and
+    /// the recipient alone is asked to respond, for being given it.
+    #[tokio::test]
+    async fn something_given_to_read_asks_its_recipient_alone() {
+        let (alice, bob) = (make_user("alice"), make_user("bob"));
+        let (channel, thread) = with_a_delegate(&[&alice, &bob]).await;
+        let hers = ActorId::User(alice.id);
+        let his = ActorId::User(bob.id);
+        let delegate = ActorId::Delegate(thread);
+        let (to_alice, mut alices) = opened();
+        let (to_bob, mut bobs) = opened();
+        let running = |id, inbox| RunningActor {
+            id,
+            abort_handle: tokio::spawn(async {}).abort_handle(),
+            task: TaskTracker::new(),
+            inbox: Some(inbox),
+            leaving: None,
+        };
+        let actors = HashMap::from([(hers, running(hers, to_alice)), (his, running(his, to_bob))]);
+        let line = ThreadId::line(channel.id);
+        let back = given(&channel, delegate, line, his, hers, Classification::CHANNEL_DEFAULT);
+        channel.process_envelope(back, &actors).await;
+        let kinds = async |inbox: &mut InboxReceiver| {
+            let mut kinds = Vec::new();
+            while let Some(envelope) = inbox.try_recv().await {
+                kinds.push(
+                    envelope.event.request_reason().map_or(envelope.event.kind(), |_| "asked"),
+                );
+            }
+            kinds
+        };
+        assert_eq!(kinds(&mut bobs).await, ["GivenToRead", "asked"], "given it, then asked");
+        assert_eq!(kinds(&mut alices).await, ["GivenToRead"], "shown it, and not asked");
+        let recorded = channel
+            .reading_history(|history| {
+                history
+                    .entries()
+                    .map(|node| (node.entry.entry.clone(), node.entry.recipients.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .await;
+        let to_him_and_the_users =
+            Recipients { named: vec![his], ..Recipients::participants(false) };
+        assert!(
+            matches!(
+                recorded.as_slice(),
+                [
+                    ..,
+                    (HistoryEntry::GivenToRead { by, .. }, to_both),
+                    (
+                        HistoryEntry::ResponseRequested { reason: RequestReason::Given, .. },
+                        to_him
+                    ),
+                ] if *by == delegate
+                    && *to_both == to_him_and_the_users
+                    && *to_him == Recipients::only(vec![his])
+            ),
+            "recorded to him by name and to the users, his request to him: {recorded:?}"
+        );
     }
 
     /// Issue 417: what enters the channel is recorded with its sender and

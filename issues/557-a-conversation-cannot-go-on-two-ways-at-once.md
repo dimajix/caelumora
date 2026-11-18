@@ -1211,3 +1211,35 @@ Decided with it, on the author's proposal:
   and its leave is recorded there, while closing is refused as long as an actor runs in it, a
   participant listed without one attends it, or its founders are still being taken in. Stored
   data to delete: the state of every channel (`ChannelState::threads`).
+- **2026-11-18** — Step 1 of 2b accepted by the maintainer, with its departures. The interface of
+  step 2 decided as proposed: the delegate named by the thread it delegates into
+  (`ActorId::Delegate(ThreadId)`), shown as "Delegate"; `GivenToRead { recipient, message }`, the
+  message's sender the one who gives it, admitted from the delegate of the thread it is given in
+  or of a thread opened at it, to a recipient running there, from a giver the channel lists, of a
+  classification the channel may publish; the request to respond made by the moderator as for a
+  nudge (`RequestReason::Given`), so that waking, recording to the recipient by name and reading
+  it again from the history are those of every request; the delegate acting in a context of its
+  own, answered for by the channel's owner as the approver's is (`SecurityContext::of_delegate`),
+  naming the giver as the initiator of its events; and, until step 3 builds the delegate's actor,
+  its tests run a scripted actor in its place.
+- **2026-11-18** — Step 2 of 2b implemented: `ActorId::Delegate(ThreadId)`, shown as "Delegate";
+  `ActorEvent::GivenToRead` and `HistoryEntry::GivenToRead`, of the thread it is given in,
+  recorded to the recipient by name and to the users; admitted from the delegate of a thread
+  opened - none delegates into the line -, into that thread or back into the one it was opened at,
+  in the name of its giver (the message's sender is the event's initiator), to a recipient running
+  there, giver and recipient participants the channel lists, as a text that may flow in
+  (`ChannelLoop::admit_given`); the moderator asking the recipient alone, as for a nudge
+  (`PolicyModerator::asking`, `RequestReason::Given`, the strongest reason), without ending the
+  channel's being quiet; the delegate's context (`SecurityContext::of_delegate`,
+  `ResolvedKind::Delegate`); an agent and an external agent taking it in as what they were given
+  (`AgentChannelState::given`), not between the steps of a turn. Until step 3 builds the
+  delegate's actor, building one fails, and the tests run a forged one in its place, in a thread
+  opened at the line (`ChannelLoop::forge_delegate`, the `Forger` moved from the channel's tests
+  into its testing module). No stored data to delete: nothing stored changes its form. Owed with
+  step 3: `ResolvedParticipant::delegate` out of its `expect(dead_code)`; a test of the security
+  suite for delegating in the giver's name; giving only once the recipient's actor has started
+  (`admit_given` asks the actors adopted, delivery the ones started - as for a nudge); the kinds
+  of actor in ARCHITECTURE.md.
+- **2026-11-18** — Step 2 of 2b accepted by the maintainer, with what it adds to the interface: the
+  initiator the giver, a text alone, no delegate of the line, and `RequestReason::Given` the
+  strongest reason. `of_delegate` stays beside `of_approver`, as agreed.

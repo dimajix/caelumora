@@ -46,9 +46,9 @@ impl Thread {
         Self { moderator, opening, phase: sync::Mutex::new(phase) }
     }
 
-    /// Who opened it; `None` for the line, which nobody opened.
-    pub(crate) fn opened_by(&self) -> Option<ActorId> {
-        self.opening.map(|opening| opening.by)
+    /// Where it was opened and by whom; `None` for the line, which nobody opened.
+    pub(crate) fn opening(&self) -> Option<Opening> {
+        self.opening
     }
 
     /// Where it stands.

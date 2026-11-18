@@ -161,8 +161,8 @@ impl ChannelLoop {
         let Some(open) = self.thread(thread).filter(|open| open.phase() != Phase::Closing) else {
             return Ok(false);
         };
-        let Some(opener) = open.opened_by() else { return Ok(false) };
-        if opener != context.caller_id {
+        let Some(opening) = open.opening() else { return Ok(false) };
+        if opening.by != context.caller_id {
             self.require(
                 context,
                 |attributes| ActionType::update(Channel::KIND, attributes),

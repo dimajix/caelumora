@@ -29,7 +29,7 @@ use crate::lock::LocksById;
 use crate::moderator::Moderator;
 use crate::session::SessionError;
 use crate::session::SessionLoop;
-use anyhow::{Error, Result};
+use anyhow::{anyhow, Error, Result};
 use arc_swap::ArcSwap;
 use caelumora_api::actor::Actor;
 use caelumora_api::component::{ComponentError, ComponentImpl};
@@ -608,6 +608,10 @@ impl ChannelLoop {
             }
             ResolvedKind::Approver(approver) => {
                 Box::new(ApproverActor::new(approver, participant_runtime))
+            }
+            // Built as a thread is delegated in (557, step 3 of 2b).
+            ResolvedKind::Delegate(thread) => {
+                return Err(anyhow!("The delegate of thread {} has no actor to build yet", thread))
             }
         })
     }

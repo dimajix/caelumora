@@ -132,7 +132,9 @@ impl OriginEventSender {
     /// Whether `event` speaks as the actor: it names the actor as its
     /// sender, and so does every message it carries. Who asked it, the
     /// initiator, may be someone else: an agent answers whoever asked it
-    /// (issue 255).
+    /// (issue 255). A message given, not said - what an agent was given, what a delegate gives to
+    /// read (issue 557) - is no message the event carries (`ActorEvent::messages`): whose it is
+    /// the channel asks as it admits it.
     fn speaks_as(&self, event: &Envelope) -> bool {
         event.context.sender_id == self.origin
             && event.event.messages().iter().all(|m| m.sender_id == self.origin)

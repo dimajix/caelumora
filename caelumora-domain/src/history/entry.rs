@@ -33,6 +33,11 @@ pub enum HistoryEntry {
     /// no id and changed by nobody. Gone to nobody: its record, read by
     /// whom may read what the agent saw.
     Given { message: Message },
+    /// `by`, the delegate of a thread, gave `recipient` `message` to read at `at` and asked it to
+    /// respond (issue 557): the message's sender is whoever gave it, a participant of the channel.
+    /// To the recipient by name and to the users; the recipient's record of it is what it was
+    /// given (`Given`).
+    GivenToRead { recipient: ActorId, message: Message, by: ActorId, at: DateTime<Utc> },
     /// The agent no longer has the message `message` to read, given to it
     /// before, from `at` on (issue 537) - a prompt part that no longer
     /// holds -: where it stopped reading it, not a change of it, since what
@@ -286,6 +291,7 @@ impl HistoryEntry {
         match self {
             HistoryEntry::Said { .. }
             | HistoryEntry::Given { .. }
+            | HistoryEntry::GivenToRead { .. }
             | HistoryEntry::Withdrawn { .. }
             | HistoryEntry::PlanStepStarted { .. }
             | HistoryEntry::TurnFinished { .. }
@@ -332,6 +338,7 @@ impl HistoryEntry {
         match self {
             HistoryEntry::Said { .. }
             | HistoryEntry::Given { .. }
+            | HistoryEntry::GivenToRead { .. }
             | HistoryEntry::Withdrawn { .. }
             | HistoryEntry::Compacted { .. }
             | HistoryEntry::TurnFinished { .. }
@@ -376,6 +383,7 @@ impl HistoryEntry {
         match self {
             HistoryEntry::Said { .. }
             | HistoryEntry::Given { .. }
+            | HistoryEntry::GivenToRead { .. }
             | HistoryEntry::Withdrawn { .. }
             | HistoryEntry::PlanStepStarted { .. }
             | HistoryEntry::TurnFinished { .. }
@@ -421,6 +429,7 @@ impl HistoryEntry {
         match self {
             HistoryEntry::Said { message } => Some(message),
             HistoryEntry::Given { .. }
+            | HistoryEntry::GivenToRead { .. }
             | HistoryEntry::Withdrawn { .. }
             | HistoryEntry::Reclassified { .. }
             | HistoryEntry::Modified { .. }
@@ -477,6 +486,7 @@ impl HistoryEntry {
             HistoryEntry::Fitted { channel } => standing.fit_into(channel),
             HistoryEntry::Said { .. }
             | HistoryEntry::Given { .. }
+            | HistoryEntry::GivenToRead { .. }
             | HistoryEntry::Withdrawn { .. }
             | HistoryEntry::Modified { .. }
             | HistoryEntry::Revoked { .. }
@@ -520,6 +530,7 @@ impl HistoryEntry {
             }
             HistoryEntry::Said { .. }
             | HistoryEntry::Given { .. }
+            | HistoryEntry::GivenToRead { .. }
             | HistoryEntry::Withdrawn { .. }
             | HistoryEntry::Fitted { .. }
             | HistoryEntry::TurnFinished { .. }
@@ -559,7 +570,8 @@ impl HistoryEntry {
     /// to every user and agent; how a turn went, what it carried out and
     /// what came of what it did of its own accord to the users; what
     /// answers a command to the user it answers; the part of the history
-    /// shared with a newcomer to the newcomer alone; what an agent was given,
+    /// shared with a newcomer to the newcomer alone; what a delegate gives to read to its
+    /// recipient and to every user (issue 557); what an agent was given,
     /// what it no longer has to read and a compaction to nobody; a command
     /// and a request to answer again to the agent they name (issues 234,
     /// 269); an approval through the approvers - an agent's request to them,
@@ -571,6 +583,9 @@ impl HistoryEntry {
     pub fn recipients(&self) -> Recipients {
         match self {
             HistoryEntry::HistoryShared { participant, .. } => Recipients::only(vec![*participant]),
+            HistoryEntry::GivenToRead { recipient, .. } => {
+                Recipients { named: vec![*recipient], ..Recipients::participants(false) }
+            }
             HistoryEntry::CommandExecuted { to: Some(to), .. }
             | HistoryEntry::CommandFailed { to, .. } => Recipients::only(
                 vec![*to].into_iter().filter(|to| matches!(to, ActorId::User(_))).collect(),
@@ -648,6 +663,9 @@ impl HistoryEntry {
             }
             HistoryEntry::Said { message } => ActorEvent::CompleteMessageGenerated(message),
             HistoryEntry::Given { message } => ActorEvent::MessageGiven { message },
+            HistoryEntry::GivenToRead { recipient, message, .. } => {
+                ActorEvent::GivenToRead { recipient, message }
+            }
             HistoryEntry::Withdrawn { message, at } => ActorEvent::MessageWithdrawn { message, at },
             HistoryEntry::Reclassified { message, classification } => {
                 ActorEvent::MessageReclassified { message, classification }
@@ -749,9 +767,8 @@ impl HistoryEntry {
 
     /// The entry as everybody but its sender may see it (issue 417): a
     /// message, said or modified, as it is published (`Message::published`),
-    /// `None` if nothing of it is left to show; nothing of what an agent was
-    /// given, nor of what it no longer has to read; every other entry as it
-    /// is.
+    /// `None` if nothing of it is left to show, and so is a message given to read; nothing of what
+    /// an agent was given, nor of what it no longer has to read; every other entry as it is.
     pub fn published(&self) -> Option<HistoryEntry> {
         match self {
             HistoryEntry::Said { message } => {
@@ -759,6 +776,14 @@ impl HistoryEntry {
             }
             HistoryEntry::Modified { message } => {
                 message.published().map(|message| HistoryEntry::Modified { message })
+            }
+            HistoryEntry::GivenToRead { recipient, message, by, at } => {
+                message.published().map(|message| HistoryEntry::GivenToRead {
+                    recipient: *recipient,
+                    message,
+                    by: *by,
+                    at: *at,
+                })
             }
             HistoryEntry::Given { .. } | HistoryEntry::Withdrawn { .. } => None,
             HistoryEntry::Revoked { .. }
@@ -818,6 +843,7 @@ impl HistoryEntry {
             | HistoryEntry::HistoryShared { by, .. }
             | HistoryEntry::ThreadOpened { by, .. }
             | HistoryEntry::ThreadClosed { by, .. }
+            | HistoryEntry::GivenToRead { by, .. }
             | HistoryEntry::CommandRequested { by, .. }
             | HistoryEntry::RetryRequested { by, .. }
             | HistoryEntry::ApprovalRequested { by, .. }
@@ -849,6 +875,7 @@ impl HistoryEntry {
                 Some((transcript, frame, message.turn_id?))
             }
             HistoryEntry::Given { .. }
+            | HistoryEntry::GivenToRead { .. }
             | HistoryEntry::Withdrawn { .. }
             | HistoryEntry::Reclassified { .. }
             | HistoryEntry::Modified { .. }
@@ -888,6 +915,7 @@ impl HistoryEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::AgentId;
     use crate::confidentiality::Confidentiality;
     use crate::context::FrameRef;
     use crate::digest;
@@ -895,6 +923,7 @@ mod tests {
     use crate::history::testing::recorded_context;
     use crate::history::History;
     use crate::message::testing::{id, make_message};
+    use crate::user::UserId;
 
     /// Issue 557: a thread opened or closed is of the whole channel, an item of its history told to
     /// its users - not to its agents, which take no note of it - and delivered again as it was.
@@ -917,6 +946,35 @@ mod tests {
         assert!(
             matches!(opened.event(), Some(ActorEvent::ThreadOpened { thread: t, origin: o })
                 if t == thread && o == origin),
+            "delivered again as it was"
+        );
+    }
+
+    /// Issue 557: what a delegate gives to read happens in its thread, an item of its history, and
+    /// goes to its recipient by name and to the users - no other agent hears it -, and is delivered
+    /// again as it was.
+    #[test]
+    fn something_given_to_read_goes_to_its_recipient_and_the_users() {
+        let thread = ThreadId::new();
+        let recipient = ActorId::Agent(AgentId::new());
+        let message = make_message(id(1));
+        let given = HistoryEntry::GivenToRead {
+            recipient,
+            message: message.clone(),
+            by: ActorId::Delegate(thread),
+            at: Utc::now(),
+        };
+        assert!(given.is_of_thread(), "of its thread");
+        assert!(given.is_item(), "an item");
+        let recipients = given.recipients();
+        assert!(recipients.goes_to(recipient, thread, Some(thread)), "to its recipient");
+        let other = ActorId::Agent(AgentId::new());
+        assert!(!recipients.goes_to(other, thread, Some(thread)), "to no other agent");
+        let user = ActorId::User(UserId::new());
+        assert!(recipients.goes_to(user, thread, Some(thread)), "to the users");
+        assert!(
+            matches!(given.event(), Some(ActorEvent::GivenToRead { recipient: r, message: m })
+                if r == recipient && m.id == message.id),
             "delivered again as it was"
         );
     }

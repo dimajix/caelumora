@@ -82,16 +82,16 @@ call from the participant the channel resolved and the initiator the work names 
 the agent's own (the agent itself as initiator), built so too; **E** an envelope's, built by the
 channel as it admits it (issue 516): the sender's context as the channel knows it then - a user's
 own, an agent's with its owner's rights and roles as the controllers hold them, limited by its
-personality, the approver's answered for by the channel's owner -, with the initiator the event
-names, and one without rights if the sender takes no part; never what the sender set. An envelope
-read back from the history (issue 223) carries the recorded initiator and is admitted again only as
-a command asked of an agent; **V** a viewer's (U, or T with the place the agent reads from); **C**
-the owner's of a channel or session, with their roles as they are when it is built (its components,
-its commands - only while they are built); **S** the system's, which asks nothing. After the name
-the concept. The rule column names the reason it is asked (R1-R5, SECURITY.md); "store" is the store
-layer, in the context the caller passes. Every Read of the store of what is classified - a channel,
-a workspace, a skill, an artifact - is followed by `cleared_for` in the same context (issue 322),
-named in the rows where it is the reason of a refusal.
+personality, the approver's and a delegate's answered for by the channel's owner -, with the
+initiator the event names, and one without rights if the sender takes no part; never what the sender
+set. An envelope read back from the history (issue 223) carries the recorded initiator and is
+admitted again only as a command asked of an agent; **V** a viewer's (U, or T with the place the
+agent reads from); **C** the owner's of a channel or session, with their roles as they are when it
+is built (its components, its commands - only while they are built); **S** the system's, which asks
+nothing. After the name the concept. The rule column names the reason it is asked (R1-R5,
+SECURITY.md); "store" is the store layer, in the context the caller passes. Every Read of the store
+of what is classified - a channel, a workspace, a skill, an artifact - is followed by `cleared_for`
+in the same context (issue 322), named in the rows where it is the reason of a refusal.
 
 The column *Again* names where a question of the operation is asked once more on the way: *(pair)*
 asked by the operation itself before it acts (R2) and again by the store as it writes (R1);
@@ -164,6 +164,7 @@ permission first, then the flow of what it carries.
 | `QuestionAnswered`, `QuestionDeclined` | `AnswerQuestion` (E,1); whether its sender was asked is the agent's | `Forbidden` |
 | `CommandRequested` | from a user (structural); the agent named takes part and carries the command out (structural); `ShowAgentCommand`, `ExecuteAgentCommand` (E,3) with the agent's attributes and the channel's - asked again, with the issuer's rights as they are then, when the request is read back from the history for the agent (issue 516) | `Invalid`, `Forbidden` |
 | `NudgeRequested` | form only: from a user, naming someone taking part | `Invalid` |
+| `GivenToRead` (issue 557) | from the delegate of a thread opened, into it or back into the thread it was opened at; in the name of its giver - the message's sender is the initiator -; to a recipient running in that thread; recipient and giver participants the channel lists; a text, without attachments, tool calls or results (structural); the flow of the message as for a message said (E,2) | `Invalid`, `ClassificationRefused` |
 | `ApprovalAnswered` | from a user, saying their own part alone (`decision`, issue 419, structural); which agent asked and `ApproveToolCall` are the approver's (issue 567) | `Invalid` |
 | `ApprovalGranted`, `ApprovalDenied`, `ApprovalTimedOut` | from an approver alone (structural) | `Invalid` |
 | `EventRefused` | to someone else taking part (structural, issue 567) | `Invalid` |

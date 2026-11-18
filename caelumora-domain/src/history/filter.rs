@@ -208,7 +208,7 @@ impl Filter<HistoryField> {
                     ActorId::User(_) => while_taking_part(HistoryField::ToUsers, &positions),
                     ActorId::Agent(_) => while_taking_part(HistoryField::ToAgents, &in_its_thread),
                     ActorId::Approver(_) => Filter::eq(HistoryField::ToApprovers, true),
-                    ActorId::System | ActorId::None => Filter::nothing(),
+                    ActorId::Delegate(_) | ActorId::System | ActorId::None => Filter::nothing(),
                 };
                 let reaching = Filter::Or(vec![
                     Filter::any(HistoryField::Named, Filter::eq(HistoryField::Element, *actor)),

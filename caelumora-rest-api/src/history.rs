@@ -260,8 +260,11 @@ impl<M> HistoryItemResponse<M> {
             // no client shows it (issue 417).
             HistoryEntry::HistoryShared { .. } => None,
             // A thread opened or closed (issue 557) is shown once the frontends sort what happens
-            // by thread (557, step 6 of 2b).
-            HistoryEntry::ThreadOpened { .. } | HistoryEntry::ThreadClosed { .. } => None,
+            // by thread, and what a delegate gave to read at the call that delegated (557, step 6
+            // of 2b).
+            HistoryEntry::ThreadOpened { .. }
+            | HistoryEntry::ThreadClosed { .. }
+            | HistoryEntry::GivenToRead { .. } => None,
             HistoryEntry::Reclassified { .. }
             | HistoryEntry::Modified { .. }
             | HistoryEntry::Revoked { .. }

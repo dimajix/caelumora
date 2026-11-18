@@ -116,13 +116,13 @@ impl Recipients {
     }
 
     /// Whether it goes to `actor` for what it is: a user or an agent of the
-    /// kinds it names, or an approver.
+    /// kinds it names, or an approver. A delegate is reached by name alone.
     fn of_kind(&self, actor: ActorId) -> bool {
         match actor {
             ActorId::User(_) => self.users,
             ActorId::Agent(_) => self.agents,
             ActorId::Approver(_) => self.approvers,
-            ActorId::System | ActorId::None => false,
+            ActorId::Delegate(_) | ActorId::System | ActorId::None => false,
         }
     }
 

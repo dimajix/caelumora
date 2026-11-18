@@ -243,9 +243,10 @@ configuration, starts its task with the others as `run` begins, delivers to it b
 takes in what it sends. They are configured, like everything else of a channel: a template names
 them for each channel (`ChannelTemplate::internal_actors`, an approver with its strategy, `Any`
 unless named), and so does a request to create one (`ChannelSpec::internal_actors`; the web UI's
-dialog names an approver). A channel has the internal actors it is given and no others - there is
-no fallback: without an approver, nobody decides what needs approval, and tools that ask for it do
-not work there.
+dialog names an approver). A channel has the internal actors it is given and no others - but the
+delegates of its threads, which come with delegating (see
+[Giving something to read](#giving-something-to-read)) -, and there is no fallback: without an
+approver, nobody decides what needs approval, and tools that ask for it do not work there.
 
 The participants of a requested channel come from the session's participants, the creator always
 among them. Its moderator and classification default as in a template (see
@@ -448,6 +449,7 @@ sender's name, then whether the sender may act so, then whether what it carries 
 | `RetryRequested` | `RetryMessage` of the channel; a message, not taken back, or a turn that can be answered again, of an agent taking part |
 | `QuestionAnswered`, `QuestionDeclined` | `AnswerQuestion` of the channel - whether the sender was asked is the agent's to check |
 | `CommandRequested`, `NudgeRequested` | sent by a user, naming an agent (or, for a nudge, anyone else) taking part |
+| `GivenToRead` | sent by the delegate of a thread opened, into it or back into the thread it was opened at, in the name of its giver; recipient and giver participants the channel lists, the recipient running there; a text, which may flow in (issue 557) |
 | `ApprovalAnswered` | sent by a user, saying their own part alone - which agent asked, and whether they may approve its calls (`ApproveToolCall`), is the approver's to tell, which holds the request (issues 312, 567) |
 | `ApprovalGranted`, `ApprovalDenied`, `ApprovalTimedOut` | sent by an approver: its decision |
 | `EventRefused` | sent by an actor in its own name, to someone else in the channel (issue 567) |
@@ -950,6 +952,34 @@ message of the user had mentioned them - no policy consulted, no chain between a
     the answer: nobody but the one asked is shown the request, and the command answers the issuer
     alone.
 
+### Giving something to read
+
+The **delegate** of a thread (`ActorId::Delegate`, named by the thread it delegates into, issue
+557) gives a participant a message to read and asks it to respond (`GivenToRead`): a brief into its
+thread, what came of it back into the thread it was opened at. The message's sender is whoever
+gives it, a participant the channel lists: nobody speaks in another's name. The delegate is no
+participant but an internal actor of the channel, which no configuration names, acting in a context
+of its own answered for by the channel's owner, as the approver's is
+(`SecurityContext::of_delegate`), and naming the giver as the initiator of what it sends. Its
+actor, which carries a delegation into the thread and what came of it back, comes with delegating
+(557, step 3 of 2b).
+
+*   **What the channel admits.** Something given by the delegate of a thread opened - into that
+    thread, or back into the one it was opened at -, in the name of its giver, a participant the
+    channel lists, to a recipient running there; a text alone, of a classification the channel may
+    hold (see [PERMISSION-CHECKS.md](PERMISSION-CHECKS.md)).
+*   **Whom it reaches.** It is recorded to the recipient by name and to the users; no other agent
+    hears it. The moderator asks the recipient alone to respond, as for a nudge - no policy
+    consulted, no chain counted (`RequestReason::Given`, the strongest reason) -, so that it is
+    woken, and the request recorded and read again from the history, as every request is. Unlike a
+    nudge it does not end the channel's being quiet: in a quiet channel the recipient is given it,
+    and asked once the channel is woken.
+*   **What an agent makes of it.** It takes it in as what it was given (`Given`), as a skill given
+    with `/skill` is: "@alice gave you this to read:" (see
+    [AGENT-TURN.md](AGENT-TURN.md#what-is-given-to-read)), recorded once as its own record
+    (`MessageGiven`). Not between the steps of a turn: it waits for the turn's end, as a command
+    does.
+
 ### Refusals
 
 A refusal is a `ChannelError::Forbidden`, which REST answers with `403`. Like a refused tool call,
@@ -1236,8 +1266,9 @@ nobody could be chosen, and a mention asks someone. Why the policy could not cho
 told to nobody.
 
 A `Routing` also says why it asks (`RequestReason`, issue 439): `mentioned` - by the agent's handle
-or `@all` -, `nudged` by a user (see [Nudging someone](#nudging-someone)), `chosen` by the policy,
-or `undecided`, asked under `on_undecided: all` because the policy could not choose (issue 441). The
+or `@all` -, `nudged` by a user (see [Nudging someone](#nudging-someone)), `given` something to read
+(see [Giving something to read](#giving-something-to-read)), `chosen` by the policy, or
+`undecided`, asked under `on_undecided: all` because the policy could not choose (issue 441). The
 request to respond carries it, and the history records it with the request. An agent whose
 personality has the component `request_reason` is told, when only chosen, that it may stay silent
 (see [AGENT-TURN.md](AGENT-TURN.md#why-the-agent-was-asked)): what a policy chooses is a guess

@@ -13,6 +13,7 @@ pub use state::{ActorState, ProcessingStateHolder};
 
 use crate::agent::AgentId;
 use crate::approval::ApproverId;
+use crate::channel::ThreadId;
 use crate::query::FieldValue;
 use crate::user::UserId;
 use crate::value::name::Name;
@@ -28,6 +29,10 @@ pub enum ActorId {
     User(UserId),
     Agent(AgentId),
     Approver(ApproverId),
+    /// The delegate of a thread (issue 557): the kernel's internal actor that carries a
+    /// delegation into the thread and what came of it back, named by the thread it delegates
+    /// into, which has one at most.
+    Delegate(ThreadId),
     /// The kernel itself, acting on no one's behalf: setting up initial data, keeping its own
     /// records in step with events. Only ever set deliberately, through
     /// `SecurityContext::system()` - never the default, so that a context nobody filled in has no
@@ -44,6 +49,7 @@ impl From<ActorId> for FieldValue {
             ActorId::User(id) => FieldValue::tagged("User", id),
             ActorId::Agent(id) => FieldValue::tagged("Agent", id),
             ActorId::Approver(id) => FieldValue::tagged("Approver", id),
+            ActorId::Delegate(id) => FieldValue::tagged("Delegate", id),
             ActorId::System => FieldValue::from("System"),
         }
     }
@@ -52,6 +58,8 @@ impl From<ActorId> for FieldValue {
 impl ActorId {
     /// The name every approver is shown with.
     pub const APPROVER_NAME: &'static str = "Approver";
+    /// The name every delegate is shown with.
+    pub const DELEGATE_NAME: &'static str = "Delegate";
 
     /// The name every approver is shown with, as a name: what an approver's
     /// actor is called in its channel.
@@ -59,12 +67,13 @@ impl ActorId {
         Name::fixed(Self::APPROVER_NAME)
     }
 
-    /// The name of an actor that is no entity and so has no name of its own: an approver, the
-    /// kernel itself, nobody. `None` for users and agents, whose names are their entities'
-    /// (`ControllerManager::actor_name`).
+    /// The name of an actor that is no entity and so has no name of its own: an approver, a
+    /// delegate, the kernel itself, nobody. `None` for users and agents, whose names are their
+    /// entities' (`ControllerManager::actor_name`).
     pub fn fixed_name(&self) -> Option<&'static str> {
         match self {
             ActorId::Approver(_) => Some(Self::APPROVER_NAME),
+            ActorId::Delegate(_) => Some(Self::DELEGATE_NAME),
             ActorId::System => Some("system"),
             ActorId::None => Some("unknown"),
             ActorId::User(_) | ActorId::Agent(_) => None,
@@ -79,6 +88,7 @@ impl ActorId {
             ActorId::User(id) => id.0,
             ActorId::Agent(id) => id.0,
             ActorId::Approver(id) => id.0,
+            ActorId::Delegate(id) => id.0,
             ActorId::System => Uuid::nil(),
         }
     }
@@ -121,7 +131,7 @@ impl ActorDescription {
             .flatten()
     }
 
-    /// Whether it is a person: a user, not an agent, an approver or the
+    /// Whether it is a person: a user, not an agent, an internal actor of the channel or the
     /// system.
     pub fn is_person(&self) -> bool {
         matches!(self.id, ActorId::User(_))

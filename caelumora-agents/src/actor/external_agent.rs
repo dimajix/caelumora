@@ -1034,6 +1034,7 @@ impl Actor for ExternalAgentActor {
             matches!(
                 event.event,
                 ActorEvent::ResponseRequested { .. }
+                    | ActorEvent::GivenToRead { .. }
                     | ActorEvent::CompleteMessageGenerated(_)
                     | ActorEvent::MessageModified(_)
                     | ActorEvent::MessageRevoked { .. }

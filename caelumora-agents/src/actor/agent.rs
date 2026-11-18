@@ -976,6 +976,7 @@ impl Actor for AgentActor {
                     | ActorEvent::MessageReclassified { .. }
                     | ActorEvent::RetryRequested { .. }
                     | ActorEvent::ResponseRequested { .. }
+                    | ActorEvent::GivenToRead { .. }
                     | ActorEvent::CommandRequested { .. }
                     | ActorEvent::ParticipantJoined { .. }
                     | ActorEvent::ParticipantLeft { .. }

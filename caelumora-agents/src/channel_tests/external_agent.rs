@@ -400,6 +400,64 @@ async fn an_external_agent_is_given_what_was_said_since_it_was_last_asked_and_an
     running.abort();
 }
 
+/// Issue 557: what a delegate gives an external agent to read is passed on to its remote agent as
+/// given to it, its giver named, and asks it to respond.
+#[tokio::test]
+async fn an_external_agent_is_given_what_a_delegate_gives_it_to_read_and_answers() {
+    use crate::external::ExternalEvent;
+    use caelumora_domain::channel::ThreadId;
+    use caelumora_domain::message::MessageRole;
+
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![
+        vec![
+            Ok(ExternalEvent::Started(task("t-1"))),
+            Ok(ExternalEvent::Message("Hello, alice.".to_string())),
+            Ok(ExternalEvent::Completed),
+        ],
+        vec![
+            Ok(ExternalEvent::Started(task("t-2"))),
+            Ok(ExternalEvent::Message("Found it.".to_string())),
+            Ok(ExternalEvent::Completed),
+        ],
+    ]));
+    let Stuck { channel, context, agent, mut events, running, .. } =
+        with_an_external_agent(Arc::clone(&remote)).await;
+    answered(&mut events, agent).await;
+
+    let alice = ActorId::User(alice_of(&context));
+    let line = ThreadId::line(channel.id());
+    let brief = Message {
+        sender_id: alice,
+        sender_name: "alice".to_string(),
+        role: MessageRole::User,
+        content: Some("Look this up.".to_string()),
+        ..Message::new(Classification::CHANNEL_DEFAULT)
+    };
+    let given = |thread| {
+        let context = EventContext {
+            sender_id: ActorId::Delegate(thread),
+            initiator_id: alice,
+            thread_id: line,
+            ..channel.event_context()
+        };
+        let message = brief;
+        let given = ActorEvent::GivenToRead { recipient: ActorId::Agent(agent), message };
+        vec![Envelope::new(context, given)]
+    };
+    channel.forge_delegate(given).await;
+    let second = answered(&mut events, agent).await;
+    assert_eq!(second[0].content.as_deref(), Some("Found it."), "asked, it answers");
+
+    let sent = remote.sent.lock().unwrap().clone();
+    let texts: Vec<_> = sent[1].1.said.iter().map(|said| said.text.clone()).collect();
+    assert!(
+        matches!(texts.as_slice(), [given] if given.contains("gave you this to read")
+            && given.contains("Look this up.")),
+        "given to it, its giver named: {texts:?}"
+    );
+    running.abort();
+}
+
 /// Where its profile says so, an agent is given when the messages of others
 /// were written, in its session's time zone as its turn begins, and the
 /// context of its answer tells them so after the time zone changed (issue

@@ -1184,6 +1184,96 @@ async fn a_sleeping_agent_woken_by_a_mention_answers_it() {
     running.abort();
 }
 
+/// Issue 557: what a delegate gives an agent to read wakes it, and it takes it in as given to it -
+/// "alice gave you this to read:", as a skill given with `/skill` -, recorded once as what it
+/// was given, and answers it.
+#[tokio::test]
+async fn an_agent_given_something_to_read_wakes_takes_it_in_and_answers() {
+    use caelumora_domain::channel::ThreadId;
+    use caelumora_domain::tool::ToolCall;
+
+    let answer = |text: &str, tool_calls| Message {
+        role: MessageRole::Assistant,
+        content: Some(text.to_string()),
+        tool_calls,
+        ..Message::new(Classification::CHANNEL_DEFAULT)
+    };
+    let stop = vec![ToolCall {
+        id: Some("1".to_string()),
+        arguments: serde_json::json!({}),
+        ..make_tool_call("stop")
+    }];
+    let components = ComponentConfig {
+        component_nodes: vec![ComponentDescriptor {
+            id: "stop".to_string(),
+            kind: TURN_END_KIND.to_string(),
+            params: Value::Null,
+            tags: vec![],
+            fail_policy: ComponentFailPolicy::FailClosed,
+        }],
+    };
+    let model =
+        Scripted(Mutex::new([answer("Good bye.", stop), answer("Found it.", Vec::new())].into()));
+    let Stuck { channel, context, agent, helper, mut events, running } =
+        with_an_agent(Arc::new(model), components).await;
+    settled(&helper, ActorState::Sleeping).await;
+    let alice = ActorId::User(alice_of(&context));
+    // Given back into the line by the delegate of a thread opened at it, which only the tests make.
+    let line = ThreadId::line(channel.id());
+    let brief = Message {
+        sender_id: alice,
+        sender_name: "alice".to_string(),
+        role: MessageRole::User,
+        content: Some("Look this up.".to_string()),
+        ..Message::new(Classification::CHANNEL_DEFAULT)
+    };
+    let given = |thread| {
+        let context = EventContext {
+            sender_id: ActorId::Delegate(thread),
+            initiator_id: alice,
+            thread_id: line,
+            ..channel.event_context()
+        };
+        let message = brief.clone();
+        let given = ActorEvent::GivenToRead { recipient: ActorId::Agent(agent), message };
+        vec![Envelope::new(context, given)]
+    };
+    channel.forge_delegate(given).await;
+
+    let said = |messages: Vec<Message>| {
+        messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>()
+    };
+    while said(answered(&mut events, agent).await) != ["Found it."] {}
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
+    let given: Vec<_> = stored
+        .transcript
+        .entries()
+        .filter_map(|node| match &node.entry {
+            TranscriptEntry::Given { message, source: None } => Some(message.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(given.len(), 1, "taken in once, as given to it: {given:?}");
+    assert_eq!((given[0].id, given[0].sender_id), (brief.id, alice), "its giver its sender");
+    let recorded = channel.history_entries().await;
+    assert!(
+        recorded.iter().any(
+            |entry| matches!(entry, HistoryEntry::Given { message } if message.id == brief.id)
+        ),
+        "its record of what it was given: {recorded:?}"
+    );
+    // What it is given again from the history, as after a restart (issue 223): by name.
+    let readable = channel.visible_entries(ActorId::Agent(agent)).await;
+    assert!(
+        readable.iter().any(|entry| matches!(
+            entry,
+            HistoryEntry::GivenToRead { message, .. } if message.id == brief.id
+        )),
+        "read back from the history as its recipient: {readable:?}"
+    );
+    running.abort();
+}
+
 #[tokio::test]
 async fn an_agent_that_calls_stop_ends_its_turn_with_the_call_and_sleeps() {
     use caelumora_domain::tool::ToolCall;

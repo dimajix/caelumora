@@ -419,6 +419,13 @@ fn history_entry(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
             e.opt_digest(Some(&message_chain(None, message)));
             e.finish()
         }
+        HistoryEntry::GivenToRead { recipient, message, by, .. } => {
+            let mut e = Encoder::new("caelumora.history-given-to-read.v1");
+            e.opt_digest(previous);
+            e.opt_digest(Some(&message_chain(None, message)));
+            e.json(&serde_json::json!([recipient, by]));
+            e.finish()
+        }
         HistoryEntry::Withdrawn { message, .. } => {
             let mut e = Encoder::new("caelumora.history-withdrawn.v1");
             e.opt_digest(previous);

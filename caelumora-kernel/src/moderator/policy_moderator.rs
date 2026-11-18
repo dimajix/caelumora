@@ -204,6 +204,15 @@ impl PolicyModerator {
         heard.drain(..excess);
     }
 
+    /// Asks `participant` alone to respond to `event`, for `reason`, if it takes part: no policy is
+    /// consulted, and no chain between agents counted - a nudge (issue 278), something given to
+    /// read (issue 557).
+    fn asking(&self, participant: ActorId, reason: RequestReason, event: &Envelope) -> Routing {
+        let ask =
+            self.actors().takes_part(participant).then_some(participant).into_iter().collect();
+        Routing { ask, reason, agent_hops: event.context.agent_hops, ..Routing::default() }
+    }
+
     /// Applies the change of a message `event` tells, if it is one, to the
     /// message kept, by the rules the message keeps (issue 234). A change of
     /// the channel's classification is no event and does not reach the
@@ -376,21 +385,14 @@ impl Moderator for PolicyModerator {
                 routing
             }
             // A user nudges someone (issue 278): they alone are asked to
-            // respond, as if a message of the user had mentioned them - no
-            // policy is consulted, and no chain between agents counted.
+            // respond, as if a message of the user had mentioned them.
             ActorEvent::NudgeRequested { participant } => {
-                let ask = self
-                    .actors()
-                    .takes_part(*participant)
-                    .then_some(*participant)
-                    .into_iter()
-                    .collect();
-                Routing {
-                    ask,
-                    reason: RequestReason::Nudged,
-                    agent_hops: event.context.agent_hops,
-                    ..Routing::default()
-                }
+                self.asking(*participant, RequestReason::Nudged, event)
+            }
+            // Given something to read by a delegate (issue 557): the recipient alone is asked, as
+            // for a nudge.
+            ActorEvent::GivenToRead { recipient, .. } => {
+                self.asking(*recipient, RequestReason::Given, event)
             }
             // A change to what was said, in what the moderator keeps of
             // what was heard (issue 234).
@@ -420,7 +422,7 @@ impl Moderator for PolicyModerator {
 struct ModeratorActors {
     agent_actors: HashMap<ActorId, Arc<dyn Actor>>,
     user_actors: HashMap<ActorId, Arc<dyn Actor>>,
-    approval_actors: HashMap<ActorId, Arc<dyn Actor>>,
+    internal_actors: HashMap<ActorId, Arc<dyn Actor>>,
 }
 
 impl ModeratorActors {
@@ -435,8 +437,9 @@ impl ModeratorActors {
             ActorId::User(_) => {
                 self.user_actors.insert(id, actor);
             }
-            ActorId::Approver(_) => {
-                self.approval_actors.insert(id, actor);
+            // The channel's own (issue 420): an approver, a delegate (issue 557).
+            ActorId::Approver(_) | ActorId::Delegate(_) => {
+                self.internal_actors.insert(id, actor);
             }
             ActorId::Agent(_) => {
                 self.agent_actors.insert(id, actor);
@@ -448,12 +451,12 @@ impl ModeratorActors {
     fn remove_actor(&mut self, id: ActorId) {
         self.agent_actors.remove(&id);
         self.user_actors.remove(&id);
-        self.approval_actors.remove(&id);
+        self.internal_actors.remove(&id);
     }
 
     /// Whether `participant`, of whatever kind, is in the channel.
     fn takes_part(&self, participant: ActorId) -> bool {
-        [&self.agent_actors, &self.user_actors, &self.approval_actors]
+        [&self.agent_actors, &self.user_actors, &self.internal_actors]
             .iter()
             .any(|actors| actors.contains_key(&participant))
     }

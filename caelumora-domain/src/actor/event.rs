@@ -372,6 +372,16 @@ pub enum ActorEvent {
     MessageGiven {
         message: Message,
     },
+    /// The delegate of a thread gives `recipient` `message` to read and asks it to respond (issue
+    /// 557): the message's sender is whoever gives it, a participant of the channel, not the
+    /// delegate that sends the event; given, not said, it is no message the event carries
+    /// (`messages`). Recorded to the recipient by name and published to the users; no other agent
+    /// hears it. The moderator asks the recipient alone to respond, as for a nudge
+    /// (`RequestReason::Given`), and the recipient takes it in as given to it (`MessageGiven`).
+    GivenToRead {
+        recipient: ActorId,
+        message: Message,
+    },
     /// The agent no longer has `message` to read, given to it before
     /// (`MessageGiven`), from `at` on (issue 537) - a prompt part that no
     /// longer holds -, as its transcript records it: sent by the agent
@@ -432,6 +442,9 @@ pub enum RequestReason {
     Nudged,
     /// What it responds to mentions it, by its handle or with `@all`.
     Mentioned,
+    /// It was given something to read (`GivenToRead`, issue 557): the strongest reason, since a
+    /// delegate asks it for what came of a brief, and waits for nothing else.
+    Given,
 }
 
 /// What a request to answer again is about (issue 235).
@@ -476,6 +489,9 @@ impl ActorEvent {
                 publish(m, ActorEvent::IntermediateMessageGenerated)
             }
             ActorEvent::MessageModified(m) => publish(m, ActorEvent::MessageModified),
+            ActorEvent::GivenToRead { recipient, message } => {
+                message.published().map(|message| ActorEvent::GivenToRead { recipient, message })
+            }
             ActorEvent::TurnFinished { turn_id, messages } => Some(ActorEvent::TurnFinished {
                 turn_id,
                 messages: messages.iter().filter_map(Message::published).collect(),
@@ -542,6 +558,7 @@ impl ActorEvent {
             | ActorEvent::EventRefused { .. }
             | ActorEvent::ApprovalAnswered { .. }
             | ActorEvent::MessageGiven { .. }
+            | ActorEvent::GivenToRead { .. }
             | ActorEvent::MessageWithdrawn { .. }
             | ActorEvent::ContextCompacted { .. } => false,
         }
@@ -652,6 +669,7 @@ impl ActorEvent {
             ActorEvent::EventRejected { .. } => "EventRejected",
             ActorEvent::EventRefused { .. } => "EventRefused",
             ActorEvent::MessageGiven { .. } => "MessageGiven",
+            ActorEvent::GivenToRead { .. } => "GivenToRead",
             ActorEvent::MessageWithdrawn { .. } => "MessageWithdrawn",
             ActorEvent::ContextCompacted { .. } => "ContextCompacted",
         }
