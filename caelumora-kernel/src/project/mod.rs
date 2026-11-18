@@ -12,6 +12,7 @@ mod spec;
 pub use manager::ProjectManager;
 pub use spec::ProjectSpec;
 
+use crate::procedure::ProcedureError;
 use crate::scoped::ScopeNotEmpty;
 use anyhow::Error;
 use caelumora_domain::project::ProjectId;
@@ -41,6 +42,9 @@ pub enum ProjectError {
     Invalid(#[from] ValueError),
     #[error(transparent)]
     Store(#[from] StoreError),
+    /// What the executor of procedures failed with (issue 593).
+    #[error(transparent)]
+    Procedure(#[from] ProcedureError),
     /// A session of the project that could not be deleted, restored or purged with it.
     #[error("a session of the project: {0}")]
     Session(#[source] Error),

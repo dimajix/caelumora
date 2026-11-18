@@ -243,7 +243,7 @@ mod tests {
             channels: vec![channel.id],
             ..session
         };
-        let session_loop = SessionManager::new(Arc::clone(&kernel))
+        let session_loop = Arc::new(SessionManager::new(Arc::clone(&kernel)))
             .create(&as_owner, session.clone(), vec![channel.clone()])
             .await
             .unwrap();

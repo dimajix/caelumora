@@ -2319,7 +2319,7 @@ async fn a_project_is_seen_by_who_reads_it() {
 
     let hers = world.session_of(&[], &[], &[]).await;
     for lying_there in [&session, &hers] {
-        lying_there.update_project(&alice, Some(project.id)).await.unwrap();
+        world.manager.update_project(&alice, lying_there.id(), Some(project.id)).await.unwrap();
     }
     let in_it = |ctx: SecurityContext| {
         let views = views(&ctx);
@@ -2343,7 +2343,7 @@ async fn a_project_is_seen_by_who_reads_it() {
     assert_eq!(in_it(alice.clone()).await, both, "its owner reads both sessions in it");
     assert_eq!(in_it(bob.clone()).await, [session.id()], "a member those he reads alone");
     for lying_there in [&session, &hers] {
-        lying_there.update_project(&alice, None).await.unwrap();
+        world.manager.update_project(&alice, lying_there.id(), None).await.unwrap();
     }
 
     let shown = views(&bob)
@@ -2399,19 +2399,22 @@ async fn a_session_is_put_into_a_project_by_who_may_change_it_and_read_the_proje
         .unwrap();
     let projects = &world.kernel.entity_stores().projects;
 
-    let refused = session
-        .update_project(&bob, Some(project.id))
+    let refused = world
+        .manager
+        .update_project(&bob, session.id(), Some(project.id))
         .await
         .expect_err("bob may not change the session");
     assert!(denied(&refused), "{refused}");
-    let refused = session
-        .update_project(&alice, Some(carols.id))
+    let refused = world
+        .manager
+        .update_project(&alice, session.id(), Some(carols.id))
         .await
         .expect_err("alice does not read carol's");
     assert!(not_found(&refused), "{refused}");
     let other = world.shared_session(&[], &[]).await;
-    let refused = session
-        .update_project(&alice, Some(other.session().project))
+    let refused = world
+        .manager
+        .update_project(&alice, session.id(), Some(other.session().project))
         .await
         .expect_err("another session's own");
     assert!(
@@ -2419,10 +2422,11 @@ async fn a_session_is_put_into_a_project_by_who_may_change_it_and_read_the_proje
         "{refused}"
     );
 
-    let (put, asked) = world.asked(session.update_project(&alice, Some(project.id))).await;
+    let (put, asked) =
+        world.asked(world.manager.update_project(&alice, session.id(), Some(project.id))).await;
     put.expect("hers to put it there");
-    assert_eq!(asked, checks(&["alice: UpdateSession(alice's) yes", "alice: GetProject(alice's) yes", "alice: GetSession(alice's) yes", "alice: UpdateSession(alice's) yes"]),
-        "changing the session, reaching the project, then storing the session; the share is the kernel's, the session's change asked");
+    assert_eq!(asked, checks(&["alice: GetSession(alice's) yes", "alice: UpdateSession(alice's) yes", "alice: GetProject(alice's) yes", "alice: GetSession(alice's) yes", "alice: UpdateSession(alice's) yes"]),
+        "reaching the session, changing it, reaching the project, then storing the session; the share is the kernel's, the session's change asked");
     assert_eq!(session.session().project, project.id, "its results go there now");
     assert!(projects.get(&bob, project.id).await.is_ok(), "shared with its participants");
     assert!(
@@ -2430,7 +2434,7 @@ async fn a_session_is_put_into_a_project_by_who_may_change_it_and_read_the_proje
         "its own stays, with what lies in it"
     );
 
-    session.update_project(&alice, None).await.expect("and to take it out");
+    world.manager.update_project(&alice, session.id(), None).await.expect("and to take it out");
     assert_eq!(session.session().project, own, "into its own again");
     assert!(
         projects.get(&bob, project.id).await.is_err(),
@@ -2482,7 +2486,7 @@ async fn lifting_a_sessions_own_project_makes_it_shared_with_the_session_in_it()
     let refused = controller.lift(&alice, "again", Scope::GlobalScope).await;
     assert!(matches!(refused, Err(ProjectError::InvalidScope)), "lifted once: {refused:?}");
 
-    session.update_project(&alice, None).await.expect("taken out");
+    world.manager.update_project(&alice, session.id(), None).await.expect("taken out");
     let anew = session.session().project;
     assert_ne!(anew, own, "into a new project of its own");
     assert_eq!(
@@ -2513,7 +2517,7 @@ async fn deleting_a_project_deletes_its_sessions_and_what_lies_in_it_as_far_as_t
         .create(&alice, ProjectSpec::new("report", Scope::UserScope { user_id: world.alice }))
         .await
         .unwrap();
-    session.update_project(&alice, Some(project.id)).await.unwrap();
+    world.manager.update_project(&alice, session.id(), Some(project.id)).await.unwrap();
     let mut bobs = ComponentBundle::new(
         ScopedName::new("tools", project.holds()).unwrap(),
         quiet(),
@@ -2552,7 +2556,11 @@ async fn deleting_a_project_deletes_its_sessions_and_what_lies_in_it_as_far_as_t
         .unwrap();
     let his =
         create(&world.manager, &bob, make_session("his", world.bob)).await.expect("bob's session");
-    his.update_project(&bob, Some(project.id)).await.expect("a member puts his session into it");
+    world
+        .manager
+        .update_project(&bob, his.id(), Some(project.id))
+        .await
+        .expect("a member puts his session into it");
     let refused =
         world.projects.delete(&alice, project.id).await.expect_err("bob's session is left");
     assert!(
@@ -2560,7 +2568,7 @@ async fn deleting_a_project_deletes_its_sessions_and_what_lies_in_it_as_far_as_t
         "{refused:?}"
     );
     world.manager.restore(&alice, session.id()).await.expect("hers restored by hand");
-    his.update_project(&bob, None).await.expect("bob takes his out");
+    world.manager.update_project(&bob, his.id(), None).await.expect("bob takes his out");
     assert!(
         world.projects.delete(&alice, project.id).await.unwrap(),
         "nothing of anybody else's is left"
@@ -3181,7 +3189,7 @@ async fn purging_a_project_is_not_its_owners() {
         .create(&alice, ProjectSpec::new("report", Scope::UserScope { user_id: world.alice }))
         .await
         .unwrap();
-    session.update_project(&alice, Some(project.id)).await.unwrap();
+    world.manager.update_project(&alice, session.id(), Some(project.id)).await.unwrap();
     world.projects.delete(&alice, project.id).await.unwrap();
 
     let (refused, asked) = world.asked(world.projects.purge(&alice, project.id)).await;

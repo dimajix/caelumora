@@ -263,7 +263,7 @@ session and its channels from the users it is given, without touching a store
 stores and starts the session, and then finds or makes the agents - an agent is the one of its name
 in exactly the scope the template asks for, made if there is none - and takes them in as anyone is
 taken into a running session; if that fails, the session is taken back
-(`SessionManager::create_from_template`). REST and the TUI both create sessions this way.
+(`procedure::session::Create`). REST and the TUI both create sessions this way.
 
 A session may have a **workspace** attached: a tree of files that belongs to a user, with one
 classification, used by the participants of those channels of the session where it and the channel
@@ -384,11 +384,11 @@ Details: [MEMORY.md](MEMORY.md), [AGENT-TURN.md](AGENT-TURN.md).
 
 ## What an agent can look up
 
-What an agent knows how to do need not be built into its personality: a **skill** is a procedure
-written down - instructions only, no tools - that a user owns, shares and edits like a document,
-kept in the `EntityStore`. An agent with the `skills` component is shown a catalogue of the skills
-it may load where it is - name and description - and loads one when a task calls for it; a
-participant can give it one with `/skill`. Either way the skill's text goes into the agent's own
+What an agent knows how to do need not be built into its personality: a **skill** is a way of
+working written down - instructions only, no tools - that a user owns, shares and edits like a
+document, kept in the `EntityStore`. An agent with the `skills` component is shown a catalogue of
+the skills it may load where it is - name and description - and loads one when a task calls for it;
+a participant can give it one with `/skill`. Either way the skill's text goes into the agent's own
 transcript, never into the system prompt or the channel's history, and loading it is a decision of
 its own (`UseSkill`), besides whether its classification may flow into the channel. An agent may
 also write a skill down, for its owner, with approval.
@@ -456,11 +456,12 @@ Details: [STORAGE.md](STORAGE.md).
 What changes an entity is split by what it changes:
 
 *   **Its lifecycle is its manager's** - making it, deleting, restoring and purging it, with what
-    lies in its scope: the `SessionManager`'s for sessions, the `AgentManager`'s, `GroupManager`'s
-    and `WorkspaceManager`'s for their kinds, the `ProjectManager`'s for shared projects - made by
-    the program beside the `SessionManager`, which it holds -, and those of the plugins
-    (`SkillManager`, `ArtifactManager`). A channel's is its session's (`SessionLoop`); a session's
-    own project is made, deleted, restored and purged with the session by the `SessionManager`.
+    lies in its scope: the `AgentManager`'s, `GroupManager`'s and `WorkspaceManager`'s for their
+    kinds, and those of the plugins (`SkillManager`, `ArtifactManager`). The lifecycles of
+    sessions and shared projects, which touch several objects, are procedures (below), carried out
+    by the building blocks of the `SessionManager` and the `ProjectManager` - made by the program
+    beside the `SessionManager`, which it holds. A channel's is its session's (`SessionLoop`); a
+    session's own project is made, deleted, restored and purged with the session.
 *   **What it is - its attributes - is its controller's**, where it has one: a name, a description,
     rules, participants. Sessions, channels, agents, users, workspaces and projects have one, as
     running sessions hold them live; the controller stores a change and announces it, so that the
@@ -468,6 +469,22 @@ What changes an entity is split by what it changes:
 *   **An entity without a controller** - a group, a skill, an artifact - is held live by nobody,
     and its manager changes its attributes too. A controller is made for a kind once
     something holds it live, not for the sake of this split.
+
+A **procedure** is one change of a lifecycle across the objects it touches (issue
+[593](../issues/593-every-lifecycle-change-is-guarded-in-a-way-of-its-own.md)): a session created,
+opened, stopped, deleted, restored, purged or put into another project, a shared project deleted,
+restored or purged. An entry point - a REST handler, the terminal - makes it, as what it asks
+for, and the kernel's `ProcedureExecutor` carries it out in a task of its own. It locks what it
+finds from the top down, by a key that names the object's path (`Key`), each key's parents shared
+with it: exclusively what it changes, shared what has to stay as it is. An object it finds locked
+defers it: it lets go of everything, waits for that object and enumerates again, so that nothing
+waits while it holds anything and no order of locks is needed; who waits at an object admits
+nobody after them. Holding its objects, it checks the state it finds and the permissions, once, and
+carries the change out by the building blocks of the objects, which ask for the proof that it holds
+them (`Admitted`) and know nothing of locking; how to undo each step it records, and the executor
+undoes it if a later step fails (`Compensation`). No procedure is carried out within another - it
+would wait for itself -, and the executor refuses it. The lifecycles of participants, channels and
+threads become procedures in the steps the issue records.
 
 An attachment is no entity: it is part of its message, read and taken back with it. The lifecycle
 of its content is the `AttachmentManager`'s: kept as it is uploaded for a message - or copied, as an

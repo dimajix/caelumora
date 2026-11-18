@@ -12,6 +12,7 @@ use caelumora_domain::approval::ApprovalRule;
 use caelumora_domain::session::SessionId;
 use caelumora_domain::snapshot::Detail;
 use caelumora_domain::value::name::NameMatch;
+use caelumora_kernel::procedure::session::{Create, Delete, Purge, Restore};
 use caelumora_kernel::session::SessionSpec;
 use caelumora_kernel::view::SessionView;
 use caelumora_rest_api::actor::ActorPath;
@@ -36,10 +37,10 @@ pub(super) async fn create_session(
         workspace: payload.workspace.map(Into::into),
         project: payload.project_id,
     };
-    let session_loop = state
-        .session_manager
-        .create_from_template(&user.security_context(), payload.template_id, spec)
-        .await?;
+    let context = user.security_context();
+    let creating =
+        Create::from_template(&state.session_manager, &context, payload.template_id, spec);
+    let session_loop = state.procedures.run(creating).await?;
 
     Ok(Json(listed(&state, &user, session_loop.id()).await?))
 }
@@ -118,7 +119,8 @@ pub(super) async fn restore_session(
     Path(session_id): Path<SessionId>,
     user: AuthenticatedUser,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
-    state.session_manager.restore(&user.security_context(), session_id).await?;
+    let restoring = Restore::new(&state.session_manager, &user.security_context(), session_id);
+    state.procedures.run(restoring).await?;
     Ok(Json(session_response(&state, &user, session_id).await?))
 }
 
@@ -129,7 +131,8 @@ pub(super) async fn purge_session(
     Path(session_id): Path<SessionId>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    match state.session_manager.purge(&user.security_context(), session_id).await? {
+    let purging = Purge::new(&state.session_manager, &user.security_context(), session_id);
+    match state.procedures.run(purging).await? {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found(
             "session_not_found",
@@ -143,10 +146,10 @@ pub(super) async fn delete_session(
     Path(session_id): Path<SessionId>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    // `SessionManager::delete` stops the running loop, marks the session deleted -
-    // kept with its channels until it is purged (issue 164) - and emits the
-    // corresponding lifecycle events.
-    match state.session_manager.delete(&user.security_context(), session_id).await? {
+    // Deleting stops the running loop, marks the session deleted - kept with its channels until
+    // it is purged (issue 164) - and emits the corresponding lifecycle events.
+    let deleting = Delete::new(&state.session_manager, &user.security_context(), session_id);
+    match state.procedures.run(deleting).await? {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found(
             "session_not_found",

@@ -1,5 +1,5 @@
 //! What a caller chooses of a new session and of a new channel: `SessionSpec`, taken by
-//! `SessionManager::create_from_template`, and `ChannelSpec`, taken by
+//! `procedure::session::Create::from_template`, and `ChannelSpec`, taken by
 //! `SessionLoop::create_channel`.
 
 use caelumora_domain::actor::ActorId;

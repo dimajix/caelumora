@@ -12,7 +12,7 @@ frontend built on it is described in [WEB-UI.md](WEB-UI.md), the policy behind t
 
 | File | Holds |
 |---|---|
-| `state.rs` | `AppState`: the `Auth`, the `Kernel`, the `SessionManager` and the `ProjectManager` every handler reaches |
+| `state.rs` | `AppState`: the `Auth`, the `Kernel`, the `SessionManager`, the `ProjectManager` and the `ProcedureExecutor` every handler reaches |
 | `auth.rs` | Login, logout, renewal, and the middleware `require_auth` and `require_stream_auth` |
 | `routes/` | The handlers, by resource, and `routes::api`, the router of all of them and of the plugins' routes |
 | `plugin.rs` | `RestPlugin`, a plugin that serves routes of its own |
@@ -295,12 +295,13 @@ expiry. The global stream is one `sse::stream`; a channel's follows the user's a
 runs (`ChannelFollower`, below).
 
 Both end as the server shuts down (issue 297): on SIGINT or SIGTERM, the sessions are shut down
-first (see [CHANNELS.md](CHANNELS.md#shutting-down)) - meanwhile requests are answered, one that
-would start a session with `503 shutting_down` -, then `AppState::shutdown` ends every stream, and
-the server takes no new request and waits a second for those under way. A channel's stream ends
-only after what the user's actor showed before - the end of its run among it -, so that its client
-is left with the channel's state as it stopped. A client is not told why: `EventSource` retries by
-itself until the server is back, and the snapshot it asks for then restores the rest.
+first (see [CHANNELS.md](CHANNELS.md#shutting-down)) - meanwhile requests are answered, but one that
+reaches a session, which is a procedure, with `503 shutting_down` -, then `AppState::shutdown` ends
+every stream, and the server takes no new request and waits a second for those under way. A
+channel's stream ends only after what the user's actor showed before - the end of its run among
+it -, so that its client is left with the channel's state as it stopped. A client is not told why:
+`EventSource` retries by itself until the server is back, and the snapshot it asks for then restores
+the rest.
 
 An `Envelope`'s event is an `ActorEvent` as serde writes it. An agent's answer begins with
 `ResponseStarted` and its `turn_id`, and every message of it, partial or complete, carries the same

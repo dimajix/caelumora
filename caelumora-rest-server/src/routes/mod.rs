@@ -35,6 +35,7 @@ use caelumora_domain::session::SessionId;
 use caelumora_domain::snapshot::Detail;
 use caelumora_domain::store::StoreError;
 use caelumora_kernel::channel::ChannelLoop;
+use caelumora_kernel::procedure::session::Open;
 use caelumora_kernel::session::SessionLoop;
 use caelumora_kernel::view::{ChannelView, Viewer, Views};
 use caelumora_rest_api::channel::ChannelResponse;
@@ -48,7 +49,8 @@ pub async fn ensure_session(
 ) -> Result<Arc<SessionLoop>, ApiError> {
     // The running session, or loaded from the store and started - either way
     // only if this user may read it (issue 11).
-    Ok(state.session_manager.open(&user.security_context(), session_id).await?)
+    let opening = Open::new(&state.session_manager, &user.security_context(), session_id);
+    Ok(state.procedures.run(opening).await?)
 }
 
 /// Session `session_id` and its channel `channel_id`, as `user` may read them - the one way a

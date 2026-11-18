@@ -1,4 +1,4 @@
-//! The component kind `skills` (issues 22, 534): what an agent can look up - skills, procedures
+//! The component kind `skills` (issues 22, 534): what an agent can look up - skills, instructions
 //! written down for it to follow - and how a skill reaches it; configured with where its catalogue
 //! goes and whether writing a skill is asked. It serves four facets: the catalogue, a prompt part
 //! (`prompt`); the tools that list, load, write and change skills (`tool`); the commands with which

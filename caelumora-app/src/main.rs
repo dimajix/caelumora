@@ -20,6 +20,8 @@ use caelumora_decision::plugin::DecisionPlugin;
 use caelumora_domain::config::AppConfig;
 use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_kernel::plugin::Plugin;
+use caelumora_kernel::procedure::session;
+use caelumora_kernel::procedure::ProcedureExecutor;
 use caelumora_kernel::project::ProjectManager;
 use caelumora_kernel::session::SessionManager;
 use caelumora_logging::{init, LogTarget};
@@ -108,13 +110,15 @@ async fn main() -> Result<()> {
     // What was under way when the process last ended goes on (issue 388),
     // beside the requests rather than before them.
     tokio::spawn({
+        let procedures = Arc::clone(kernel.procedures());
         let session_manager = Arc::clone(&session_manager);
-        async move { session_manager.resume_interrupted().await }
+        async move { session::resume_interrupted(&procedures, &session_manager).await }
     });
 
     let shutdown = CancellationToken::new();
     let state = Arc::new(AppState {
         auth,
+        procedures: Arc::clone(kernel.procedures()),
         kernel,
         session_manager: Arc::clone(&session_manager),
         project_manager: Arc::new(ProjectManager::new(Arc::clone(&session_manager))),
@@ -136,14 +140,18 @@ async fn main() -> Result<()> {
         )
     });
     // The request id is set inside the request span, which is the outer layer.
+    let procedures = Arc::clone(&state.procedures);
     let app = app(routes::api(state, &rest_plugins))
         .layer(middleware::from_fn(error::request_id))
         .layer(trace_layer);
 
     let listener = TcpListener::bind(config.server.address).await?;
     tracing::info!("Caelumora listening on {}", listener.local_addr()?);
-    let serving = axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_on_signal(session_manager, shutdown.clone()));
+    let serving = axum::serve(listener, app).with_graceful_shutdown(shutdown_on_signal(
+        procedures,
+        session_manager,
+        shutdown.clone(),
+    ));
     tokio::select! {
         served = serving.into_future() => served?,
         () = async { shutdown.cancelled().await; time::sleep(CONNECTIONS_CLOSE).await } => {
@@ -161,12 +169,17 @@ const CONNECTIONS_CLOSE: Duration = Duration::from_secs(1);
 /// Waits for SIGINT or SIGTERM, then shuts down in order (issue 297): the
 /// sessions are stopped, their actors keeping what they are in the middle
 /// of, and the `local` shell's commands ended, within `SHUTDOWN_BOUND` -
-/// meanwhile requests are still answered, a start of a session refused;
-/// then `shutdown` ends every stream, and the server takes no new request.
-async fn shutdown_on_signal(session_manager: Arc<SessionManager>, shutdown: CancellationToken) {
+/// meanwhile requests are still answered, but one that reaches a session, a
+/// procedure, refused; then `shutdown` ends every stream, and the server takes
+/// no new request.
+async fn shutdown_on_signal(
+    procedures: Arc<ProcedureExecutor>,
+    session_manager: Arc<SessionManager>,
+    shutdown: CancellationToken,
+) {
     signalled().await;
     tracing::info!("Caelumora is shutting down");
-    session_manager.shutdown().await;
+    session::shut_down(&procedures, &session_manager).await;
     shutdown.cancel();
 }
 

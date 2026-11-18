@@ -912,7 +912,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn two_who_add_one_participant_at_once_take_them_in_once() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
         let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
         let add = || {
@@ -943,7 +943,7 @@ mod tests {
     async fn a_participant_added_later_sees_the_history_granted_and_is_announced() {
         use crate::channel::ChannelError;
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
         let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
         let owner = match ctx.initiator_id {
@@ -1051,7 +1051,7 @@ mod tests {
     async fn who_joins_or_leaves_is_recorded_where_it_happened_and_shown_also_to_who_made_it() {
         use caelumora_domain::actor::ActorEvent;
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
         let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
         let writer = channel
@@ -1130,7 +1130,7 @@ mod tests {
     async fn a_users_followers_are_told_their_actor_ended_when_they_leave_or_the_channel_is_deleted(
     ) {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
         let owner = ctx.initiator_id.as_user_id().unwrap();
 
@@ -1158,7 +1158,7 @@ mod tests {
         use caelumora_domain::channel::InternalActor;
         use caelumora_domain::template::InternalActorTemplate;
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
         let with_approver = ChannelSpec {
             internal_actors: vec![InternalActorTemplate::Approver {
@@ -1529,7 +1529,7 @@ mod tests {
     #[tokio::test]
     async fn a_grant_begins_at_the_oldest_message_it_grants() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
         let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
         let ActorId::User(owner) = ctx.initiator_id else { unreachable!() };

@@ -45,7 +45,7 @@ participants. Who leaves reads the project no longer, and is told so.
     goes with the session in the name of whoever deletes or restores the session. A session is a
     user's, so that its project has an owner.
 *   **A shared one it lies in.** Whoever may change the session (`UpdateSession`) and reads a shared
-    project (`GetProject`) puts the session into it (`SessionLoop::update_project`), or takes it out
+    project (`GetProject`) puts the session into it (`procedure::session::Move`), or takes it out
     into its own again - the one in its scope, or a new one if that was lifted. The project it lies
     in is shared with the session's participants for reading, in the kernel's name, so that every
     participant publishes into it; the project it leaves is no longer. A new session can be made in
@@ -74,16 +74,17 @@ with the session in it and every artifact published so far. No artifact is kept 
 
 ## Lifecycle
 
-The `ProjectManager` makes, deletes, restores and purges shared projects
-(`caelumora-kernel/src/project`), and finds one by its name or makes it (`find_or_create`), for the
-terminal program. It is made by the program beside the `SessionManager`, which it holds, since
-deleting a project deletes the sessions in it and only the `SessionManager` deletes a session - it
-stops what runs. Deleting a project deletes its sessions through the `SessionManager` and what lies
-in its scope through `ScopedEntities`, in the deleter's name: a session or anything else left that
-they may not delete keeps the project (`ScopeNotEmpty`), and what they could delete stays deleted.
-Restoring brings back what went with it, as far as the restorer may; a session in a deleted project
-is not restored alone. Purging purges all of it, the artifacts' content included. A session's own
-project goes with its session alone.
+The `ProjectManager` makes shared projects (`caelumora-kernel/src/project`), and finds one by its
+name or makes it (`find_or_create`), for the terminal program; deleting, restoring and purging one
+are procedures (`procedure::project`, issue 593), which hold the project and the sessions in it and
+carry the change out by its building blocks. It is made by the program beside the `SessionManager`,
+which it holds, since deleting a project deletes the sessions in it and only the `SessionManager`
+deletes a session - it stops what runs. Deleting a project deletes its sessions through the
+`SessionManager` and what lies in its scope through `ScopedEntities`, in the deleter's name: a
+session or anything else left that they may not delete keeps the project (`ScopeNotEmpty`), and what
+they could delete stays deleted. Restoring brings back what went with it, as far as the restorer
+may; a session in a deleted project is not restored alone. Purging purges all of it, the artifacts'
+content included. A session's own project goes with its session alone.
 
 ## Not done yet
 

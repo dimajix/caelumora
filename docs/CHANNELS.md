@@ -134,27 +134,29 @@ the call recorded as having run, and the agent ends within the grace.
 ### Shutting down
 
 As the process ends - SIGINT or SIGTERM to the server, a signal, `/exit` or an error to the TUI -
-the sessions are shut down in order (`SessionManager::shutdown`, issue 297). From then on no session
-is started: a request that would start one is refused (`SessionError::ShuttingDown`), as one that
-would start a session another process runs is (`SessionError::RunsElsewhere`, issue 554). Every
-running session is stopped as `stop` stops it, all at once, so that each actor keeps what it is in
-the middle of. Of the commands, only what does not outlive the process ends: each storage decides
-(`TerminalProvider::shutdown`) - the `local` shell ends its commands, an Open Terminal instance
-keeps them, which the model can follow after a restart and their bound ends. The whole takes at most
-`SHUTDOWN_BOUND`, eight seconds, within the ten Docker leaves between SIGTERM and SIGKILL; what is
-still under way then ends with the process.
+the sessions are shut down in order (`procedure::session::shut_down`, issue 297). From then on the
+kernel's `ProcedureExecutor` admits no procedure: a request that reaches a session - opening one
+that runs too - is refused (`ProcedureError::ShuttingDown`, issue 593), as one that would start a
+session another process runs is (`SessionError::RunsElsewhere`, issue 554). Once the procedures
+under way are done, every running session is stopped as `procedure::session::Stop` stops it, all at
+once, so that each actor keeps what it is in the middle of. Of the commands, only what does not
+outlive the process ends: each storage decides (`TerminalProvider::shutdown`) - the `local` shell
+ends its commands, an Open Terminal instance keeps them, which the model can follow after a restart
+and their bound ends. The whole takes at most `SHUTDOWN_BOUND`, eight seconds, within the ten Docker
+leaves between SIGTERM and SIGKILL; what is still under way then ends with the process.
 
 ### Starting again after a restart
 
 What a shutdown or a crash interrupted goes on by itself when the server starts again (issue
 [388](../issues/388-resume-interrupted-work-after-a-restart.md)). Once it is seeded, the server has
-`SessionManager::resume_interrupted` start every session in which an agent's stored state has work
-under way: a turn stored at a step it goes on from, or a remote task the remote agent works on. The
-state store keeps an index of them (see [STORAGE.md](STORAGE.md#work-under-way)), so nothing else is
-loaded. Nobody asked for these sessions, so the kernel opens them in its own name; what the agents
-then do is done in their own names, as at every start. They are started one after another, beside
-the first requests, and not bounded otherwise: what they resume is the work that ran when the server
-stopped, no more (issue [436](../issues/436-work-resumed-after-a-restart-is-not-bounded.md)).
+`procedure::session::resume_interrupted` start every session in which an agent's stored state has
+work under way: a turn stored at a step it goes on from, or a remote task the remote agent works
+on. The state store keeps an index of them (see [STORAGE.md](STORAGE.md#work-under-way)), so
+nothing else is loaded. Nobody asked for these sessions, so the kernel opens them in its own name;
+what the agents then do is done in their own names, as at every start. They are started one after
+another, beside the first requests, and not bounded otherwise: what they resume is the work that ran
+when the server stopped, no more (issue
+[436](../issues/436-work-resumed-after-a-restart-is-not-bounded.md)).
 
 Not started is a session whose agents only wait for a person - an approval, a question, a remote
 task that asked back -, since the person's answer starts it; nor one deleted. A message delivered to

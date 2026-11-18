@@ -41,6 +41,9 @@ fn judged(e: &(dyn Error + 'static)) -> Option<String> {
             SessionError::ChannelUnavailable { cause, .. } => {
                 component_message(cause).map(|_| e.to_string())
             }
+            // As a workspace's; what anything else failed with is judged further along the chain.
+            SessionError::Store(e) => store_message(e),
+            SessionError::Failed(_) => None,
             _ => Some(e.to_string()),
         }
     } else if let Some(e) = e.downcast_ref::<ScopeNotEmpty>() {
@@ -175,6 +178,29 @@ mod tests {
             built(StoreError::NotFound { entity: "component_bundle", id: "tools".to_string() });
         assert!(user_message(&anyhow::Error::new(gone))
             .is_some_and(|message| message.contains("'tools'")));
+    }
+
+    /// What a procedure of a session answers (issue 593) is shown as what it wraps: a store's
+    /// error as a store's - its backend never -, anything else by what it failed with, further
+    /// along the chain.
+    #[test]
+    fn a_session_shows_what_it_wraps_as_that_is_shown() {
+        let backend = StoreError::Backend("/srv/data/session: permission denied".to_string());
+        assert_eq!(user_message(&anyhow::Error::new(SessionError::Store(backend))), None);
+        let gone = StoreError::NotFound { entity: "personality", id: "p1".to_string() };
+        assert_eq!(
+            user_message(&anyhow::Error::new(SessionError::Store(gone))),
+            store_message(&StoreError::NotFound { entity: "personality", id: "p1".to_string() }),
+            "as the store's error"
+        );
+        let channel = ChannelError::NotAtTheLine { channel: ChannelId::new() };
+        let shown = channel.to_string();
+        let failed = SessionError::Failed(anyhow::Error::new(channel));
+        assert_eq!(
+            user_message(&anyhow::Error::new(failed)),
+            Some(shown),
+            "as what it failed with"
+        );
     }
 
     /// What is left in a scope is shown as its holder raises it, and alone: by kind and count.

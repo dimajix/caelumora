@@ -33,6 +33,7 @@ use caelumora_kernel::controller::UserController;
 use caelumora_kernel::event::EventBus;
 use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_kernel::plugin::Plugin;
+use caelumora_kernel::procedure::session;
 use caelumora_kernel::project::ProjectManager;
 use caelumora_kernel::session::{SessionLoop, SessionManager};
 use caelumora_kernel::user_provider::Credential;
@@ -310,7 +311,7 @@ async fn main() -> Result<()> {
         talk(session_loop, views, sessions, controller, bus, screen.as_mut(), signalled).await;
     // The terminal given back first: the shutdown may take a while.
     drop(screen);
-    session_manager.shutdown().await;
+    session::shut_down(kernel.procedures(), &session_manager).await;
     talked
 }
 

@@ -21,6 +21,7 @@ use crate::event::{EventBus, EventSubscription, Following, SubscriptionTopic};
 use crate::group::{keep_participants, GroupManager};
 use crate::kernel::{ChannelRuntime, Kernel};
 use crate::lock::LocksById;
+use crate::procedure::ProcedureError;
 use crate::scoped::{purge_for_good, ScopeNotEmpty, ScopedEntities};
 use crate::view::{Viewer, Views};
 use crate::workspace::WorkspaceManager;
@@ -40,7 +41,7 @@ use caelumora_domain::privacy::SessionPrivacy;
 use caelumora_domain::project::{Project, ProjectId};
 use caelumora_domain::scope::Scope;
 use caelumora_domain::session::{Session, SessionId};
-use caelumora_domain::store::{StoreResult, StoreResultExt};
+use caelumora_domain::store::{StoreError, StoreResult, StoreResultExt};
 use caelumora_domain::template::SessionTemplateId;
 use caelumora_domain::user::{User, UserUpdateEvent};
 use caelumora_domain::value::name::Name;
@@ -120,14 +121,37 @@ pub enum SessionError {
     /// session or channel is kept.
     #[error(transparent)]
     ScopeNotEmpty(#[from] ScopeNotEmpty),
-    /// The sessions are shut down as the process ends (issue 297): none is
-    /// started any more.
-    #[error("Caelumora is shutting down: no session is started")]
-    ShuttingDown,
+    /// What the executor of procedures failed with: the sessions are shut down as the process
+    /// ends (issue 297), and none is started any more, among it (issue 593).
+    #[error(transparent)]
+    Procedure(#[from] ProcedureError),
+    /// What a store reported.
+    #[error(transparent)]
+    Store(#[from] StoreError),
+    /// What anything else a procedure of a session asked failed with - a template, a workspace,
+    /// a channel -, judged further along its chain.
+    #[error("{0}")]
+    Failed(#[source] anyhow::Error),
     /// The session runs in another process that shares the stores (issue 554): it is not started,
     /// deleted, restored or purged here meanwhile.
     #[error("The session {0} runs in another process")]
     RunsElsewhere(SessionId),
+}
+
+/// What a building block of a session, which answers `anyhow`, failed with, as a procedure of the
+/// session answers it (issue 593): the session's own error or the store's as they are, anything
+/// else as `Failed`.
+impl From<anyhow::Error> for SessionError {
+    fn from(error: anyhow::Error) -> Self {
+        let error = match error.downcast::<SessionError>() {
+            Ok(own) => return own,
+            Err(error) => error,
+        };
+        match error.downcast::<StoreError>() {
+            Ok(store) => SessionError::Store(store),
+            Err(error) => SessionError::Failed(error),
+        }
+    }
 }
 
 /// Nothing if a channel may be given `classification` at all - it names
@@ -233,10 +257,6 @@ pub struct SessionLoop {
     /// What the participants it takes in are followed by on `subscription` (issue 590), from
     /// wherever it takes them in.
     following: Following,
-    /// Held while the session is put into another project (issue 467), so
-    /// that two such changes do not share and unshare projects across each
-    /// other.
-    moving: Mutex<()>,
     /// Held while the channels that do not run are built again (`retry_unavailable`), and while
     /// someone is let go from one of them (issue 590), so that none is built from a copy that
     /// still lists one let go.
@@ -387,7 +407,6 @@ impl SessionLoop {
             start_rx: Mutex::new(start_rx),
             subscription: Mutex::new(subscription),
             following,
-            moving: Mutex::new(()),
             rebuilding: Mutex::new(()),
             changing: LocksById::new(),
         });
@@ -580,7 +599,7 @@ mod tests {
     #[tokio::test]
     async fn a_renamed_user_is_renamed_in_every_channel_of_the_session() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
         let ActorId::User(owner) = ctx.initiator_id else { unreachable!() };
         let first = session.create_channel(&ctx, spec("first", vec![other])).await.unwrap();
@@ -613,7 +632,7 @@ mod tests {
     #[tokio::test]
     async fn a_renamed_participant_is_mentioned_by_its_new_name_in_every_channel() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
         let ActorId::User(other_id) = other else { unreachable!() };
         let stores = kernel.entity_stores();
@@ -648,7 +667,7 @@ mod tests {
     #[tokio::test]
     async fn a_participant_renamed_while_events_were_lost_is_mentioned_by_its_new_name() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let (session, ctx, _) = running_session_of_a_user(&manager).await;
         let stores = kernel.entity_stores();
         let helper = stored_agent(stores, "helper", make_personality("plain"), ctx.caller_id).await;

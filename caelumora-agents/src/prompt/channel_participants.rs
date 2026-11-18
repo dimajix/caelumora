@@ -305,7 +305,7 @@ mod tests {
         let session = Session { participants, channels: vec![channel.id], ..session };
         let as_owner =
             SecurityContext::new(ActorId::User(kaya.id), Default::default(), Default::default());
-        let session_loop = SessionManager::new(Arc::clone(&kernel))
+        let session_loop = Arc::new(SessionManager::new(Arc::clone(&kernel)))
             .create(&as_owner, session.clone(), vec![channel.clone()])
             .await
             .unwrap();

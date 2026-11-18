@@ -209,8 +209,9 @@ pub const STOP_GRACE: Duration = Duration::from_secs(5);
 
 /// How long adding a participant again waits for the actor it had before
 /// to end (issue 171): past `STOP_GRACE`, after which that actor's task is
-/// aborted, by as long as the abort takes to reach it.
-const LEAVE_GRACE: Duration = Duration::from_secs(STOP_GRACE.as_secs() + 1);
+/// aborted, by as long as the abort takes to reach it. Past it, a procedure that waits at a key
+/// is logged (issue 593).
+pub(crate) const LEAVE_GRACE: Duration = Duration::from_secs(STOP_GRACE.as_secs() + 1);
 
 /// Waits until the tasks `tasks` track have ended, at most `STOP_GRACE`,
 /// and returns whether they did (issue 187). An actor whose task never

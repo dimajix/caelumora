@@ -1,5 +1,6 @@
-//! `SessionManager`: the lifecycle of sessions - creating, starting, stopping, deleting, restoring
-//! and purging them.
+//! `SessionManager`: the sessions of the process - those that run, and the building blocks that
+//! create, start, stop, delete, restore and purge them, which the procedures of a session carry
+//! out (`procedure::session`, issue 593).
 
 use super::{
     load_own, make_own, purge_channel_document, require_attachable, require_classification,
@@ -11,7 +12,8 @@ use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use crate::group::{keep_participants, GroupManager};
 use crate::kernel::Kernel;
-use crate::lock::LocksById;
+use crate::procedure::session::Open;
+use crate::procedure::Admitted;
 use crate::scoped::{purge_for_good, ScopeNotEmpty, ScopedEntities};
 use crate::template::{
     resolve_participants, resolve_workspace, take_in_participants, TemplateParticipants,
@@ -26,7 +28,7 @@ use caelumora_domain::channel::Participant;
 use caelumora_domain::channel::{Channel, ChannelField, ChannelId};
 use caelumora_domain::event::{Announcing, GlobalEvent};
 use caelumora_domain::group::{Group, GroupId};
-use caelumora_domain::project::Project;
+use caelumora_domain::project::{Project, ProjectId};
 use caelumora_domain::query::{Filter, Query};
 use caelumora_domain::removal::Removal;
 use caelumora_domain::scope::{Scope, ScopeField};
@@ -48,39 +50,22 @@ use caelumora_security::{
 use caelumora_store::sessions::{SessionHold, SessionLocks};
 use caelumora_store::{purge_behind, Deleted, EntityStores, StateStore};
 use dashmap::DashMap;
-use futures::future::join_all;
 use std::collections::HashSet;
 use std::iter;
 #[cfg(any(test, feature = "test-support"))]
 use std::mem;
 use std::ops::AsyncFnOnce;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::task::JoinHandle;
-use tokio::time;
 use tracing::{info, warn};
-
-/// How long `SessionManager::shutdown` takes at most (issue 297): within
-/// the ten seconds Docker leaves between SIGTERM and SIGKILL, with the
-/// actors' `STOP_GRACE` and the time a command's kill waits.
-const SHUTDOWN_BOUND: Duration = Duration::from_secs(8);
 
 pub struct SessionManager {
     sessions: DashMap<SessionId, Arc<SessionLoop>>,
     handles: DashMap<SessionId, JoinHandle<()>>,
-    /// One lock per session id, held while that session is started, stopped, deleted, restored or
-    /// purged, so that a session starts only once however many requests ask for it at the same
-    /// time (issue 62): two loops of one session would run two actors per agent and channel, which
-    /// overwrite each other's state.
-    lifecycles: LocksById<SessionId>,
     /// What holds a session for this process against the others that share the stores (issue
     /// 554), if any do; and the holds of the sessions that run here, let go as they stop.
     locks: Option<Arc<dyn SessionLocks>>,
     holds: DashMap<SessionId, SessionHold>,
-    /// Set once the sessions are shut down (`shutdown`): none is started
-    /// any more.
-    shutting_down: AtomicBool,
     /// What builds the loops of the sessions it starts and the views of them, and what is made
     /// beside it runs in (`kernel`).
     kernel: Arc<Kernel>,
@@ -139,10 +124,8 @@ impl SessionManager {
         Self {
             sessions: DashMap::new(),
             handles: DashMap::new(),
-            lifecycles: LocksById::new(),
             locks: kernel.session_locks().map(Arc::clone),
             holds: DashMap::new(),
-            shutting_down: AtomicBool::new(false),
             policies: kernel.policies().clone(),
             stores: kernel.entity_stores().clone(),
             state_store: Arc::clone(kernel.state_store()),
@@ -159,17 +142,16 @@ impl SessionManager {
     }
 
     /// Build the runtime loop for an (already-persisted) session, register it, spawn its
-    /// run task, and announce that the session has started running. Called
-    /// with the session's lifecycle lock held, and with `hold`, the session held for this process
-    /// where others share the stores (`hold`, issue 554), which it keeps as long as the session
-    /// runs.
+    /// run task, and announce that the session has started running. For a procedure that holds
+    /// the session exclusively, with `hold`, the session held for this process where others share
+    /// the stores (`hold`, issue 554), which it keeps as long as the session runs.
     async fn spawn_session(
         &self,
+        _: &Admitted<'_>,
         session: Session,
         channels: Vec<Channel>,
         hold: Option<SessionHold>,
     ) -> Result<Arc<SessionLoop>> {
-        self.refuse_while_shutting_down()?;
         let id = session.id;
         let session_loop = SessionLoop::new(session, channels, Arc::clone(&self.kernel)).await?;
         self.sessions.insert(id, Arc::clone(&session_loop));
@@ -193,8 +175,8 @@ impl SessionManager {
     }
 
     /// Session `id` held for this process against the others that share the stores (issue 554),
-    /// for what is done with it under its lifecycle lock: `None` where it needs no hold of its
-    /// own - it runs here, held as long as it runs, or no other process shares the stores.
+    /// for what a procedure that holds it does with it: `None` where it needs no hold of its own -
+    /// it runs here, held as long as it runs, or no other process shares the stores.
     ///
     /// # Errors
     /// `SessionError::RunsElsewhere` if another process holds it; whatever asking reports.
@@ -236,12 +218,13 @@ impl SessionManager {
         }
     }
 
-    /// Creates a session from the template `template_id` as `spec` asks, on behalf of `context`,
-    /// whose user owns it and is the template's "user", and starts it (issue 88). One of the
-    /// user's own workspaces that `spec` chooses is attached as the session is made; the rest - a
-    /// workspace to be found or made, the agents, the share of the chosen workspace, the project
-    /// it goes to - is done once it is made (`complete`), as `context`; if any of it fails, the
-    /// session's creation is rolled back, with what was made in its scope or for it.
+    /// Creates session `id` from the template `template_id` as `spec` asks, on behalf of
+    /// `context`, whose user owns it and is the template's "user", and starts it (issue 88), for
+    /// `procedure::session::Create`, which holds it until it is complete and rolls its creation
+    /// back if any of it fails. One of the user's own workspaces that `spec` chooses is attached as
+    /// the session is made; the rest - a workspace to be found or made, the agents, the share of
+    /// the chosen workspace, the project it goes to - is done once it is made (`complete`), as
+    /// `context`.
     ///
     /// # Errors
     /// `SessionError::OwnerNotAUser` if `context` acts for no user; a `StoreError` if the template,
@@ -252,13 +235,14 @@ impl SessionManager {
     /// components of one of its channels cannot be read in the owner's name (issue 463); what
     /// putting it into the project reports (`SessionLoop::update_project`); whatever creating the
     /// session reports.
-    pub async fn create_from_template(
+    pub(crate) async fn make_from_template(
         &self,
+        admitted: &Admitted<'_>,
         context: &SecurityContext,
+        id: SessionId,
         template_id: SessionTemplateId,
         spec: SessionSpec,
     ) -> Result<Arc<SessionLoop>> {
-        self.refuse_while_shutting_down()?;
         let owner = context
             .principal_id
             .as_user_id()
@@ -272,7 +256,6 @@ impl SessionManager {
                 StoreError::NotFound { .. } => SessionError::TemplateNotFound(template_id).into(),
                 e => Error::new(e),
             })?;
-        let id = SessionId::new();
         // Its own verb before anything of others is asked or anything is
         // found or made for it (issue 312): who may not create the session
         // learns nothing of the agents, the workspace or anyone's clearance.
@@ -304,19 +287,13 @@ impl SessionManager {
         // made once the session is, so that one of its scope is made where
         // `context` may put it (issue 344).
         session.workspace = existing;
-        let session_loop = self.establish(context, session, own, channels).await?;
+        let session_loop = self.establish(admitted, context, session, own, channels).await?;
         // A channel whose components the owner cannot read is left out as a
         // session opens (issue 463), but making it is the owner's own request,
         // refused as `create_channel` refuses it.
-        let completed = async {
-            session_loop.require_running()?;
-            self.complete(context, owner, &template, &session_loop, &spec, (users, agents)).await
-        }
-        .await;
-        if let Err(e) = completed {
-            self.roll_back_creation(id).await;
-            return Err(e);
-        }
+        session_loop.require_running()?;
+        let session = &session_loop;
+        self.complete(admitted, context, owner, &template, session, &spec, (users, agents)).await?;
         Ok(session_loop)
     }
 
@@ -334,8 +311,13 @@ impl SessionManager {
     /// # Errors
     /// What finding or making the workspace or the agents reports, or taking them in, sharing the
     /// workspace or putting the session into the project.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the proof of admission came to the steps of a creation, issue 593"
+    )]
     async fn complete(
         &self,
+        admitted: &Admitted<'_>,
         context: &SecurityContext,
         owner: UserId,
         template: &SessionTemplate,
@@ -375,7 +357,7 @@ impl SessionManager {
                 controller.share(context, group, *grant).await?;
             }
             if let Some(project) = spec.project {
-                session.update_project(context, Some(project)).await?;
+                session.update_project(admitted, context, Some(project)).await?;
             }
             Ok(())
         }
@@ -394,21 +376,6 @@ impl SessionManager {
         completed
     }
 
-    /// Rolls back creating the session `id`, just made and not to be kept - not complete -, in the
-    /// kernel's name - making it was permitted: deleted and purged, with what was made in its
-    /// scope. What cannot be is logged.
-    async fn roll_back_creation(&self, id: SessionId) {
-        let system = SecurityContext::system();
-        if let Err(undo) = async {
-            self.delete(&system, id).await?;
-            self.purge(&system, id).await
-        }
-        .await
-        {
-            warn!(session = %id, "The session that could not be completed stays: {undo}");
-        }
-    }
-
     /// Establishes the brand-new `session` with its own project `own` and its `channels`, whose
     /// creation `context` was asked for (`CreateSession`) before anything was found or made for
     /// it: persists them (`persist`), announces their existence, then starts the session. The
@@ -419,13 +386,13 @@ impl SessionManager {
     /// As `persist`; whatever starting the session reports (`spawn_session`).
     async fn establish(
         &self,
+        admitted: &Admitted<'_>,
         context: &SecurityContext,
         mut session: Session,
         mut own: Project,
         mut channels: Vec<Channel>,
     ) -> Result<Arc<SessionLoop>> {
         let id = session.id;
-        let _starting = self.lifecycles.lock(id).await;
         // Held before anything is stored, so that what cannot hold it leaves nothing behind.
         let hold = self.hold(id)?;
         self.persist(context, &mut session, &mut own, &mut channels).await?;
@@ -437,7 +404,7 @@ impl SessionManager {
             event_bus.announce(GlobalEvent::created::<Channel>(&(id, channel.id)), channel);
         }
 
-        self.spawn_session(session, channels, hold).await
+        self.spawn_session(admitted, session, channels, hold).await
     }
 
     /// Stores the brand-new `session` with its own project `own` and its `channels`, whose creation
@@ -502,39 +469,6 @@ impl SessionManager {
         Ok(channels)
     }
 
-    /// The session `id` for `context`: the running one, or loaded from the
-    /// store and started - which announces it as `session::STARTED`, not
-    /// as created, as the session exists already. A channel whose components
-    /// cannot be read is left out as the session starts, and built again
-    /// whenever the running session is opened (`SessionLoop::retry_unavailable`,
-    /// issue 463).
-    ///
-    /// Started once, however many ask at the same time (issue 62): whoever
-    /// comes second waits for the first and gets the session it started -
-    /// if they may read it.
-    ///
-    /// # Errors
-    /// `StoreError::NotFound` if there is no such session or `context` may
-    /// not read it, `SessionError::RunsElsewhere` if another process that shares the stores runs
-    /// it (issue 554); whatever loading or starting it reports otherwise.
-    pub async fn open(&self, context: &SecurityContext, id: SessionId) -> Result<Arc<SessionLoop>> {
-        let starting = self.lifecycles.lock(id).await;
-        let session_loop = match self.find(context, id).await? {
-            Found::Running(session_loop) => session_loop,
-            Found::Stored(session) => {
-                let hold = self.hold(id)?;
-                let channels = self.load_channels(&session).await?;
-                return self.spawn_session(session, channels, hold).await;
-            }
-        };
-        // Not under the lock: building a channel takes its time, and the
-        // session runs already - whoever else opens, stops or deletes it does
-        // not wait for it.
-        drop(starting);
-        session_loop.retry_unavailable().await;
-        Ok(session_loop)
-    }
-
     /// Takes `participant` - whom `context` acts for: themselves, or their own agent - into session
     /// `id` by their own act, and with `into` into that channel (issue 221, `SessionLoop::join`).
     /// The session is opened in the kernel's name if an entry of its access list lets `context`
@@ -544,7 +478,7 @@ impl SessionManager {
     /// `SessionError::NotFound` if there is no such session or `context` may
     /// neither join nor read it; as `SessionLoop::join` otherwise.
     pub async fn join(
-        &self,
+        self: &Arc<Self>,
         context: &SecurityContext,
         id: SessionId,
         participant: ActorId,
@@ -562,26 +496,100 @@ impl SessionManager {
         if !reachable {
             return Err(not_found().into());
         }
-        let session_loop = self.open(&system, id).await?;
+        // Until taking someone in is a procedure of its own (issue 593), which starts the session
+        // where it does not run.
+        let opening = Open::new(self, &system, id);
+        let session_loop = self.kernel.procedures().run(opening).await?;
         session_loop.join(context, participant, into).await?;
         Ok(session_loop)
     }
 
-    /// Starts again, as the process starts, every session in which an agent's work was under way
-    /// when it last ended (issue 388) - shut down or crashed -, as the state store's index of the
-    /// work under way lists them (`StateStore::channels_with_work_under_way`): the turns stored
-    /// mid-way go on from the step they stood at, the remote tasks are followed again. Nobody asked
-    /// for it, so the kernel opens them in its own name, as `join` does; what the agents then do is
-    /// done in their own names, as at every start. One after another, not bounded otherwise. A
-    /// session that is gone or deleted is passed over; the sessions with no work under way stay
-    /// stopped until someone acts in them. Ends early once the sessions are shut down. Returns how
-    /// many it started.
-    pub async fn resume_interrupted(&self) -> usize {
+    /// Session `id` for `context`, for a procedure that holds it - exclusively where it does not
+    /// run: the running one, whose channels left out as it started are built again
+    /// (`SessionLoop::retry_unavailable`, issue 463), or loaded from the store and started - which
+    /// announces it as `session::STARTED`, not as created, as the session exists already.
+    ///
+    /// # Errors
+    /// `SessionError::NotFound` if there is no such session or `context` may not read it,
+    /// `SessionError::RunsElsewhere` if another process that shares the stores runs it (issue
+    /// 554); whatever loading or starting it reports otherwise.
+    pub(crate) async fn open_held(
+        &self,
+        admitted: &Admitted<'_>,
+        context: &SecurityContext,
+        id: SessionId,
+    ) -> Result<Arc<SessionLoop>> {
+        match self.find(context, id).await? {
+            Found::Running(running) => {
+                running.retry_unavailable().await;
+                Ok(running)
+            }
+            Found::Stored(session) => {
+                let hold = self.hold(id)?;
+                let channels = self.load_channels(&session).await?;
+                self.spawn_session(admitted, session, channels, hold).await
+            }
+        }
+    }
+
+    /// Stops session `id` on behalf of `context` without deleting it, for a procedure that holds
+    /// it exclusively, so that a start under way is not missed (issue 62): its channels and actors
+    /// stop, for everybody in it (`StopSession`) - each actor keeps what it is in the middle of, to
+    /// be resumed when the session runs again, and is given up to `STOP_GRACE` to store it (issue
+    /// 377) -, and the commands of its channels end (issue 254). Answers whether it ran.
+    ///
+    /// # Errors
+    /// `SessionError::NotFound` if there is no such session or `context` may not read it,
+    /// `StoreError::PermissionDenied` if they may read but not stop it - whether it runs or not.
+    pub(crate) async fn stop_held(
+        &self,
+        admitted: &Admitted<'_>,
+        context: &SecurityContext,
+        id: SessionId,
+    ) -> Result<bool> {
+        let found = self.find(context, id).await?;
+        let attributes = found.attributes();
+        self.policies
+            .access_policy()
+            .require(context, ActionType::StopSession(&attributes), StoreError::PermissionDenied)
+            .await?;
+        if !matches!(found, Found::Running(_)) {
+            return Ok(false);
+        }
+        let Some(stopped) = self.stop_running(admitted, id, SessionLoop::stop_actors).await else {
+            return Ok(false);
+        };
+        self.end_commands_of(&stopped).await;
+        Ok(true)
+    }
+
+    /// The project session `id` lies in - running, stored or deleted -, read in the kernel's name,
+    /// for a procedure to lock as it enumerates; `None` if there is no such session, or it cannot
+    /// be read.
+    pub(crate) async fn project_of(&self, id: SessionId) -> Option<ProjectId> {
+        if let Some(running) = self.running(id) {
+            return Some(running.session().project);
+        }
+        let system = SecurityContext::system();
+        match self.stores.sessions.get(&system, id).await {
+            Ok(session) => Some(session.project),
+            Err(_) => {
+                let deleted = self.stores.sessions.get_deleted(&system, id).await;
+                deleted.ok().map(|deleted| deleted.entity.project)
+            }
+        }
+    }
+
+    /// The sessions in which an agent's work was under way when the process last ended (issue
+    /// 388), as the state store's index of the work under way lists them
+    /// (`StateStore::channels_with_work_under_way`), read in the kernel's name; a channel that is
+    /// gone is passed over.
+    pub(crate) async fn interrupted(&self) -> Vec<SessionId> {
         let channels = match self.state_store.channels_with_work_under_way().await {
             Ok(channels) => channels,
             Err(error) => {
                 warn!("The work under way at the last end cannot be read, nothing is started again: {error}");
-                return 0;
+                return Vec::new();
             }
         };
         let system = SecurityContext::system();
@@ -596,92 +604,19 @@ impl SessionManager {
                 ),
             }
         }
-        let mut started = 0;
-        for session_id in sessions {
-            if self.refuse_while_shutting_down().is_err() {
-                break;
-            }
-            match self.open(&system, session_id).await {
-                Ok(_) => {
-                    info!("Session {session_id} started again: work was under way in it");
-                    started += 1;
-                }
-                Err(error) => info!("Session {session_id}, in which work was under way, is not started again: {error}"),
-            }
-        }
-        started
+        sessions.into_iter().collect()
     }
 
-    /// Stops session `id` on behalf of `context` without deleting it: its
-    /// channels and actors stop, for everybody in it (`StopSession`) - each
-    /// actor keeps what it is in the middle of, to be resumed when the
-    /// session runs again, and is given up to `STOP_GRACE` to store it
-    /// (issue 377). Returns whether it ran.
-    ///
-    /// Waits for a start of the same session that is under way (issue 62):
-    /// otherwise that start could register the session after it was stopped,
-    /// and it would run on.
-    ///
-    /// # Errors
-    /// `StoreError::NotFound` if there is no such session or `context` may
-    /// not read it, `StoreError::PermissionDenied` if they may read but not
-    /// stop it - whether it runs or not.
-    pub async fn stop(&self, context: &SecurityContext, id: SessionId) -> Result<bool> {
-        let _lifecycle = self.lifecycles.lock(id).await;
-        let found = self.find(context, id).await?;
-        let attributes = found.attributes();
-        self.policies
-            .access_policy()
-            .require(context, ActionType::StopSession(&attributes), StoreError::PermissionDenied)
-            .await?;
-        if !matches!(found, Found::Running(_)) {
-            return Ok(false);
-        }
-        let Some(stopped) = self.stop_running(id, SessionLoop::stop_actors).await else {
-            return Ok(false);
-        };
-        self.end_commands_of(&stopped).await;
-        Ok(true)
+    /// The sessions that run.
+    pub(crate) fn running_ids(&self) -> Vec<SessionId> {
+        self.sessions.iter().map(|entry| *entry.key()).collect()
     }
 
-    /// Shuts the sessions down as the process ends (issue 297): from now on
-    /// none is started, and every running one is stopped as `stop` stops
-    /// it, all at once - each actor keeping what it is in the middle of, to
-    /// be resumed when its session runs again. Of the commands, only what
-    /// does not outlive the process is ended (`CommandReaper::shutdown`):
-    /// an Open Terminal instance keeps its commands, unlike at a `stop`.
-    /// Returns within `SHUTDOWN_BOUND`, leaving whatever is still under way
-    /// to end with the process: a shutdown that hangs is worse than none.
-    pub async fn shutdown(&self) {
-        self.shutting_down.store(true, Ordering::SeqCst);
-        let ending = async {
-            // Those being started too: their start is waited for, as `stop`
-            // waits for it, and what started is stopped.
-            let ids: HashSet<SessionId> = self
-                .lifecycles
-                .ids()
-                .into_iter()
-                .chain(self.sessions.iter().map(|entry| *entry.key()))
-                .collect();
-            join_all(ids.into_iter().map(|id| async move {
-                let _lifecycle = self.lifecycles.lock(id).await;
-                self.stop_running(id, SessionLoop::stop_actors).await;
-            }))
-            .await;
-            self.command_reaper.shutdown().await;
-        };
-        match time::timeout(SHUTDOWN_BOUND, ending).await {
-            Ok(()) => info!("Every session is shut down"),
-            Err(_) => warn!("Shutting the sessions down took longer than {:?}; what is still under way ends with the process", SHUTDOWN_BOUND),
-        }
-    }
-
-    /// `SessionError::ShuttingDown` once the sessions are shut down.
-    fn refuse_while_shutting_down(&self) -> Result<(), SessionError> {
-        match self.shutting_down.load(Ordering::SeqCst) {
-            true => Err(SessionError::ShuttingDown),
-            false => Ok(()),
-        }
+    /// Ends, of the commands of every session, what does not outlive the process, as the sessions
+    /// are shut down (`CommandReaper::shutdown`), for the procedure that holds them: an Open
+    /// Terminal instance keeps its commands, unlike at a stop.
+    pub(crate) async fn shut_down_commands(&self, _: &Admitted<'_>) {
+        self.command_reaper.shutdown().await;
     }
 
     /// Ends every command started in a channel of `stopped`, with what it
@@ -691,14 +626,14 @@ impl SessionManager {
         self.command_reaper.end_commands_in(&stopped.session().channels).await;
     }
 
-    /// Stops session `id` if it runs. Called with its lifecycle lock held. Its
-    /// actors are ended first by `end_actors`, told to stop
-    /// (`SessionLoop::stop_actors`) or to leave (`SessionLoop::leave_actors`),
-    /// and given `STOP_GRACE` to end by themselves before the session's
-    /// task, and with it whoever did not, is aborted (issue 377). Nobody
-    /// finds it running meanwhile.
-    async fn stop_running(
+    /// Stops session `id` if it runs, for a procedure that holds it exclusively. Its actors are
+    /// ended first by `end_actors`, told to stop (`SessionLoop::stop_actors`) or to leave
+    /// (`SessionLoop::leave_actors`), and given `STOP_GRACE` to end by themselves before the
+    /// session's task, and with it whoever did not, is aborted (issue 377). Nobody finds it running
+    /// meanwhile.
+    pub(crate) async fn stop_running(
         &self,
+        _: &Admitted<'_>,
         id: SessionId,
         end_actors: impl AsyncFnOnce(&SessionLoop),
     ) -> Option<Arc<SessionLoop>> {
@@ -719,12 +654,16 @@ impl SessionManager {
         removed
     }
 
-    /// Stops and deletes a session. Deleting marks (issue 164): the session is kept, with its
-    /// channels and their state, hidden until it is restored (`restore`) or purged (`purge`). Its
-    /// own project is marked with it, in the kernel's name (issues 467, 458); what lies in its
-    /// scope and in its own project's is deleted with it, in `context`'s name (issue 320), and then
-    /// the groups of its participants, its channels' and its project's members, in the kernel's
-    /// (issue 348) - all of it with the session's mark, by `context`'s caller (issue 469).
+    /// Stops and deletes session `id` on behalf of `context`, marked with `removal` - its own, or
+    /// the mark of a deletion it goes with: of the project it lies in (issue 469) -, for a
+    /// procedure that holds it exclusively until it is gone from the store, so that nothing starts
+    /// it again from there meanwhile (issue 62). Deleting marks (issue 164): the session is kept,
+    /// with its channels and their state, hidden until it is restored (`restore`) or purged
+    /// (`purge`). Its own project is marked with it, in the kernel's name (issues 467, 458); what
+    /// lies in its scope and in its own project's is deleted with it, in `context`'s name (issue
+    /// 320), and then the groups of its participants, its channels' and its project's members, in
+    /// the kernel's (issue 348) - all of it with the session's mark, by `context`'s caller (issue
+    /// 469).
     ///
     /// Asked about before anything happens - a refused deletion must not stop the session on the
     /// way (issue 11).
@@ -739,24 +678,13 @@ impl SessionManager {
     /// they may not delete - what they may is deleted, the session is kept; whatever else the store
     /// reports, the groups of its participants or its own project failing to go among it, which
     /// keeps the session too, with its groups and its project.
-    pub async fn delete(&self, context: &SecurityContext, id: SessionId) -> Result<bool> {
-        self.delete_with(context, id, &Removal::now(context.caller_id)).await
-    }
-
-    /// Deletes session `id` on behalf of `context` as `delete` does, marked with `removal`, the
-    /// mark of a deletion it goes with: of the project it lies in (issue 469).
-    ///
-    /// # Errors
-    /// As `delete`.
-    pub(crate) async fn delete_with(
+    pub(crate) async fn delete_held(
         &self,
+        admitted: &Admitted<'_>,
         context: &SecurityContext,
         id: SessionId,
         removal: &Removal,
     ) -> Result<bool> {
-        // Held until the session is gone from the store, so that no request
-        // starts it again from there in the meantime (issue 62).
-        let _lifecycle = self.lifecycles.lock(id).await;
         let session = match self.find(context, id).await {
             Ok(found) => found.session(),
             Err(error) if matches!(error.downcast_ref(), Some(SessionError::NotFound(_))) => {
@@ -820,7 +748,7 @@ impl SessionManager {
 
         // Its actors leave, as those of a deleted channel do (issue 377),
         // and the commands of its channels end.
-        if let Some(stopped) = self.stop_running(id, SessionLoop::leave_actors).await {
+        if let Some(stopped) = self.stop_running(admitted, id, SessionLoop::leave_actors).await {
             self.end_commands_of(&stopped).await;
         }
 
@@ -832,12 +760,14 @@ impl SessionManager {
         Ok(true)
     }
 
-    /// Restores the deleted session `id` on behalf of `context` (issue 164): its mark taken away,
-    /// with the channels it listed when it was deleted, the groups of its participants and theirs,
-    /// and its own project with the group of its members, in the kernel's name (issues 348, 467);
-    /// then what lay in its scope and its own project's, as far as `context` may restore it. It is
-    /// not started; opening it starts it, as any stored session. A session that lies in a shared
-    /// project is not restored while the project is deleted: it comes back with the project.
+    /// Restores the deleted session `id` on behalf of `context` (issue 164), for a procedure that
+    /// holds it exclusively, as deleting and purging it do: a purge never meets it half restored.
+    /// Its mark is taken away, with the channels it listed when it was deleted, the groups of its
+    /// participants and theirs, and its own project with the group of its members, in the kernel's
+    /// name (issues 348, 467); then what lay in its scope and its own project's, as far as
+    /// `context` may restore it. It is not started; opening it starts it, as any stored session. A
+    /// session that lies in a shared project is not restored while the project is deleted: it comes
+    /// back with the project.
     ///
     /// # Errors
     /// `SessionError::NotFound` if there is no such deleted session, `context` may not see it
@@ -847,10 +777,12 @@ impl SessionManager {
     /// the stores holds it (issue 554), `StoreError::PermissionDenied` if they may but not restore
     /// it, or whatever the store reports as the groups of its participants or its own project are
     /// restored - the session stays deleted then.
-    pub async fn restore(&self, context: &SecurityContext, id: SessionId) -> Result<Session> {
-        // Its lifecycle lock, which deleting and purging it hold as well: a purge never meets it
-        // half restored.
-        let _lifecycle = self.lifecycles.lock(id).await;
+    pub(crate) async fn restore_held(
+        &self,
+        _: &Admitted<'_>,
+        context: &SecurityContext,
+        id: SessionId,
+    ) -> Result<Session> {
         // Its mark, read before it goes - as `context`, so that whoever may not see it learns
         // nothing more: what was deleted with it carries it and comes back with it (issues 178,
         // 469), its own project among it.
@@ -988,16 +920,20 @@ impl SessionManager {
     /// the kernel's name, since the purge was permitted - what lies behind it (`remove_behind`),
     /// then its document. Only what was deleted is purged; the store asks `Purge`. A step that
     /// fails leaves the session deleted, its purge begun, so that the next purge removes what is
-    /// left (issue 496). Under its lifecycle lock, which deleting and restoring it hold as well, so
-    /// that a purge never meets it half deleted or half restored. `false` if there was nothing
-    /// deleted the caller could see, as every purge answers (issue 510).
+    /// left (issue 496). For a procedure that holds it exclusively, as deleting and restoring it
+    /// do, so that a purge never meets it half deleted or half restored. `false` if there was
+    /// nothing deleted the caller could see, as every purge answers (issue 510).
     ///
     /// # Errors
     /// `StoreError::PermissionDenied` if they may see it but not purge it,
     /// `SessionError::RunsElsewhere` if another process that shares the stores holds it (issue
     /// 554), or whatever the stores report.
-    pub async fn purge(&self, context: &SecurityContext, id: SessionId) -> Result<bool> {
-        let _lifecycle = self.lifecycles.lock(id).await;
+    pub(crate) async fn purge_held(
+        &self,
+        _: &Admitted<'_>,
+        context: &SecurityContext,
+        id: SessionId,
+    ) -> Result<bool> {
         // What the caller may not see, or what is not deleted, is not there to purge: asked before
         // whether another process holds it, which they learn of only for what they see.
         if self.stores.sessions.get_deleted(context, id).await.optional()?.is_none() {
@@ -1077,24 +1013,25 @@ impl SessionManager {
     }
 }
 
-/// How the tests make a session past the manager's own API: from its document and its channels,
-/// as a template would.
+/// How the tests make a session past a template: from its document and its channels, as a
+/// template would.
 #[cfg(any(test, feature = "test-support"))]
 impl SessionManager {
-    /// Creates a brand-new session with its `channels`, as a template would: asks to create it
-    /// (`CreateSession`) before anything else. Its results go to a project of its own, made with
-    /// it, whatever project it names (issue 467). The participants the channels name join them as
-    /// their founders once the session runs, as a template's do (issue 420).
+    /// Creates the brand-new `session` with its `channels`, as a template would, for the procedure
+    /// of the tests that holds it (`session::testing`): asks to create it (`CreateSession`) before
+    /// anything else. Its results go to a project of its own, made with it, whatever project it
+    /// names (issue 467). The participants the channels name join them as their founders once the
+    /// session runs, as a template's do (issue 420).
     ///
     /// # Errors
     /// `SessionError::OwnerNotAUser` if the session is not a user's; otherwise as `establish`.
-    pub async fn create(
+    pub(crate) async fn make(
         &self,
+        admitted: &Admitted<'_>,
         context: &SecurityContext,
         mut session: Session,
         mut channels: Vec<Channel>,
     ) -> Result<Arc<SessionLoop>> {
-        self.refuse_while_shutting_down()?;
         self.policies
             .access_policy()
             .require(
@@ -1111,7 +1048,7 @@ impl SessionManager {
             .iter_mut()
             .map(|channel| (channel.id, mem::take(&mut channel.participants)))
             .collect();
-        let session_loop = self.establish(context, session, own, channels).await?;
+        let session_loop = self.establish(admitted, context, session, own, channels).await?;
         for (channel, participants) in founders {
             let channel = session_loop
                 .channel(channel)
@@ -1149,13 +1086,16 @@ fn lying_in(id: SessionId) -> Query<ScopeField> {
 
 #[cfg(test)]
 mod tests {
-    use super::SHUTDOWN_BOUND;
     use crate::agent::AgentError;
     use crate::channel::STOP_GRACE;
     use crate::command::CommandExecutor;
     use crate::component::BUNDLE_REF_KIND;
     use crate::error::is_forbidden;
     use crate::kernel::Kernel;
+    use crate::procedure::session::SHUTDOWN_BOUND;
+    use crate::procedure::{
+        Admitted, Compensation, Deferred, Key, Locks, Procedure, ProcedureError,
+    };
     use crate::project::{ProjectManager, ProjectSpec};
     use crate::session::testing::*;
     use crate::session::SessionLoop;
@@ -1163,6 +1103,7 @@ mod tests {
     use crate::testing::TestKernel;
     use crate::view::Viewer;
     use anyhow::Result;
+    use async_trait::async_trait;
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::actor::{ActorEvent, ActorState, Envelope};
     use caelumora_domain::agent::testing::make_personality;
@@ -1210,12 +1151,13 @@ mod tests {
     use std::time::Duration;
     use std::time::Instant;
     use tokio::sync::broadcast::Receiver;
+    use tokio::sync::Semaphore;
     use tokio::time;
 
     #[tokio::test]
     async fn create_session_emits_created_then_started() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let mut rx = kernel.event_bus().subscribe_all();
         let ctx = SecurityContext::default();
 
@@ -1250,7 +1192,7 @@ mod tests {
     #[tokio::test]
     async fn delete_session_emits_stopped_then_deleted() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let ctx = SecurityContext::default();
 
         let session = make_session("s2", UserId::new());
@@ -1283,7 +1225,7 @@ mod tests {
     #[tokio::test]
     async fn opening_a_stored_session_emits_started_but_not_created() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let ctx = SecurityContext::default();
 
         // Persist a session directly, without going through `create`.
@@ -1314,7 +1256,7 @@ mod tests {
     #[tokio::test]
     async fn a_session_asked_for_at_the_same_time_starts_once() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let ctx = SecurityContext::default();
         let session = make_session("concurrent", UserId::new());
         let session_id = session.id;
@@ -1340,6 +1282,37 @@ mod tests {
 
     #[tokio::test]
     async fn a_stop_waits_for_a_start_under_way_and_then_stops_what_it_started() {
+        /// A start of `session`, which holds it exclusively as `Open` does and registers it
+        /// once `go` lets it go on.
+        struct Starting {
+            manager: Arc<SessionManager>,
+            session: Session,
+            channels: Vec<Channel>,
+            go: Arc<Semaphore>,
+        }
+
+        #[async_trait]
+        impl Procedure for Starting {
+            type Plan = ();
+            type Output = ();
+            type Error = anyhow::Error;
+
+            async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<(), Deferred> {
+                locks.exclusive(Key::Session(self.session.id))
+            }
+
+            async fn carry_out(
+                self,
+                (): (),
+                admitted: &Admitted<'_>,
+                _: &mut Compensation,
+            ) -> Result<()> {
+                self.go.acquire().await?.forget();
+                self.manager.spawn_session(admitted, self.session, self.channels, None).await?;
+                Ok(())
+            }
+        }
+
         let kernel = test_kernel();
         let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let ctx = SecurityContext::default();
@@ -1348,8 +1321,16 @@ mod tests {
         let mut channels = [main_channel(&session)];
         let session = persist(&manager, &ctx, session, &mut channels).await;
 
-        // A start under way holds the lock ...
-        let starting = manager.lifecycles.lock(session_id).await;
+        // A start under way holds the session ...
+        let go = Arc::new(Semaphore::new(0));
+        let channels = channels.to_vec();
+        let start =
+            Starting { manager: Arc::clone(&manager), session, channels, go: Arc::clone(&go) };
+        let starting = tokio::spawn({
+            let kernel = Arc::clone(&kernel);
+            async move { kernel.procedures().run(start).await.unwrap() }
+        });
+        time::sleep(Duration::from_millis(50)).await;
         let stopping = tokio::spawn({
             let manager = Arc::clone(&manager);
             async move { manager.stop(&SecurityContext::system(), session_id).await.unwrap() }
@@ -1359,8 +1340,8 @@ mod tests {
 
         // ... and registers the session before it lets go: the stop then
         // finds it, and nothing keeps running.
-        manager.spawn_session(session, channels.to_vec(), None).await.unwrap();
-        drop(starting);
+        go.add_permits(1);
+        starting.await.unwrap();
         assert!(stopping.await.unwrap(), "the stop stopped what the start started");
         assert!(!manager.running(session_id).is_some());
     }
@@ -1615,7 +1596,7 @@ mod tests {
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn a_session_is_created_from_a_template_for_its_owner() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let (owner, template) = pairing(&kernel).await;
         let hers =
             SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
@@ -1782,7 +1763,7 @@ mod tests {
     async fn a_session_whose_workspace_cannot_be_shared_is_not_made() {
         let (kernel, passing) = failing_kernel(Workspace::KIND);
         let stores = kernel.entity_stores().clone();
-        let manager = SessionManager::new(Arc::clone(&kernel));
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let (owner, template) = pairing(&kernel).await;
         let hers =
             SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
@@ -1820,7 +1801,7 @@ mod tests {
         let (entities, states) = (Arc::new(MemoryStore::new()), Arc::new(MemoryStore::new()));
         let store = Persistence::new(entities, Arc::<MemoryStore>::clone(&states)).unwrap();
         let kernel = TestKernel { store, ..Default::default() }.build();
-        let manager = SessionManager::new(kernel);
+        let manager = Arc::new(SessionManager::new(kernel));
         let stores = manager.kernel().entity_stores();
         let ctx = SecurityContext::default();
         let session = make_session("two-stores", UserId::new());
@@ -1884,7 +1865,7 @@ mod tests {
         let kernel = test_kernel();
         let stores = kernel.entity_stores().clone();
         let mut events = kernel.event_bus().subscribe_all();
-        let manager = SessionManager::new(kernel);
+        let manager = Arc::new(SessionManager::new(kernel));
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
         let owner = UserId::new();
         let session = make_session("with-results", owner);
@@ -1968,7 +1949,7 @@ mod tests {
     async fn a_session_keeps_its_groups_and_its_project_all_or_none() {
         let (kernel, passing) = failing_kernel(Project::KIND);
         let stores = kernel.entity_stores().clone();
-        let manager = SessionManager::new(kernel);
+        let manager = Arc::new(SessionManager::new(kernel));
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
         let session = make_session("kept", UserId::new());
         let id = session.id;
@@ -2041,8 +2022,8 @@ mod tests {
             .unwrap();
 
         passing.store(0, Ordering::SeqCst);
-        session
-            .update_project(&ctx, Some(project.id))
+        manager
+            .update_project(&ctx, session.id(), Some(project.id))
             .await
             .expect_err("the session cannot be stored");
         assert_eq!(session.session().project, own, "it lies where it lay");
@@ -2067,7 +2048,7 @@ mod tests {
     #[tokio::test]
     async fn a_session_another_process_holds_is_left_to_it() {
         let (kernel, locks) = shared_kernel();
-        let manager = SessionManager::new(kernel);
+        let manager = Arc::new(SessionManager::new(kernel));
         let ctx = SecurityContext::default();
         let session = make_session("shared", UserId::new());
         let id = session.id;
@@ -2106,7 +2087,7 @@ mod tests {
         let (kernel, passing) = failing_kernel(Channel::KIND);
         let stores = kernel.entity_stores().clone();
         let states = Arc::clone(kernel.state_store());
-        let manager = SessionManager::new(kernel);
+        let manager = Arc::new(SessionManager::new(kernel));
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
         let session = make_session("purged", UserId::new());
         let (id, channel_id) = (session.id, session.channels[0]);
@@ -2177,7 +2158,7 @@ mod tests {
         let bundles = Arc::clone(&kernel.entity_stores().component_bundles);
         let agents = Arc::clone(&kernel.entity_stores().agents);
         let stores = kernel.entity_stores().clone();
-        let manager = SessionManager::new(kernel);
+        let manager = Arc::new(SessionManager::new(kernel));
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
         let session = make_session("scoped", UserId::new());
         let id = session.id;
@@ -2298,7 +2279,7 @@ mod tests {
         let agents = Arc::clone(&kernel.entity_stores().agents);
         let states = Arc::clone(kernel.state_store());
         let mut events = kernel.event_bus().subscribe_all();
-        let manager = SessionManager::new(kernel);
+        let manager = Arc::new(SessionManager::new(kernel));
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
         let session = make_session("scoped", UserId::new());
         let id = session.id;
@@ -2522,7 +2503,7 @@ mod tests {
         let refused = |result: Result<Arc<SessionLoop>>| {
             matches!(
                 result.err().and_then(|e| e.downcast::<SessionError>().ok()),
-                Some(SessionError::ShuttingDown)
+                Some(SessionError::Procedure(ProcedureError::ShuttingDown))
             )
         };
         assert!(refused(manager.open(&alice, stored).await), "a stored one is not started");
@@ -2540,7 +2521,7 @@ mod tests {
     #[tokio::test]
     async fn a_restart_starts_again_the_sessions_with_work_under_way_and_no_other() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let ctx = SecurityContext::default();
         let sessions = ["interrupted", "waiting", "idle", "deleted"]
             .map(|name| make_session(name, UserId::new()));

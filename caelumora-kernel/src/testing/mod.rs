@@ -746,7 +746,11 @@ pub fn not_found(error: &Error) -> bool {
         )
         || matches!(
             error.downcast_ref::<SessionError>(),
-            Some(SessionError::NotFound(_) | SessionError::TemplateNotFound(_))
+            Some(
+                SessionError::NotFound(_)
+                    | SessionError::TemplateNotFound(_)
+                    | SessionError::Store(StoreError::NotFound { .. })
+            )
         )
         || matches!(error.downcast_ref::<ProjectError>(), Some(ProjectError::NotFound(_)))
 }

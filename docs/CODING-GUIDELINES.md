@@ -239,17 +239,24 @@ it the Rust files a commit adds or changes.
 
 ### A module's manager
 
-A manager is the one owner of the lifecycle of a kind - it makes, deletes, restores and purges
-it: `AgentManager`, `SessionManager`, `WorkspaceManager`, `GroupManager`, `ControllerManager`,
-`UserManager`. It lives in its module's `manager.rs`, declared `mod manager;` and exported from
-`mod.rs` with `pub use manager::XyzManager;`, so that it is imported by its module's path
+A manager is the one owner of the lifecycle of a kind - it makes, deletes, restores and purges it:
+`AgentManager`, `WorkspaceManager`, `GroupManager`, `ControllerManager`, `UserManager`; the
+`SessionManager` and the `ProjectManager` offer the building blocks of a lifecycle that is
+procedures' (below). It lives in its module's `manager.rs`, declared `mod manager;` and exported
+from `mod.rs` with `pub use manager::XyzManager;`, so that it is imported by its module's path
 (`crate::workspace::WorkspaceManager`). `mod.rs` holds the module's description, its error type,
 what its parts share, and its exports, so that the manager's methods and tests do not bury them.
 Test helpers the module offers to other modules' tests are its `testing.rs` (issue 364).
 
 Its methods are named by the verbs of the lifecycle, without the kind - the manager names it:
 `create`, `delete`, `restore` and `purge`, and for what runs, `open` and `stop`
-(`SessionManager::open`, `AgentManager::delete`; issue 354).
+(`AgentManager::delete`; issue 354). A lifecycle that touches several objects - a session's, a
+shared project's - is a procedure's (issue 593): each verb a type named so in the module
+`procedure` of the kind (`procedure::session::Open`, `procedure::project::Delete`), which an entry
+point makes and the kernel's `ProcedureExecutor` carries out. Its manager then offers the building
+blocks the procedures carry the change out by, each asking for the proof that the procedure holds
+what it changes (`Admitted`), and named `…_held` where it is the verb the procedure carries out
+(`SessionManager::delete_held`).
 
 The verbs on one entity, found by its id, answer what is not there - or not the caller's to see -
 alike: `delete` and `purge` answer `false`, since for whoever wants it gone it is gone (how a REST
@@ -258,10 +265,11 @@ handler answers that is in [REST-SERVER.md](REST-SERVER.md#errors)); `restore` f
 lifecycle, the running session for its channels too (`SessionLoop::delete_channel`).
 
 What a caller chooses of a new entity is a `…Spec`, which the operation making the entity takes -
-`create`, `SessionManager::create_from_template`, `SessionLoop::create_channel` -, in the `spec.rs`
-of its module and exported from it: `WorkspaceSpec`, `ProjectSpec`, `AgentSpec`, `GroupSpec`,
-`SessionSpec` and `ChannelSpec`. It holds only what the caller may choose, never what the manager
-sets (its id, owner, access list, times); free text as a `String`, validated as the entity is made.
+`create`, `procedure::session::Create::from_template`, `SessionLoop::create_channel` -, in the
+`spec.rs` of its module and exported from it: `WorkspaceSpec`, `ProjectSpec`, `AgentSpec`,
+`GroupSpec`, `SessionSpec` and `ChannelSpec`. It holds only what the caller may choose, never what
+the manager sets (its id, owner, access list, times); free text as a `String`, validated as the
+entity is made.
 Its required parts are given to its `new`, the others are public fields with their defaults, so that
 a new optional part changes no caller:
 `WorkspaceSpec { description, ..WorkspaceSpec::new(name, scope, storage) }`. A spec with required
@@ -501,8 +509,10 @@ agents' logic, it answers in a type of theirs (see
 
 An operation that stored something and then fails part of the way is rolled back: what it stored is
 set back to how it was before - in the kernel's name, since the operation was permitted -, and its
-caller gets the error. A step that does so is named `roll_back_…` after what it rolls back
-(`SessionManager::roll_back_creation`, `SessionLoop::roll_back_channel_deletion`). It is no
+caller gets the error. A procedure records how to undo each step in its `Compensation`, which the
+executor undoes, the last first, once a later step fails (`procedure::session::Create`, issue
+593). Elsewhere, a step that does so is named `roll_back_…` after what it rolls back
+(`SessionLoop::roll_back_channel_deletion`). It is no
 transaction: what cannot be set back is logged and stays (issue 354). One exception: who is let go
 from a session stays let go when one of its channels fails to let them go, since taking them out of
 the others ended their turns - asking again finishes it (see
@@ -621,10 +631,10 @@ a cut is wrong: it is a [finding](../AGENTS.md#findings), and the visibility is 
     the nearest `testing` module above the type that reaches what the method needs, the crate's
     own included (`impl ChannelLoop` in `channel::testing`, with `actor_of`; `impl Turn` in
     `caelumora_agents::testing`); only where none does, beside the type, after its own `impl`
-    (`EventSubscription`, `UserActor`, `SessionManager::create`, whose module's `testing` cannot
-    reach what it calls). No single method of the type's own `impl` is guarded for tests: who
-    reads the type sees its API apart from what only tests are given, and nothing widens it outside
-    the guard.
+    (`EventSubscription`, `UserActor`, the verbs of `ProjectManager` the tests carry out as
+    procedures, whose module has no `testing` that reaches the executor). No single method of the
+    type's own `impl` is guarded for tests: who reads the type sees its API apart from what only
+    tests are given, and nothing widens it outside the guard.
 *   **Documents in tests:** a test that needs a document of the domain starts from what the
     `testing` module of its kind makes - `make_personality`, `make_session`, `make_user`,
     `make_template`, `make_channel`, `make_message` - and writes beside it only what it differs in

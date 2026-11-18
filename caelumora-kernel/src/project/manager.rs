@@ -1,11 +1,16 @@
-//! `ProjectManager`: making, deleting, restoring and purging shared projects (issue 467), with
-//! the sessions that lie in them and what lies in their scope.
+//! `ProjectManager`: the lifecycle of shared projects (issue 467) - making them, and the building
+//! blocks that delete, restore and purge them with the sessions that lie in them and what lies in
+//! their scope, which the procedures of a project carry out (`procedure::project`, issue 593).
 
 use super::{store_error, ProjectError, ProjectResult, ProjectSpec};
 use crate::error::is_forbidden;
 use crate::event::EventBus;
 use crate::group::{keep_participants, GroupManager};
-use crate::lock::LocksById;
+#[cfg(any(test, feature = "test-support"))]
+use crate::procedure::project::{Delete, Purge, Restore};
+use crate::procedure::Admitted;
+#[cfg(any(test, feature = "test-support"))]
+use crate::procedure::ProcedureExecutor;
 use crate::scoped::{found_or_made, purge_for_good, ScopeNotEmpty, ScopedEntities};
 use crate::session::{SessionError, SessionManager};
 use caelumora_domain::actor::ActorId;
@@ -39,11 +44,6 @@ pub struct ProjectManager {
     events: Arc<EventBus>,
     /// What goes with a project deleted, restored or purged.
     scoped: Arc<ScopedEntities>,
-    /// One lock per project id, held while that project is deleted, restored or purged, so that
-    /// none of them meets another half done: each goes through the project, its sessions, its
-    /// scope and its group, more than one store write (issue 492) - as the `SessionManager` holds
-    /// one per session.
-    lifecycles: LocksById<ProjectId>,
 }
 
 impl fmt::Debug for ProjectManager {
@@ -62,7 +62,6 @@ impl ProjectManager {
             events: Arc::clone(kernel.event_bus()),
             scoped: Arc::clone(kernel.scoped_entities()),
             sessions,
-            lifecycles: LocksById::new(),
         }
     }
 
@@ -119,21 +118,26 @@ impl ProjectManager {
         .await
     }
 
-    /// Deletes project `id` on behalf of `ctx` (`DeleteProject`): marked first, then the sessions
-    /// that lie in it - each through the `SessionManager`, in `ctx`'s name, with what lies in its
-    /// scope -, then what lies in its scope (`ScopedEntities`), as far as `ctx` may delete it, then
-    /// the group of its members in the kernel's name - all of it with the project's mark, by
-    /// `ctx`'s caller (issue 469). If a session or something of its scope is left that `ctx` may
-    /// not delete, the project is kept, its mark taken away again, and what they could delete stays
-    /// deleted. `false` if there was none the caller could see.
+    /// Deletes project `id` on behalf of `ctx` (`DeleteProject`), for a procedure that holds it
+    /// and the sessions that lie in it exclusively (`procedure::project::Delete`): marked first,
+    /// then the sessions that lie in it - each through the `SessionManager`, in `ctx`'s name, with
+    /// what lies in its scope -, then what lies in its scope (`ScopedEntities`), as far as `ctx`
+    /// may delete it, then the group of its members in the kernel's name - all of it with the
+    /// project's mark, by `ctx`'s caller (issue 469). If a session or something of its scope is
+    /// left that `ctx` may not delete, the project is kept, its mark taken away again, and what
+    /// they could delete stays deleted. `false` if there was none the caller could see.
     ///
     /// # Errors
     /// `InvalidScope` for a session's own, which goes with the session; `ScopeNotEmpty` with how
     /// many sessions and what else are left; `Session` if deleting a session failed otherwise -
     /// `SessionError::RunsElsewhere` for one another process runs (issue 554), which keeps the
     /// project as it is; or whatever the store reports, `PermissionDenied` included.
-    pub async fn delete(&self, ctx: &SecurityContext, id: ProjectId) -> ProjectResult<bool> {
-        let _lifecycle = self.lifecycles.lock(id).await;
+    pub(crate) async fn delete_held(
+        &self,
+        admitted: &Admitted<'_>,
+        ctx: &SecurityContext,
+        id: ProjectId,
+    ) -> ProjectResult<bool> {
         let Some(project) = self.stores.projects.get(ctx, id).await.optional()? else {
             return Ok(false);
         };
@@ -150,7 +154,7 @@ impl ProjectManager {
         let deleted = async {
             let mut left = Vec::new();
             let sessions = self.sessions_in(id).await?;
-            let kept = self.delete_sessions(ctx, &sessions, &removal).await?;
+            let kept = self.delete_sessions(admitted, ctx, &sessions, &removal).await?;
             if kept > 0 {
                 left.push((Session::KIND, kept));
             }
@@ -173,17 +177,22 @@ impl ProjectManager {
         Ok(true)
     }
 
-    /// Restores the deleted project `id` on behalf of `ctx` (`Restore`): its mark taken away and
-    /// the group of its members restored in the kernel's name - both, or neither: it keeps its mark
-    /// then, so that it can be tried again (issue 469) -, then the sessions deleted with it and
-    /// what lay in its scope - what carries its mark -, as far as `ctx` may restore them; what they
-    /// may not stays deleted, and the project comes back all the same.
+    /// Restores the deleted project `id` on behalf of `ctx` (`Restore`), for a procedure that holds
+    /// it and its deleted sessions exclusively (`procedure::project::Restore`): its mark taken away
+    /// and the group of its members restored in the kernel's name - both, or neither: it keeps its
+    /// mark then, so that it can be tried again (issue 469) -, then the sessions deleted with it
+    /// and what lay in its scope - what carries its mark -, as far as `ctx` may restore them; what
+    /// they may not stays deleted, and the project comes back all the same.
     ///
     /// # Errors
     /// `NotFound` if it is not deleted or not the caller's to see, `InvalidScope` for a session's
     /// own, or whatever else the store reports - `NameTaken` among it.
-    pub async fn restore(&self, ctx: &SecurityContext, id: ProjectId) -> ProjectResult<Project> {
-        let _lifecycle = self.lifecycles.lock(id).await;
+    pub(crate) async fn restore_held(
+        &self,
+        admitted: &Admitted<'_>,
+        ctx: &SecurityContext,
+        id: ProjectId,
+    ) -> ProjectResult<Project> {
         // What went with it carries its mark (issue 469).
         let Deleted { entity: deleted, removal } =
             self.stores.projects.get_deleted(ctx, id).await.map_err(store_error(id))?;
@@ -211,7 +220,7 @@ impl ProjectManager {
             .await?
             .items
         {
-            if let Err(e) = self.sessions.restore(ctx, session.id).await {
+            if let Err(e) = self.sessions.restore_held(admitted, ctx, session.id).await {
                 info!(project = %id, session = %session.id, "A session of a restored project stays deleted: {e}");
             }
         }
@@ -224,18 +233,23 @@ impl ProjectManager {
         Ok(project)
     }
 
-    /// Removes the deleted project `id` for good on behalf of `ctx`, in the order of every purge of
-    /// what has something behind it (`purge_behind`): its purge begun (`Purge`, asked before
-    /// anything is removed), then - in the kernel's name - what lies behind it (`remove_behind`),
-    /// then the project. A step that fails leaves it deleted, its purge begun, so that the next
-    /// purge removes what is left (issue 496). Announces nothing, as no purge does. `false` if
-    /// there was nothing deleted the caller could see.
+    /// Removes the deleted project `id` for good on behalf of `ctx`, for a procedure that holds it
+    /// and its deleted sessions exclusively (`procedure::project::Purge`), in the order of every
+    /// purge of what has something behind it (`purge_behind`): its purge begun (`Purge`, asked
+    /// before anything is removed), then - in the kernel's name - what lies behind it
+    /// (`remove_behind`), then the project. A step that fails leaves it deleted, its purge begun,
+    /// so that the next purge removes what is left (issue 496). Announces nothing, as no purge
+    /// does. `false` if there was nothing deleted the caller could see.
     ///
     /// # Errors
     /// `InvalidScope` for a session's own, `PermissionDenied`, `Session` if purging a session
     /// failed, or whatever the store reports.
-    pub async fn purge(&self, ctx: &SecurityContext, id: ProjectId) -> ProjectResult<bool> {
-        let _lifecycle = self.lifecycles.lock(id).await;
+    pub(crate) async fn purge_held(
+        &self,
+        admitted: &Admitted<'_>,
+        ctx: &SecurityContext,
+        id: ProjectId,
+    ) -> ProjectResult<bool> {
         let Some(Deleted { entity: deleted, .. }) =
             self.stores.projects.get_deleted(ctx, id).await.optional()?
         else {
@@ -245,7 +259,7 @@ impl ProjectManager {
             return Err(ProjectError::InvalidScope);
         }
         let purged = purge_behind(self.stores.projects.as_ref(), ctx, id, async |project| {
-            self.remove_behind(project).await
+            self.remove_behind(admitted, project).await
         })
         .await?;
         if purged {
@@ -260,10 +274,11 @@ impl ProjectManager {
     ///
     /// # Errors
     /// `Session` if purging a session failed, or whatever the store reports.
-    async fn remove_behind(&self, project: &Project) -> ProjectResult<()> {
+    async fn remove_behind(&self, admitted: &Admitted<'_>, project: &Project) -> ProjectResult<()> {
         let system = SecurityContext::system();
         for Deleted { entity: session, .. } in self.deleted_sessions_in(project.id).await? {
-            self.sessions.purge(&system, session.id).await.map_err(ProjectError::Session)?;
+            let purged = self.sessions.purge_held(admitted, &system, session.id).await;
+            purged.map_err(ProjectError::Session)?;
         }
         self.scoped.purge_lying_in(slice::from_ref(&project.holds())).await?;
         purge_for_good(self.stores.groups.as_ref(), GroupId::of_project(project.id)).await?;
@@ -272,12 +287,15 @@ impl ProjectManager {
 
     /// The sessions that lie in project `id`, read in the kernel's name: all of them are found,
     /// whatever the caller may read.
-    async fn sessions_in(&self, id: ProjectId) -> ProjectResult<Vec<Session>> {
+    pub(crate) async fn sessions_in(&self, id: ProjectId) -> ProjectResult<Vec<Session>> {
         Ok(self.stores.sessions.list(&SecurityContext::system(), &in_project(id)).await?.items)
     }
 
     /// The deleted sessions that lie in project `id`, read in the kernel's name.
-    async fn deleted_sessions_in(&self, id: ProjectId) -> ProjectResult<Vec<Deleted<Session>>> {
+    pub(crate) async fn deleted_sessions_in(
+        &self,
+        id: ProjectId,
+    ) -> ProjectResult<Vec<Deleted<Session>>> {
         Ok(self
             .stores
             .sessions
@@ -294,13 +312,14 @@ impl ProjectManager {
     /// `Session` if deleting one failed otherwise; what was deleted before stays deleted.
     async fn delete_sessions(
         &self,
+        admitted: &Admitted<'_>,
         ctx: &SecurityContext,
         sessions: &[Session],
         removal: &Removal,
     ) -> ProjectResult<usize> {
         let mut kept = 0;
         for session in sessions {
-            match self.sessions.delete_with(ctx, session.id, removal).await {
+            match self.sessions.delete_held(admitted, ctx, session.id, removal).await {
                 Ok(true) => {}
                 Ok(false) => kept += 1,
                 Err(e)
@@ -316,6 +335,52 @@ impl ProjectManager {
             }
         }
         Ok(kept)
+    }
+}
+
+/// What the tests do with shared projects as the entry points do: each a procedure, carried out by
+/// the kernel's executor (`Kernel::procedures`). Beside the type, as no `testing` module reaches
+/// the executor through it.
+#[cfg(any(test, feature = "test-support"))]
+impl ProjectManager {
+    /// Deletes project `id` on behalf of `ctx` (`procedure::project::Delete`).
+    ///
+    /// # Errors
+    /// As `ProjectManager::delete_held`.
+    pub async fn delete(
+        self: &Arc<Self>,
+        ctx: &SecurityContext,
+        id: ProjectId,
+    ) -> ProjectResult<bool> {
+        self.procedures().run(Delete::new(self, ctx, id)).await
+    }
+
+    /// Restores project `id` on behalf of `ctx` (`procedure::project::Restore`).
+    ///
+    /// # Errors
+    /// As `ProjectManager::restore_held`.
+    pub async fn restore(
+        self: &Arc<Self>,
+        ctx: &SecurityContext,
+        id: ProjectId,
+    ) -> ProjectResult<Project> {
+        self.procedures().run(Restore::new(self, ctx, id)).await
+    }
+
+    /// Purges project `id` on behalf of `ctx` (`procedure::project::Purge`).
+    ///
+    /// # Errors
+    /// As `ProjectManager::purge_held`.
+    pub async fn purge(
+        self: &Arc<Self>,
+        ctx: &SecurityContext,
+        id: ProjectId,
+    ) -> ProjectResult<bool> {
+        self.procedures().run(Purge::new(self, ctx, id)).await
+    }
+
+    fn procedures(&self) -> &Arc<ProcedureExecutor> {
+        self.sessions.kernel().procedures()
     }
 }
 
@@ -377,7 +442,7 @@ mod tests {
         let (kernel, passing) = failing_kernel(Group::KIND);
         let stores = kernel.entity_stores().clone();
         let manager = Arc::new(SessionManager::new(kernel));
-        let projects = ProjectManager::new(Arc::clone(&manager));
+        let projects = Arc::new(ProjectManager::new(Arc::clone(&manager)));
         let owner = UserId::new();
         let ctx =
             SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
@@ -387,7 +452,7 @@ mod tests {
             .create(&ctx, ProjectSpec::new("report", Scope::UserScope { user_id: owner }))
             .await
             .unwrap();
-        session.update_project(&ctx, Some(project.id)).await.unwrap();
+        manager.update_project(&ctx, session.id(), Some(project.id)).await.unwrap();
         let mut bundle = ComponentBundle::new(
             ScopedName::new("tools", project.holds()).unwrap(),
             Default::default(),
@@ -426,7 +491,7 @@ mod tests {
         let (kernel, passing) = failing_kernel(Channel::KIND);
         let stores = kernel.entity_stores().clone();
         let manager = Arc::new(SessionManager::new(kernel));
-        let projects = ProjectManager::new(Arc::clone(&manager));
+        let projects = Arc::new(ProjectManager::new(Arc::clone(&manager)));
         let owner = UserId::new();
         let ctx =
             SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
@@ -436,7 +501,7 @@ mod tests {
             .create(&ctx, ProjectSpec::new("report", Scope::UserScope { user_id: owner }))
             .await
             .unwrap();
-        session.update_project(&ctx, Some(project.id)).await.unwrap();
+        manager.update_project(&ctx, session.id(), Some(project.id)).await.unwrap();
         projects.delete(&ctx, project.id).await.unwrap();
 
         passing.store(0, Ordering::SeqCst);

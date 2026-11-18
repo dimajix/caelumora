@@ -20,6 +20,8 @@ use caelumora_domain::user::UserId;
 use caelumora_domain::value::language::Language;
 use caelumora_domain::workspace::{WorkspaceChoice, WorkspaceId};
 use caelumora_kernel::kernel::Kernel;
+use caelumora_kernel::procedure::session::{Create, Delete, Open, Stop};
+use caelumora_kernel::procedure::ProcedureExecutor;
 use caelumora_kernel::session::{SessionError, SessionLoop, SessionManager, SessionSpec};
 use caelumora_kernel::view::{ChannelView, SessionView, Views};
 use chrono::{DateTime, Local, Utc};
@@ -60,8 +62,10 @@ pub(crate) struct Sessions {
     /// the stores, since the terminal links no crate of stores (`docs/CRATES.md`), and the views
     /// read neither.
     kernel: Arc<Kernel>,
-    /// What opens and starts them.
+    /// What opens and starts them, as the procedures it carries out are given it (issue 593).
     manager: Arc<SessionManager>,
+    /// What carries out the procedures of their lifecycles: the kernel's.
+    procedures: Arc<ProcedureExecutor>,
     /// The user the program acts for.
     owner: UserId,
     /// The views as the user reads them, in whose name - theirs, with their roles - the sessions
@@ -85,7 +89,8 @@ impl Sessions {
         place: Option<(ProjectId, WorkspaceId)>,
         template: String,
     ) -> Self {
-        Self { kernel, manager, owner, views, place, template }
+        let procedures = Arc::clone(kernel.procedures());
+        Self { kernel, manager, procedures, owner, views, place, template }
     }
 
     /// The sessions of the directory the viewer may read, newest first by the last message heard
@@ -138,11 +143,10 @@ impl Sessions {
             });
             return Ok((self.start(template).await?, told));
         };
-        match self.manager.open(self.views.context(), id).await {
+        let opening = Open::new(&self.manager, self.views.context(), id);
+        match self.procedures.run(opening).await {
             Ok(opened) => Ok((opened, None)),
-            Err(e) if matches!(e.downcast_ref(), Some(SessionError::RunsElsewhere(_))) => {
-                Err(SessionsError::OpenElsewhere(id))
-            }
+            Err(SessionError::RunsElsewhere(_)) => Err(SessionsError::OpenElsewhere(id)),
             Err(e) => Err(SessionsError::failed(format!("The session {id} cannot be resumed"), e)),
         }
     }
@@ -150,9 +154,10 @@ impl Sessions {
     /// Stops the session `id`, which the terminal leaves for another.
     ///
     /// # Errors
-    /// As `SessionManager::stop`.
+    /// As `procedure::session::Stop`.
     pub(crate) async fn stop(&self, id: SessionId) -> SessionsResult<()> {
-        let stopped = self.manager.stop(self.views.context(), id).await;
+        let stopping = Stop::new(&self.manager, self.views.context(), id);
+        let stopped = self.procedures.run(stopping).await;
         stopped
             .map_err(|e| SessionsError::failed(format!("The session {id} cannot be stopped"), e))?;
         Ok(())
@@ -174,7 +179,8 @@ impl Sessions {
         if id == talked_in {
             return Err(SessionsError::TalkedIn(id));
         }
-        let deleted = self.manager.delete(self.views.context(), id).await;
+        let deleting = Delete::new(&self.manager, self.views.context(), id);
+        let deleted = self.procedures.run(deleting).await;
         deleted
             .map_err(|e| SessionsError::failed(format!("The session {id} cannot be deleted"), e))?;
         Ok(id)
@@ -261,7 +267,8 @@ impl Sessions {
             project: self.place.map(|(project, _)| project),
             ..SessionSpec::default()
         };
-        let started = self.manager.create_from_template(security, template.id, spec).await;
+        let creating = Create::from_template(&self.manager, security, template.id, spec);
+        let started = self.procedures.run(creating).await;
         let what = format!("No session can be started from the template '{}'", template.name.name);
         started.map_err(|e| SessionsError::failed(what, e))
     }

@@ -19,6 +19,7 @@ use crate::event::EventBus;
 use crate::group::GroupManager;
 use crate::library::ForLibrary;
 use crate::plugin::Plugin;
+use crate::procedure::ProcedureExecutor;
 use crate::scoped::{ScopeHolders, ScopeMember, ScopedEntities, ScopedKind, Unowned};
 use crate::seed::SeedSection;
 use crate::terminal::TerminalProvider;
@@ -744,6 +745,7 @@ impl KernelBuilder {
             extensions: self.extensions,
             prompts,
             seed_sections: self.seed_sections,
+            procedures: Arc::new(ProcedureExecutor::new()),
         })
     }
 }

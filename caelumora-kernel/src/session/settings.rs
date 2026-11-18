@@ -3,6 +3,7 @@
 
 use super::{held_workspace, load_own, make_own, require_attachable, SessionError, SessionLoop};
 use crate::controller::WorkspaceController;
+use crate::procedure::Admitted;
 use crate::project;
 use crate::scoped::purge_for_good;
 use anyhow::{Error, Result};
@@ -172,19 +173,20 @@ impl SessionLoop {
     ///
     /// The project it goes to is shared, or its new own made, before the session is stored as
     /// lying there, so that it never lies where its participants read nothing; if storing the
-    /// session fails, that is rolled back. One change at a time (`moving`).
+    /// session fails, that is rolled back. For `procedure::session::Move` and the creation of a
+    /// session, which hold it exclusively and the project it goes to shared (issue 593).
     ///
     /// # Errors
     /// `StoreError::PermissionDenied` if `context` may not change the session,
     /// `ProjectError::NotFound` if there is no project they may read,
     /// `SessionError::ProjectOutOfScope` for another session's own, `SessionError::OwnerNotAUser`
     /// if a new own is needed and the session is no user's, or whatever else storing reports.
-    pub async fn update_project(
+    pub(crate) async fn update_project(
         &self,
+        _: &Admitted<'_>,
         context: &SecurityContext,
         project: Option<ProjectId>,
     ) -> Result<()> {
-        let _moving = self.moving.lock().await;
         let session = self.session();
         self.policies
             .access_policy()

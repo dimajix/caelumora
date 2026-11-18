@@ -567,6 +567,7 @@ fn api_of(world: &World) -> Router {
         kernel: Arc::clone(&world.kernel),
         session_manager: Arc::clone(&world.manager),
         project_manager: Arc::clone(&world.projects),
+        procedures: Arc::clone(world.kernel.procedures()),
         compartments: Default::default(),
         shutdown: Default::default(),
     });
@@ -1400,7 +1401,7 @@ async fn an_artifact_of_a_shared_project_outlives_the_session_it_was_published_i
         .unwrap();
     let session = world.shared_session(&[], &[]).await;
     session.update_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
-    session.update_project(&alice, Some(project.id)).await.unwrap();
+    world.manager.update_project(&alice, session.id(), Some(project.id)).await.unwrap();
     let (session_id, main) = (session.id(), session.channels()[0].id());
     let (_, terminal) = terminal_in(&session, main, &alice).await.unwrap();
     let at = WorkspacePath::parse("report.md").unwrap();

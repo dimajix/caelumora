@@ -107,7 +107,7 @@ impl SessionLoop {
     }
 
     /// The channel `channel_id`, if the user `context` acts for may read it,
-    /// as `SessionManager::open` opens a session (issues 70, 102):
+    /// as `procedure::session::Open` opens a session (issues 70, 102):
     /// reached as the views reach a channel for a user (`channel_reading`,
     /// issue 304), by `GetChannel` and their clearance for it as a whole.
     ///
@@ -495,7 +495,7 @@ impl SessionLoop {
     /// Deleting marks (issue 164): the channel is taken out of the session
     /// and its document marked, but it and its state stay stored - it can
     /// be restored (`restore_channel`) - until it is purged with its session
-    /// (`SessionManager::purge`). Asked about first, in the order
+    /// (`SessionManager::purge_held`). Asked about first, in the order
     /// of issue 304 - whether `context` reaches the channel as the views
     /// reach it (`listed_channel_for`), then may delete it (`DeleteChannel`), then,
     /// as it is taken out of the session, change the session
@@ -811,7 +811,7 @@ mod tests {
     #[tokio::test]
     async fn a_channel_created_in_a_running_session_is_stored_announced_and_runs() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
         let mut rx = kernel.event_bus().subscribe_all();
 
@@ -878,7 +878,7 @@ mod tests {
     async fn a_channel_is_held_in_the_language_asked_for_and_in_none_otherwise() {
         use caelumora_domain::user::UserProfile;
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let (session, ctx, _) = running_session_of_a_user(&manager).await;
         let language = |tag: &str| Some(Language::new(tag).unwrap());
 
@@ -1002,7 +1002,7 @@ mod tests {
     #[tokio::test]
     async fn a_channel_uses_the_workspace_unless_its_creator_says_otherwise() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let (session, ctx, _) = running_session_of_a_user(&manager).await;
 
         let unsaid = session.create_channel(&ctx, spec("unsaid", vec![])).await.unwrap();
@@ -1020,7 +1020,7 @@ mod tests {
     #[tokio::test]
     async fn a_channel_that_cannot_be_is_refused_before_anything_is_stored() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let (session, ctx, _) = running_session_of_a_user(&manager).await;
         let stranger = ActorId::User(UserId::new());
 
@@ -1083,7 +1083,7 @@ mod tests {
     async fn a_deleted_channel_is_stopped_announced_and_kept_until_it_is_restored() {
         use caelumora_domain::agent::{AgentChannelState, AgentId};
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let (session, ctx, _) = running_session_of_a_user(&manager).await;
         let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
         let id = channel.id();
@@ -1170,7 +1170,7 @@ mod tests {
     #[tokio::test]
     async fn a_channel_deleted_before_the_session_runs_is_never_started() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let ctx = SecurityContext::default();
         let session = make_session("waiting", UserId::new());
         let channel_id = session.channels[0];
@@ -1285,7 +1285,7 @@ mod tests {
     async fn a_channel_whose_restoring_failed_comes_back_whole_when_tried_again() {
         let (kernel, passing) = failing_kernel(Session::KIND);
         let stores = kernel.entity_stores().clone();
-        let manager = SessionManager::new(kernel);
+        let manager = Arc::new(SessionManager::new(kernel));
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
         let session =
             create(&manager, &ctx, make_session("restored", UserId::new())).await.unwrap();

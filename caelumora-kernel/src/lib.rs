@@ -15,6 +15,7 @@ mod library;
 mod lock;
 pub mod moderator;
 pub mod plugin;
+pub mod procedure;
 pub mod project;
 pub mod scoped;
 pub mod secret;

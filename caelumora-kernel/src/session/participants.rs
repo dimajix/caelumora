@@ -227,8 +227,8 @@ impl SessionLoop {
     /// Takes `participant` into `channel` of the session as one of its founders, on behalf of
     /// `context`, who created it (`ChannelLoop::found`), one change of a participant at a time
     /// (`changing`, issue 590), as taking in makes it: for the creation of a channel alone -
-    /// `create_channel`, a template's (`SessionManager::create_from_template`), and
-    /// `SessionManager::create`.
+    /// `create_channel`, a template's (`SessionManager::make_from_template`), and
+    /// `SessionManager::make`.
     ///
     /// # Errors
     /// As `ChannelLoop::found`.
@@ -817,7 +817,7 @@ mod tests {
     #[tokio::test]
     async fn an_agent_taken_in_later_is_followed_as_one_taken_in_from_the_start() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let helper = stored_agent(
             kernel.entity_stores(),
             "helper",

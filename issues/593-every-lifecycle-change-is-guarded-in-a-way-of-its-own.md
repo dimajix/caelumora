@@ -1,6 +1,6 @@
 # 593 — Every change of a lifecycle is guarded in a way of its own
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** high
 **Area:** Code structure
@@ -215,6 +215,139 @@ The maintainer's decisions of 2026-11-18 on the assessment:
 - **The interface** of the procedure and the executor, put before the maintainer before any body is
   written.
 
+## Decision on the open questions
+
+The maintainer's decisions of 2026-11-18 on the open questions above, and on the conflicts with
+written rules the plan for them found:
+
+- **The name.** *Procedure*, carried out by the `ProcedureExecutor`. Where the documents call a
+  skill "procedures written down" - ARCHITECTURE.md, STORAGE.md, the module docs of
+  `caelumora-skills` -, they are reworded, so that the word has one meaning.
+- **The key is the path.** `Session(SessionId)`, `Channel(SessionId, ChannelId)`,
+  `Thread(SessionId, ChannelId, ThreadId)`, `Participant(SessionId, ActorId)` and
+  `Project(ProjectId)`. The ids alone would identify - each is a UUID, and a channel's line takes
+  its channel's -, but that a procedure locks the parents of what it changes shared would then be a
+  convention, held by review. With the path, the executor locks the parents of a key shared itself:
+  a session or a channel locked exclusively conflicts with everything below it. A participant hangs
+  under its session alone, as it takes part in the session and in every channel of it - one key in
+  place of the two tables `SessionLoop::changing` and `ChannelLoop::changing` -; who takes it into a
+  channel locks the channel besides. A project is no part of the path, since a session is put into
+  a shared project and taken out again: a procedure locks it where it matters.
+- **Procedures are public types**, which the entry points make - a REST handler, the terminal, a
+  plugin's writer, whoever follows an event - and hand to the executor. The managers and the loops
+  are building blocks, and their methods of a lifecycle go; a new procedure changes no manager, and
+  a plugin writes procedures of its own (the end of a sub-agent, `SubAgents::wind_up`, issue
+  [558](558-no-agent-hands-a-task-to-a-sub-agent.md), is one). It changes what
+  CODING-GUIDELINES.md says of a module's manager, the one owner of a kind's lifecycle, and
+  *Managers and controllers* of ARCHITECTURE.md.
+- **Out of scope: the managers of a kind** - `AgentManager`, `GroupManager`, `WorkspaceManager`, the
+  plugins' -, whose lifecycles change one object: building blocks alone. The lifecycles of sessions
+  and projects are in scope, with every verb of them, a session's creation too; a project's creation
+  is no procedure, since nothing anybody else reaches is locked or changed by it.
+- **Permissions are checked once, under the locks**, first in carrying a procedure out, before
+  anything is asked of others - of `run` too. Enumerating reads in the kernel's name and shows the
+  caller nothing.
+- **Errors.** `Procedure` names its error type (`type Error`), which takes in what the executor
+  fails with (`From<ProcedureError>`: nested, shutting down, ended without an answer); the executor
+  answers it as it is. Each procedure translates what its building blocks fail with.
+- **The proof of admission** is `Admitted`, made by the executor alone and bound to the procedure's
+  hold by its lifetime, so that no task keeps it. It proves that a building block is called in
+  carrying a procedure out, not which objects that procedure locked: that would be a check in the
+  object. Which objects a procedure locks, its tests hold.
+- **Persistence: not now**, as recommended above; and no bound of idempotence or serialisation on a
+  procedure while nothing uses it.
+- **Where they lie.** A module `procedure` of `caelumora-kernel`, with a module for each object
+  whose lifecycle a procedure changes - the one it locks exclusively: `session`, `project`,
+  `channel`, `participant`, `thread`. Named by the topmost object it locks, nearly every procedure
+  would lie in `session`, which almost all lock shared. A plugin's procedures lie in the plugin.
+- **Shutting down within its bound.** A stop that waits for procedures holding the session shared,
+  which wait up to `LEAVE_GRACE` themselves, and then `STOP_GRACE` for its own actors, would exceed
+  `SHUTDOWN_BOUND`: the executor admits no procedure any more, waits for those under way and stops
+  the sessions, all within the bound; what is still under way then ends with the process, as now.
+- **Opening a session is one procedure, `session::Open`, whether it runs or not**: enumerating
+  locks the session shared for one that runs - which keeps it running while the channels left out
+  are built again -, and exclusively for one it starts - so that no entry point looks first whether
+  it runs. Building a channel left out as its session started is a
+  procedure of its own (`channel::Start`, for `SessionLoop::retry_unavailable`), with the session
+  locked shared - as `SessionManager::open` now lets go of its lock before it builds them.
+- **Enumerating fails at nothing but a conflict** (`Deferred`): what reading fails at goes into what
+  it found, and carrying the procedure out answers it - one way for an error to reach the caller.
+- **A session being created is held until it is complete.** `SessionManager::create_from_template`
+  completes the session - its workspace, its participants, its project - after `establish` let go
+  of its lock, while it runs and is found already, so that stopping or deleting it meanwhile
+  crosses the completion and its rollback. `session::Create` chooses the session's id before it is
+  built and holds it exclusively until it is complete or rolled back.
+- **`run` answers.** Every request to `run` (`ActorChange`) carries what `run` answers once it has
+  carried it out: a leave once the actor's task has ended and its leave is recorded, a close once
+  the thread is closed and announced. A request dropped unanswered means that the channel stopped,
+  its actors with it: a leave counts as done.
+- **No procedure within another is checked at run time.** The executor marks the task it carries a
+  procedure out in (a task-local); a procedure asked of the executor from such a task is refused at
+  once (`ProcedureError::Nested`) and logged - it would wait for whoever holds the keys it needs,
+  the procedure that asked. Only a task a procedure spawns escapes the check; the executor is held
+  by the entry points alone, by no building block.
+- **What a procedure waits for gives up waiting for a procedure** once it is let go or stopped. An
+  actor does: leaving interrupts the tool call it is in, and the procedure the call asked for goes
+  on in its own task, deferred and holding nothing, until the procedure that let the actor go is
+  done; one that does not react is aborted after `LEAVE_GRACE`. It is not detected: that would need
+  the executor to know whom a procedure waits for and from whose task another was asked, which the
+  caller of its context does not say. The executor logs a procedure that waits at a key longer than
+  `LEAVE_GRACE`, with the key and the procedure that holds it.
+
+Beside them, decided on the same day:
+
+- **Moving a session is a procedure** (`session::Move`): put into a shared project, or taken out
+  (`SessionLoop::update_project`). Of itself an attribute; but deleting a project enumerates its
+  sessions, and a session moved into it meanwhile would cross that. It locks the session
+  exclusively and the project it leaves and the one it goes to shared; `SessionLoop::moving`, a
+  lock of its own not named above, goes.
+- **Reclassifying a channel is a procedure** (`channel::Reclassify`): raising its classification
+  asks whether every participant is cleared for it (`ChannelError::NotCleared`), and taking someone
+  in asks whether they are cleared for the classification - side by side, one not cleared could get
+  in. It locks the channel exclusively.
+- **Who follows the events is an entry point.** The loop of a session follows the agents deleted
+  and restored, and all of them after events it lost (`SessionLoop::follow_agents`); with
+  procedures, it would hold the executor, and an object would know of locking. Following moves to
+  a follower of the kernel, which holds the executor and has the agents followed by a procedure
+  (`participant::Follow`); the session's loop keeps following renames, which change no lifecycle.
+- **Taking someone into a stopped session starts it**, as `SessionManager::join` now opens it in
+  the kernel's name: enumerating locks the session exclusively where it does not run, and starting
+  it is code `session::Open` shares - not two procedures one after the other at the entry point,
+  between which the session could stop again.
+
+The procedures, by step, each step reviewed and committed on its own:
+
+1. The executor, with the lifecycles of sessions and projects, in place of
+   `SessionManager::lifecycles` and `ProjectManager::lifecycles`: `session::Create` (from a
+   template; `roll_back_creation` becomes code it shares with deleting and purging), `Open`,
+   `Stop`, `Delete`, `Restore`, `Purge`, `ShutDown`, `Move`; `project::Delete`, `Restore`,
+   `Purge` (the deletion of a project's sessions code it shares with `session::Delete`, in place
+   of `SessionManager::delete_with`).
+2. `run` answers its requests, without a change of behaviour.
+3. Participants: `participant::TakeIn` (added or joining, into the session and a channel of it),
+   `LetGo` (removed or leaving, from the session with every channel of it, or from one channel),
+   `Follow` (agents deleted or restored), with the follower of the events; `changing` of both loops,
+   `ChannelLoop::leaving`, `ChannelError::StillLeaving` and the rollbacks of taking in go. Taking
+   founders in is code that creating a session or a channel and opening a thread share.
+4. Channels: `channel::Create` (with its founders), `Delete`, `Restore` (letting go whom the
+   session let go meanwhile), `Start` (one left out as its session started), `Reclassify`; the
+   order of locks in `SessionLoop::restore_channel` goes.
+5. Threads and sub-agents: `thread::Open` (with its founders) and `Close`; in
+   `caelumora-subagents`, starting a sub-agent - an agent made, a thread opened, a brief delegated -
+   and ending it - let go, its thread closed, the agent deleted -, in place of its `apart` and its
+   rollback; `Phase` and the threads `run` keeps closing go.
+6. The documents: ARCHITECTURE.md, CHANNELS.md, CODING-GUIDELINES.md, PERMISSION-CHECKS.md.
+
+No procedure: the attributes their controllers write - of a session and a channel their name,
+language, time zone, privacy, description, rules of approval, whether a channel uses the workspace,
+and which workspace a session has, which is a kind of a manager's -; the ordinary flow of `run` -
+what is said, cancelling, waking, interrupting a tool call, delegating into an open thread (`run`
+refuses what is delegated into a thread closed), an actor that ends by itself, the internal actors
+`run` starts and lets go -; the lifecycles of the kinds of managers, whose effect on running
+channels a procedure follows (`participant::Follow`); and `ChannelLoop::building_mentions` and
+writing a document under one lock (issue [492](492-a-document-is-written-under-two-locks.md)):
+neither guards a lifecycle.
+
 ## Done when
 
 - The changes of a lifecycle follow one named pattern, decided with the maintainer and described in
@@ -230,3 +363,36 @@ The maintainer's decisions of 2026-11-18 on the assessment:
 - **2026-11-18** — The maintainer proposed procedures, as "transactions"; assessed, and decided as
   *Proposal: procedures* and *Decision* record. Open: the name, a proof of admission for the
   building blocks, persistence, where the procedures lie, and their interface.
+- **2026-11-18** — The open questions decided, with the conflicts with written rules the plan for
+  them found, as *Decision on the open questions* records; begun on the branch
+  `issue-593-procedures`. Since this issue was opened, step 1 of 2b of issue 557 is on `main`
+  (`Phase`, the threads `run` keeps closing, `ChannelLoop::leaving`), and issue 558 is done: its
+  writer of sub-agents composes the first change of a lifecycle a plugin makes, letting an agent
+  go, closing its thread and deleting it (`SubAgents::wind_up`).
+- **2026-11-18** — Step 1 implemented, not committed yet: the module `procedure` of the kernel, with
+  the executor, the keys and their locks, the proof of admission and the compensation, tested for
+  every order of two procedures; the lifecycles of sessions and shared projects as procedures, in
+  place of `SessionManager::lifecycles`, `ProjectManager::lifecycles`, `SessionLoop::moving` and
+  the flag `SessionManager::shutting_down`; the REST server, the terminal and the server program
+  make procedures. Decided in implementing it: the executor is the kernel's, one per process
+  (`Kernel::procedures`), which the entry points take once and the plugins reach in step 5;
+  deleting, restoring and purging a session lock the session alone, since the procedures of a
+  project lock every session in it; starting the sessions interrupted is no procedure but runs
+  `session::Open` for each, as an entry point; the rollbacks within deleting, restoring and storing
+  a session stay in their building blocks, the creation's moved into the compensation. A session
+  being created is held until it is complete, which closes the gap after `establish`.
+- **2026-11-18** — Reviewed with fresh eyes; what it found in the change is taken in. Deleting,
+  restoring and purging a session lock the project it lies in shared after all, as every way into
+  a project or out of it does - creating a session in it, moving one into it -, so that the
+  procedures of a project, which list its sessions again as they carry the change out, find those
+  they locked; a session restored while its project is deleted crossed it before. Moving a session
+  locks only the project it goes to: deleting the one it leaves locks the session, and enumerates
+  anew once it is moved. Opening and stopping a session are building blocks of the
+  `SessionManager` of their own (`open_held`, `stop_held`), and only a running session has the
+  channels left out built again. The proof of admission is made in the module of the locks
+  alone, out of reach of the modules of procedures. Since every request that reaches a session is
+  a procedure, a shutdown refuses reading a running session too (`503 shutting_down`), no longer
+  only starting one; and a procedure under way that takes long - an opening that builds channels
+  again - holds back every stop of the shutdown, within `SHUTDOWN_BOUND`. A procedure keeps its
+  place in the queue of one key alone, fair for each key and not across keys; one that panics is
+  not undone.

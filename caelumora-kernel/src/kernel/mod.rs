@@ -43,6 +43,7 @@ use crate::component::ComponentRegistry;
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use crate::group::GroupManager;
+use crate::procedure::ProcedureExecutor;
 use crate::scoped::ScopedEntities;
 use crate::seed::{self, SeedSection};
 use crate::user_provider::UserManager;
@@ -124,6 +125,8 @@ pub struct Kernel {
     prompts: Arc<PromptCatalogue>,
     /// The sections of the seed the plugins claimed (issue 323).
     seed_sections: BTreeMap<String, Arc<dyn SeedSection>>,
+    /// What carries out the changes of the lifecycles of sessions and projects (issue 593).
+    procedures: Arc<ProcedureExecutor>,
 }
 
 impl Kernel {
@@ -260,6 +263,12 @@ impl Kernel {
     /// The one owner of workspaces and their places (issue 253).
     pub fn workspace_manager(&self) -> &Arc<WorkspaceManager> {
         &self.workspaces
+    }
+
+    /// What carries out every change of a lifecycle - one per process (issue 593): for the entry
+    /// points, which make the procedures, never for a building block of one.
+    pub fn procedures(&self) -> &Arc<ProcedureExecutor> {
+        &self.procedures
     }
 
     /// What ends the commands nobody may run any longer (issues 254, 344).

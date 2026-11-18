@@ -175,7 +175,7 @@ mod tests {
         // Kept by the store (issue 250): in another session the name is
         // free, which the store suite says.
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let (session, ctx, _) = running_session_of_a_user(&manager).await;
         let side = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
 

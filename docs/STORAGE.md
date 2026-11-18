@@ -25,7 +25,7 @@ The entity stores (`EntityStore<T>`, in `caelumora-store`) keep the long-lived d
 *   **Projects**: what holds the results of sessions, each a user's (see
     [PROJECTS.md](PROJECTS.md)): a session's own lies in the session's scope, a shared one in the
     global scope or its owner's; each holds a scope of its own, where its artifacts lie.
-*   **Skills**: procedures written down for agents, a kind of the plugin `caelumora-skills` (see
+*   **Skills**: instructions written down for agents, a kind of the plugin `caelumora-skills` (see
     [SKILLS.md](SKILLS.md)).
 *   **Artifacts**: results an agent published, each a user's, with its versions, a kind of the
     plugin `caelumora-artifacts`. Their content lies in a storage of content (see
@@ -464,16 +464,15 @@ purge begun, for the next purge to finish; the record holds across every writer 
 lock in one process could. A channel is restored only through its running session, so the session's
 purge begun keeps its channels too; and nothing that lies in a project - its sessions, what lies in
 its scope - is restored while the project is deleted, so the project's purge begun keeps them.
-Deleting, restoring and purging a session are serialised by the `SessionManager`, under the lock it
-also starts a session with, so that a purge never meets it half deleted or half restored - within
-one process, and against the others that share the store by the session's hold (`SessionLocks`, see
-[Several instances](#several-instances)). Deleting, restoring and purging a project are serialised
-by the `ProjectManager`, under one lock per project id, since each goes through the project's
-sessions, its scope and its group. Both tables of locks by id are a `LocksById`, which keeps an id's
-lock only while somebody holds it or waits for it. What the kernel removes for good that is not
-marked - the channels of a session being purged, a document whose creation failed - it marks first,
-in its own name. The state of what was deleted stays in the `StateStore` until it is purged (see
-[Deleting state](#deleting-state)).
+Deleting, restoring and purging a session are procedures that hold it exclusively, as starting it
+does (`procedure::session`, issue 593), so that a purge never meets it half deleted or half
+restored - within one process, and against the others that share the store by the session's hold
+(`SessionLocks`, see [Several instances](#several-instances)). Deleting, restoring and purging a
+project hold the project and the sessions that lie in it exclusively (`procedure::project`), since
+each goes through the project's sessions, its scope and its group. What the kernel removes for good
+that is not marked - the channels of a session being purged, a document whose creation failed - it
+marks first, in its own name. The state of what was deleted stays in the `StateStore` until it is
+purged (see [Deleting state](#deleting-state)).
 
 ### Demo data
 
@@ -719,8 +718,9 @@ not help; the rule is the kernel's to keep:
 each holding the state under a lock of its own while it changes and stores it.
 
 This holds because a session starts only once, however many requests ask for it at the same time:
-starting, stopping, deleting, restoring and purging a session take one lock per session id, so a
-stop cannot miss a start under way, and a deleted session cannot be started again meanwhile. Where
+starting, stopping, deleting, restoring and purging a session are procedures that hold it
+exclusively (`procedure::session`, issue 593), so a stop cannot miss a start under way, and a
+deleted session cannot be started again meanwhile. Where
 several processes share the store, the session's hold keeps it so between them (`SessionLocks`, see
 [Several instances](#several-instances)).
 

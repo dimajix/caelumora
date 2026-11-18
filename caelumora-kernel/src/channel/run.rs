@@ -3357,7 +3357,7 @@ mod tests {
         use crate::session::SessionManager;
         use caelumora_domain::channel::{Channel, Said, SAID};
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let (session, ctx, _) = running_session_of_a_user(&manager).await;
         let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
         let owner = ctx.initiator_id;

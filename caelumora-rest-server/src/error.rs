@@ -38,6 +38,7 @@ use caelumora_kernel::agent::AgentError;
 use caelumora_kernel::channel::ChannelError;
 use caelumora_kernel::error::{refusal, user_message};
 use caelumora_kernel::group::GroupError;
+use caelumora_kernel::procedure::ProcedureError;
 use caelumora_kernel::project::ProjectError;
 use caelumora_kernel::scoped::ScopeNotEmpty;
 use caelumora_kernel::session::SessionError;
@@ -424,8 +425,24 @@ impl From<ProjectError> for ApiError {
             ProjectError::Invalid(e) => e.into(),
             ProjectError::Store(e) => Self::of_store(e),
             ProjectError::Session(e) => e.into(),
+            ProjectError::Procedure(e) => e.into(),
             // A caller that is no user: not the client's request.
             ProjectError::OwnerNotAUser => {
+                Self::internal("internal_error", "the request", &error.into())
+            }
+        }
+    }
+}
+
+impl From<ProcedureError> for ApiError {
+    /// What the executor of procedures failed with (issue 593): shutting down is the server's
+    /// state, to be tried again; a procedure within another or one ended without an answer is the
+    /// server's fault.
+    fn from(error: ProcedureError) -> Self {
+        let detail = error.to_string();
+        match error {
+            ProcedureError::ShuttingDown => Self::unavailable("shutting_down", detail),
+            ProcedureError::Nested | ProcedureError::Ended => {
                 Self::internal("internal_error", "the request", &error.into())
             }
         }
@@ -490,7 +507,10 @@ impl From<SessionError> for ApiError {
             SessionError::ProjectOutOfScope(_) => Self::bad_request("project_out_of_scope", detail),
             SessionError::ProjectDeleted(_) => Self::conflict("project_deleted", detail),
             SessionError::ScopeNotEmpty(e) => e.into(),
-            SessionError::ShuttingDown => Self::unavailable("shutting_down", detail),
+            SessionError::Procedure(e) => e.into(),
+            // As in a chain, as what it reported met on the way.
+            SessionError::Store(e) => Error::new(e).into(),
+            SessionError::Failed(e) => e.into(),
             SessionError::RunsElsewhere(_) => Self::conflict("session_runs_elsewhere", detail),
             SessionError::AlreadyParticipant { .. } => {
                 Self::conflict("already_participant", detail)
@@ -1021,9 +1041,26 @@ mod tests {
             (409, "session_runs_elsewhere".to_string())
         );
         assert_eq!(
-            answer(SessionError::ShuttingDown),
+            answer(SessionError::Procedure(ProcedureError::ShuttingDown)),
             (503, "shutting_down".to_string()),
             "for now, not for good (issue 297)"
+        );
+        assert_eq!(
+            answer(SessionError::Store(StoreError::NotFound {
+                entity: "personality",
+                id: "p1".to_string()
+            })),
+            (500, "internal_error".to_string()),
+            "what a store reported met on the way, as it answers in a chain"
+        );
+        assert_eq!(
+            answer(SessionError::Store(StoreError::NameTaken { entity: "agent" })),
+            (409, "name_taken".to_string())
+        );
+        assert_eq!(
+            answer(SessionError::Failed(Error::new(SessionError::NotFound(session)))),
+            (404, "session_not_found".to_string()),
+            "anything else as what it failed with"
         );
         let left = || ScopeNotEmpty {
             holder: Scope::SessionScope { session_id: session },
@@ -1066,7 +1103,9 @@ mod tests {
         };
         assert_eq!(answer(ProjectError::ScopeNotEmpty(left)), (409, "scope_not_empty".to_string()));
         assert_eq!(
-            answer(ProjectError::Session(Error::new(SessionError::ShuttingDown))),
+            answer(ProjectError::Session(Error::new(SessionError::from(
+                ProcedureError::ShuttingDown
+            )))),
             (503, "shutting_down".to_string()),
             "a session of it as that session's error"
         );
