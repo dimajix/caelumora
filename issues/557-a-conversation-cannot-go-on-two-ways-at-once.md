@@ -1328,3 +1328,12 @@ Decided with it, on the author's proposal:
   dropped, though COMPONENTS.md says a component failing closed fails the turn. No stored data to
   delete.
 - **2026-11-18** — Accepted by the maintainer.
+- **2026-11-18** — The second of these steps implemented, tests alone: a step of a plan whose
+  message an emit processor drops ends, nothing of it said or run, and the plan goes on; a call an
+  emit processor changes is the one said and run, labelled as its tool declares
+  (`test_dropping_calls`, now of the tool `dropped` alone; `test_renaming_calls`,
+  `test_whispering_tool`, hidden). Both mutation-checked: the old order, and leaving out labelling
+  again.
+- **2026-11-18** — Accepted by the maintainer. Found on review, to be decided apart: about 25
+  component descriptors in the agents' channel tests written out field by field, where
+  `ComponentDescriptor::new` with a struct update would do.

@@ -1299,7 +1299,7 @@ async fn the_calls_of_a_message_dropped_on_its_way_out_are_not_run() {
         tool_calls: vec![ToolCall {
             id: Some("1".to_string()),
             arguments: serde_json::json!({}),
-            ..make_tool_call("calculator")
+            ..make_tool_call("dropped")
         }],
         ..Message::new(Classification::CHANNEL_DEFAULT)
     };
@@ -1323,6 +1323,124 @@ async fn the_calls_of_a_message_dropped_on_its_way_out_are_not_run() {
         said.iter().all(|m| m.tool_calls.is_empty() && m.role != MessageRole::Tool),
         "neither the calls nor their results: {said:?}"
     );
+    running.abort();
+}
+
+/// Issue 557: a step of a plan whose message the emit processors drop ends as one answered without
+/// calls - nothing of it said, its calls not run - and the plan goes on with its next step.
+#[tokio::test]
+async fn a_step_whose_message_is_dropped_ends_and_the_plan_goes_on() {
+    use caelumora_domain::tool::ToolCall;
+
+    let said = |content: &str| Message {
+        role: MessageRole::Assistant,
+        content: Some(content.to_string()),
+        ..Message::new(Classification::CHANNEL_DEFAULT)
+    };
+    let calling = |name: &str, arguments| Message {
+        tool_calls: vec![ToolCall { id: Some("1".to_string()), arguments, ..make_tool_call(name) }],
+        ..said("")
+    };
+    let steps = serde_json::json!({
+        "summary": "two steps",
+        "steps": [{ "description": "first" }, { "description": "second" }]
+    });
+    let script = [
+        calling("create_plan", steps),
+        calling("dropped", serde_json::json!({})),
+        said("second done"),
+        said("all done"),
+    ];
+    let component_nodes =
+        [PLANNING_KIND, "test_dropping_calls"].map(|kind| ComponentDescriptor::new(kind, kind));
+    let components = ComponentConfig { component_nodes: component_nodes.into() };
+    let Stuck { channel, agent, mut events, running, .. } =
+        with_an_agent(Arc::new(Scripted(Mutex::new(script.into()))), components).await;
+
+    let mut seen = Vec::new();
+    time::timeout(Duration::from_secs(5), async {
+        loop {
+            let envelope = events.recv().await.expect("the channel is running");
+            if envelope.context.sender_id != ActorId::Agent(agent) {
+                continue;
+            }
+            match envelope.event {
+                ActorEvent::TurnFinished { .. } => break,
+                ActorEvent::IntermediateMessageGenerated(m) => {
+                    seen.push(format!("intermediate:{}", m.content.unwrap_or_default()))
+                }
+                ActorEvent::PlanStepStarted { step_index, .. } => {
+                    seen.push(format!("started:{step_index}"))
+                }
+                ActorEvent::PlanStepFinished { step_index, .. } => {
+                    seen.push(format!("finished:{step_index}"))
+                }
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("the turn ends");
+    assert_eq!(
+        seen,
+        ["started:0", "finished:0", "started:1", "intermediate:second done", "finished:1"],
+        "the first step ended with nothing said, the second went on"
+    );
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
+    let said = stored.transcript.messages();
+    let dropped = |m: &Message| {
+        m.tool_calls.iter().any(|c| c.function_name == "dropped")
+            || m.tool_results.iter().any(|r| r.tool_name == "dropped")
+    };
+    assert!(!said.iter().any(dropped), "the dropped call neither said nor run: {said:?}");
+    running.abort();
+}
+
+/// Issue 557: the call an emit processor makes of the model's is the one taken into the turn and
+/// run - said as it left the processor, labelled as its tool declares: hidden, its owner's.
+#[tokio::test]
+async fn a_call_an_emit_processor_changes_runs_as_it_changed_it() {
+    use caelumora_domain::tool::{ToolCall, ToolVisibility};
+
+    let drafted = Message {
+        role: MessageRole::Assistant,
+        tool_calls: vec![ToolCall {
+            id: Some("1".to_string()),
+            arguments: serde_json::json!({}),
+            ..make_tool_call("draft")
+        }],
+        ..Message::new(Classification::CHANNEL_DEFAULT)
+    };
+    let answer = Message {
+        role: MessageRole::Assistant,
+        content: Some("Done.".to_string()),
+        ..Message::new(Classification::CHANNEL_DEFAULT)
+    };
+    let component_nodes = ["test_whispering_tool", "test_renaming_calls"]
+        .map(|kind| ComponentDescriptor::new(kind, kind));
+    let components = ComponentConfig { component_nodes: component_nodes.into() };
+    let model = Scripted(Mutex::new([drafted, answer].into()));
+    let Stuck { channel, agent, mut events, running, .. } =
+        with_an_agent(Arc::new(model), components).await;
+
+    answered(&mut events, agent).await;
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
+    let said = stored.transcript.messages();
+    let called: Vec<_> = said
+        .iter()
+        .flat_map(|m| m.tool_calls.iter().map(|c| (c.function_name.clone(), c.visibility)))
+        .collect();
+    assert_eq!(
+        called,
+        [("whisper".to_string(), ToolVisibility::HIDDEN)],
+        "said as the processor made it, labelled as its tool declares: {said:?}"
+    );
+    let results: Vec<_> = said
+        .iter()
+        .flat_map(|m| m.tool_results.iter())
+        .map(|r| (r.tool_name.clone(), r.status))
+        .collect();
+    assert_eq!(results, [("whisper".to_string(), ToolResultStatus::Ok)], "and run");
     running.abort();
 }
 
