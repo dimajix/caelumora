@@ -262,7 +262,7 @@ impl Recorded {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actor::{ActorEvent, Rejection, RequestReason, RetryTarget};
+    use crate::actor::{ActorEvent, EventId, Rejection, RequestReason, RetryTarget};
     use crate::agent::{AgentId, RetryRefused};
     use crate::approval::{ApprovalDecision, ApprovalRequest, ApprovalVerdict};
     use crate::confidentiality::Classification;
@@ -671,7 +671,7 @@ mod tests {
         let context = EventContext {
             sender_id: agent,
             sender_name: "agent".to_string(),
-            correlation_id: Uuid::new_v4(),
+            correlation_id: EventId::new(),
             span_depth: 2,
             agent_hops: 1,
             initiator_id: user,

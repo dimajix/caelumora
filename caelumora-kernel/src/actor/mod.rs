@@ -13,11 +13,10 @@ pub use kinds::AgentKinds;
 pub use manager::{ActorManager, Shown};
 
 use caelumora_api::actor::Answering;
-use caelumora_domain::actor::EventContext;
+use caelumora_domain::actor::{EventContext, SpanId};
 use caelumora_domain::channel::{ChannelId, ThreadId};
 use caelumora_domain::session::SessionId;
 use caelumora_security::SecurityContext;
-use uuid::Uuid;
 
 /// What of an `Answering` the kernel alone builds (issue 516): one in the channel's name, in a span
 /// of a user's, or replying to an event - the agent side answers only as it is asked
@@ -37,7 +36,7 @@ pub(crate) trait ChannelAnswering: Sized {
 
     /// This context in the span `span_id`: a user's action, whose events
     /// share the span the frontend learns.
-    fn with_span(self, span_id: Uuid) -> Self;
+    fn with_span(self, span_id: SpanId) -> Self;
 
     /// This context in the thread `thread` of its channel (issue 557): what the channel says of
     /// someone, where they take part.
@@ -63,7 +62,7 @@ impl ChannelAnswering for Answering {
         Answering { event_context }
     }
 
-    fn with_span(mut self, span_id: Uuid) -> Self {
+    fn with_span(mut self, span_id: SpanId) -> Self {
         self.event_context.span_id = span_id;
         self
     }

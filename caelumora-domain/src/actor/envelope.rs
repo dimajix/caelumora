@@ -1,6 +1,6 @@
 //! An event on its way through a channel (`Envelope`): when it was sent, where and in which chain
-//! (`EventContext`), whom it goes to and what is kept of it - and what an actor does with one it
-//! looks at in its inbox (`Pick`).
+//! (`EventContext`, by the ids `EventId` and `SpanId`), whom it goes to and what is kept of it -
+//! and what an actor does with one it looks at in its inbox (`Pick`).
 
 use super::{ActorEvent, ActorId, Rejection};
 use crate::approval::ApprovalStatus;
@@ -10,7 +10,9 @@ use crate::history::{HistoryEntry, Recipients};
 use crate::session::SessionId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
+
+define_id!(EventId);
+define_id!(SpanId);
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EventContext {
@@ -21,9 +23,14 @@ pub struct EventContext {
     pub thread_id: ThreadId,
     pub sender_id: ActorId,
     pub sender_name: String,
-    pub event_id: Uuid,
-    pub correlation_id: Uuid,
-    pub span_id: Uuid,
+    /// Its own id, new for every envelope (issue 352).
+    pub event_id: EventId,
+    /// The event it answers - the `event_id` of what it follows in its chain -, nil for what
+    /// answers none.
+    pub correlation_id: EventId,
+    /// What one initial event caused: new where a chain begins (`new`) - a user's action above
+    /// all -, kept by `next` for every envelope that follows from it.
+    pub span_id: SpanId,
     pub span_depth: i32,
     /// The position in its channel's history of the entry it was delivered
     /// as (issue 417), stamped by the channel as it delivers it: what a
@@ -59,9 +66,9 @@ impl EventContext {
             thread_id: ThreadId::line(channel_id),
             sender_id,
             sender_name: sender_name.into(),
-            event_id: Uuid::new_v4(),
-            correlation_id: Uuid::default(),
-            span_id: Uuid::new_v4(),
+            event_id: EventId::new(),
+            correlation_id: EventId::default(),
+            span_id: SpanId::new(),
             span_depth: 0,
             position: None,
             agent_hops: 0,
@@ -76,7 +83,7 @@ impl EventContext {
             thread_id: self.thread_id,
             sender_id,
             sender_name: sender_name.into(),
-            event_id: Uuid::new_v4(),
+            event_id: EventId::new(),
             correlation_id: self.event_id,
             span_id: self.span_id,
             span_depth: self.span_depth + 1,
@@ -725,6 +732,25 @@ mod tests {
         let in_other = EventContext { thread_id: other, ..said };
         let answer = in_other.next(ActorId::Agent(AgentId::new()), "bob");
         assert_eq!(answer.thread_id, other, "what follows stays in the thread");
+    }
+
+    /// Issue 592: what follows an event answers it, in its span, and its ids are stored and
+    /// answered as the UUIDs they wrap, and read back from them.
+    #[test]
+    fn what_follows_an_event_answers_it_in_its_span_by_ids_written_as_uuids() {
+        let alice = ActorId::User(UserId::new());
+        let said = EventContext::new(SessionId::new(), ChannelId::new(), alice, "alice");
+        let answer = said.next(ActorId::Agent(AgentId::new()), "bob");
+        assert_eq!(answer.correlation_id, said.event_id, "it answers the event");
+        assert_eq!(answer.span_id, said.span_id, "in its span");
+        assert_ne!(answer.event_id, said.event_id, "an event of its own");
+
+        let written = serde_json::to_value(&answer).unwrap();
+        assert_eq!(written["event_id"], answer.event_id.to_string(), "a bare UUID");
+        assert_eq!(written["correlation_id"], said.event_id.to_string(), "a bare UUID");
+        assert_eq!(written["span_id"], said.span_id.to_string(), "a bare UUID");
+        let read: EventContext = serde_json::from_value(written).unwrap();
+        assert_eq!(read, answer, "read back as it was written");
     }
 
     /// Issue 557: the line's view shows what happens in the line and in the whole channel, and of

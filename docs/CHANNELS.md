@@ -1124,7 +1124,9 @@ An **actor** is anything that sends and receives events in a channel.
     own. Whose name an envelope carries is what the `OriginEventSender` checks, so it is decided in
     one place. Every envelope is an event of its own, with an `event_id` of its own, even where many
     are sent in the same context - the events of a turn share its span and what it answers
-    (`correlation_id`), not their id.
+    (`correlation_id`), not their id. Two kinds of id tie them together: an `EventId` names one
+    event, and the event it answers by its `correlation_id`; a `SpanId` names what one initial
+    event caused - a user's action above all.
 
 ### External agents
 

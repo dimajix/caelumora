@@ -7,7 +7,7 @@ mod envelope;
 mod event;
 mod state;
 
-pub use envelope::{Envelope, EventContext, Pick};
+pub use envelope::{Envelope, EventContext, EventId, Pick, SpanId};
 pub use event::{ActorEvent, Rejection, RequestReason, RetryTarget};
 pub use state::{ActorState, ProcessingStateHolder};
 

@@ -3,7 +3,7 @@
 
 use crate::history::{HistoryPageItem, HistoryPageResponse};
 use crate::session::{ParticipantKind, UNKNOWN};
-use caelumora_domain::actor::{ActorId, ActorState};
+use caelumora_domain::actor::{ActorId, ActorState, SpanId};
 use caelumora_domain::agent::PersonalityKind;
 use caelumora_domain::approval::{ApprovalRequest, ApprovalRule};
 use caelumora_domain::chain::Position;
@@ -456,7 +456,7 @@ pub struct CommandReplyResponse {
     pub command: String,
     pub output: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub span_id: Option<Uuid>,
+    pub span_id: Option<SpanId>,
 }
 
 #[cfg(test)]

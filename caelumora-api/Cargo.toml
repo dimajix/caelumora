@@ -19,7 +19,6 @@ serde_json.workspace = true
 serde_path_to_error.workspace = true
 bytes.workspace = true
 chrono.workspace = true
-uuid = { workspace = true, features = ["v4"] }
 arc-swap.workspace = true
 tracing.workspace = true
 

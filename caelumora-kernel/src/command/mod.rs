@@ -34,6 +34,7 @@ use caelumora_api::command::{
     check_arguments, Command, CommandError, CommandProvider, CommandResult, CommandSet,
 };
 use caelumora_api::component::{ComponentImpl, ComponentResult};
+use caelumora_domain::actor::SpanId;
 use caelumora_domain::command::{CommandDescription, CommandOutput, CommandVisibility};
 use caelumora_domain::security::SecurityAttributes;
 use caelumora_domain::store::StoreError;
@@ -42,7 +43,6 @@ use caelumora_domain::value::name::{named, Name};
 use caelumora_security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
 use std::fmt::Debug;
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// What issuing a command answered at once (see
 /// `UserActor::execute_command`).
@@ -60,7 +60,7 @@ pub struct CommandReply {
     /// For a command sent to agents (issue 269), the span of the requests:
     /// their answers come later, as `CommandExecuted` or `CommandFailed`
     /// on the issuer's stream, in this span.
-    pub span_id: Option<Uuid>,
+    pub span_id: Option<SpanId>,
 }
 
 /// What a command of the channel runs with: who issued it, the channel,

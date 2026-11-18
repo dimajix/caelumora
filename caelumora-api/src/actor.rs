@@ -6,7 +6,7 @@ use crate::transport::{EventReceiver, EventSender};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use caelumora_domain::actor::{
-    ActorDescription, ActorEvent, ActorId, ActorState, Envelope, EventContext,
+    ActorDescription, ActorEvent, ActorId, ActorState, Envelope, EventContext, EventId,
 };
 use caelumora_domain::channel::{ChannelId, ThreadId};
 use caelumora_domain::command::CommandDescription;
@@ -22,7 +22,6 @@ use std::fmt::Debug;
 use std::future::Future;
 use std::sync::Arc;
 use tracing::warn;
-use uuid::Uuid;
 
 /// What builds the actor of an agent of one kind: from its runtime alone (issue 516), which
 /// holds the agent, its personality and the channel it takes part in.
@@ -208,7 +207,7 @@ impl Answering {
     /// `event_id` of its own, however many are sent in the same context - the
     /// events of a turn, which share its span and what it answers (issue 352).
     pub fn envelope(&self, event: ActorEvent) -> Envelope {
-        let context = EventContext { event_id: Uuid::new_v4(), ..self.event_context.clone() };
+        let context = EventContext { event_id: EventId::new(), ..self.event_context.clone() };
         Envelope::new(context, event)
     }
 

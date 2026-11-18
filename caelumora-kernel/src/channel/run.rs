@@ -1197,7 +1197,7 @@ mod tests {
     use caelumora_api::transport::{EventReceiver, EventSender};
     use caelumora_domain::actor::{
         ActorEvent, ActorId, ActorState, Envelope, EventContext, Rejection, RequestReason,
-        RetryTarget,
+        RetryTarget, SpanId,
     };
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::channel::{Brief, ChannelId, Delegation, ThreadId, ThreadOrigin};
@@ -1221,7 +1221,6 @@ mod tests {
     use std::time::Duration;
     use tokio::task::JoinSet;
     use tokio::time;
-    use uuid::Uuid;
 
     impl ChannelLoop {
         /// `event` admitted in the context the channel builds for its sender, as it is live.
@@ -2325,7 +2324,7 @@ mod tests {
         // to the channel, as above (issue 567): a message taken back is sent all the same.
         let hers = channel.user_actor(alice.id).unwrap();
         let his = channel.user_actor(bob.id).unwrap();
-        let error = |result: Result<Uuid>| {
+        let error = |result: Result<SpanId>| {
             result.expect_err("refused").downcast::<ChannelError>().expect("a channel's error")
         };
         assert!(

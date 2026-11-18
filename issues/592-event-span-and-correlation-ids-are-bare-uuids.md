@@ -1,6 +1,6 @@
 # 592 — An event's, a span's and a correlation's ids are bare UUIDs
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -45,3 +45,11 @@ other id.
 - **2026-11-17** — Opened from the work on issue
   [590](590-a-session-lets-nobody-go.md), as the maintainer asked: ids as types of their own for
   type safety at compile time, apart from the actor ids in REST paths, which 590 takes up.
+- **2026-11-18** — Done, by the maintainer's decision for two types: a correlation is no
+  identity of its own but the `EventId` of the event answered (`EventContext::next`,
+  `ChannelAnswering::replying_to`), and a span is what one initial event caused. `EventId` and
+  `SpanId` by `define_id!` beside `EventContext`; `correlation_id` is an `EventId`. The
+  `UserActor`'s operations answer `SpanId`, `with_span`, `CommandReply` and `CommandReplyResponse`
+  take it; the form stored and answered is the UUID as before, held by a test. The web UI holds
+  every id as a `string` and is unchanged. Left open: the nil `EventId` for what answers nothing,
+  and the name `correlation_id` for what names the event answered.

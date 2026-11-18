@@ -13,7 +13,7 @@ use caelumora_api::actor::{Actor, Answering};
 use caelumora_api::command::CommandError;
 use caelumora_api::transport::{EventReceiver, EventSender, TransportError};
 use caelumora_domain::actor::{
-    ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RetryTarget,
+    ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RetryTarget, SpanId,
 };
 use caelumora_domain::agent::AgentId;
 use caelumora_domain::approval::{
@@ -191,7 +191,7 @@ impl UserActor {
     /// actor's own (`Answering::own`), whatever the caller of
     /// `send_message` is. Nothing of what a user says is for its owner
     /// alone: it is sent as it is (`Answering::envelope`).
-    fn envelope(&self, event: ActorEvent, span_id: Uuid) -> Envelope {
+    fn envelope(&self, event: ActorEvent, span_id: SpanId) -> Envelope {
         let thread = self.participant_runtime.thread_id();
         Answering::own(self.session_id, self.channel_id, thread, self.id(), self.name())
             .with_span(span_id)
@@ -232,7 +232,7 @@ impl UserActor {
         &self,
         id: QuestionId,
         responses: Option<Vec<Response>>,
-    ) -> Result<Uuid> {
+    ) -> Result<SpanId> {
         self.channel_loop()?;
         let refused =
             |reason| ChannelError::Question { question: id, channel: self.channel_id, reason };
@@ -254,7 +254,7 @@ impl UserActor {
             Some(responses) => ActorEvent::QuestionAnswered { id, agent_id, responses },
             None => ActorEvent::QuestionDeclined { id, agent_id },
         };
-        let span_id = Uuid::new_v4();
+        let span_id = SpanId::new();
         self.send(self.envelope(event, span_id)).await?;
         Ok(span_id)
     }
@@ -278,7 +278,7 @@ impl UserActor {
         content: Option<String>,
         classification: Option<Classification>,
         attachments: Vec<ContentId>,
-    ) -> Result<Uuid> {
+    ) -> Result<SpanId> {
         let channel_loop = self.channel_loop()?;
         let classification = classification.unwrap_or_else(|| channel_loop.classification());
         let attachments = self.participant_runtime.attachment_manager().named(
@@ -308,7 +308,7 @@ impl UserActor {
         // Then the request to wake the channel's agents for it - the
         // channel does not wake by itself (issue 90). Said outside of any
         // turn, the message is answered by itself (issue 258).
-        let span_id = Uuid::new_v4();
+        let span_id = SpanId::new();
         for (id, agent_id) in self.take_open_questions() {
             self.send(self.envelope(ActorEvent::QuestionDeclined { id, agent_id }, span_id))
                 .await?;
@@ -340,7 +340,7 @@ impl UserActor {
             timestamp: Utc::now(),
             ..Message::new(channel_loop.classification())
         };
-        self.send(self.envelope(ActorEvent::CompleteMessageGenerated(msg), Uuid::new_v4())).await
+        self.send(self.envelope(ActorEvent::CompleteMessageGenerated(msg), SpanId::new())).await
     }
 
     /// Modifies this user's message `message` to read `content` from now on (issue 234), with the
@@ -366,7 +366,7 @@ impl UserActor {
         content: Option<String>,
         classification: Option<Classification>,
         attachments: Vec<ContentId>,
-    ) -> Result<Uuid> {
+    ) -> Result<SpanId> {
         let channel_loop = self.channel_loop()?;
         let original = self.message_of(&channel_loop, message).await?;
         if original.sender_id != self.id {
@@ -401,7 +401,7 @@ impl UserActor {
             timestamp: Utc::now(),
             ..original
         };
-        let span_id = Uuid::new_v4();
+        let span_id = SpanId::new();
         self.send(self.envelope(ActorEvent::MessageModified(modified), span_id)).await?;
         Ok(span_id)
     }
@@ -414,8 +414,8 @@ impl UserActor {
     /// # Errors
     /// An error if the channel is gone. Whether the message is there and can be taken back the
     /// channel decides as it admits the revocation (issue 567).
-    pub async fn revoke_message(&self, message: MessageId) -> Result<Uuid> {
-        let span_id = Uuid::new_v4();
+    pub async fn revoke_message(&self, message: MessageId) -> Result<SpanId> {
+        let span_id = SpanId::new();
         self.send(self.envelope(ActorEvent::MessageRevoked { message, at: Utc::now() }, span_id))
             .await?;
         Ok(span_id)
@@ -436,8 +436,8 @@ impl UserActor {
         &self,
         message: MessageId,
         classification: Classification,
-    ) -> Result<Uuid> {
-        let span_id = Uuid::new_v4();
+    ) -> Result<SpanId> {
+        let span_id = SpanId::new();
         self.send(
             self.envelope(ActorEvent::MessageReclassified { message, classification }, span_id),
         )
@@ -459,7 +459,7 @@ impl UserActor {
     /// `ChannelError::MessageNotFound` if the channel has no such message; an error if the channel
     /// is gone. Whether it was taken back, and whether an agent of the channel said it, the channel
     /// decides as it admits the request (issue 567).
-    pub async fn request_retry(&self, message: MessageId) -> Result<Uuid> {
+    pub async fn request_retry(&self, message: MessageId) -> Result<SpanId> {
         let channel_loop = self.channel_loop()?;
         let author = self.message_of(&channel_loop, message).await?.sender_id;
         self.send_retry(RetryTarget::Message(message), author).await
@@ -476,7 +476,7 @@ impl UserActor {
     ///
     /// # Errors
     /// An error if the channel is gone.
-    pub async fn request_retry_of_turn(&self, author: ActorId, turn: TurnId) -> Result<Uuid> {
+    pub async fn request_retry_of_turn(&self, author: ActorId, turn: TurnId) -> Result<SpanId> {
         self.send_retry(RetryTarget::Turn(turn), author).await
     }
 
@@ -497,11 +497,11 @@ impl UserActor {
     /// # Errors
     /// `ChannelError::NudgesItself` if `participant` is this user; an error if
     /// the channel is gone.
-    pub async fn request_response(&self, participant: ActorId) -> Result<Uuid> {
+    pub async fn request_response(&self, participant: ActorId) -> Result<SpanId> {
         if participant == self.id {
             return Err(ChannelError::NudgesItself { participant, channel: self.channel_id }.into());
         }
-        let span_id = Uuid::new_v4();
+        let span_id = SpanId::new();
         self.send(self.envelope(ActorEvent::NudgeRequested { participant }, span_id)).await?;
         Ok(span_id)
     }
@@ -509,8 +509,8 @@ impl UserActor {
     /// Sends the request to `author` to answer again instead of `target`: the
     /// channel wakes `author` alone for it, as for a nudge (issue 567).
     /// Returns the envelope's `span_id`.
-    async fn send_retry(&self, target: RetryTarget, author: ActorId) -> Result<Uuid> {
-        let span_id = Uuid::new_v4();
+    async fn send_retry(&self, target: RetryTarget, author: ActorId) -> Result<SpanId> {
+        let span_id = SpanId::new();
         self.send(self.envelope(ActorEvent::RetryRequested { target, author }, span_id)).await?;
         Ok(span_id)
     }
@@ -583,9 +583,9 @@ impl UserActor {
     ///
     /// # Errors
     /// An error if the channel is gone.
-    pub async fn send_approval(&self, id: ApprovalId, approved: bool) -> Result<Uuid> {
+    pub async fn send_approval(&self, id: ApprovalId, approved: bool) -> Result<SpanId> {
         let decision = self.decision(None);
-        let span_id = Uuid::new_v4();
+        let span_id = SpanId::new();
         let answer = ActorEvent::ApprovalAnswered { id, approved, decision };
         self.send(self.envelope(answer, span_id)).await?;
         Ok(span_id)
@@ -685,7 +685,7 @@ impl UserActor {
                 to: None,
                 turn_id: None,
             };
-            self.send(self.envelope(event, Uuid::new_v4())).await?;
+            self.send(self.envelope(event, SpanId::new())).await?;
         }
         Ok(CommandReply {
             command: name.to_string(),
@@ -764,7 +764,7 @@ impl UserActor {
             };
             return Err(invalid(reason).into());
         }
-        let span_id = Uuid::new_v4();
+        let span_id = SpanId::new();
         for (agent, name, args) in &targets {
             let event = ActorEvent::CommandRequested {
                 command: name.to_string(),
