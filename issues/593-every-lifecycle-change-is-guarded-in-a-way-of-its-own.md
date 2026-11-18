@@ -99,6 +99,122 @@ refused. Changes of the same object are serialised, and allowed only in certain 
 - **Tests.** A pattern of its own can be tested once, for every order of two changes, instead of
   each guard on its own.
 
+## Proposal: procedures
+
+The maintainer's proposal of 2026-11-18, made as "transactions"; the name is open (see *Open
+questions*), *procedure* is the working name here:
+
+- **A procedure orchestrates one change of the logical object graph** - a change of a lifecycle as
+  above - across the objects it touches, a type of its own. It is first queued with an executor.
+- **It locks what it enumerates.** It finds what it would change from the top down - a session
+  before its channels, a channel before its threads and participants - and locks each object as it
+  finds it: exclusively what it changes, shared the parents that only have to stay as they are. An
+  object it finds locked defers it: it lets go of everything it holds and waits until that object
+  is free, then enumerates again, since the procedure that held the object may have changed what
+  there is. Enumerating reads and locks, nothing else.
+- **Holding its objects, it checks the state it finds** - permissions too, as they depend on it -
+  and carries the change out or refuses it. Where an object's own loop carries a step out - a
+  channel's `run` stopping an actor -, the procedure asks it and waits for its answer; where actors
+  have to come to rest, it tells them and waits for them, within a grace, as `STOP_GRACE` bounds it
+  now. It holds its objects until the change is complete, not only until it was handed on.
+- **It keeps a compensation log** of what it did as it goes, and undoes it if a step fails.
+- **It ends carried out, refused or failed**; its objects are free again, and the procedures
+  deferred on them go on.
+- **Idempotent and serialisable**, so that the executor could keep the procedures queued and under
+  way and go on with them after a restart.
+
+### Assessment
+
+How the races named above fare:
+
+- **A change against a change** - a session deleted while it runs (458), two takings-in undoing
+  each other (564), a leave crossing a join (590), a founder taken in while its thread is closed
+  (557) - is ruled out by the conflict on an object alone.
+- **A change against the ordinary flow of `run`** - a participant re-added while its old actor
+  still stops (171), the last events of an actor let go refused by a thread closed before it ended
+  (557) - only because a procedure holds its objects until `run` has carried the change out. Then
+  what says that a change is under way goes: a thread's `Phase::Founding` and `Phase::Closing`, the
+  closes `run` keeps waiting (`closing`), `ChannelLoop::leaving` and the wait for it (557, step 1 of
+  2b, not on `main` as this is written).
+- **A close lost as the session stops** before the leave it waits for is recorded (557): the stop
+  locks the session exclusively and waits for the procedures that hold it shared.
+- **An actor's own work against a change** - a turn's end lost as its agent was removed (262), a
+  session's actors aborted as it stopped (377) - stays the actor's: a procedure tells it to come to
+  rest and waits; how it keeps what it is in the middle of is not the executor's.
+- **A lock taken out of its table while held** (495) moves into the executor, which keeps the table
+  of the objects locked, and is solved there once.
+
+What it replaces besides:
+
+- The fixed order of the locks - the session's before the channel's, several sorted by id
+  (`SessionLoop::restore_channel`) -, since nothing is waited for while anything is held.
+- The rollbacks spread over the objects - `SessionLoop::roll_back_taking_in`, the controllers'
+  `roll_back_participant_addition`, `ChannelLoop::roll_back_opening` (557), the purge in
+  `SessionManager::persist`, `SessionManager::roll_back_creation` -, which become the compensation
+  logs of procedures.
+- Changes run in the caller's task, where a caller giving up - a request dropped - ends a change
+  midway without its rollback.
+
+What it costs: every change of a lifecycle in `SessionManager`, `ProjectManager`, `SessionLoop` and
+`ChannelLoop` is written anew as a procedure; a key over objects of different kinds; the executor,
+with shared and exclusive locks, its queue and procedures given up; `run` answering the steps it is
+asked for. In steps: the executor in place of `LocksById` first, without a change of behaviour.
+
+A compensation log is no rollback: an event announced or an actor started can be balanced, not
+taken back, and what is no procedure - `run`, a reader through the REST API - sees the states in
+between. Hence not "transaction", which promises an isolation there is not.
+
+## Decision
+
+The maintainer's decisions of 2026-11-18 on the assessment:
+
+- **Changes of a lifecycle only.** A procedure is for the changes of the logical object graph,
+  where most conflicts arise; a plain change of an attribute - a rename - is not one.
+- **Locked as enumerated, deferred on a conflict**, and enumerated anew when it goes on, as above.
+- **Fair.** A key at which a deferred procedure waits admits nobody after it, shared neither, so
+  that a stop is not starved by a stream of small changes.
+- **No procedure within another.** Code shared between procedures is welcome; a procedure starting
+  another is not - it would wait for itself.
+- **Run in a task of the executor's**, not the caller's: a caller giving up does not cut a change
+  off midway.
+- **The compensation logs move into the procedures**, together with the logic of the rollbacks
+  named above.
+- **The objects are simple, the procedures orchestrate.** The methods of a lifecycle leave the
+  objects - session, channel, actor - entirely, instead of staying as methods that call the
+  executor: that would be a second way to the same thing, and one object acting on another's
+  behalf. The objects know nothing of locking, not even indirectly; they keep their building blocks
+  and the invariants of the single object - a participant listed once, the line never closed. The
+  procedures hold the order, the checks of state and permission across objects, and the
+  compensation: the complexity moves into them. A channel keeps its `run` for the ordinary flow;
+  its building blocks for running actors become requests to `run` that answer.
+
+## Open questions
+
+- **The name.** "Transaction" promises an isolation there is not; "operation" is so general that
+  a rename is one too, and [PERMISSION-CHECKS.md](../docs/PERMISSION-CHECKS.md) uses it for any
+  action already; `LifecycleManager` is narrower than meant. Proposed: *procedure* - steps in an
+  order, with compensation -, carried out by a `ProcedureExecutor`, as the `ToolExecutor` carries
+  out tools; a `…Manager` is a module's manager
+  ([CODING-GUIDELINES.md](../docs/CODING-GUIDELINES.md#a-modules-manager)).
+- **No building block past a procedure.** Visibility cannot say it in Rust: `pub(in …)` names only
+  enclosing modules, and a `pub(crate)` building block of `session` can be called from all of the
+  kernel. As a convention, it would be held by review again - which this issue is to end. Proposed:
+  a building block that changes an object asks for a proof of admission that only the executor
+  gives out; the object neither locks nor checks, it only asks for the proof. It departs from "not
+  even indirectly" above.
+- **Persistence.** Recommended not to take it up for now: what runs - loops, actor tasks, the
+  answer to the caller - does not survive a restart; a procedure gone on with acts in a
+  `SecurityContext` whose rights may be gone meanwhile; which process goes on with it would be bound
+  to `SessionLocks` (554); and the pattern for a restart is the reconciliation as an object starts
+  again (590). A user it may have: a crash in `SessionManager::persist` after the session was
+  stored and before its group, its project and its channels - whether anything clears up what is
+  left then is not checked yet.
+- **Where the procedures lie.** Proposed: a module `procedure` with a module for each object, named
+  by the topmost object a procedure locks, so that what belongs to a subject lies together while a
+  procedure touches several objects.
+- **The interface** of the procedure and the executor, put before the maintainer before any body is
+  written.
+
 ## Done when
 
 - The changes of a lifecycle follow one named pattern, decided with the maintainer and described in
@@ -111,3 +227,6 @@ refused. Changes of the same object are serialised, and allowed only in certain 
   [557](557-a-conversation-cannot-go-on-two-ways-at-once.md), whose opening and closing of threads
   needed a phase, a check over three sources and a deferred close to guard against the races its
   review found.
+- **2026-11-18** — The maintainer proposed procedures, as "transactions"; assessed, and decided as
+  *Proposal: procedures* and *Decision* record. Open: the name, a proof of admission for the
+  building blocks, persistence, where the procedures lie, and their interface.
