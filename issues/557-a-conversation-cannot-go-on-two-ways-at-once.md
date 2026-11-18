@@ -1337,3 +1337,12 @@ Decided with it, on the author's proposal:
 - **2026-11-18** — Accepted by the maintainer. Found on review, to be decided apart: about 25
   component descriptors in the agents' channel tests written out field by field, where
   `ComponentDescriptor::new` with a struct update would do.
+- **2026-11-18** — Step 5b of 2b implemented: the crate `caelumora-subagents`, as 558 records it,
+  its writer acting through the running session the work's `SessionView` gives out, reaching the
+  channel as a frontend does (`channel_for`) - what PLUGINS.md and CODING-GUIDELINES.md now say of
+  such a face. On review: `start` and `end` run in a task of their own, so that a turn cancelled
+  while they run leaves no sub-agent half started or ended; ending lets go first and closes and
+  deletes only once that is done; a name taken meanwhile is drawn again; the agents' manager is held
+  by the writer. No stored data to delete.
+- **2026-11-18** — Step 5b of 2b accepted by the maintainer, to be committed as it is; what its
+  review left to decide decided as recommended, as a step of its own (558's History).

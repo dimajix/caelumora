@@ -566,3 +566,22 @@ version and shares it. An artifact lives as long as its project: with the sessio
 is the session's own, beyond it where it is shared - kept by lifting the session's own project,
 never by moving an artifact (see [PROJECTS.md](PROJECTS.md), [STORAGE.md](STORAGE.md) and
 [SECURITY.md](SECURITY.md#ownership)).
+
+### Sub-agents
+
+`start_subagent`, `ask_subagent` and `end_subagent` (component `subagents`, of the library of
+`caelumora-subagents`, issue 558) hand a task to a sub-agent: a new agent of one of the
+personalities the component is configured with (`personalities`), which works on the brief apart,
+in a thread of its own opened at the call, and gives back only what came of it. Starting does not
+block: the call returns the thread at once, and what the sub-agent answers is given to the agent to
+read where the thread was opened, once it is there - as the kernel's delegate gives it (see
+[CHANNELS.md](CHANNELS.md#delegating-into-a-thread)). `ask_subagent` gives it more to read,
+`end_subagent` ends it: let go from its channel and its session, its thread closed, the agent
+deleted, never purged.
+
+They are offered where the work's session runs, and act through the `SubAgentWriter` the plugin
+binds to the turn's work (issue 516), in its context: the agent gives, its owner owns the sub-agent,
+made in the channel's scope, of a personality the owner may read - an internal one alone (issue
+591) -, named by an adjective and the personality (`curious-researcher`), never by a name the
+channel has had. Only the agent that started a sub-agent asks or ends it.
+

@@ -976,6 +976,12 @@ the channel records what came of it (`Delegation::follow`), dropped with what ca
 cannot reach the giver, gone from where the thread was opened (`Delegation::refused`), and dropped
 as the thread is closed.
 
+The channel knows nothing of what delegates: it offers the building blocks - opening a thread with
+its founders, delegating into it, closing it - and sub-agents are made of them, in a crate of their
+own (`caelumora-subagents`, issue 558; see [TOOLS.md](TOOLS.md#sub-agents)): an agent made for a
+brief, the thread founded with it at the call, the brief delegated to it by the agent that started
+it, which is given back what came of it.
+
 The **delegate** of the thread carries it out (`ActorId::Delegate`, named by the thread it
 delegates into; `DelegateActor`). It is no participant but an internal actor of the channel, which
 no configuration names (`Channel::is_internal`): started with the first brief, built from the

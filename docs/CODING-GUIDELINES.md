@@ -368,12 +368,13 @@ holds (`Session`, `Channel`) share their work by three rules:
     with the session and the channel as their controllers hold them, for its reader as its views
     reached them (`WorkspaceWriter`, `WorkspaceReader`). Both answer `None` or refuse while the
     channel is being built or once it is gone, so that the caller still decides what that means. The
-    public API of `ChannelLoop` is the frontends'; it acts in a user's name too
-    (`ChannelLoop::user_actor`), and is not an actor's. What an actor needs of its channel and does
-    not find on its runtime is added there. `ParticipantRuntime::channel_loop` stays the kernel's
-    (`pub(crate)`): for the user's and the approver's actors, which act for a person as the
-    frontends do, for the views, and for the runtime of an agent (`AgentRuntime`), which answers
-    what the agent asks of its channel.
+    public API of `ChannelLoop` is the frontends' - and that of a plugin's face bound to a work,
+    which reaches the channel as a frontend does (`SessionLoop::channel_for`, issue 558); it acts
+    in a user's name too (`ChannelLoop::user_actor`), and is not an actor's. What an actor needs of
+    its channel and does not find on its runtime is added there. `ParticipantRuntime::channel_loop`
+    stays the kernel's (`pub(crate)`): for the user's and the approver's actors, which act for a
+    person as the frontends do, for the views, and for the runtime of an agent (`AgentRuntime`),
+    which answers what the agent asks of its channel.
 *   **A loop gives out what it holds; a manager is given coordinates and properties.** An operation
     of a manager or a controller on what lies in a channel takes the channel by its coordinates - an
     id, an `Address<Channel>` - or by its document (`Session`, `Channel`), the properties it needs;

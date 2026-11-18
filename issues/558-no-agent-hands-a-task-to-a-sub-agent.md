@@ -1,6 +1,6 @@
 # 558 — No agent can hand a task to a sub-agent and take back its result
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** medium
 **Area:** Sessions and channels
@@ -451,3 +451,21 @@ what the main agent may.
   591.
 - **2026-11-17** — The steps of 557's 2b decided, with this crate as step 5 and the frontends as
   step 6 ([557](557-a-conversation-cannot-go-on-two-ways-at-once.md#the-steps-of-2b)).
+- **2026-11-18** — The crate `caelumora-subagents` (557's step 5b of 2b): the writer
+  `SubAgentWriter` - `start`, `ask`, `end` -, bound by `SubagentsPlugin` to the session of every
+  piece of work of an agent that runs, made of the kernel's building blocks alone: the agent made by
+  the work's owner in the channel's scope, of an internal personality alone (591), named by an
+  adjective and the personality, never by a name the channel has had; the thread founded with it at
+  the call; the brief delegated to it; and ending it, by the agent that started it alone, as letting
+  it go from the session, closing its thread and deleting the agent. The component `subagents`
+  (`SubagentsLibrary`), configured with the personalities its tools may start an agent of, and its
+  tools `start_subagent`, `ask_subagent`, `end_subagent`. Still open: the command by which a user
+  starts a sub-agent, an idle sub-agent, bounding its rights by the main agent's, and a user
+  closing its thread.
+- **2026-11-18** — Decided by the maintainer on 5b's review, as a step of its own: the personality
+  found as the kernel finds it from the channel's place (`Views::personality_named`, public); a
+  refusal told from a failure (`SubAgentError::Forbidden`, answered as the tool's
+  `PermissionDenied`; `Failed`, worded as users are told); `start_subagent` asking for approval as
+  its component is configured (`requires_approval`, not by default); and an open brief dropped as
+  its sub-agent is ended, said in TOOLS.md.
+

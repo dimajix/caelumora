@@ -36,13 +36,14 @@ trusted as the kernel: it is given what the kernel has, the stores, the policies
 controllers, the system's context. What runs an agent or brings components for an agent's facets is
 no plugin but a library of the agent side, trusted for nothing (see [What a library
 is](#what-a-library-is) and [ARCHITECTURE.md](ARCHITECTURE.md#principles)). `caelumora-skills`,
-`caelumora-artifacts` and `caelumora-memory` stand on both levels, cut by Cargo features (issue
-[516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)): what an agent's work does
-with their kind is the crate's part of the API (`api`: the faces, and the errors of their own),
-their manager and, where they have them, views and routes are the kernel's - a plugin (`kernel`,
-and `server` for the routes: `SkillsPlugin`, `ArtifactsPlugin`, `MemoryPlugin`), which binds the
-faces -, and their components a library's (`library`: `SkillsLibrary`, `ArtifactsLibrary`,
-`MemoryLibrary`). Each side builds without the other - the plugin without the agents (`kernel`
+`caelumora-artifacts`, `caelumora-memory` and `caelumora-subagents` stand on both levels, cut by
+Cargo features (issue [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)): what
+an agent's work does with their kind is the crate's part of the API (`api`: the faces, and the
+errors of their own), their manager and, where they have them, views and routes are the kernel's -
+a plugin (`kernel`, and `server` for the routes: `SkillsPlugin`, `ArtifactsPlugin`, `MemoryPlugin`,
+`SubagentsPlugin`, which has no manager of its own), which binds the faces -, and their components
+a library's (`library`: `SkillsLibrary`, `ArtifactsLibrary`, `MemoryLibrary`,
+`SubagentsLibrary`). Each side builds without the other - the plugin without the agents (`kernel`
 alone), the library without the plugin (`library` alone), the entity and the wire types without
 either -, which the pre-commit hook checks. A program lists both; the library alone keeps the
 kernel from being built, as no plugin binds what its component reaches.
@@ -127,9 +128,9 @@ of agent and the built-in components (issue 370) - or brings components for an a
 `caelumora-tool-mcp` (issue 325), `caelumora-a2a` (issue 326), `caelumora-tool-workspace` (issue
 428), `caelumora-compaction` (issue 464), `caelumora-tool-image` (issue 525),
 `caelumora-tool-attachment` (issue 533), `caelumora-tool-web` (issue 544), and the library sides
-of `caelumora-skills`, `caelumora-artifacts` and `caelumora-memory` (`SkillsLibrary`,
-`ArtifactsLibrary`, `MemoryLibrary`). It is linked into the program as a
-plugin is, but trusted for nothing, and links the kernel's API
+of `caelumora-skills`, `caelumora-artifacts`, `caelumora-memory` and `caelumora-subagents`
+(`SkillsLibrary`, `ArtifactsLibrary`, `MemoryLibrary`, `SubagentsLibrary`). It is linked into the
+program as a plugin is, but trusted for nothing, and links the kernel's API
 (`caelumora-api`), the domain and other libraries, never the kernel, `caelumora-security` or
 `caelumora-store`: they are dev-dependencies of its tests alone, which build the kernel's world -
 for `caelumora-agents` its `testing` too, under `test-support` -, which `scripts/library-deps.sh`
@@ -196,7 +197,10 @@ does with its kind it offers as **extensions**, by one pattern:
     its views - as the plugin's own views are built - so that it acts in the work's context, may
     make it asynchronously, and may answer none where it is not offered - the artifacts' writer
     where no storage of content is configured, the workspace's reader where the work may use none,
-    the places of the stores where their backend tells none. No method of a face
+    the places of the stores where their backend tells none. A face that acts on a running channel
+    acts through the running session the work's `SessionView` gives out (`session_loop`),
+    reaching the channel as a frontend does (`channel_for`), by the loops' public operations,
+    each checking itself - the sub-agents' writer (issue 558). No method of a face
     takes a context or an identity, and what it hands out is data, not an object of the kernel - but
     for a handle, named as one, that carries a right beyond the call: the workspace's terminal and
     shell.

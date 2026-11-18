@@ -429,7 +429,10 @@ has the system as its initiator.
 
 There is no delegation chain. An agent that mentions another does not delegate to it: the other
 answers for its own owner, bounded by the channel, with whoever began the conversation as its
-initiator. A chain is reconsidered when there are subagents.
+initiator. Neither does a sub-agent (issue 558): it is an agent of the owner of the agent that
+started it, acting for that owner, bounded by its personality and the channel, and what is delegated
+to it carries the initiator of the chain that delegated. Bounding its rights by those of the agent
+that started it is open in 558.
 
 **What this accepts.** An owner who puts an agent into a channel without requiring approval lets
 every participant read through it whatever the agent may read - within the channel's classification,

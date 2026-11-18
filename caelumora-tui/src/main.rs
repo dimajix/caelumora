@@ -51,6 +51,8 @@ use caelumora_store_home::plugin::HomeStorePlugin;
 use caelumora_store_home::{HomeStore, HomeStoreConfig, HOME};
 use caelumora_store_json::plugin::JsonStorePlugin;
 use caelumora_store_postgres::plugin::PostgresStorePlugin;
+use caelumora_subagents::library::SubagentsLibrary;
+use caelumora_subagents::plugin::SubagentsPlugin;
 use caelumora_tool_attachment::library::AttachmentToolLibrary;
 use caelumora_tool_image::library::ImageToolLibrary;
 use caelumora_tool_mcp::library::McpToolLibrary;
@@ -179,6 +181,7 @@ fn plugins() -> Vec<Box<dyn Plugin>> {
         Box::new(SkillsPlugin),
         Box::new(ArtifactsPlugin),
         Box::new(MemoryPlugin),
+        Box::new(SubagentsPlugin),
         Box::new(OpenTerminalPlugin),
         Box::new(ModelPlugin),
         Box::new(OllamaModelPlugin),
@@ -207,6 +210,7 @@ fn libraries(log: LogTarget) -> Vec<Box<dyn Library>> {
         Box::new(SkillsLibrary),
         Box::new(ArtifactsLibrary),
         Box::new(MemoryLibrary),
+        Box::new(SubagentsLibrary),
     ];
     if let LogTarget::File(log) = log {
         libraries.push(Box::new(ProgramLibrary::new(log)));

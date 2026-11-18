@@ -265,6 +265,14 @@ An agent's views are built per piece of work, with the agent's place, and handed
 | Delete, restore (`ArtifactManager`) | the store: `GetArtifact` or `ReadDeleted`, `cleared_for`, then the verb; a deletion reads first to announce it; a restoring reads its mark in S first and asks the project in S afterwards (issue 458) - gone, marked again as it was | reach (store) + R1 | `GetArtifact`, `cleared_for` (store) for a deletion | `PermissionDenied`, `NotFound` |
 | Purge (`purge`) | store `ReadDeleted` + `Purge`, the purge begun (issue 492); content removed; store `ReadDeleted` + `Purge` | R1 | `ReadDeleted`, `cleared_for` + `Purge` (store) | `PermissionDenied` |
 
+### Sub-agents
+
+| Operation | Questions in order | Rule | Again | Refusal |
+|---|---|---|---|---|
+| Start (`SubAgentWriter::start`, the plugin `caelumora-subagents`, issue 558) | the work's channel reached as a frontend reaches it (`SessionLoop::channel_for`): `GetChannel` (T,1), `cleared_for` (T,2); the personality among those the viewer lists (V,1), an internal one (structural); the agent made (`AgentManager::create`): `CreateAgent` (T,1) for the work's owner, the channel's scope (`GetChannel`, T,1), `GetPersonality` (T,1); the thread opened with it as its founder (*Open a thread*: `OpenThread`, the founder the owner's own); the brief delegated (*Delegate into a thread*); a step that fails rolls back what was done, in the work's name | R2 + R1 | as each building block asks | `UnknownPersonality`, `External`, `Refused` with what the kernel refused |
+| Ask (`ask`) | the channel reached as above; the thread's delegation given by the work's agent (structural); delegated again (*Delegate into a thread*) | R1 | - | `NoSubAgent`, `Refused` |
+| End (`end`) | the channel reached as above; the thread's delegation given by the work's agent (structural); the sub-agent let go from the session by its owner's own act (`LeaveSession`, *Leave a session*), the thread closed by its opener (nothing asked), the agent deleted (`DeleteAgent`, T,1) - each only once the one before it is done | R1 | - | `NoSubAgent`, `Refused` |
+
 ### Attachments
 
 | Operation | Questions in order | Rule | Again | Refusal |
