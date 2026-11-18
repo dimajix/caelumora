@@ -231,6 +231,7 @@ async fn agent_channel_hearing(
         register_activities(registry);
         register_first_only(registry);
         register_dropping_calls(registry);
+        register_failing_emit(registry);
     };
     let defaults = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
@@ -368,6 +369,31 @@ impl MessageProcessor for DroppingCalls {
 }
 
 impl EmitOutProcessor for DroppingCalls {}
+
+/// Registers `test_failing_emit`: emit processors that fail, to be given a fail policy (issue 557).
+fn register_failing_emit(registry: &mut ComponentRegistry) {
+    registry.register(
+        ComponentKind::new("test_failing_emit").provides::<dyn EmitOutProcessor>(),
+        |_descriptor, _context| {
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn EmitOutProcessor>(Arc::new(FailingEmit));
+            Ok(facets)
+        },
+    );
+}
+
+/// What fails at every message on its way out of the agent.
+#[derive(Debug)]
+struct FailingEmit;
+
+#[async_trait::async_trait]
+impl MessageProcessor for FailingEmit {
+    async fn process_messages(&self, _: Vec<Message>) -> Result<Vec<Message>, ProcessingError> {
+        Err(ProcessingError::Failed("the filter is broken".to_string()))
+    }
+}
+
+impl EmitOutProcessor for FailingEmit {}
 
 /// Registers `FirstOnly` as the kind `test_first_only`, at the position its
 /// parameters name, else at the start.

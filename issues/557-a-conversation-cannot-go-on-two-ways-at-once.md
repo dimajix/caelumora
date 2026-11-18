@@ -1321,3 +1321,10 @@ Decided with it, on the author's proposal:
   before 5b: first `AgentActor::respond` handing on the error of a fail-closed emit processor, so
   that it gives the turn up as every error of a turn does; then the tests of a step whose message
   was dropped in a plan, and of a processor that changes a call.
+- **2026-11-18** — The first of these steps implemented: `AgentActor::respond` hands on the error
+  of an emit processor that fails closed, which gives the turn up (`GivenUpReason::Failed`); one
+  that fails open is left out, as before - also as a part of a message streams. Found on review,
+  to be decided apart: a `PerceiveInProcessor` that fails closed is only logged, its messages
+  dropped, though COMPONENTS.md says a component failing closed fails the turn. No stored data to
+  delete.
+- **2026-11-18** — Accepted by the maintainer.

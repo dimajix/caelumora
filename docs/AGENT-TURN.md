@@ -157,13 +157,14 @@ Every message passes the agent's `EmitOutProcessor`s and is published through th
 out what only the agent's owner may see (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)). A message
 they drop is not said, and the calls it carries are not run: a call runs only with the message that
 carries it, which `Turn::calling_message` names while it runs (issue 557), labelled as it left the
-processors; a step whose message was dropped ends as one answered without calls does. A complete
-message is *said* (`Turn::say`): kept in the turn, then published, so that the channel learns of
-every message the turn keeps as it is made; its answer - a message of the model calling no tools,
-not a step of a plan, with words or without - carries what the turn put aside to attach
-(`Turn::put_aside`, issue 282), which the channel claims as it claims an upload. A partial one is
-only *shown* (`Turn::show`). Both take the actor's output as a parameter: the turn is handed to
-every component working in it, and none of them is to speak in the agent's name.
+processors; a step whose message was dropped ends as one answered without calls does. A processor
+fails as every component does (see [COMPONENTS.md](COMPONENTS.md)): failing closed, it gives the
+turn up. A complete message is *said* (`Turn::say`): kept in the turn, then published, so that the
+channel learns of every message the turn keeps as it is made; its answer - a message of the model
+calling no tools, not a step of a plan, with words or without - carries what the turn put aside to
+attach (`Turn::put_aside`, issue 282), which the channel claims as it claims an upload. A partial
+one is only *shown* (`Turn::show`). Both take the actor's output as a parameter: the turn is handed
+to every component working in it, and none of them is to speak in the agent's name.
 
 While a plan runs, the messages of its steps are *internal*: kept like every message and published
 as intermediate, but heard by no other participant and not the answer. The answer after the last

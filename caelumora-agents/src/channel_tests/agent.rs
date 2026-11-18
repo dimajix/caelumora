@@ -1326,6 +1326,75 @@ async fn the_calls_of_a_message_dropped_on_its_way_out_are_not_run() {
     running.abort();
 }
 
+/// Issue 557: an emit processor that fails closed gives the turn up, as every error of a turn does,
+/// as soon as a message streams; one that fails open is left out, and the message is said as it
+/// was.
+#[tokio::test]
+async fn an_emit_processor_that_fails_closed_gives_the_turn_up() {
+    let answer = |text: &str| Message {
+        role: MessageRole::Assistant,
+        content: Some(text.to_string()),
+        ..Message::new(Classification::CHANNEL_DEFAULT)
+    };
+    let failing = |fail_policy| ComponentConfig {
+        component_nodes: vec![ComponentDescriptor {
+            id: "failing".to_string(),
+            kind: "test_failing_emit".to_string(),
+            params: Value::Null,
+            tags: vec![],
+            fail_policy,
+        }],
+    };
+    let model = Scripted(Mutex::new([answer("Hello.")].into()));
+    let Stuck { agent, mut events, running, .. } =
+        with_an_agent(Arc::new(model), failing(ComponentFailPolicy::FailClosed)).await;
+    let reason = turn_given_up(&mut events, agent).await;
+    assert!(reason.contains("the filter is broken"), "given up, and why: {reason}");
+    running.abort();
+
+    let model = Scripted(Mutex::new([answer("Hello.")].into()));
+    let Stuck { agent, mut events, running, .. } =
+        with_an_agent(Arc::new(model), failing(ComponentFailPolicy::FailOpen)).await;
+    let said = answered(&mut events, agent).await;
+    assert_eq!(said[0].content.as_deref(), Some("Hello."), "said as it was");
+    running.abort();
+    // Already as a part of it streams: the rest of the stream, which never comes, is not waited
+    // for.
+    let Stuck { agent, mut events, running, .. } =
+        with_an_agent(Arc::new(StreamsAPart), failing(ComponentFailPolicy::FailClosed)).await;
+    let reason = turn_given_up(&mut events, agent).await;
+    assert!(reason.contains("the filter is broken"), "given up as it streams: {reason}");
+    running.abort();
+}
+
+/// A model that streams a part of its answer and then nothing more.
+#[derive(Debug)]
+struct StreamsAPart;
+
+#[async_trait::async_trait]
+impl LanguageModelClient for StreamsAPart {
+    async fn chat_completion(
+        &self,
+        _: ActorId,
+        _: &[Message],
+        _: &[ToolDescription],
+    ) -> BoxStream<'static, ModelResult<MessageEvent>> {
+        use futures::StreamExt;
+        let part = Message {
+            role: MessageRole::Assistant,
+            content: Some("Hel".to_string()),
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        };
+        stream::iter([Ok(MessageEvent::Partial(part))]).chain(stream::pending()).boxed()
+    }
+}
+
+impl ModelProfileProvider for StreamsAPart {
+    fn profile(&self) -> ModelProfile {
+        ModelProfile::default()
+    }
+}
+
 #[tokio::test]
 async fn an_agent_that_calls_stop_ends_its_turn_with_the_call_and_sleeps() {
     use caelumora_domain::tool::ToolCall;
