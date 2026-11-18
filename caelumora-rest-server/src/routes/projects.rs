@@ -26,7 +26,6 @@ use caelumora_rest_api::project::{
 use caelumora_rest_api::scope::ItemDescriptionRequest;
 use caelumora_rest_api::session::{SessionResponse, SessionSnapshot};
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// The shared projects the user reaches - or, with `?deleted=true`, those deleted they may read
 /// as such.
@@ -78,19 +77,18 @@ pub(super) async fn create_project(
 /// Project `id`, as the user sees it.
 pub(super) async fn get_project(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<ProjectId>,
     user: AuthenticatedUser,
 ) -> Result<Json<ProjectResponse>, ApiError> {
-    Ok(Json(readable(&state, &user, ProjectId(id)).await?))
+    Ok(Json(readable(&state, &user, id).await?))
 }
 
 pub(super) async fn rename_project(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<ProjectId>,
     user: AuthenticatedUser,
     Json(request): Json<RenameProjectRequest>,
 ) -> Result<Json<ProjectResponse>, ApiError> {
-    let id = ProjectId(id);
     controller(&state, id).await?.update_name(&user.security_context(), &request.name).await?;
     Ok(Json(readable(&state, &user, id).await?))
 }
@@ -98,11 +96,10 @@ pub(super) async fn rename_project(
 /// Says what the project is for; `null` or empty takes it away.
 pub(super) async fn describe_project(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<ProjectId>,
     user: AuthenticatedUser,
     Json(request): Json<ItemDescriptionRequest>,
 ) -> Result<Json<ProjectResponse>, ApiError> {
-    let id = ProjectId(id);
     controller(&state, id)
         .await?
         .update_description(&user.security_context(), request.description.as_deref())
@@ -113,26 +110,21 @@ pub(super) async fn describe_project(
 /// Makes the users the body names the members of the project, replacing who was among them.
 pub(super) async fn set_members(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<ProjectId>,
     user: AuthenticatedUser,
-    Json(members): Json<Vec<Uuid>>,
+    Json(members): Json<Vec<UserId>>,
 ) -> Result<Json<ProjectResponse>, ApiError> {
-    let id = ProjectId(id);
-    controller(&state, id)
-        .await?
-        .update_members(&user.security_context(), members.into_iter().map(UserId).collect())
-        .await?;
+    controller(&state, id).await?.update_members(&user.security_context(), members).await?;
     Ok(Json(readable(&state, &user, id).await?))
 }
 
 /// Gives the project the access list in the body, replacing the one it had: its owner's act.
 pub(super) async fn set_access(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<ProjectId>,
     user: AuthenticatedUser,
     Json(entries): Json<Vec<AccessEntry>>,
 ) -> Result<Json<ProjectResponse>, ApiError> {
-    let id = ProjectId(id);
     let acl =
         AccessEntry::acl_of(entries).map_err(|e| ApiError::bad_request("invalid_access", e))?;
     controller(&state, id).await?.update_access(&user.security_context(), acl).await?;
@@ -143,11 +135,10 @@ pub(super) async fn set_access(
 /// own: a shared project then, with the session in it.
 pub(super) async fn lift_project(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<ProjectId>,
     user: AuthenticatedUser,
     Json(request): Json<LiftProjectRequest>,
 ) -> Result<Json<ProjectResponse>, ApiError> {
-    let id = ProjectId(id);
     let scope = request.scope.of_user(user.id).ok_or_else(|| {
         ApiError::new(
             StatusCode::BAD_REQUEST,
@@ -163,10 +154,9 @@ pub(super) async fn lift_project(
 /// it is purged.
 pub(super) async fn delete_project(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<ProjectId>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let id = ProjectId(id);
     match state.project_manager.delete(&user.security_context(), id).await? {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found("project_not_found", format!("There is no project {id}"))),
@@ -177,10 +167,9 @@ pub(super) async fn delete_project(
 /// took its name meanwhile.
 pub(super) async fn restore_project(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<ProjectId>,
     user: AuthenticatedUser,
 ) -> Result<Json<ProjectResponse>, ApiError> {
-    let id = ProjectId(id);
     state.project_manager.restore(&user.security_context(), id).await?;
     Ok(Json(readable(&state, &user, id).await?))
 }
@@ -189,10 +178,9 @@ pub(super) async fn restore_project(
 /// default the system's alone.
 pub(super) async fn purge_project(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<ProjectId>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let id = ProjectId(id);
     match state.project_manager.purge(&user.security_context(), id).await? {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found(
@@ -205,10 +193,10 @@ pub(super) async fn purge_project(
 /// The sessions that lie in project `id` and the user may read, as `GET /sessions` lists them.
 pub(super) async fn project_sessions(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<ProjectId>,
     user: AuthenticatedUser,
 ) -> Result<Json<Vec<SessionResponse>>, ApiError> {
-    let sessions = views(&state, &user).project(ProjectId(id)).await?.sessions().await?;
+    let sessions = views(&state, &user).project(id).await?.sessions().await?;
     Ok(Json(all_listed(sessions).await))
 }
 
@@ -216,20 +204,20 @@ pub(super) async fn project_sessions(
 /// read the project.
 pub(super) async fn put_into_project(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<SessionId>,
     user: AuthenticatedUser,
     Json(request): Json<SessionProjectRequest>,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
-    update_project(&state, &user, SessionId(id), Some(request.project_id)).await
+    update_project(&state, &user, id, Some(request.project_id)).await
 }
 
 /// Takes the session out of the project it lies in, into its own.
 pub(super) async fn take_out_of_project(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<SessionId>,
     user: AuthenticatedUser,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
-    update_project(&state, &user, SessionId(id), None).await
+    update_project(&state, &user, id, None).await
 }
 
 async fn update_project(

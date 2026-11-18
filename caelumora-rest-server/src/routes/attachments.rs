@@ -18,7 +18,6 @@ use caelumora_rest_api::channel::AttachmentQuery;
 use futures::TryStreamExt;
 use std::io::Error;
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// Keeps the request's body as the file the query names, uploaded by the user for a message they
 /// will say in channel `cid` - classified as the query says, the channel's if it names no level -,
@@ -26,7 +25,7 @@ use uuid::Uuid;
 /// request's `Content-Length`, which is required (`411`).
 pub(super) async fn upload_attachment(
     State(state): State<Arc<AppState>>,
-    Path((id, cid)): Path<(Uuid, Uuid)>,
+    Path((id, cid)): Path<(SessionId, ChannelId)>,
     Query(query): Query<AttachmentQuery>,
     user: AuthenticatedUser,
     headers: HeaderMap,
@@ -43,7 +42,7 @@ pub(super) async fn upload_attachment(
             )
         })?;
     let classification = classification_of(&query)?;
-    let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let (_, channel) = open_channel(&state, &user, id, cid).await?;
     let content = Box::pin(body.into_data_stream().map_err(Error::other));
     let uploaded = state
         .kernel
@@ -63,12 +62,11 @@ pub(super) async fn upload_attachment(
 /// an image a browser shows without running anything inline, anything else as a download.
 pub(super) async fn download_attachment(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, mid, aid)): Path<(Uuid, Uuid, Uuid, Uuid)>,
+    Path((id, cid, mid, aid)): Path<(SessionId, ChannelId, MessageId, ContentId)>,
     user: AuthenticatedUser,
 ) -> Result<Response, ApiError> {
-    let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let (attachment, size, content) =
-        channel.attachment_content(MessageId(mid), ContentId(aid)).await?;
+    let channel = channel_view(&state, &user, id, cid).await?;
+    let (attachment, size, content) = channel.attachment_content(mid, aid).await?;
     Ok(content_response(
         size,
         content,

@@ -11,7 +11,6 @@ use axum::{extract::State, http::StatusCode};
 use caelumora_domain::approval::ApprovalRule;
 use caelumora_domain::session::SessionId;
 use caelumora_domain::snapshot::Detail;
-use caelumora_domain::template::SessionTemplateId;
 use caelumora_domain::value::name::NameMatch;
 use caelumora_kernel::session::SessionSpec;
 use caelumora_kernel::view::SessionView;
@@ -23,7 +22,6 @@ use caelumora_rest_api::session::{
     SessionPrivacyRequest, SessionResponse, SessionSnapshot,
 };
 use std::sync::Arc;
-use uuid::Uuid;
 
 pub(super) async fn create_session(
     State(state): State<Arc<AppState>>,
@@ -31,7 +29,6 @@ pub(super) async fn create_session(
     Json(payload): Json<CreateSessionRequest>,
 ) -> Result<Json<SessionResponse>, ApiError> {
     // The logged-in user owns the session and is its template's "user".
-    let template_id = SessionTemplateId(payload.template_id);
     let spec = SessionSpec {
         name: payload.name,
         language: payload.language,
@@ -41,7 +38,7 @@ pub(super) async fn create_session(
     };
     let session_loop = state
         .session_manager
-        .create_from_template(&user.security_context(), template_id, spec)
+        .create_from_template(&user.security_context(), payload.template_id, spec)
         .await?;
 
     Ok(Json(listed(&state, &user, session_loop.id()).await?))
@@ -83,10 +80,9 @@ pub(super) async fn all_listed(sessions: Vec<SessionView>) -> Vec<SessionRespons
 /// (issue 35). Does not start a stopped session.
 pub(super) async fn get_session(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(session_id): Path<SessionId>,
     user: AuthenticatedUser,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
-    let session_id = SessionId(id);
     Ok(Json(session_response(&state, &user, session_id).await?))
 }
 
@@ -95,12 +91,11 @@ pub(super) async fn get_session(
 /// read what it saw (`ReadAgentContext`); none for a user.
 pub(super) async fn agent_private_notes(
     State(state): State<Arc<AppState>>,
-    Path((id, ActorPath(aid))): Path<(Uuid, ActorPath)>,
+    Path((session_id, ActorPath(aid))): Path<(SessionId, ActorPath)>,
     user: AuthenticatedUser,
 ) -> Result<Json<Vec<PrivateNotesResponse>>, ApiError> {
     // A user keeps no private notes, as it counts no calls (`get_participant_usage`).
     let Some(agent) = aid.as_agent_id() else { return Ok(Json(Vec::new())) };
-    let session_id = SessionId(id);
     let session = views(&state, &user).session(session_id).await?;
     let found = session.private_notes_of(agent).await?;
     Ok(Json(
@@ -120,10 +115,9 @@ pub(super) async fn agent_private_notes(
 /// does. It is not started; opening it starts it.
 pub(super) async fn restore_session(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(session_id): Path<SessionId>,
     user: AuthenticatedUser,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
-    let session_id = SessionId(id);
     state.session_manager.restore(&user.security_context(), session_id).await?;
     Ok(Json(session_response(&state, &user, session_id).await?))
 }
@@ -132,10 +126,9 @@ pub(super) async fn restore_session(
 /// state (issue 164) - as the policy allows, by default the system's alone.
 pub(super) async fn purge_session(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(session_id): Path<SessionId>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let session_id = SessionId(id);
     match state.session_manager.purge(&user.security_context(), session_id).await? {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found(
@@ -147,10 +140,9 @@ pub(super) async fn purge_session(
 
 pub(super) async fn delete_session(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(session_id): Path<SessionId>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let session_id = SessionId(id);
     // `SessionManager::delete` stops the running loop, marks the session deleted -
     // kept with its channels until it is purged (issue 164) - and emits the
     // corresponding lifecycle events.
@@ -165,11 +157,10 @@ pub(super) async fn delete_session(
 
 pub(super) async fn rename_session(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(session_id): Path<SessionId>,
     user: AuthenticatedUser,
     Json(payload): Json<RenameSessionRequest>,
 ) -> Result<Json<SessionResponse>, ApiError> {
-    let session_id = SessionId(id);
     let session_loop = ensure_session(&state, &user, session_id).await?;
 
     session_loop.update_name(&user.security_context(), &payload.name).await?;
@@ -184,11 +175,10 @@ pub(super) async fn rename_session(
 /// user sees it now.
 pub(super) async fn set_session_language(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(session_id): Path<SessionId>,
     user: AuthenticatedUser,
     Json(language): Json<Option<String>>,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
-    let session_id = SessionId(id);
     let session_loop = ensure_session(&state, &user, session_id).await?;
 
     session_loop.update_language(&user.security_context(), language.as_deref()).await?;
@@ -203,11 +193,10 @@ pub(super) async fn set_session_language(
 /// it now.
 pub(super) async fn set_session_time_zone(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(session_id): Path<SessionId>,
     user: AuthenticatedUser,
     Json(time_zone): Json<Option<String>>,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
-    let session_id = SessionId(id);
     let session_loop = ensure_session(&state, &user, session_id).await?;
 
     session_loop.update_time_zone(&user.security_context(), time_zone.as_deref()).await?;
@@ -219,11 +208,10 @@ pub(super) async fn set_session_time_zone(
 /// only its owner may. Answers the session as the snapshot shows it.
 pub(super) async fn update_session_privacy(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(session_id): Path<SessionId>,
     user: AuthenticatedUser,
     Json(payload): Json<SessionPrivacyRequest>,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
-    let session_id = SessionId(id);
     let session_loop = ensure_session(&state, &user, session_id).await?;
 
     session_loop.update_privacy(&user.security_context(), payload.privacy).await?;
@@ -238,11 +226,10 @@ pub(super) async fn update_session_privacy(
 /// otherwise the session as the user sees it now.
 pub(super) async fn update_session_approval_rules(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(session_id): Path<SessionId>,
     user: AuthenticatedUser,
     Json(rules): Json<Vec<ApprovalRule>>,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
-    let session_id = SessionId(id);
     let session_loop = ensure_session(&state, &user, session_id).await?;
 
     session_loop
@@ -259,11 +246,10 @@ pub(super) async fn update_session_approval_rules(
 /// not fit, and otherwise the session as the user sees it now.
 pub(super) async fn update_session_description(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(session_id): Path<SessionId>,
     user: AuthenticatedUser,
     Json(payload): Json<DescriptionRequest>,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
-    let session_id = SessionId(id);
     let session_loop = ensure_session(&state, &user, session_id).await?;
 
     session_loop
@@ -283,11 +269,10 @@ pub(super) async fn update_session_description(
 /// taken in. Only for whoever may change the session.
 pub(super) async fn candidates(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(session_id): Path<SessionId>,
     Query(query): Query<CandidatesQuery>,
     user: AuthenticatedUser,
 ) -> Result<Json<Vec<CandidateResponse>>, ApiError> {
-    let session_id = SessionId(id);
     ensure_session(&state, &user, session_id).await?;
     let session = views(&state, &user).session(session_id).await?;
     let found = session.candidates(&NameMatch::Prefix(query.prefix), query.channel).await?;
@@ -299,11 +284,10 @@ pub(super) async fn candidates(
 /// the channel. Answers the session as the snapshot shows it.
 pub(super) async fn add_participant(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(session_id): Path<SessionId>,
     user: AuthenticatedUser,
     Json(payload): Json<AddSessionParticipantRequest>,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
-    let session_id = SessionId(id);
     let session_loop = ensure_session(&state, &user, session_id).await?;
     let into = payload.channel.map(|channel| (channel, payload.history));
     session_loop.add_participant(&user.security_context(), payload.participant, into).await?;
@@ -315,10 +299,10 @@ pub(super) async fn add_participant(
 /// part in neither.
 pub(super) async fn remove_participant(
     State(state): State<Arc<AppState>>,
-    Path((id, ActorPath(participant))): Path<(Uuid, ActorPath)>,
+    Path((id, ActorPath(participant))): Path<(SessionId, ActorPath)>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let session_loop = ensure_session(&state, &user, SessionId(id)).await?;
+    let session_loop = ensure_session(&state, &user, id).await?;
     session_loop.remove_participant(&user.security_context(), participant).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -327,10 +311,10 @@ pub(super) async fn remove_participant(
 /// and every channel of it by their own act (issue 590), without the right to change it.
 pub(super) async fn leave_session(
     State(state): State<Arc<AppState>>,
-    Path((id, ActorPath(participant))): Path<(Uuid, ActorPath)>,
+    Path((id, ActorPath(participant))): Path<(SessionId, ActorPath)>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let session_loop = ensure_session(&state, &user, SessionId(id)).await?;
+    let session_loop = ensure_session(&state, &user, id).await?;
     session_loop.leave(&user.security_context(), participant).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -341,11 +325,10 @@ pub(super) async fn leave_session(
 /// read.
 pub(super) async fn join_session(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(session_id): Path<SessionId>,
     user: AuthenticatedUser,
     Json(payload): Json<JoinSessionRequest>,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
-    let session_id = SessionId(id);
     let context = user.security_context();
     let participant = payload.participant.unwrap_or(context.principal_id);
     state.session_manager.join(&context, session_id, participant, payload.channel).await?;

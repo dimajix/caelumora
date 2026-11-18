@@ -42,7 +42,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::field;
 use tracing::Span;
-use uuid::Uuid;
 
 /// Name of the cookie holding the session token.
 pub const SESSION_COOKIE: &str = "caelumora_session";
@@ -61,7 +60,7 @@ const MIN_KEY_LEN: usize = 32;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 struct Claims {
-    sub: Uuid,
+    sub: UserId,
     iat: i64,
     exp: i64,
     /// When the user entered their credentials; carried over on renewal.
@@ -145,7 +144,7 @@ impl TokenService {
 
     fn issue(&self, user: UserId, auth_time: i64, now: i64) -> Result<String> {
         let claims =
-            Claims { sub: user.0, iat: now, exp: self.expires_at(auth_time, now), auth_time };
+            Claims { sub: user, iat: now, exp: self.expires_at(auth_time, now), auth_time };
         let mut header = Header::new(Algorithm::HS256);
         header.kid = Some(self.key_id.clone());
         Ok(jsonwebtoken::encode(&header, &claims, &self.encoding)?)
@@ -331,7 +330,7 @@ async fn authenticate(auth: Arc<Auth>, mut request: Request, next: Next, renew: 
     let Some(claims) = token.as_deref().and_then(|t| auth.tokens.verify(t)) else {
         return unauthorized(&auth, token.is_some());
     };
-    let user = UserId(claims.sub);
+    let user = claims.sub;
     let now = Utc::now().timestamp();
 
     let mut expires_at = claims.exp;
@@ -570,7 +569,7 @@ mod tests {
         let token = service.issue(user, now, now).unwrap();
 
         let claims = service.verify(&token).expect("own token verifies");
-        assert_eq!(claims.sub, user.0);
+        assert_eq!(claims.sub, user);
         assert_eq!(claims.exp, now + 600);
 
         let other = TokenService::new(b"another key, also 32 bytes long!", &config()).unwrap();
@@ -608,7 +607,7 @@ mod tests {
     fn renewal_is_due_after_half_the_lifetime() {
         let service = tokens();
         let now = Utc::now().timestamp();
-        let claims = Claims { sub: Uuid::new_v4(), iat: now, exp: now + 600, auth_time: now };
+        let claims = Claims { sub: UserId::new(), iat: now, exp: now + 600, auth_time: now };
         assert!(!service.needs_renewal(&claims, now + 299));
         assert!(service.needs_renewal(&claims, now + 300));
     }

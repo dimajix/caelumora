@@ -17,7 +17,6 @@ use caelumora_kernel::group::GroupSpec;
 use caelumora_rest_api::deleted::{DeletedResponse, ListOptions};
 use caelumora_rest_api::group::{CreateGroupRequest, GroupResponse, RenameGroupRequest};
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// The teams the user owns or belongs to - or, with `?deleted=true`, those
 /// they deleted.
@@ -64,19 +63,18 @@ pub(super) async fn create_group(
 /// Group `id`, with its members.
 pub(super) async fn get_group(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<GroupId>,
     user: AuthenticatedUser,
 ) -> Result<Json<GroupResponse>, ApiError> {
-    Ok(Json(readable(&state, &user, GroupId(id)).await?))
+    Ok(Json(readable(&state, &user, id).await?))
 }
 
 pub(super) async fn rename_group(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<GroupId>,
     user: AuthenticatedUser,
     Json(request): Json<RenameGroupRequest>,
 ) -> Result<Json<GroupResponse>, ApiError> {
-    let id = GroupId(id);
     state.kernel.group_manager().rename(&user.security_context(), id, &request.name).await?;
     Ok(Json(readable(&state, &user, id).await?))
 }
@@ -85,12 +83,10 @@ pub(super) async fn rename_group(
 /// was in it.
 pub(super) async fn set_members(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<GroupId>,
     user: AuthenticatedUser,
-    Json(members): Json<Vec<Uuid>>,
+    Json(members): Json<Vec<UserId>>,
 ) -> Result<Json<GroupResponse>, ApiError> {
-    let id = GroupId(id);
-    let members = members.into_iter().map(UserId).collect();
     state.kernel.group_manager().set_members(&user.security_context(), id, members).await?;
     Ok(Json(readable(&state, &user, id).await?))
 }
@@ -99,10 +95,9 @@ pub(super) async fn set_members(
 /// through it reads it no longer.
 pub(super) async fn delete_group(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<GroupId>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let id = GroupId(id);
     let deleted = state.kernel.group_manager().delete(&user.security_context(), id).await?;
     match deleted {
         true => Ok(StatusCode::NO_CONTENT),
@@ -113,10 +108,9 @@ pub(super) async fn delete_group(
 /// Restores the deleted team; `409` if another took its name meanwhile.
 pub(super) async fn restore_group(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<GroupId>,
     user: AuthenticatedUser,
 ) -> Result<Json<GroupResponse>, ApiError> {
-    let id = GroupId(id);
     state.kernel.group_manager().restore(&user.security_context(), id).await?;
     Ok(Json(readable(&state, &user, id).await?))
 }
@@ -125,10 +119,9 @@ pub(super) async fn restore_group(
 /// system's alone.
 pub(super) async fn purge_group(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<GroupId>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let id = GroupId(id);
     let purged = state.kernel.group_manager().purge(&user.security_context(), id).await?;
     match purged {
         true => Ok(StatusCode::NO_CONTENT),

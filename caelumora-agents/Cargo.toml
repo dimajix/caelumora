@@ -11,7 +11,7 @@ caelumora-kernel = { workspace = true, optional = true }
 caelumora-store = { workspace = true, optional = true }
 anyhow.workspace = true
 thiserror.workspace = true
-uuid = { workspace = true, features = ["v4", "serde"] }
+uuid = { workspace = true, features = ["serde"] }
 chrono = { workspace = true, features = ["serde"] }
 async-trait.workspace = true
 futures.workspace = true

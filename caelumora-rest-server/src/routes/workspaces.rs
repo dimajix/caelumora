@@ -38,7 +38,6 @@ use caelumora_rest_api::workspace::{
 use futures::TryStreamExt;
 use std::io::Error;
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// The user's own workspaces - or, with `?deleted=true`, those they
 /// deleted.
@@ -103,19 +102,18 @@ pub(super) async fn create_workspace(
 /// The user's workspace `id` as they see it.
 pub(super) async fn get_workspace(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<WorkspaceId>,
     user: AuthenticatedUser,
 ) -> Result<Json<WorkspaceResponse>, ApiError> {
-    Ok(Json(owned(&state, &user, WorkspaceId(id)).await?))
+    Ok(Json(owned(&state, &user, id).await?))
 }
 
 pub(super) async fn rename_workspace(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<WorkspaceId>,
     user: AuthenticatedUser,
     Json(request): Json<RenameWorkspaceRequest>,
 ) -> Result<Json<WorkspaceResponse>, ApiError> {
-    let id = WorkspaceId(id);
     controller(&state, id).await?.update_name(&user.security_context(), &request.name).await?;
     Ok(Json(owned(&state, &user, id).await?))
 }
@@ -123,11 +121,10 @@ pub(super) async fn rename_workspace(
 /// Says what the workspace holds; `null` or empty takes it away.
 pub(super) async fn describe_workspace(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<WorkspaceId>,
     user: AuthenticatedUser,
     Json(request): Json<ItemDescriptionRequest>,
 ) -> Result<Json<WorkspaceResponse>, ApiError> {
-    let id = WorkspaceId(id);
     controller(&state, id)
         .await?
         .update_description(&user.security_context(), request.description.as_deref())
@@ -138,11 +135,10 @@ pub(super) async fn describe_workspace(
 /// Reclassifies the workspace as a whole: lowering releases every file.
 pub(super) async fn reclassify_workspace(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<WorkspaceId>,
     user: AuthenticatedUser,
     Json(classification): Json<Classification>,
 ) -> Result<Json<WorkspaceResponse>, ApiError> {
-    let id = WorkspaceId(id);
     controller(&state, id)
         .await?
         .update_classification(&user.security_context(), classification)
@@ -153,10 +149,9 @@ pub(super) async fn reclassify_workspace(
 /// Deletes the workspace: kept, with its files, until it is purged.
 pub(super) async fn delete_workspace(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<WorkspaceId>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let id = WorkspaceId(id);
     let deleted = state.kernel.workspace_manager().delete(&user.security_context(), id).await?;
     match deleted {
         true => Ok(StatusCode::NO_CONTENT),
@@ -169,10 +164,9 @@ pub(super) async fn delete_workspace(
 /// Restores the deleted workspace; `409` if another took its name meanwhile.
 pub(super) async fn restore_workspace(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<WorkspaceId>,
     user: AuthenticatedUser,
 ) -> Result<Json<WorkspaceResponse>, ApiError> {
-    let id = WorkspaceId(id);
     state.kernel.workspace_manager().restore(&user.security_context(), id).await?;
     Ok(Json(owned(&state, &user, id).await?))
 }
@@ -181,10 +175,9 @@ pub(super) async fn restore_workspace(
 /// allows, by default the system's alone.
 pub(super) async fn purge_workspace(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<WorkspaceId>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let id = WorkspaceId(id);
     let purged = state.kernel.workspace_manager().purge(&user.security_context(), id).await?;
     match purged {
         true => Ok(StatusCode::NO_CONTENT),
@@ -198,48 +191,47 @@ pub(super) async fn purge_workspace(
 /// Lists a directory of workspace `id`: whoever may read it (issue 23).
 pub(super) async fn files(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<WorkspaceId>,
     Query(query): Query<FilesQuery>,
     user: AuthenticatedUser,
 ) -> Result<Json<Vec<FileResponse>>, ApiError> {
-    list(reader(&state, &user, WorkspaceId(id)).await?.as_ref(), &query.path).await
+    list(reader(&state, &user, id).await?.as_ref(), &query.path).await
 }
 
 pub(super) async fn download_file(
     State(state): State<Arc<AppState>>,
-    Path((id, path)): Path<(Uuid, String)>,
+    Path((id, path)): Path<(WorkspaceId, String)>,
     user: AuthenticatedUser,
 ) -> Result<Response, ApiError> {
-    download(reader(&state, &user, WorkspaceId(id)).await?.as_ref(), &path).await
+    download(reader(&state, &user, id).await?.as_ref(), &path).await
 }
 
 /// Writes a file of workspace `id`: whoever may change its files.
 pub(super) async fn upload_file(
     State(state): State<Arc<AppState>>,
-    Path((id, path)): Path<(Uuid, String)>,
+    Path((id, path)): Path<(WorkspaceId, String)>,
     user: AuthenticatedUser,
     body: Body,
 ) -> Result<StatusCode, ApiError> {
-    upload(terminal(&state, &user, WorkspaceId(id)).await?.as_ref(), &path, body).await
+    upload(terminal(&state, &user, id).await?.as_ref(), &path, body).await
 }
 
 pub(super) async fn delete_file(
     State(state): State<Arc<AppState>>,
-    Path((id, path)): Path<(Uuid, String)>,
+    Path((id, path)): Path<(WorkspaceId, String)>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    remove(terminal(&state, &user, WorkspaceId(id)).await?.as_ref(), &path).await
+    remove(terminal(&state, &user, id).await?.as_ref(), &path).await
 }
 
 /// Gives the workspace the access list in the body (issue 23), replacing
 /// the one it had: its owner's act.
 pub(super) async fn set_access(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<WorkspaceId>,
     user: AuthenticatedUser,
     Json(entries): Json<Vec<AccessEntry>>,
 ) -> Result<Json<WorkspaceResponse>, ApiError> {
-    let id = WorkspaceId(id);
     let acl =
         AccessEntry::acl_of(entries).map_err(|e| ApiError::bad_request("invalid_access", e))?;
     controller(&state, id).await?.update_access(&user.security_context(), acl).await?;
@@ -250,31 +242,30 @@ pub(super) async fn set_access(
 /// session they may change.
 pub(super) async fn attach_workspace(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<SessionId>,
     user: AuthenticatedUser,
     Json(request): Json<AttachWorkspaceRequest>,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
-    update_workspace(&state, &user, SessionId(id), Some(request.workspace_id), request.share).await
+    update_workspace(&state, &user, id, Some(request.workspace_id), request.share).await
 }
 
 /// Takes the attached workspace away from the session; it shares nothing.
 pub(super) async fn detach_workspace(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<SessionId>,
     user: AuthenticatedUser,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
-    update_workspace(&state, &user, SessionId(id), None, None).await
+    update_workspace(&state, &user, id, None, None).await
 }
 
 /// Sets whether the channel uses the session's workspace: whoever may
 /// change the channel.
 pub(super) async fn set_uses_workspace(
     State(state): State<Arc<AppState>>,
-    Path((id, cid)): Path<(Uuid, Uuid)>,
+    Path((session_id, channel_id)): Path<(SessionId, ChannelId)>,
     user: AuthenticatedUser,
     Json(request): Json<UsesWorkspaceRequest>,
 ) -> Result<Json<ChannelResponse>, ApiError> {
-    let (session_id, channel_id) = (SessionId(id), ChannelId(cid));
     let (_, channel) = open_channel(&state, &user, session_id, channel_id).await?;
     channel.update_uses_workspace(&user.security_context(), request.uses).await?;
     Ok(Json(channel_response(&state, &user, session_id, channel_id).await?))
@@ -285,10 +276,10 @@ pub(super) async fn set_uses_workspace(
 /// Answers how the command stands, with what it printed.
 pub(super) async fn kill_command(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, command_id)): Path<(Uuid, Uuid, String)>,
+    Path((id, cid, command_id)): Path<(SessionId, ChannelId, String)>,
     user: AuthenticatedUser,
 ) -> Result<Json<CommandState>, ApiError> {
-    let (session, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let (session, channel) = open_channel(&state, &user, id, cid).await?;
     let (_, shell) = session
         .workspace()?
         .shell_in(&user.security_context(), &session.session(), &channel.channel())

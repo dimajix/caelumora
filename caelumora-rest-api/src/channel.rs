@@ -5,7 +5,7 @@ use crate::history::{HistoryPageItem, HistoryPageResponse};
 use crate::session::{ParticipantKind, UNKNOWN};
 use caelumora_domain::actor::{ActorId, ActorState, SpanId};
 use caelumora_domain::agent::PersonalityKind;
-use caelumora_domain::approval::{ApprovalRequest, ApprovalRule};
+use caelumora_domain::approval::{ApprovalId, ApprovalRequest, ApprovalRule};
 use caelumora_domain::chain::Position;
 use caelumora_domain::channel::{ChannelId, HistoryAccess};
 use caelumora_domain::command::CommandDescription;
@@ -23,7 +23,6 @@ use caelumora_domain::work::TurnId;
 use caelumora_domain::workspace::WorkspaceId;
 use serde::{Deserialize, Serialize};
 use std::mem;
-use uuid::Uuid;
 
 /// The state of a channel when a stream connects: its participants and the last
 /// page of its history, as items - messages and how turns ended (issue 258).
@@ -434,7 +433,7 @@ pub struct AnswerQuestionsRequest {
 /// which agent asked the approver tells, which holds the request.
 #[derive(Debug, Deserialize)]
 pub struct SendApprovalRequest {
-    pub approval_id: Uuid,
+    pub approval_id: ApprovalId,
     pub approved: bool,
 }
 
@@ -472,7 +471,7 @@ mod tests {
     #[test]
     fn a_channel_view_is_answered_with_kinds_and_a_name_for_the_deleted() {
         let alice = ActorId::User(UserId::new());
-        let approver = ActorId::Approver(ApproverId(Uuid::new_v4()));
+        let approver = ActorId::Approver(ApproverId::new());
         let participant = |id, name: Option<&str>| snapshot::ChannelParticipantSnapshot {
             id,
             name: name.map(str::to_string),

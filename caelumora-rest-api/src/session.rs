@@ -15,16 +15,16 @@ use caelumora_domain::project::ProjectId;
 use caelumora_domain::security::Grant;
 use caelumora_domain::session::SessionId;
 use caelumora_domain::snapshot;
+use caelumora_domain::template::SessionTemplateId;
 use caelumora_domain::value::language::Language;
 use caelumora_domain::value::text::{Briefing, Summary};
 use caelumora_domain::value::time_zone::TimeZone;
 use caelumora_domain::workspace::{WorkspaceChoice, WorkspaceId};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateSessionRequest {
-    pub template_id: Uuid,
+    pub template_id: SessionTemplateId,
     pub name: Option<String>,
     /// The language its channels are held in where they hold none of their
     /// own (issue 425), a BCP 47 tag; the template's if absent.
@@ -331,7 +331,7 @@ mod tests {
                 .workspace
                 .map(WorkspaceChoice::from)
         };
-        let template = Uuid::new_v4();
+        let template = SessionTemplateId::new();
         assert_eq!(parse(serde_json::json!({ "template_id": template })), None, "the template's");
         assert_eq!(
             parse(serde_json::json!({ "template_id": template, "workspace": { "kind": "none" } })),

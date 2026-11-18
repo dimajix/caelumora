@@ -96,7 +96,10 @@ An actor of a path - `{aid}` of `…/participants/{aid}` and `…/actors/{aid}` 
 and its id, `User:<uuid>` or `Agent:<uuid>` (`ActorPath`, issue
 [590](../issues/590-a-session-lets-nobody-go.md)): the server hands it on as it is, and whether it
 takes part is asked where it is asked anyway. Anything else, a bare UUID among it, is
-`400 invalid_path`.
+`400 invalid_path`. Every other id of one kind - of a path, of a request's body, in a plugin's
+routes too - is read as the type of its kind (`SessionId`, `ChannelId`, `SkillId`, ...), written
+as the UUID it wraps; a path's id that is no UUID is `400 invalid_path` as well. An id whose kind
+is given beside it, as in an entry of an access list (`AccessEntry`), is a bare UUID.
 
 | Endpoint | Does |
 |---|---|

@@ -466,7 +466,7 @@ mod tests {
 
     #[test]
     fn the_innermost_of_a_name_is_found_from_a_place() {
-        let (alice, bob) = (UserId(Uuid::new_v4()), UserId(Uuid::new_v4()));
+        let (alice, bob) = (UserId::new(), UserId::new());
         let session_id = SessionId::new();
         let (channel_id, other_channel) = (ChannelId::new(), ChannelId::new());
         let channel = Scope::ChannelScope { session_id, channel_id };
@@ -520,7 +520,7 @@ mod tests {
 
     #[test]
     fn the_innermost_are_those_seen_from_a_place_that_lie_deepest() {
-        let (alice, bob) = (UserId(Uuid::new_v4()), UserId(Uuid::new_v4()));
+        let (alice, bob) = (UserId::new(), UserId::new());
         let session_id = SessionId::new();
         let channel = Scope::ChannelScope { session_id, channel_id: ChannelId::new() };
         let session = Scope::SessionScope { session_id };
@@ -664,9 +664,9 @@ mod tests {
     /// two of which share a channel, whose id is unique.
     #[test]
     fn the_conditions_of_a_list_say_what_contains_and_visible_from_say() {
-        let (alice, bob) = (UserId(Uuid::new_v4()), UserId(Uuid::new_v4()));
-        let (s1, s2) = (SessionId(Uuid::new_v4()), SessionId(Uuid::new_v4()));
-        let (c1, c2) = (ChannelId(Uuid::new_v4()), ChannelId(Uuid::new_v4()));
+        let (alice, bob) = (UserId::new(), UserId::new());
+        let (s1, s2) = (SessionId::new(), SessionId::new());
+        let (c1, c2) = (ChannelId::new(), ChannelId::new());
         let scopes = [
             Scope::GlobalScope,
             Scope::UserScope { user_id: alice },
@@ -675,10 +675,10 @@ mod tests {
             Scope::SessionScope { session_id: s2 },
             Scope::ChannelScope { session_id: s1, channel_id: c1 },
             Scope::ChannelScope { session_id: s1, channel_id: c2 },
-            Scope::ChannelScope { session_id: s2, channel_id: ChannelId(Uuid::new_v4()) },
+            Scope::ChannelScope { session_id: s2, channel_id: ChannelId::new() },
             Scope::GroupScope { group_id: GroupId::new() },
-            Scope::ProjectScope { project_id: ProjectId(Uuid::new_v4()) },
-            Scope::ProjectScope { project_id: ProjectId(Uuid::new_v4()) },
+            Scope::ProjectScope { project_id: ProjectId::new() },
+            Scope::ProjectScope { project_id: ProjectId::new() },
         ];
         let document = |scope: &Scope| serde_json::json!({ "scope": scope });
         for holder in &scopes {

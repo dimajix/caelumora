@@ -68,7 +68,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::ops::Not;
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// Runs one kind through its whole life: create, create again, update, get,
 /// list, delete, delete again, and get and update once it is gone.
@@ -132,7 +131,7 @@ fn session() -> Session {
 }
 
 fn channel() -> Channel {
-    make_channel(SessionId(Uuid::new_v4()), "general")
+    make_channel(SessionId::new(), "general")
 }
 
 fn user(username: &str) -> User {
@@ -401,7 +400,7 @@ pub async fn queries_behave(stores: &EntityStores) {
     let ctx = SecurityContext::system();
     let (alice, bob) = (UserId::new(), UserId::new());
     // By scope, by the session of a channel, by a participant.
-    let session_id = SessionId(Uuid::new_v4());
+    let session_id = SessionId::new();
     let mut in_session = Personality {
         name: ScopedName::new("in-session", Scope::SessionScope { session_id }).unwrap(),
         ..make_personality("assistant")
@@ -409,7 +408,7 @@ pub async fn queries_behave(stores: &EntityStores) {
     let mut in_channel = Personality {
         name: ScopedName::new(
             "in-channel",
-            Scope::ChannelScope { session_id, channel_id: ChannelId(Uuid::new_v4()) },
+            Scope::ChannelScope { session_id, channel_id: ChannelId::new() },
         )
         .unwrap(),
         ..make_personality("assistant")
@@ -432,7 +431,7 @@ pub async fn queries_behave(stores: &EntityStores) {
         "what lies in the session or a channel of it"
     );
 
-    let agent = AgentId(Uuid::new_v4());
+    let agent = AgentId::new();
     let mut with_agent = self::session();
     with_agent.participants.push(Participant::Agent(agent));
     let mut without = self::session();

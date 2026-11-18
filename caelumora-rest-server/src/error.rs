@@ -765,7 +765,7 @@ mod tests {
             #[expect(dead_code, reason = "only its deserializing is tested")]
             name: String,
         }
-        async fn handler(Path(_id): Path<Uuid>, Json(_p): Json<Payload>) -> StatusCode {
+        async fn handler(Path(_id): Path<SessionId>, Json(_p): Json<Payload>) -> StatusCode {
             StatusCode::OK
         }
         let app = Router::new().route("/items/{id}", post(handler));
@@ -781,9 +781,12 @@ mod tests {
             app.clone().oneshot(request("/items/not-a-uuid", r#"{"name":"x"}"#)).await.unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert_eq!(response.headers()[CONTENT_TYPE], "application/problem+json");
+        let bytes = body::to_bytes(response.into_body(), 4096).await.unwrap();
+        let json: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["code"], "invalid_path", "an id of its kind that is no UUID");
 
         let response = app
-            .oneshot(request(&format!("/items/{}", Uuid::nil()), r#"{"nome":"x"}"#))
+            .oneshot(request(&format!("/items/{}", SessionId::new()), r#"{"nome":"x"}"#))
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);

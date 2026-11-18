@@ -21,7 +21,6 @@ use chrono::Utc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
-use uuid::Uuid;
 
 /// What a scripted agent does when it is asked to respond.
 #[derive(Debug, Clone)]
@@ -156,7 +155,7 @@ impl ScriptedAgent {
         Message {
             role: MessageRole::Assistant,
             content: Some(text.to_string()),
-            id: MessageId(Uuid::new_v4()),
+            id: MessageId::new(),
             sender_id: self.id,
             sender_name: self.name().to_string(),
             timestamp: Utc::now(),

@@ -66,7 +66,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn, Instrument};
-use uuid::Uuid;
 
 #[derive(Debug)]
 pub(crate) struct ExternalAgentActor {
@@ -774,7 +773,7 @@ impl ExternalAgentActor {
         Message {
             role: MessageRole::Assistant,
             content,
-            id: MessageId(Uuid::new_v4()),
+            id: MessageId::new(),
             sender_id: self.id(),
             sender_name: self.name().to_string(),
             timestamp: Utc::now(),
@@ -1152,7 +1151,7 @@ mod tests {
         Message {
             role: MessageRole::User,
             content: Some(text.to_string()),
-            id: MessageId(Uuid::new_v4()),
+            id: MessageId::new(),
             sender_id: sender,
             sender_name: name.to_string(),
             ..Message::new(Classification::CHANNEL_DEFAULT)

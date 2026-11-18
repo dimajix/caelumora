@@ -27,7 +27,6 @@ use caelumora_rest_server::plugin::RestPlugin;
 use caelumora_rest_server::routes::views;
 use caelumora_rest_server::state::AppState;
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// What the handlers of skills share: the state of every handler, and the one writer of skills,
 /// taken from the kernel when the routes are built.
@@ -135,19 +134,18 @@ async fn create_skill(
 /// Skill `id`, with its body.
 async fn get_skill(
     State(state): State<Skills>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<SkillId>,
     user: AuthenticatedUser,
 ) -> Result<Json<SkillResponse>, ApiError> {
-    Ok(Json(readable(&state, &user, SkillId(id)).await?))
+    Ok(Json(readable(&state, &user, id).await?))
 }
 
 async fn rename_skill(
     State(state): State<Skills>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<SkillId>,
     user: AuthenticatedUser,
     Json(request): Json<RenameSkillRequest>,
 ) -> Result<Json<SkillResponse>, ApiError> {
-    let id = SkillId(id);
     state.manager.rename(&user.security_context(), id, &request.name).await?;
     Ok(Json(readable(&state, &user, id).await?))
 }
@@ -155,11 +153,10 @@ async fn rename_skill(
 /// Says anew what the skill is for.
 async fn describe_skill(
     State(state): State<Skills>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<SkillId>,
     user: AuthenticatedUser,
     Json(request): Json<SkillDescriptionRequest>,
 ) -> Result<Json<SkillResponse>, ApiError> {
-    let id = SkillId(id);
     state.manager.describe(&user.security_context(), id, &request.description).await?;
     Ok(Json(readable(&state, &user, id).await?))
 }
@@ -167,11 +164,10 @@ async fn describe_skill(
 /// Writes anew what the skill tells the model.
 async fn rewrite_skill(
     State(state): State<Skills>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<SkillId>,
     user: AuthenticatedUser,
     Json(request): Json<SkillBodyRequest>,
 ) -> Result<Json<SkillResponse>, ApiError> {
-    let id = SkillId(id);
     state.manager.rewrite(&user.security_context(), id, &request.body).await?;
     Ok(Json(readable(&state, &user, id).await?))
 }
@@ -179,11 +175,10 @@ async fn rewrite_skill(
 /// Reclassifies the skill as a whole.
 async fn reclassify_skill(
     State(state): State<Skills>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<SkillId>,
     user: AuthenticatedUser,
     Json(classification): Json<Classification>,
 ) -> Result<Json<SkillResponse>, ApiError> {
-    let id = SkillId(id);
     state.manager.reclassify(&user.security_context(), id, classification).await?;
     Ok(Json(readable(&state, &user, id).await?))
 }
@@ -191,10 +186,9 @@ async fn reclassify_skill(
 /// Deletes the skill: kept until it is purged.
 async fn delete_skill(
     State(state): State<Skills>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<SkillId>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let id = SkillId(id);
     let deleted = state.manager.delete(&user.security_context(), id).await?;
     match deleted {
         true => Ok(StatusCode::NO_CONTENT),
@@ -205,10 +199,9 @@ async fn delete_skill(
 /// Restores the deleted skill; `409` if another took its name meanwhile.
 async fn restore_skill(
     State(state): State<Skills>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<SkillId>,
     user: AuthenticatedUser,
 ) -> Result<Json<SkillResponse>, ApiError> {
-    let id = SkillId(id);
     state.manager.restore(&user.security_context(), id).await?;
     Ok(Json(readable(&state, &user, id).await?))
 }
@@ -217,10 +210,9 @@ async fn restore_skill(
 /// the system's alone.
 async fn purge_skill(
     State(state): State<Skills>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<SkillId>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let id = SkillId(id);
     let purged = state.manager.purge(&user.security_context(), id).await?;
     match purged {
         true => Ok(StatusCode::NO_CONTENT),

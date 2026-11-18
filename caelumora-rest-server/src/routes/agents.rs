@@ -18,7 +18,6 @@ use caelumora_rest_api::agent::{
 };
 use caelumora_rest_api::deleted::{DeletedResponse, ListOptions};
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// The agents the user may read - or, with `?deleted=true`, those they
 /// deleted and may read as such.
@@ -64,10 +63,10 @@ pub(super) async fn create_agent(
 /// Agent `id`, with the channels it takes part in that the user may read.
 pub(super) async fn get_agent(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<AgentId>,
     user: AuthenticatedUser,
 ) -> Result<Json<AgentResponse>, ApiError> {
-    let agent = views(&state, &user).agent(AgentId(id)).await?;
+    let agent = views(&state, &user).agent(id).await?;
     let channels = agent
         .channels()
         .await?
@@ -86,11 +85,10 @@ pub(super) async fn get_agent(
 /// agent that runs takes the new name at once.
 pub(super) async fn rename_agent(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<AgentId>,
     user: AuthenticatedUser,
     Json(request): Json<RenameAgentRequest>,
 ) -> Result<Json<AgentResponse>, ApiError> {
-    let id = AgentId(id);
     let agent = state.kernel.controller_manager().agent_controller(id).await?;
     agent.update_name(&user.security_context(), &request.name).await?;
     Ok(Json(readable(&state, &user, id).await?))
@@ -100,10 +98,9 @@ pub(super) async fn rename_agent(
 /// former participant, and is kept marked until it is purged.
 pub(super) async fn delete_agent(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(agent_id): Path<AgentId>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let agent_id = AgentId(id);
     let deleted = state.kernel.agent_manager().delete(&user.security_context(), agent_id).await?;
     match deleted {
         true => Ok(StatusCode::NO_CONTENT),
@@ -117,10 +114,9 @@ pub(super) async fn delete_agent(
 /// rested in. `409` if another agent took its name meanwhile.
 pub(super) async fn restore_agent(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(agent_id): Path<AgentId>,
     user: AuthenticatedUser,
 ) -> Result<Json<AgentResponse>, ApiError> {
-    let agent_id = AgentId(id);
     state.kernel.agent_manager().restore(&user.security_context(), agent_id).await?;
     Ok(Json(readable(&state, &user, agent_id).await?))
 }
@@ -129,10 +125,9 @@ pub(super) async fn restore_agent(
 /// allows, by default the system's alone.
 pub(super) async fn purge_agent(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(agent_id): Path<AgentId>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let agent_id = AgentId(id);
     let purged = state.kernel.agent_manager().purge(&user.security_context(), agent_id).await?;
     match purged {
         true => Ok(StatusCode::NO_CONTENT),

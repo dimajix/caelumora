@@ -834,7 +834,7 @@ where
                         if let Some(thinking) = msg.thinking.filter(|t| !t.is_empty()) {
                             full_reasoning.push_str(&thinking);
                             let partial_message = Message {
-                                id: MessageId(Uuid::new_v4()),
+                                id: MessageId::new(),
                                 sender_id,
                                 sender_name: sender_name.clone(),
                                 role: MessageRole::Assistant,
@@ -848,7 +848,7 @@ where
                         if !msg.content.is_empty() {
                             full_content.push_str(&msg.content);
                             let partial_message = Message {
-                                id: MessageId(Uuid::new_v4()),
+                                id: MessageId::new(),
                                 sender_id,
                                 sender_name: sender_name.clone(),
                                 role: MessageRole::Assistant,
@@ -861,7 +861,7 @@ where
                     }
                     if body.done {
                         let mut message = Message {
-                            id: MessageId(Uuid::new_v4()),
+                            id: MessageId::new(),
                             sender_id,
                             sender_name: sender_name.clone(),
                             role: MessageRole::Assistant,

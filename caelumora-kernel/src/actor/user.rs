@@ -42,7 +42,6 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{broadcast, mpsc, Mutex, MutexGuard};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
-use uuid::Uuid;
 
 #[derive(Debug)]
 pub struct UserActor {
@@ -296,7 +295,7 @@ impl UserActor {
                 .unwrap_or_default(),
             content,
             attachments,
-            id: MessageId(Uuid::new_v4()),
+            id: MessageId::new(),
             sender_id: self.id(),
             sender_name: self.name().to_string(),
             timestamp: Utc::now(),
@@ -334,7 +333,7 @@ impl UserActor {
             content: None,
             tool_calls: vec![call],
             tool_results: vec![result],
-            id: MessageId(Uuid::new_v4()),
+            id: MessageId::new(),
             sender_id: self.id(),
             sender_name: self.name().to_string(),
             timestamp: Utc::now(),

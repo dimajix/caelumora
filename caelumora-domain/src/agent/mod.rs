@@ -28,7 +28,6 @@ use crate::value::name::{Name, ScopedName};
 use crate::value::ValueError;
 use serde::{Deserialize, Serialize};
 use std::ops::Not;
-use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentUpdateEvent {
@@ -75,7 +74,7 @@ impl Agent {
     /// components, its introduction - is read through `personality_id`, so
     /// that a change of the personality reaches it (issue 176).
     pub fn new(name: ScopedName, personality_id: PersonalityId, owner: ActorId) -> Self {
-        let agent_id = AgentId(Uuid::new_v4());
+        let agent_id = AgentId::new();
         // Read by its owner, whose rights it acts with (issue 255): it reads
         // its own definition as its owner.
         let security_attributes = SecurityAttributes::owned_by(owner);

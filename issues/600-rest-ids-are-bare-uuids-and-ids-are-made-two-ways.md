@@ -1,6 +1,6 @@
 # 600 — The REST API takes ids as bare UUIDs, and an id is made in two ways
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -50,3 +50,13 @@ tell them apart for free. And a reader meets two ways of doing the same thing, o
 - **2026-11-18** — Opened from the review of issue
   [592](592-event-span-and-correlation-ids-are-bare-uuids.md), as the maintainer asked: its
   findings on ids in the REST API and on making ids, in one issue.
+- **2026-11-18** — Done, in one change. Every route reads the ids of its path as the types of
+  their kinds - the plugins' routes too (`caelumora-skills`, `caelumora-artifacts`), which the
+  problem above did not name -; where a rebinding only named the id
+  (`let session_id = SessionId(id)`), the path binds that name itself. Beside the two request
+  types named above, the members a group's and a project's `PUT …/members` take are `UserId`s,
+  and so is the `sub` of the login token's claims. `XyzId::new()` makes every id that was made as
+  `XyzId(Uuid::new_v4())`. The form on the wire is unchanged, and a path's id that is no UUID is
+  `400 invalid_path`, held by a test; REST-SERVER.md says how ids are read. Left as they were: the
+  names a handler binds its path's ids by, `id` and `cid` in some, `session_id` and `channel_id`
+  in others.

@@ -501,7 +501,7 @@ mod tests {
         let sessions = of_kind::<Session>(dir.path());
         let ctx = SecurityContext::default();
 
-        let session_id = SessionId(Uuid::new_v4());
+        let session_id = SessionId::new();
         let channel = make_channel(session_id, "general");
         let channel_id = channel.id;
         let mut session =
@@ -509,7 +509,7 @@ mod tests {
         sessions.create(&ctx, &mut session).await.unwrap();
 
         // Write out channel state so we can assert it gets removed.
-        let agent_id = AgentId(Uuid::new_v4());
+        let agent_id = AgentId::new();
         states
             .put_agent_channel_state(agent_id, channel_id, &mut AgentChannelState::default())
             .await

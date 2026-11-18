@@ -14,7 +14,7 @@ use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response, Sse};
 use axum::{extract::State, http::StatusCode};
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::approval::{ApprovalId, ApprovalRule};
+use caelumora_domain::approval::ApprovalRule;
 use caelumora_domain::channel::{moderation_components, ChannelId, ThreadId};
 use caelumora_domain::command::{CommandDescription, CommandVisibility};
 use caelumora_domain::confidentiality::{Classification, LabelCauses};
@@ -51,17 +51,15 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::field;
 use tracing::Span;
-use uuid::Uuid;
 
 /// The channels of the session the user may read - or, with
 /// `?deleted=true`, those deleted from it they may read as such (issue 164).
 pub(super) async fn list_channels(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(session_id): Path<SessionId>,
     Query(options): Query<ListOptions>,
     user: AuthenticatedUser,
 ) -> Result<Response, ApiError> {
-    let session_id = SessionId(id);
     // Only the channels the user may read (issue 70), as they see them
     // (issue 80).
     let session = views(&state, &user).session(session_id).await?;
@@ -82,24 +80,22 @@ pub(super) async fn list_channels(
 /// restore the channel may.
 pub(super) async fn restore_channel(
     State(state): State<Arc<AppState>>,
-    Path((id, cid)): Path<(Uuid, Uuid)>,
+    Path((session_id, channel_id)): Path<(SessionId, ChannelId)>,
     user: AuthenticatedUser,
 ) -> Result<Json<ChannelResponse>, ApiError> {
-    let session_id = SessionId(id);
     let session = ensure_session(&state, &user, session_id).await?;
-    session.restore_channel(&user.security_context(), ChannelId(cid)).await?;
-    Ok(Json(channel_response(&state, &user, session_id, ChannelId(cid)).await?))
+    session.restore_channel(&user.security_context(), channel_id).await?;
+    Ok(Json(channel_response(&state, &user, session_id, channel_id).await?))
 }
 
 /// Creates a channel in the session and starts it (issue 09). Only who may
 /// change the session may do it.
 pub(super) async fn create_channel(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(session_id): Path<SessionId>,
     user: AuthenticatedUser,
     Json(payload): Json<CreateChannelRequest>,
 ) -> Result<Json<ChannelResponse>, ApiError> {
-    let session_id = SessionId(id);
     let session = ensure_session(&state, &user, session_id).await?;
     let context = user.security_context();
 
@@ -126,13 +122,11 @@ pub(super) async fn create_channel(
 /// Stops and deletes a channel of the session, with its history (issue 09).
 pub(super) async fn delete_channel(
     State(state): State<Arc<AppState>>,
-    Path((id, cid)): Path<(Uuid, Uuid)>,
+    Path((session_id, channel_id)): Path<(SessionId, ChannelId)>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let session_id = SessionId(id);
     let session = ensure_session(&state, &user, session_id).await?;
 
-    let channel_id = ChannelId(cid);
     match session.delete_channel(&user.security_context(), channel_id).await? {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found(
@@ -144,10 +138,10 @@ pub(super) async fn delete_channel(
 
 pub(super) async fn get_channel(
     State(state): State<Arc<AppState>>,
-    Path((id, cid)): Path<(Uuid, Uuid)>,
+    Path((id, cid)): Path<(SessionId, ChannelId)>,
     user: AuthenticatedUser,
 ) -> Result<Json<ChannelResponse>, ApiError> {
-    Ok(Json(channel_response(&state, &user, SessionId(id), ChannelId(cid)).await?))
+    Ok(Json(channel_response(&state, &user, id, cid).await?))
 }
 
 /// How many items of its history a snapshot carries: the end of the
@@ -163,12 +157,12 @@ const SNAPSHOT_ITEMS: usize = 20;
 /// messages carrying attachments alone (issue 509).
 pub(super) async fn get_channel_history(
     State(state): State<Arc<AppState>>,
-    Path((id, cid)): Path<(Uuid, Uuid)>,
+    Path((id, cid)): Path<(SessionId, ChannelId)>,
     Query(query): Query<HistoryQuery>,
     user: AuthenticatedUser,
 ) -> Result<Json<HistoryPageResponse<Message>>, ApiError> {
-    let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let line = ThreadId::line(ChannelId(cid));
+    let channel = channel_view(&state, &user, id, cid).await?;
+    let line = ThreadId::line(cid);
     let in_line =
         query.thread.is_none().then(|| Filter::shown_in_line(line, ActorId::User(user.id)));
     let filter = Filter::all_given([in_line, query.filter()]);
@@ -184,14 +178,12 @@ pub(super) async fn get_channel_history(
 /// user's controller, without starting the session.
 pub(super) async fn mark_read(
     State(state): State<Arc<AppState>>,
-    Path((id, cid)): Path<(Uuid, Uuid)>,
+    Path((id, cid)): Path<(SessionId, ChannelId)>,
     user: AuthenticatedUser,
     Json(payload): Json<ReadRequest>,
 ) -> Result<StatusCode, ApiError> {
     let controller = state.kernel.controller_manager().user_controller(user.id).await?;
-    controller
-        .mark_read(&user.security_context(), SessionId(id), ChannelId(cid), payload.message_id)
-        .await?;
+    controller.mark_read(&user.security_context(), id, cid, payload.message_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -200,11 +192,11 @@ pub(super) async fn mark_read(
 /// was not let in.
 pub(super) async fn get_message(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, mid)): Path<(Uuid, Uuid, Uuid)>,
+    Path((id, cid, mid)): Path<(SessionId, ChannelId, MessageId)>,
     user: AuthenticatedUser,
 ) -> Result<Json<Message>, ApiError> {
-    let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    Ok(Json(channel.message(MessageId(mid)).await?))
+    let channel = channel_view(&state, &user, id, cid).await?;
+    Ok(Json(channel.message(mid).await?))
 }
 
 /// The notes every agent of the channel published (issue 17) - what a
@@ -212,10 +204,10 @@ pub(super) async fn get_message(
 /// 65).
 pub(super) async fn get_notes(
     State(state): State<Arc<AppState>>,
-    Path((id, cid)): Path<(Uuid, Uuid)>,
+    Path((id, cid)): Path<(SessionId, ChannelId)>,
     user: AuthenticatedUser,
 ) -> Result<Json<Vec<PublishedNotesResponse>>, ApiError> {
-    let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let channel = channel_view(&state, &user, id, cid).await?;
     let notes = channel.notes().await.map_err(|e| {
         ApiError::internal(
             "notes_failed",
@@ -237,11 +229,10 @@ pub(super) async fn get_notes(
 /// while it ran.
 pub(super) async fn join_channel(
     State(state): State<Arc<AppState>>,
-    Path((id, cid)): Path<(Uuid, Uuid)>,
+    Path((session_id, channel_id)): Path<(SessionId, ChannelId)>,
     Query(options): Query<StreamOptions>,
     user: AuthenticatedUser,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    let (session_id, channel_id) = (SessionId(id), ChannelId(cid));
     let views = views(&state, &user);
     let channel = views.channel(session_id, channel_id).await?;
     let watch = channel.user_follow().await?.ok_or_else(|| not_a_participant(channel_id))?;
@@ -368,30 +359,30 @@ impl ChannelFollower {
 /// channel may do it.
 pub(super) async fn add_participant(
     State(state): State<Arc<AppState>>,
-    Path((id, cid)): Path<(Uuid, Uuid)>,
+    Path((id, cid)): Path<(SessionId, ChannelId)>,
     user: AuthenticatedUser,
     Json(payload): Json<AddParticipantRequest>,
 ) -> Result<Json<ChannelResponse>, ApiError> {
     // Through the session: one not in it yet is taken into it, too (issue 221).
-    let session = ensure_session(&state, &user, SessionId(id)).await?;
+    let session = ensure_session(&state, &user, id).await?;
     session
         .add_participant(
             &user.security_context(),
             payload.participant,
-            Some((ChannelId(cid), payload.history)),
+            Some((cid, payload.history)),
         )
         .await?;
-    Ok(Json(channel_response(&state, &user, SessionId(id), ChannelId(cid)).await?))
+    Ok(Json(channel_response(&state, &user, id, cid).await?))
 }
 
 /// One participant of the channel, with who it is (issue 244) - not with what its model calls
 /// used, which would read its whole state for it: that is `get_participant_usage`.
 pub(super) async fn get_participant(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, ActorPath(aid))): Path<(Uuid, Uuid, ActorPath)>,
+    Path((id, cid, ActorPath(aid))): Path<(SessionId, ChannelId, ActorPath)>,
     user: AuthenticatedUser,
 ) -> Result<Json<ChannelParticipantResponse>, ApiError> {
-    let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let channel = channel_view(&state, &user, id, cid).await?;
     let participant = channel.participant(aid).await?.snapshot(Detail::PROFILE).await;
     ChannelParticipantResponse::of(participant).map(Json).ok_or_else(|| {
         let actor = ActorPath(aid);
@@ -406,10 +397,10 @@ pub(super) async fn get_participant(
 /// a state that cannot be read is an error.
 pub(super) async fn get_participant_usage(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, ActorPath(aid))): Path<(Uuid, Uuid, ActorPath)>,
+    Path((id, cid, ActorPath(aid))): Path<(SessionId, ChannelId, ActorPath)>,
     user: AuthenticatedUser,
 ) -> Result<Json<Option<TokenUsage>>, ApiError> {
-    let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let channel = channel_view(&state, &user, id, cid).await?;
     Ok(Json(channel.participant(aid).await?.usage().await?))
 }
 
@@ -417,10 +408,10 @@ pub(super) async fn get_participant_usage(
 /// may do it.
 pub(super) async fn remove_participant(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, ActorPath(participant))): Path<(Uuid, Uuid, ActorPath)>,
+    Path((id, cid, ActorPath(participant))): Path<(SessionId, ChannelId, ActorPath)>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let (_, channel) = open_channel(&state, &user, id, cid).await?;
     let context = user.security_context();
     channel.remove_participant(&context, participant).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -430,21 +421,21 @@ pub(super) async fn remove_participant(
 /// their own act (issue 562), without the right to change it (`ChannelLoop::leave`).
 pub(super) async fn leave(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, ActorPath(participant))): Path<(Uuid, Uuid, ActorPath)>,
+    Path((id, cid, ActorPath(participant))): Path<(SessionId, ChannelId, ActorPath)>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let (_, channel) = open_channel(&state, &user, id, cid).await?;
     channel.leave(&user.security_context(), participant).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 pub(super) async fn send_message(
     State(state): State<Arc<AppState>>,
-    Path((id, cid)): Path<(Uuid, Uuid)>,
+    Path((id, cid)): Path<(SessionId, ChannelId)>,
     user: AuthenticatedUser,
     Json(payload): Json<MessageRequest>,
 ) -> Result<StatusCode, ApiError> {
-    let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let (_, channel) = open_channel(&state, &user, id, cid).await?;
     let user_actor = user_actor_of(&channel, &user)?;
     let span_id = user_actor
         .send_message(payload.content, payload.classification, payload.attachments)
@@ -461,19 +452,14 @@ pub(super) async fn send_message(
 /// of the user's for the channel fails at once.
 pub(super) async fn modify_message(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, mid)): Path<(Uuid, Uuid, Uuid)>,
+    Path((id, cid, mid)): Path<(SessionId, ChannelId, MessageId)>,
     user: AuthenticatedUser,
     Json(payload): Json<MessageRequest>,
 ) -> Result<StatusCode, ApiError> {
-    let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let (_, channel) = open_channel(&state, &user, id, cid).await?;
     let user_actor = user_actor_of(&channel, &user)?;
     let span_id = user_actor
-        .modify_message(
-            MessageId(mid),
-            payload.content,
-            payload.classification,
-            payload.attachments,
-        )
+        .modify_message(mid, payload.content, payload.classification, payload.attachments)
         .await?;
     Span::current().record("span_id", field::display(span_id));
     Ok(StatusCode::OK)
@@ -486,12 +472,12 @@ pub(super) async fn modify_message(
 /// and the new answer - or `RetryRefused` with the reason.
 pub(super) async fn retry_message(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, mid)): Path<(Uuid, Uuid, Uuid)>,
+    Path((id, cid, mid)): Path<(SessionId, ChannelId, MessageId)>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let (_, channel) = open_channel(&state, &user, id, cid).await?;
     let user_actor = user_actor_of(&channel, &user)?;
-    let span_id = user_actor.request_retry(MessageId(mid)).await?;
+    let span_id = user_actor.request_retry(mid).await?;
     Span::current().record("span_id", field::display(span_id));
     Ok(StatusCode::OK)
 }
@@ -503,11 +489,11 @@ pub(super) async fn retry_message(
 /// it delivers the request, and the stream shows `RetryAccepted` and the new answer.
 pub(super) async fn retry_turn(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, ActorPath(participant))): Path<(Uuid, Uuid, ActorPath)>,
+    Path((id, cid, ActorPath(participant))): Path<(SessionId, ChannelId, ActorPath)>,
     user: AuthenticatedUser,
     Json(payload): Json<TurnRequest>,
 ) -> Result<StatusCode, ApiError> {
-    let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let (_, channel) = open_channel(&state, &user, id, cid).await?;
     let user_actor = user_actor_of(&channel, &user)?;
     let span_id = user_actor.request_retry_of_turn(participant, payload.turn_id).await?;
     Span::current().record("span_id", field::display(span_id));
@@ -520,12 +506,12 @@ pub(super) async fn retry_turn(
 /// the stream (`EventRejected`, issue 567); otherwise the stream shows it as `MessageRevoked`.
 pub(super) async fn revoke_message(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, mid)): Path<(Uuid, Uuid, Uuid)>,
+    Path((id, cid, mid)): Path<(SessionId, ChannelId, MessageId)>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let (_, channel) = open_channel(&state, &user, id, cid).await?;
     let user_actor = user_actor_of(&channel, &user)?;
-    let span_id = user_actor.revoke_message(MessageId(mid)).await?;
+    let span_id = user_actor.revoke_message(mid).await?;
     Span::current().record("span_id", field::display(span_id));
     Ok(StatusCode::NO_CONTENT)
 }
@@ -552,10 +538,10 @@ fn not_a_participant(id: ChannelId) -> ApiError {
 /// lets cancel it may (`CancelChannel`, checked by the channel).
 pub(super) async fn cancel_channel(
     State(state): State<Arc<AppState>>,
-    Path((id, cid)): Path<(Uuid, Uuid)>,
+    Path((id, cid)): Path<(SessionId, ChannelId)>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let (_, channel) = open_channel(&state, &user, id, cid).await?;
     channel.cancel(&user.security_context(), None).await?;
     Ok(StatusCode::OK)
 }
@@ -565,10 +551,10 @@ pub(super) async fn cancel_channel(
 /// the channel). The others go on, and the channel stays answering.
 pub(super) async fn cancel_participant(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, ActorPath(participant))): Path<(Uuid, Uuid, ActorPath)>,
+    Path((id, cid, ActorPath(participant))): Path<(SessionId, ChannelId, ActorPath)>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let (_, channel) = open_channel(&state, &user, id, cid).await?;
     channel.cancel_actor(&user.security_context(), participant).await?;
     Ok(StatusCode::OK)
 }
@@ -580,11 +566,16 @@ pub(super) async fn cancel_participant(
 /// that does not run, or no longer, is `409 tool_call_not_running`.
 pub(super) async fn interrupt_tool_call(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, ActorPath(participant), call_id)): Path<(Uuid, Uuid, ActorPath, String)>,
+    Path((id, cid, ActorPath(participant), call_id)): Path<(
+        SessionId,
+        ChannelId,
+        ActorPath,
+        String,
+    )>,
     user: AuthenticatedUser,
     Json(payload): Json<TurnRequest>,
 ) -> Result<StatusCode, ApiError> {
-    let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let (_, channel) = open_channel(&state, &user, id, cid).await?;
     channel
         .interrupt_tool_call(&user.security_context(), participant, payload.turn_id, &call_id)
         .await?;
@@ -595,13 +586,13 @@ pub(super) async fn interrupt_tool_call(
 /// releases what is in it. Answers with the channel as the user sees it now.
 pub(super) async fn reclassify_channel(
     State(state): State<Arc<AppState>>,
-    Path((id, cid)): Path<(Uuid, Uuid)>,
+    Path((id, cid)): Path<(SessionId, ChannelId)>,
     user: AuthenticatedUser,
     Json(classification): Json<Classification>,
 ) -> Result<Json<ChannelResponse>, ApiError> {
-    let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let (_, channel) = open_channel(&state, &user, id, cid).await?;
     channel.reclassify(&user.security_context(), classification).await?;
-    Ok(Json(channel_response(&state, &user, SessionId(id), ChannelId(cid)).await?))
+    Ok(Json(channel_response(&state, &user, id, cid).await?))
 }
 
 /// Has the channel's conversation held in the language the body names - a
@@ -610,13 +601,13 @@ pub(super) async fn reclassify_channel(
 /// turn on. Answers with the channel as the user sees it now.
 pub(super) async fn set_channel_language(
     State(state): State<Arc<AppState>>,
-    Path((id, cid)): Path<(Uuid, Uuid)>,
+    Path((id, cid)): Path<(SessionId, ChannelId)>,
     user: AuthenticatedUser,
     Json(language): Json<Option<String>>,
 ) -> Result<Json<ChannelResponse>, ApiError> {
-    let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let (_, channel) = open_channel(&state, &user, id, cid).await?;
     channel.update_language(&user.security_context(), language.as_deref()).await?;
-    Ok(Json(channel_response(&state, &user, SessionId(id), ChannelId(cid)).await?))
+    Ok(Json(channel_response(&state, &user, id, cid).await?))
 }
 
 /// Sets what the channel restricts of the tool calls made in it (issue 13):
@@ -626,16 +617,16 @@ pub(super) async fn set_channel_language(
 /// channel as the user sees it now.
 pub(super) async fn update_channel_approval_rules(
     State(state): State<Arc<AppState>>,
-    Path((id, cid)): Path<(Uuid, Uuid)>,
+    Path((id, cid)): Path<(SessionId, ChannelId)>,
     user: AuthenticatedUser,
     Json(rules): Json<Vec<ApprovalRule>>,
 ) -> Result<Json<ChannelResponse>, ApiError> {
-    let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let (_, channel) = open_channel(&state, &user, id, cid).await?;
     channel
         .update_approval_rules(&user.security_context(), rules)
         .await
         .map_err(|e| change_error(e, "invalid_rule"))?;
-    Ok(Json(channel_response(&state, &user, SessionId(id), ChannelId(cid)).await?))
+    Ok(Json(channel_response(&state, &user, id, cid).await?))
 }
 
 /// Says what the channel is for (issue 245): its summary and briefing,
@@ -644,11 +635,11 @@ pub(super) async fn update_channel_approval_rules(
 /// one that does not fit, and otherwise the channel as the user sees it now.
 pub(super) async fn update_channel_description(
     State(state): State<Arc<AppState>>,
-    Path((id, cid)): Path<(Uuid, Uuid)>,
+    Path((id, cid)): Path<(SessionId, ChannelId)>,
     user: AuthenticatedUser,
     Json(payload): Json<DescriptionRequest>,
 ) -> Result<Json<ChannelResponse>, ApiError> {
-    let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let (_, channel) = open_channel(&state, &user, id, cid).await?;
     channel
         .update_description(
             &user.security_context(),
@@ -656,7 +647,7 @@ pub(super) async fn update_channel_description(
             payload.briefing.as_deref(),
         )
         .await?;
-    Ok(Json(channel_response(&state, &user, SessionId(id), ChannelId(cid)).await?))
+    Ok(Json(channel_response(&state, &user, id, cid).await?))
 }
 
 /// Reclassifies a message of the channel (issues 133, 239): its author or the channel's owner,
@@ -666,13 +657,13 @@ pub(super) async fn update_channel_description(
 /// `MessageReclassified`.
 pub(super) async fn reclassify_message(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, mid)): Path<(Uuid, Uuid, Uuid)>,
+    Path((id, cid, mid)): Path<(SessionId, ChannelId, MessageId)>,
     user: AuthenticatedUser,
     Json(classification): Json<Classification>,
 ) -> Result<StatusCode, ApiError> {
-    let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let (_, channel) = open_channel(&state, &user, id, cid).await?;
     let user_actor = user_actor_of(&channel, &user)?;
-    let span_id = user_actor.reclassify_message(MessageId(mid), classification).await?;
+    let span_id = user_actor.reclassify_message(mid, classification).await?;
     Span::current().record("span_id", field::display(span_id));
     Ok(StatusCode::OK)
 }
@@ -681,10 +672,10 @@ pub(super) async fn reclassify_message(
 /// completion (issue 28).
 pub(super) async fn list_commands(
     State(state): State<Arc<AppState>>,
-    Path((id, cid)): Path<(Uuid, Uuid)>,
+    Path((id, cid)): Path<(SessionId, ChannelId)>,
     user: AuthenticatedUser,
 ) -> Result<Json<Vec<CommandDescription>>, ApiError> {
-    let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let (_, channel) = open_channel(&state, &user, id, cid).await?;
     let user_actor = user_actor_of(&channel, &user)?;
     Ok(Json(user_actor.visible_commands().await))
 }
@@ -694,11 +685,11 @@ pub(super) async fn list_commands(
 /// `messages` - and never enter the conversation.
 pub(super) async fn execute_command(
     State(state): State<Arc<AppState>>,
-    Path((id, cid)): Path<(Uuid, Uuid)>,
+    Path((id, cid)): Path<(SessionId, ChannelId)>,
     user: AuthenticatedUser,
     Json(payload): Json<ExecuteCommandRequest>,
 ) -> Result<Json<CommandReplyResponse>, ApiError> {
-    let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let (_, channel) = open_channel(&state, &user, id, cid).await?;
     let user_actor = user_actor_of(&channel, &user)?;
     let reply = user_actor.execute_command(&payload.line).await?;
     // An answer for the whole channel reaches this client on the channel's
@@ -712,15 +703,15 @@ pub(super) async fn execute_command(
 /// produced a message has a context for it.
 pub(super) async fn message_context(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, ActorPath(aid), mid)): Path<(Uuid, Uuid, ActorPath, Uuid)>,
+    Path((id, cid, ActorPath(aid), mid)): Path<(SessionId, ChannelId, ActorPath, MessageId)>,
     user: AuthenticatedUser,
 ) -> Result<Json<MessageContextResponse>, ApiError> {
-    let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let channel = channel_view(&state, &user, id, cid).await?;
     let participant = channel.participant(aid).await?;
     let view = participant.context().await?;
-    let seen = view.context_of(MessageId(mid)).await?;
+    let seen = view.context_of(mid).await?;
     // What set the message's label, of the parts classified (issue 170).
-    let label = view.classification_of(MessageId(mid)).await?.unwrap_or_default();
+    let label = view.classification_of(mid).await?.unwrap_or_default();
     let mut classified: Vec<&Classification> =
         seen.reference.frame.knowledge.iter().filter_map(|k| k.classification.as_ref()).collect();
     for item in &seen.items {
@@ -737,7 +728,7 @@ pub(super) async fn message_context(
         knowledge.push(knowledge_response(channel.session(), read, &causes).await);
     }
     Ok(Json(MessageContextResponse {
-        message_id: MessageId(mid),
+        message_id: mid,
         actor_id: participant.id(),
         transcript_digest: seen.reference.transcript,
         items: seen
@@ -819,11 +810,11 @@ async fn knowledge_response(
 /// given (`Given`, issue 557), not twice.
 pub(super) async fn agent_history(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, ActorPath(aid))): Path<(Uuid, Uuid, ActorPath)>,
+    Path((id, cid, ActorPath(aid))): Path<(SessionId, ChannelId, ActorPath)>,
     Query(query): Query<HistoryQuery>,
     user: AuthenticatedUser,
 ) -> Result<Json<HistoryPageResponse<HistoryMessageResponse>>, ApiError> {
-    let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let channel = channel_view(&state, &user, id, cid).await?;
     let view = channel.participant(aid).await?.context().await?;
     let mut page = view.history_page_of(query.before, query.limit(), query.filter()).await?;
     page.items.retain(|(_, entry)| !matches!(entry, HistoryEntry::GivenToRead { .. }));
@@ -841,10 +832,10 @@ pub(super) async fn agent_history(
 /// may see them (`ReadAgentTools`).
 pub(super) async fn agent_tools(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, ActorPath(aid))): Path<(Uuid, Uuid, ActorPath)>,
+    Path((id, cid, ActorPath(aid))): Path<(SessionId, ChannelId, ActorPath)>,
     user: AuthenticatedUser,
 ) -> Result<Json<AgentToolsResponse>, ApiError> {
-    let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let channel = channel_view(&state, &user, id, cid).await?;
     let tool_sets = channel.participant(aid).await?.tool_sets().await?;
     Ok(Json(AgentToolsResponse { tool_sets }))
 }
@@ -853,10 +844,10 @@ pub(super) async fn agent_tools(
 /// (issue 270), for whoever may see them (`ReadAgentComponents`).
 pub(super) async fn agent_components(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, ActorPath(aid))): Path<(Uuid, Uuid, ActorPath)>,
+    Path((id, cid, ActorPath(aid))): Path<(SessionId, ChannelId, ActorPath)>,
     user: AuthenticatedUser,
 ) -> Result<Json<AgentComponentsResponse>, ApiError> {
-    let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let channel = channel_view(&state, &user, id, cid).await?;
     let components = channel.participant(aid).await?.components().await?;
     Ok(Json(AgentComponentsResponse { components }))
 }
@@ -867,14 +858,14 @@ pub(super) async fn agent_components(
 /// (`EventRefused`, issue 567). Answered `200` once the answer is on its way.
 pub(super) async fn send_approval(
     State(state): State<Arc<AppState>>,
-    Path((id, cid)): Path<(Uuid, Uuid)>,
+    Path((id, cid)): Path<(SessionId, ChannelId)>,
     user: AuthenticatedUser,
     Json(payload): Json<SendApprovalRequest>,
 ) -> Result<StatusCode, ApiError> {
-    let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let (_, channel) = open_channel(&state, &user, id, cid).await?;
     let user_actor = user_actor_of(&channel, &user)?;
     let span_id = user_actor
-        .send_approval(ApprovalId(payload.approval_id), payload.approved)
+        .send_approval(payload.approval_id, payload.approved)
         .await
         .map_err(|e| ApiError::internal("approval_not_sent", "sending the approval", &e))?;
     Span::current().record("span_id", field::display(span_id));
@@ -885,7 +876,7 @@ pub(super) async fn send_approval(
 /// or declines them: exactly one of `responses` and `declined: true`.
 pub(super) async fn answer_questions(
     State(state): State<Arc<AppState>>,
-    Path((id, cid, qid)): Path<(Uuid, Uuid, Uuid)>,
+    Path((id, cid, qid)): Path<(SessionId, ChannelId, QuestionId)>,
     user: AuthenticatedUser,
     Json(payload): Json<AnswerQuestionsRequest>,
 ) -> Result<StatusCode, ApiError> {
@@ -900,9 +891,9 @@ pub(super) async fn answer_questions(
             ))
         }
     };
-    let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let (_, channel) = open_channel(&state, &user, id, cid).await?;
     let user_actor = user_actor_of(&channel, &user)?;
-    let span_id = user_actor.answer_questions(QuestionId(qid), responses).await?;
+    let span_id = user_actor.answer_questions(qid, responses).await?;
     Span::current().record("span_id", field::display(span_id));
     Ok(StatusCode::OK)
 }
@@ -934,6 +925,7 @@ mod tests {
     use std::time::Duration;
     use tokio::time;
     use tower::ServiceExt;
+    use uuid::Uuid;
 
     #[test]
     fn a_command_that_does_not_run_is_answered_with_what_the_user_did() {

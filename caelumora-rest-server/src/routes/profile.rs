@@ -12,7 +12,6 @@ use caelumora_domain::store::{StoreError, StoreResultExt};
 use caelumora_kernel::controller::UserController;
 use caelumora_rest_api::profile::{ApprovalRuleRequest, ProfileRequest, ProfileResponse};
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// The user's profile; one without an introduction if they never wrote one.
 pub(super) async fn get_profile(
@@ -79,18 +78,16 @@ pub(super) async fn add_approval_rule(
 /// rule_not_found` if they have no such rule.
 pub(super) async fn remove_approval_rule(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<ApprovalRuleId>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
     let controller = controller_of(&state, &user).await?;
-    controller.remove_approval_rule(&user.security_context(), ApprovalRuleId(id)).await.map_err(
-        |e| match e {
-            StoreError::NotFound { .. } => {
-                ApiError::not_found("rule_not_found", "You have no such rule")
-            }
-            e => ApiError::internal("profile_failed", "saving the profile", &e.into()),
-        },
-    )?;
+    controller.remove_approval_rule(&user.security_context(), id).await.map_err(|e| match e {
+        StoreError::NotFound { .. } => {
+            ApiError::not_found("rule_not_found", "You have no such rule")
+        }
+        e => ApiError::internal("profile_failed", "saving the profile", &e.into()),
+    })?;
     Ok(StatusCode::NO_CONTENT)
 }
 
