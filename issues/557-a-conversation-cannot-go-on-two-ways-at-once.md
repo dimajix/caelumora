@@ -1293,3 +1293,19 @@ Decided with it, on the author's proposal:
   end the quiet of the thread of whom they ask; a thread opened after a cancel of the whole channel
   starts awake, until the frontends can wake one thread (step 6). Found on review, to be decided
   apart: a user at the line can ask an agent of another thread to answer again.
+- **2026-11-18** — The interface of step 5 decided as proposed, in two commits: 5a opens what the
+  crate needs, without a change of behaviour - `SessionView::session_loop`,
+  `ChannelLoop::delegation`, `Situation::thread_id`, `Turn::calling_message` -; 5b is the crate
+  `caelumora-subagents` (558), its origin taken from the agent side - the thread its work happens
+  in, the message whose calls run -, its sub-agent found by the thread's delegation, named by an
+  adjective of a list of its own and the personality.
+- **2026-11-18** — Step 5a of 2b implemented: `SessionView::session_loop`, public, in place of the
+  crate's `running`; `ChannelLoop::delegation`, what was delegated into a thread as the channel's
+  state holds it; `Situation::thread_id`, the thread of the work's envelope; and
+  `Turn::calling_message`, the last message of the turn with calls while its calls run. No change of
+  behaviour, no stored data to delete. What PLUGINS.md and CODING-GUIDELINES.md say of a writer
+  acting through the running session (`session_loop`, `channel_for`) comes with its first user,
+  5b.
+- **2026-11-18** — Step 5a of 2b accepted by the maintainer. Its finding - a step whose message an
+  `EmitOutProcessor` drops still runs its calls, so that `Turn::calling_message` names an earlier
+  message - to be fixed in a step of its own before 5b.

@@ -41,7 +41,7 @@ pub struct SessionView {
     /// The document as it was when the session was reached.
     session: Arc<Session>,
     /// Its loop, if it runs: where its channels are reached through.
-    running: Option<Arc<SessionLoop>>,
+    session_loop: Option<Arc<SessionLoop>>,
 }
 
 /// The least of a name one searches by (`SessionView::candidates`): fewer
@@ -71,9 +71,11 @@ impl SessionView {
         match found {
             Found::Running(session_loop) => {
                 let session = session_loop.session();
-                Self { views, session, running: Some(session_loop) }
+                Self { views, session, session_loop: Some(session_loop) }
             }
-            Found::Stored(session) => Self { views, session: Arc::new(session), running: None },
+            Found::Stored(session) => {
+                Self { views, session: Arc::new(session), session_loop: None }
+            }
         }
     }
 
@@ -81,9 +83,12 @@ impl SessionView {
         &self.views
     }
 
-    /// Its loop, if it runs.
-    pub(crate) fn running(&self) -> Option<&Arc<SessionLoop>> {
-        self.running.as_ref()
+    /// The running session the view was made of, if it runs: what a plugin acts on a running
+    /// channel through (issue 557, T2) - reaching the channel as a frontend does
+    /// (`SessionLoop::channel_for`), which asks whether the work may, then by the channel's public
+    /// operations, each checking itself.
+    pub fn session_loop(&self) -> Option<&Arc<SessionLoop>> {
+        self.session_loop.as_ref()
     }
 
     /// The document, as it was when the session was reached.
@@ -134,7 +139,7 @@ impl SessionView {
 
     /// The session as privacy sees it now (issue 134).
     pub fn privacy(&self) -> SessionPrivacy {
-        match &self.running {
+        match &self.session_loop {
             Some(session_loop) => session_loop.privacy(),
             None => SessionPrivacy::of(&self.session),
         }
@@ -197,7 +202,7 @@ impl SessionView {
             Some(id) => Some(self.channel(id).await?),
             None => None,
         };
-        let Some(session_loop) = &self.running else { return Ok(Vec::new()) };
+        let Some(session_loop) = &self.session_loop else { return Ok(Vec::new()) };
         let context = self.views.context();
         let stores = self.views.stores();
         let users = stores
@@ -389,7 +394,7 @@ impl SessionView {
     /// The document of channel `id`, if the session has it, with its loop if it runs, as the view
     /// reached the session (`document_in`).
     pub(super) async fn document(&self, id: ChannelId) -> ViewResult<Option<Document>> {
-        self.document_in(self.running.as_ref(), id).await
+        self.document_in(self.session_loop.as_ref(), id).await
     }
 
     /// The document of channel `id` as it stands now: through the session's loop if it runs now -
@@ -450,7 +455,7 @@ impl SessionView {
     /// The session's channel documents, in its order, each with its loop if
     /// it runs. A channel whose document cannot be read is left out.
     async fn channel_documents(&self) -> Vec<Document> {
-        match &self.running {
+        match &self.session_loop {
             Some(session_loop) => session_loop
                 .listed_channels()
                 .into_iter()

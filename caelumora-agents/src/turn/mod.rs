@@ -154,6 +154,21 @@ impl<'a> Turn<'a> {
         &self.agent_name
     }
 
+    /// The message of the turn whose tool calls run now (issue 557): the last it said with calls -
+    /// what a call that opens a thread hangs it at. `None` outside a step of calls.
+    pub fn calling_message(&self) -> Option<MessageId> {
+        if self.current().tool_calls.is_empty() {
+            return None;
+        }
+        let turn_id = self.turn_id();
+        let messages = self.agent_channel_state.transcript.messages();
+        let calling = messages
+            .iter()
+            .rev()
+            .find(|message| message.turn_id == Some(turn_id) && !message.tool_calls.is_empty())?;
+        Some(calling.id)
+    }
+
     /// The working state of the turn under way. A `Turn` is only had while
     /// one is (`of`); the empty one it falls back to cannot be reached.
     fn current(&self) -> &TurnState {
@@ -536,6 +551,44 @@ mod tests {
         let carried: Vec<usize> =
             state.transcript.messages().iter().map(|message| message.attachments.len()).collect();
         assert_eq!(carried, [0, 0, 0, 1, 0], "the answer alone, once, with words or without - not a step of a plan, nor one that calls tools");
+    }
+
+    /// Issue 557: the message whose calls run now is the last the turn said with calls - not that
+    /// of an earlier step -, none outside a step of calls.
+    #[tokio::test]
+    async fn the_calling_message_is_the_last_the_turn_said_with_calls() {
+        use caelumora_domain::tool::{ToolCall, ToolCallState, ToolCallStatus};
+        use caelumora_kernel::testing::Discard;
+        let mut state = AgentChannelState::default();
+        let mut turn = Turn::begun(AgentId::new(), &mut state);
+        let call = |id: &str| ToolCall {
+            id: Some(id.to_string()),
+            arguments: serde_json::json!({}),
+            ..make_tool_call("start_subagent")
+        };
+        let calling = |text: &str, id: &str| Message {
+            role: MessageRole::Assistant,
+            tool_calls: vec![call(id)],
+            ..message(text)
+        };
+        let ready = |id: &str| ToolCallState {
+            tool_call: call(id),
+            status: ToolCallStatus::Ready { answers: None },
+            approval: Vec::new(),
+        };
+        assert_eq!(turn.calling_message(), None, "outside a step of calls");
+        turn.tool_calls().register(vec![ready("1")]);
+        turn.say(calling("first step", "1"), &Discard).await.unwrap();
+        let first = turn.calling_message();
+        turn.tool_calls().register(vec![ready("2")]);
+        turn.say(message("the first step's result"), &Discard).await.unwrap();
+        turn.say(calling("second step", "2"), &Discard).await.unwrap();
+        let second = turn.calling_message();
+
+        let said = state.transcript.messages();
+        let with_calls: Vec<_> =
+            said.iter().filter(|m| !m.tool_calls.is_empty()).map(|m| Some(m.id)).collect();
+        assert_eq!([first, second].as_slice(), with_calls.as_slice(), "each step's own");
     }
 
     /// Issue 417: what a turn says leaves the agent as it is, what only its

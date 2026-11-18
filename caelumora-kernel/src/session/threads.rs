@@ -139,6 +139,9 @@ mod tests {
             unreachable!("found above")
         };
         assert_eq!(message.content.as_deref(), Some("found it"), "what the turn said");
+        let held = main.delegation(thread).await.expect("delegated into");
+        assert_eq!((held.giver, held.recipient), (hers, helper), "by alice, to her agent");
+        assert!(held.briefs.is_empty(), "its brief answered");
         let delegate = ActorId::Delegate(thread);
         assert!(main.actor(delegate).is_some(), "its delegate runs");
         assert!(!main.participant_ids().contains(&delegate), "and takes no part in the channel");
@@ -172,6 +175,8 @@ mod tests {
         })
         .await;
         assert!(main.actor(ActorId::Delegate(thread)).is_none(), "which is gone");
+        assert!(main.delegation(thread).await.is_none(), "with what was delegated");
+        assert!(main.delegation(line).await.is_none(), "and nothing is delegated into the line");
         world.manager.stop(&alice, session.id()).await.unwrap();
     }
 

@@ -91,6 +91,14 @@ impl ChannelLoop {
         Ok(())
     }
 
+    /// What was delegated into `thread`, if it is still open and was delegated into (issue 557):
+    /// its giver, its recipient and its briefs, answered or not, as the channel's state holds them
+    /// now - what the work on a sub-agent asks whose it is.
+    pub async fn delegation(&self, thread: ThreadId) -> Option<Delegation> {
+        let state = self.state.lock().await;
+        state.threads.get(&thread).filter(|held| !held.closed)?.delegation.clone()
+    }
+
     /// Whether `giver` may delegate into `thread` to `recipient` (`ThreadState::delegates_alike`):
     /// a thread opened that `run` has not recorded yet is delegated into by nobody.
     async fn delegated_alike(&self, thread: ThreadId, giver: ActorId, recipient: ActorId) -> bool {
