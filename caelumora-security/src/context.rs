@@ -87,7 +87,7 @@ impl SecurityContext {
 
     /// The context the delegate of `thread` acts in, in `channel` (issue 557): its own, answered
     /// for by the owner of its channel, as the approver's is - what the channel admits its
-    /// envelopes in, which name whom it gives for as their initiator.
+    /// envelopes in, which name the chain that delegated as their initiator.
     pub fn of_delegate(thread: ThreadId, channel: &Channel) -> Self {
         Self {
             owner_id: channel.security_attributes.owner_id,

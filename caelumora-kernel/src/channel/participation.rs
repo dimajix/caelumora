@@ -277,10 +277,6 @@ impl ResolvedParticipant {
     /// The delegate of `thread`, of channel `channel_id` of session `session_id` (issue 557): an
     /// internal actor of the channel, which nothing lists - the thread it delegates into is what
     /// its actor is built from.
-    #[cfg_attr(
-        not(any(test, feature = "test-support")),
-        expect(dead_code, reason = "built as a thread is delegated in, 557 step 3 of 2b")
-    )]
     pub(crate) fn delegate(thread: ThreadId, session_id: SessionId, channel_id: ChannelId) -> Self {
         Self { kind: ResolvedKind::Delegate(thread), session_id, channel_id: Some(channel_id) }
     }

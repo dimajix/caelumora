@@ -835,7 +835,10 @@ mod tests {
         let bob = ActorId::User(UserId::new());
         let agent = ActorId::Agent(AgentId::new());
         let approver = ActorId::Approver(ApproverId::new());
-        let actors = [alice, bob, agent, approver, ActorId::System];
+        let (here, elsewhere) = (ThreadId::new(), ThreadId::new());
+        // The delegate of a thread, given what goes to the users there (issue 557).
+        let delegate = ActorId::Delegate(here);
+        let actors = [alice, bob, agent, approver, delegate, ActorId::System];
         let entries = [
             HistoryEntry::Said { message: make_message(id(1)) },
             HistoryEntry::Said { message: Message { content: None, ..make_message(id(2)) } },
@@ -857,7 +860,6 @@ mod tests {
             Recipients { named: vec![agent], ..Recipients::participants(false) },
         ];
         // Where a reader took part: nowhere, in one thread, in two (issue 557).
-        let (here, elsewhere) = (ThreadId::new(), ThreadId::new());
         let at = |thread, range| Attended { thread, range };
         let whereabouts = [
             vec![],

@@ -67,6 +67,12 @@ impl ActorId {
         Name::fixed(Self::APPROVER_NAME)
     }
 
+    /// The name every delegate is shown with, as a name: what a delegate's actor is called in its
+    /// channel (issue 557).
+    pub fn delegate_name() -> Name {
+        Name::fixed(Self::DELEGATE_NAME)
+    }
+
     /// The name of an actor that is no entity and so has no name of its own: an approver, a
     /// delegate, the kernel itself, nobody. `None` for users and agents, whose names are their
     /// entities' (`ControllerManager::actor_name`).

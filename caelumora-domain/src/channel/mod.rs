@@ -14,7 +14,7 @@ mod thread;
 pub use history_access::{HistoryAccess, HistoryStart};
 pub use participant::{FormerParticipant, InternalActor, Participant};
 pub use state::{ChannelState, ChannelStateChange};
-pub use thread::{Opening, ThreadId, ThreadOrigin, ThreadState};
+pub use thread::{Brief, Delegation, Opening, ThreadId, ThreadOrigin, ThreadState};
 
 use crate::actor::ActorId;
 use crate::approval::ApprovalRule;
@@ -327,9 +327,11 @@ impl Channel {
     }
 
     /// Whether `actor` is one of the channel's internal actors (issue 420),
-    /// which take no part in it.
+    /// which take no part in it: one it lists, or a delegate of one of its threads, which no
+    /// channel lists (issue 557).
     pub fn is_internal(&self, actor: ActorId) -> bool {
-        self.internal_actors.iter().any(|internal| internal.actor_id() == actor)
+        matches!(actor, ActorId::Delegate(_))
+            || self.internal_actors.iter().any(|internal| internal.actor_id() == actor)
     }
 
     /// Takes `participant` in, unless it is listed already, as `Session::take_in` takes one into

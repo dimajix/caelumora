@@ -245,7 +245,7 @@ them for each channel (`ChannelTemplate::internal_actors`, an approver with its 
 unless named), and so does a request to create one (`ChannelSpec::internal_actors`; the web UI's
 dialog names an approver). A channel has the internal actors it is given and no others - but the
 delegates of its threads, which come with delegating (see
-[Giving something to read](#giving-something-to-read)) -, and there is no fallback: without an
+[Delegating into a thread](#delegating-into-a-thread)) -, and there is no fallback: without an
 approver, nobody decides what needs approval, and tools that ask for it do not work there.
 
 The participants of a requested channel come from the session's participants, the creator always
@@ -449,7 +449,7 @@ sender's name, then whether the sender may act so, then whether what it carries 
 | `RetryRequested` | `RetryMessage` of the channel; a message, not taken back, or a turn that can be answered again, of an agent taking part |
 | `QuestionAnswered`, `QuestionDeclined` | `AnswerQuestion` of the channel - whether the sender was asked is the agent's to check |
 | `CommandRequested`, `NudgeRequested` | sent by a user, naming an agent (or, for a nudge, anyone else) taking part |
-| `GivenToRead` | sent by the delegate of a thread opened, into it or back into the thread it was opened at, in the name of its giver; recipient and giver participants the channel lists, the recipient running there; a text, which may flow in (issue 557) |
+| `GivenToRead` | sent by the delegate of a thread opened, as its delegation says - the open brief into the thread, what came of it back where the thread was opened -, in the delegating chain's name, to whom runs there; a text, which may flow in (issue 557) |
 | `ApprovalAnswered` | sent by a user, saying their own part alone - which agent asked, and whether they may approve its calls (`ApproveToolCall`), is the approver's to tell, which holds the request (issues 312, 567) |
 | `ApprovalGranted`, `ApprovalDenied`, `ApprovalTimedOut` | sent by an approver: its decision |
 | `EventRefused` | sent by an actor in its own name, to someone else in the channel (issue 567) |
@@ -952,22 +952,58 @@ message of the user had mentioned them - no policy consulted, no chain between a
     the answer: nobody but the one asked is shown the request, and the command answers the issuer
     alone.
 
-### Giving something to read
+### Delegating into a thread
 
-The **delegate** of a thread (`ActorId::Delegate`, named by the thread it delegates into, issue
-557) gives a participant a message to read and asks it to respond (`GivenToRead`): a brief into its
-thread, what came of it back into the thread it was opened at. The message's sender is whoever
-gives it, a participant the channel lists: nobody speaks in another's name. The delegate is no
-participant but an internal actor of the channel, which no configuration names, acting in a context
-of its own answered for by the channel's owner, as the approver's is
-(`SecurityContext::of_delegate`), and naming the giver as the initiator of what it sends. Its
-actor, which carries a delegation into the thread and what came of it back, comes with delegating
-(557, step 3 of 2b).
+A participant - the **giver** - has an agent - the **recipient** - work on a **brief** in a thread
+opened at the giver's, and is given back what came of it there (`ChannelLoop::delegate`, issue
+557): the giver is the caller - nobody delegates in another's name -, who reads the channel; the
+recipient runs in the thread, the giver where it was opened. What a thread was delegated is the
+thread's part of the channel's state (`Delegation`): the giver, the recipient, the root of the
+chain that delegated, and the briefs, the first the one open - a further brief waits behind it; a
+thread delegated into takes no other giver nor recipient (`DelegatedOtherwise`). The channel alone
+writes it, one change after the other in `run`: a brief recorded as it is delegated - dropped,
+logged, if the thread is no longer open by then -, given as the channel records it, answered as
+the channel records what came of it (`Delegation::follow`), dropped with what came of it if that
+cannot reach the giver, gone from where the thread was opened (`Delegation::refused`), and dropped
+as the thread is closed.
 
-*   **What the channel admits.** Something given by the delegate of a thread opened - into that
-    thread, or back into the one it was opened at -, in the name of its giver, a participant the
-    channel lists, to a recipient running there; a text alone, of a classification the channel may
-    hold (see [PERMISSION-CHECKS.md](PERMISSION-CHECKS.md)).
+The **delegate** of the thread carries it out (`ActorId::Delegate`, named by the thread it
+delegates into; `DelegateActor`). It is no participant but an internal actor of the channel, which
+no configuration names (`Channel::is_internal`): started with the first brief, built from the
+channel's state and kept in step with it by `run` (`sync`), acting in a context of its own
+answered for by the channel's owner, as the approver's is (`SecurityContext::of_delegate`). It is
+given what goes to the users and happens in its thread or the whole channel
+(`Recipients::reaches`), and:
+
+*   **gives the open brief** to the recipient, in the thread, once (`GivenToRead`);
+*   **takes the recipient's first turn that ends after the brief was given** as its answer - the
+    thread is a closed circle in which the delegate alone gives the recipient anything, and is
+    written in by nobody else: a turn answering a user who wrote in it would be taken so, and the
+    turn that answers the brief taken as the next brief's answer, and so on -
+*   **and gives back** to the giver, where the thread was opened, what came of it, once: what
+    others hear of the turn, that it ended without an answer, that it was given up and why, that
+    the recipient could not be asked - the brief refused, the recipient gone before it was given -,
+    or that it left, for the open brief and for each that waited behind it (`kernel.delegation_*`),
+    as the recipient's message. Both directions carry the delegating chain's initiator, so that the
+    turns that answer them act in the authority the chain began in. Then the next brief is open.
+
+After a restart the channel builds its threads, reconciles what changed while it did not run,
+starts the delegates of what is still to answer, then its participants: a delegate reads on from
+where its open brief was given (`Actor::heard`), so that an answer recorded while it did not run is
+not lost, and gives a brief already given not again. A thread is closed with its delegate
+(`close_thread` does not count it): it is let go as the thread is to be closed, and what was open
+is dropped - a recipient let go right before is given back as gone only if its task ended before
+the close was applied. A brief given whose recipient does not start again after a restart - left
+out, as one that cannot be run - waits until the thread is closed: nothing records that it left,
+and the brief is not given again to be refused.
+
+What a delegate gives:
+
+*   **What the channel admits.** What the thread's delegation says, from the delegate of a thread
+    opened alone - the open brief into the thread to its recipient, what came of the open brief back
+    where the thread was opened, of the recipient to the giver -, in the delegating chain's name, to
+    whom runs there; a text alone, of a classification the channel may hold (see
+    [PERMISSION-CHECKS.md](PERMISSION-CHECKS.md)).
 *   **Whom it reaches.** It is recorded to the recipient by name and to the users; no other agent
     hears it. The moderator asks the recipient alone to respond, as for a nudge - no policy
     consulted, no chain counted (`RequestReason::Given`, the strongest reason) -, so that it is
@@ -1267,7 +1303,7 @@ told to nobody.
 
 A `Routing` also says why it asks (`RequestReason`, issue 439): `mentioned` - by the agent's handle
 or `@all` -, `nudged` by a user (see [Nudging someone](#nudging-someone)), `given` something to read
-(see [Giving something to read](#giving-something-to-read)), `chosen` by the policy, or
+(see [Delegating into a thread](#delegating-into-a-thread)), `chosen` by the policy, or
 `undecided`, asked under `on_undecided: all` because the policy could not choose (issue 441). The
 request to respond carries it, and the history records it with the request. An agent whose
 personality has the component `request_reason` is told, when only chosen, that it may stay silent

@@ -1243,3 +1243,32 @@ Decided with it, on the author's proposal:
 - **2026-11-18** — Step 2 of 2b accepted by the maintainer, with what it adds to the interface: the
   initiator the giver, a text alone, no delegate of the line, and `RequestReason::Given` the
   strongest reason. `of_delegate` stays beside `of_approver`, as agreed.
+- **2026-11-18** — The interface of step 3 decided as proposed: a thread's `Delegation` (giver,
+  recipient, the initiator of the chain that delegated, its briefs, the first one open) and
+  `Brief` (the message, where it was given) in `ThreadState`; `ChannelLoop::delegate`, by whom the
+  caller acts for or an agent of their own, who reads the channel, to a recipient running in the
+  thread; the `DelegateActor`, built from the state and handed later briefs by `run`, reading on
+  after a restart from where its open brief was given (`Actor::heard`); a delegate given what a
+  user is given, of its thread alone; both directions in the delegating chain's initiator, the
+  channel admitting what the delegate gives against the delegation it holds - in place of step
+  2's "the initiator the giver"; the delegate let go with its thread, open briefs dropped, and
+  "left" given back when the recipient leaves; the answer given back as a text alone.
+- **2026-11-18** — Step 3 of 2b implemented: `Delegation` and `Brief` in `ThreadState`, with
+  the rule of one giver and one recipient (`ThreadState::delegate`); the channel following what
+  the delegate gives as it records it, with the entry in one store, and as it refuses it
+  (`ChannelState::follow_given`, `follow_refused`), and keeping the delegate in step (`sync`);
+  `ChannelLoop::delegate`; the `DelegateActor`, started with the first brief or as the channel
+  starts again - after its threads and reconciling, before its participants -, reading on from
+  where its open brief was given, taking the recipient's first turn that ends after the brief was
+  given, and giving back the answer, that the turn ended without one or was given up, that the
+  recipient could not be asked, or that it left (`kernel.delegation_*`); a delegate given what goes
+  to the users of its thread and of the whole channel, and internal to the channel
+  (`Channel::is_internal`); the admission of what it gives against the delegation; the delegate
+  let go as its thread is to be closed. Where it departs from the interface decided: the giver is
+  the caller alone - without a giver to name, an agent of one's own cannot be one -, and the
+  recipient an agent, whose turn is what comes of a brief; no reconciling of delegations as the
+  channel starts - following them with the entry they follow leaves nothing to set right. A brief
+  into a thread no longer open by the time `run` takes it is dropped, logged, though `delegate`
+  answered it as taken. Stored data to delete: the state of every channel
+  (`ThreadState::delegation`).
+- **2026-11-18** — Step 3 of 2b accepted by the maintainer, with its departures.

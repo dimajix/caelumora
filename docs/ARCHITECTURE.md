@@ -235,8 +235,10 @@ its line, and threads opened at a message of another -, each with its own **mode
 decides who is asked to respond to a message.
 
 Everything that takes part in a channel is an **actor**: a user (`UserActor`), an agent
-(`AgentActor`), an agent that runs elsewhere (`ExternalAgentActor`), or the channel's approver
-(`ApproverActor`), which collects the users' decisions on tool calls that need approval. Actors
+(`AgentActor`), an agent that runs elsewhere (`ExternalAgentActor`), the channel's approver
+(`ApproverActor`), which collects the users' decisions on tool calls that need approval, or a
+thread's delegate (`DelegateActor`), which gives the recipient of what is delegated into its thread
+the brief and brings back what came of it. Actors
 communicate only through **envelopes** - an event with who sent it and in reply to what
 (`EventContext`); on whose authority it is checked (`SecurityContext`) the channel builds from the
 sender as it admits it.

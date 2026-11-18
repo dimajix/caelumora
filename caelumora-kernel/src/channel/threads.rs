@@ -170,7 +170,10 @@ impl ChannelLoop {
             )
             .await?;
         }
-        let running = self.actors.load().values().any(|actor| actor.thread == thread);
+        // Its delegate goes with it (issue 557).
+        let delegate = ActorId::Delegate(thread);
+        let running =
+            self.actors.load().iter().any(|(id, actor)| actor.thread == thread && *id != delegate);
         let attending = self.attending().await;
         let listed = self.channel();
         let resting = listed

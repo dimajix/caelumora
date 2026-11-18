@@ -8,6 +8,7 @@
     reason = "test code: what fails here fails the test that runs it"
 )]
 
+use crate::channel::thread::{Phase, Thread};
 use crate::channel::ChannelLoop;
 use crate::channel::ResolvedParticipant;
 use crate::controller::SessionController;
@@ -25,7 +26,9 @@ use caelumora_domain::chain::Position;
 use caelumora_domain::channel::testing::{founded, make_channel};
 #[cfg(test)]
 use caelumora_domain::channel::ChannelId;
-use caelumora_domain::channel::{Channel, InternalActor, Participant, ThreadId, ThreadOrigin};
+use caelumora_domain::channel::{
+    Channel, Delegation, InternalActor, Opening, Participant, ThreadId, ThreadOrigin, ThreadState,
+};
 use caelumora_domain::content::ContentId;
 use caelumora_domain::history::testing::{items_of, messages_of};
 use caelumora_domain::history::{Attended, Audience, History, HistoryEntry, Reader, Recorded};
@@ -43,6 +46,7 @@ use caelumora_security::{AccessPolicy, ActionType, Policies, SecurityContext};
 use caelumora_store::testing::record_users;
 use caelumora_store::testing::stored_agent;
 use caelumora_store::{EntityStores, Persistence};
+use std::collections::HashMap;
 use std::mem;
 use std::sync;
 use std::sync::Arc;
@@ -235,17 +239,29 @@ impl ResolvedParticipant {
 /// alone, under names of their own - the channel's API is not widened by
 /// them.
 impl ChannelLoop {
-    /// Opens a thread at the line, founded by nobody, and starts an actor in place of its delegate
-    /// (issue 557), which sends what `envelopes` makes for the thread as it is written (`Forger`) -
-    /// until the delegate's own actor is built as a thread is delegated in (557, step 3 of 2b).
-    /// Returns the thread.
+    /// A thread at the line, delegated into as `delegation` says, whose delegate is forged
+    /// (issue 557): an actor in its place that sends what `envelopes` makes for the thread as it
+    /// is written (`Forger`) - what the channel admits of a delegate, tested without one. The
+    /// thread is held and kept in the channel's state at once, as the channel builds it as it
+    /// starts, opened by nobody and announced nowhere. Returns the thread.
     pub async fn forge_delegate(
         &self,
+        delegation: Delegation,
         envelopes: impl FnOnce(ThreadId) -> Vec<Envelope>,
     ) -> ThreadId {
+        let thread = ThreadId::new();
         let origin = ThreadOrigin { thread: ThreadId::line(self.id), message: MessageId::new() };
-        let system = SecurityContext::system();
-        let thread = self.open_thread(&system, origin, &[]).await.expect("opened");
+        let opening = Opening { origin, by: ActorId::System };
+        let held =
+            ThreadState { opening: Some(opening), closed: false, delegation: Some(delegation) };
+        self.state.lock().await.threads.insert(thread, held);
+        let moderator = self.moderator().await.expect("a moderator");
+        let opened = Arc::new(Thread::new(moderator, Some(opening), Phase::Open));
+        self.threads.rcu(|threads| {
+            let mut threads = HashMap::clone(threads);
+            threads.insert(thread, Arc::clone(&opened));
+            threads
+        });
         let delegate = ActorId::Delegate(thread);
         let resolved = ResolvedParticipant::delegate(thread, self.session_id, self.id);
         let forger = Forger::sending(delegate, envelopes(thread));

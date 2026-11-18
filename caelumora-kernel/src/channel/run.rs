@@ -34,7 +34,7 @@ use tracing::{debug, error, info, trace, warn, Instrument};
 /// is read from anywhere; this one is `run`'s, whose `JoinSet` owns the
 /// tasks - so that they end with the channel's own task - and which starts and
 /// stops them as `ActorChange`s tell it (issue 91).
-struct RunningActor {
+pub(super) struct RunningActor {
     id: ActorId,
     abort_handle: AbortHandle,
     /// What to wait on for the task to end (`ChannelActor::task`).
@@ -218,14 +218,20 @@ impl ChannelLoop {
             // A thread opened or closed (issue 557) is of the whole channel: announced in its
             // line, and recorded among the threads open with its entry, which stores them.
             ActorChange::Open(thread, opening, by) => {
-                let state = ThreadState { opening: Some(opening), closed: false };
+                let state = ThreadState { opening: Some(opening), closed: false, delegation: None };
                 self.state.lock().await.threads.insert(thread, state);
                 let opened = ActorEvent::ThreadOpened { thread, origin: opening.origin };
                 self.announce(opened, by, ThreadId::line(self.id), running).await;
             }
+            // Its delegate goes as soon as it is to be closed (issue 557): it has nothing more to
+            // give, and what was open is dropped.
             ActorChange::Close(thread, by) => {
+                self.let_delegate_go(thread, running).await;
                 closing.insert(thread, by);
                 self.close_settled(closing, running).await;
+            }
+            ActorChange::Delegate(thread, delegation) => {
+                self.hand_to_delegate(thread, delegation).await;
             }
         }
     }
@@ -343,6 +349,7 @@ impl ChannelLoop {
         trace!("Envelope: {:?}", event);
         let context = self.admitted_in(&event);
         if let Err(reason) = self.admission(&event, &context).await {
+            self.follow_refused(&event).await;
             self.reject(&event, reason, running).await;
             return;
         }
@@ -560,10 +567,10 @@ impl ChannelLoop {
     /// - a command for an agent (issue 269) comes from a user, names an agent taking part that
     ///   carries it out, and is one the issuer may see and ask for (`admit_command`, issue 516);
     ///   a nudge (issue 278) comes from a user and names someone else taking part;
-    /// - something given to read (issue 557) comes from the delegate of a thread opened, given
-    ///   into that thread or the one it was opened at, in the name of its giver, a participant the
-    ///   channel lists; to a participant running there; a text alone, as it is classified
-    ///   (`admit_given`);
+    /// - something given to read (issue 557) comes from the delegate of a thread opened and gives
+    ///   what its delegation says - the open brief into the thread, what came of it back where the
+    ///   thread was opened -, in the delegating chain's name, to whom runs there; a text alone, as
+    ///   it is classified (`admit_given`);
     /// - what the channel records of a turn besides its messages - where a step of its plan began,
     ///   a command or an activity it carried out, how it ended - and the start of an activity come
     ///   from an agent in its own name (issue 284): nobody else has turns; so does what an agent
@@ -708,7 +715,7 @@ impl ChannelLoop {
                 .ok_or(Rejection::Invalid)
             }
             ActorEvent::GivenToRead { recipient, message } => {
-                self.admit_given(event, *recipient, message, context, &classification)
+                self.admit_given(event, *recipient, message, context, &classification).await
             }
             ActorEvent::MessageGiven { message } => {
                 event.context.sender_id.as_agent_id().ok_or(Rejection::Invalid)?;
@@ -747,12 +754,14 @@ impl ChannelLoop {
 
     /// Nothing if `event`, sent in `context`, may give `recipient` `message` to read (issue 557);
     /// why not otherwise. It comes from the delegate of a thread opened - no thread delegates into
-    /// the line -, given into that thread or back into the one it was opened at; in the name of
-    /// whoever gives the message, its initiator; the recipient runs in that thread; both are
-    /// participants the channel lists; and the message is a text - no attachment, which only a
+    /// the line - and gives what that thread's delegation says (`Delegation`): into the thread, the
+    /// open brief to the recipient; back into the thread it was opened at, what came of the open
+    /// brief - answered, refused, its recipient gone -, of the recipient to the giver; in the name
+    /// of the chain that delegated (its
+    /// initiator), to whom runs there; and the message is a text - no attachment, which only a
     /// message said claims, no tool call or result -, classified so that it may enter the channel
     /// (`require_parts`).
-    fn admit_given(
+    async fn admit_given(
         &self,
         event: &Envelope,
         recipient: ActorId,
@@ -767,21 +776,23 @@ impl ChannelLoop {
         let Some(opening) = self.thread(delegated).and_then(|opened| opened.opening()) else {
             return Err(Rejection::Invalid);
         };
-        let its_own = thread == delegated || thread == opening.origin.thread;
-        let giver = message.sender_id;
+        let as_delegated = {
+            let state = self.state.lock().await;
+            let held = state.threads.get(&delegated).and_then(|held| held.delegation.as_ref());
+            held.is_some_and(|delegation| {
+                let gives = if thread == delegated {
+                    delegation.gives_brief(recipient, message)
+                } else {
+                    thread == opening.origin.thread && delegation.gives_back(recipient, message)
+                };
+                gives && event.context.initiator_id == delegation.initiator
+            })
+        };
         let running_there = self.actors.load().get(&recipient).is_some_and(|r| r.thread == thread);
-        let listed = self.channel();
-        let lists = |actor| listed.participants.iter().any(|p| p.actor_id() == actor);
         let text = message.attachments.is_empty()
             && message.tool_calls.is_empty()
             && message.tool_results.is_empty();
-        if !(its_own
-            && event.context.initiator_id == giver
-            && running_there
-            && lists(recipient)
-            && lists(giver)
-            && text)
-        {
+        if !(as_delegated && running_there && text) {
             return Err(Rejection::Invalid);
         }
         self.require_parts(context, message, classification)
@@ -1041,18 +1052,28 @@ impl ChannelLoop {
 
     /// Records `recorded` in the channel's history and stores it
     /// (`append_history`); returns its position, or `None` if it was not
-    /// recorded - a change of a message that changes nothing.
+    /// recorded - a change of a message that changes nothing. What a delegate gave is followed in
+    /// its delegation (`Delegation::follow`), stored with it.
     async fn record(&self, recorded: Recorded) -> Option<Position> {
         let said = recorded
             .entry
             .published()
             .and_then(|entry| entry.said().cloned())
             .filter(Message::is_heard);
+        let entry = recorded.entry.clone();
         let mut state = self.state.lock().await;
         if !state.history.enter(recorded) {
             return None;
         }
         let position = state.history.end().previous();
+        // What a delegate gave, followed in its delegation with its entry, stored together, and
+        // its delegate in step with it (issue 557).
+        let delegated = position.and_then(|at| state.follow_given(&entry, at));
+        if let Some(thread) = delegated {
+            if let Some(delegation) = state.delegation(thread) {
+                self.sync_delegate(thread, delegation);
+            }
+        }
         match self.store_state(&mut state).await {
             Ok(()) => {
                 if let Some(message) = said {
@@ -1062,6 +1083,21 @@ impl ChannelLoop {
             Err(e) => warn!("Cannot store state of channel {}: {}", self.id, e),
         }
         position
+    }
+
+    /// Follows the channel refusing `event`, if a delegate gave something with it (issue 557,
+    /// `ChannelState::follow_refused`): stored, and its delegate in step with it - ahead of the
+    /// rejection it is told.
+    async fn follow_refused(&self, event: &Envelope) {
+        let Some(entry) = event.entry() else { return };
+        let mut state = self.state.lock().await;
+        let Some(thread) = state.follow_refused(&entry) else { return };
+        if let Err(e) = self.store_state(&mut state).await {
+            warn!("Cannot store the delegation into thread {}: {}", thread, e);
+        }
+        if let Some(delegation) = state.delegation(thread) {
+            self.sync_delegate(thread, delegation);
+        }
     }
 
     /// Stores `state`, the channel's, and then lets go of what its history
@@ -1144,7 +1180,7 @@ mod tests {
         RetryTarget,
     };
     use caelumora_domain::agent::AgentId;
-    use caelumora_domain::channel::{ChannelId, ThreadId, ThreadOrigin};
+    use caelumora_domain::channel::{Brief, ChannelId, Delegation, ThreadId, ThreadOrigin};
     use caelumora_domain::confidentiality::{Classification, Confidentiality};
     use caelumora_domain::content::ContentRef;
     use caelumora_domain::history::{HistoryEntry, Recipients};
@@ -1159,6 +1195,7 @@ mod tests {
     use caelumora_security::AllowAllPolicy;
     use caelumora_security::SecurityContext;
     use chrono::Utc;
+    use std::collections::VecDeque;
     use std::slice;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
@@ -2886,16 +2923,26 @@ mod tests {
         assert!(!channel.close_thread(&system, line).await.unwrap(), "and the line never");
     }
 
-    /// A channel of `users` with a thread opened at its line, whose delegate is forged
-    /// (`ChannelLoop::forge_delegate`): what something is given to read in (issue 557).
-    async fn with_a_delegate(users: &[&User]) -> (Arc<ChannelLoop>, ThreadId) {
-        let channel = channel_with(users, Arc::new(AllowAllPolicy::new())).await;
-        let thread = channel.forge_delegate(|_| Vec::new()).await;
+    /// A channel of alice and bob with a thread at its line delegated into by bob, to alice, in
+    /// her chain, its brief given, whose delegate is forged (`ChannelLoop::forge_delegate`): what
+    /// the delegate gives back is admitted as the delegation says (issue 557).
+    async fn with_a_delegate(alice: &User, bob: &User) -> (Arc<ChannelLoop>, ThreadId) {
+        let channel = channel_with(&[alice, bob], Arc::new(AllowAllPolicy::new())).await;
+        let (hers, his) = (ActorId::User(alice.id), ActorId::User(bob.id));
+        let message = Message {
+            sender_id: his,
+            content: Some("look this up".to_string()),
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        };
+        let brief = Brief { message, given_at: Some(Position::START) };
+        let briefs = VecDeque::from([brief]);
+        let delegation = Delegation { giver: his, recipient: hers, initiator: hers, briefs };
+        let thread = channel.forge_delegate(delegation, |_| Vec::new()).await;
         (channel, thread)
     }
 
     /// `sender` gives `recipient` in `thread_id` a message of `giver`, classified
-    /// `classification`, to read (issue 557).
+    /// `classification`, to read, in the chain of `giver` (issue 557).
     fn given(
         channel: &ChannelLoop,
         sender: ActorId,
@@ -2913,19 +2960,20 @@ mod tests {
         let message = Message {
             sender_id: giver,
             role: MessageRole::User,
-            content: Some("look this up".to_string()),
+            content: Some("found it".to_string()),
             ..Message::new(classification)
         };
         Envelope::new(context, ActorEvent::GivenToRead { recipient, message })
     }
 
-    /// Issue 557: something is given to read by the delegate of a thread opened alone - into it,
-    /// or back into the thread it was opened at -, in its giver's name, to a participant running
-    /// there, for a giver the channel lists, as a text of a classification the channel may hold.
+    /// Issue 557: what a delegate gives is admitted as its thread's delegation says - what came of
+    /// a brief given, back where the thread was opened, of its recipient to its giver, in the
+    /// delegating chain's name -, from the delegate of a thread opened alone, to whom runs there,
+    /// as a text of a classification the channel may hold.
     #[tokio::test]
-    async fn something_is_given_to_read_by_a_delegate_alone() {
+    async fn a_delegate_gives_what_its_delegation_says_alone() {
         let (alice, bob) = (make_user("alice"), make_user("bob"));
-        let (channel, thread) = with_a_delegate(&[&alice, &bob]).await;
+        let (channel, thread) = with_a_delegate(&alice, &bob).await;
         let hers = ActorId::User(alice.id);
         let his = ActorId::User(bob.id);
         let line = ThreadId::line(channel.id);
@@ -2935,26 +2983,27 @@ mod tests {
         };
         let fits = Classification::CHANNEL_DEFAULT;
         let back = given(delegate, line, his, hers, fits.clone());
-        assert_eq!(channel.admit(&back).await, Ok(()), "back into the thread it was opened at");
+        assert_eq!(channel.admit(&back).await, Ok(()), "back where the thread was opened");
         let refused = [
             (given(hers, line, his, hers, fits.clone()), "from one who is no delegate"),
             (
                 given(ActorId::Delegate(ThreadId::new()), line, his, hers, fits.clone()),
                 "from the delegate of a thread not opened at it",
             ),
-            (given(delegate, thread, his, hers, fits.clone()), "to one not running there"),
-            (given(delegate, thread, delegate, hers, fits.clone()), "to no participant"),
+            (given(ActorId::Delegate(line), line, his, hers, fits.clone()), "from the line's"),
+            (given(delegate, thread, his, hers, fits.clone()), "into its thread but the brief"),
+            (given(delegate, thread, delegate, hers, fits.clone()), "to itself"),
+            (given(delegate, line, hers, hers, fits.clone()), "back to another than its giver"),
             (
                 given(delegate, line, his, ActorId::Agent(AgentId::new()), fits.clone()),
-                "for a giver the channel does not list",
+                "of another than its recipient",
             ),
-            (given(ActorId::Delegate(line), line, his, hers, fits.clone()), "from the line's"),
             (
                 Envelope {
                     context: EventContext { initiator_id: his, ..back.context.clone() },
                     ..back.clone()
                 },
-                "in the name of another than its giver",
+                "in another chain than the one that delegated",
             ),
             (
                 Envelope {
@@ -2987,7 +3036,7 @@ mod tests {
     #[tokio::test]
     async fn something_given_to_read_asks_its_recipient_alone() {
         let (alice, bob) = (make_user("alice"), make_user("bob"));
-        let (channel, thread) = with_a_delegate(&[&alice, &bob]).await;
+        let (channel, thread) = with_a_delegate(&alice, &bob).await;
         let hers = ActorId::User(alice.id);
         let his = ActorId::User(bob.id);
         let delegate = ActorId::Delegate(thread);

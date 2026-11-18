@@ -874,6 +874,33 @@ async fn a_thread_is_opened_by_a_reader_with_their_own_and_closed_by_its_opener_
     world.manager.stop(&alice, session.id()).await.unwrap();
 }
 
+/// Issue 557: whoever reads a channel delegates into a thread of it, in their own name - its brief
+/// given by the thread's delegate, which nothing asks again -, and nobody who does not read it.
+#[tokio::test]
+async fn a_brief_is_delegated_by_a_reader_of_the_channel_in_their_own_name() {
+    let answering = ScriptedAgents(Script::Answers("ok".to_string()));
+    let world = World::with(&[], &[&answering], |_| {}).await;
+    let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
+    let bobs_helper = ActorId::Agent(world.agent("bobs-helper", world.bob, &shared).await);
+    let session = world.shared_session(&[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let bob = World::as_user(world.bob);
+    let line = ThreadOrigin { thread: ThreadId::line(main.id()), message: MessageId::new() };
+    let thread = session.open_thread(&bob, main.id(), line, vec![bobs_helper]).await.unwrap();
+
+    let carol = World::as_user(world.carol);
+    let (refused, asked) =
+        world.asked(main.delegate(&carol, thread, bobs_helper, "mine".to_string())).await;
+    assert!(denied(&refused.expect_err("carol does not read the channel")));
+    assert_eq!(asked, checks(&["carol: GetChannel(alice's) no"]), "asked as reading it");
+
+    let (delegated, asked) =
+        world.asked(main.delegate(&bob, thread, bobs_helper, "look it up".to_string())).await;
+    delegated.expect("bob reads the channel");
+    assert_eq!(asked, checks(&["bob: GetChannel(alice's) yes"]), "and nothing else: {asked:?}");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 /// An agent is taken in only by who may read it (issue 14): nobody brings
 /// in an agent whose tools, and the credentials behind them, they may not
 /// use - and only one that may run, whose personality is its to read.

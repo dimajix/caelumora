@@ -208,7 +208,13 @@ impl Filter<HistoryField> {
                     ActorId::User(_) => while_taking_part(HistoryField::ToUsers, &positions),
                     ActorId::Agent(_) => while_taking_part(HistoryField::ToAgents, &in_its_thread),
                     ActorId::Approver(_) => Filter::eq(HistoryField::ToApprovers, true),
-                    ActorId::Delegate(_) | ActorId::System | ActorId::None => Filter::nothing(),
+                    // What goes to the users and happened in its thread or the whole channel
+                    // (`Recipients::reaches`).
+                    ActorId::Delegate(thread) => Filter::all_of([
+                        Filter::eq(HistoryField::ToUsers, true),
+                        Filter::in_thread(*thread),
+                    ]),
+                    ActorId::System | ActorId::None => Filter::nothing(),
                 };
                 let reaching = Filter::Or(vec![
                     Filter::any(HistoryField::Named, Filter::eq(HistoryField::Element, *actor)),

@@ -2,6 +2,7 @@
 //! a thread within it is `thread`'s, opening and closing one `threads`'.
 
 mod control;
+mod delegation;
 mod history;
 mod inbox;
 mod participants;
@@ -29,7 +30,7 @@ use crate::lock::LocksById;
 use crate::moderator::Moderator;
 use crate::session::SessionError;
 use crate::session::SessionLoop;
-use anyhow::{anyhow, Error, Result};
+use anyhow::{Error, Result};
 use arc_swap::ArcSwap;
 use caelumora_api::actor::Actor;
 use caelumora_api::component::{ComponentError, ComponentImpl};
@@ -37,7 +38,9 @@ use caelumora_domain::actor::ActorId;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_domain::actor::Envelope;
 use caelumora_domain::chain::Position;
-use caelumora_domain::channel::{Channel, ChannelId, ChannelState, Opening, Participant, ThreadId};
+use caelumora_domain::channel::{
+    Channel, ChannelId, ChannelState, Delegation, Opening, Participant, ThreadId,
+};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::mention::MentionDirectory;
 use caelumora_domain::message::MessageId;
@@ -155,6 +158,15 @@ pub enum ChannelError {
     /// first.
     #[error("thread {thread} of channel {channel} is not closed while someone takes part in it")]
     ThreadNotEmpty { thread: ThreadId, channel: ChannelId },
+    /// A participant that does not run in the thread named of the channel (issue 557): whom a
+    /// brief is delegated to there, or whoever delegates it where the thread was opened.
+    #[error("{participant} takes no part in thread {thread} of channel {channel}")]
+    NotInThread { participant: ActorId, thread: ThreadId, channel: ChannelId },
+    /// A thread delegated into by another giver, or to another recipient, than a brief names
+    /// (issue 557): a thread has one delegation, which brings back to its giver what its recipient
+    /// made of it.
+    #[error("thread {thread} of channel {channel} is delegated by another or to another")]
+    DelegatedOtherwise { thread: ThreadId, channel: ChannelId },
 }
 
 /// Whether `error` of `Participation::resolve` or of building its actor says
@@ -231,6 +243,10 @@ enum ActorChange {
     /// The thread to close, on whose behalf - in whose name `run` announces it (`ThreadClosed`),
     /// once whoever left it has left, and records it closed.
     Close(ThreadId, SecurityContext),
+    /// What is delegated into the thread (issue 557): `run` records its briefs behind those of the
+    /// thread's delegation, starting the delegation with it if the thread has none, and hands them
+    /// to the thread's delegate - starting it if it does not run.
+    Delegate(ThreadId, Delegation),
 }
 
 #[derive(Debug)]
@@ -365,6 +381,9 @@ impl ChannelLoop {
             let resolved = ResolvedParticipant::internal(internal, session_id, id);
             channel_loop.start_participant(resolved, line, None, None).await?;
         }
+        // The delegates of what is still delegated (issue 557), each reading on from where its
+        // open brief was given, before the participants they give to.
+        channel_loop.start_delegates().await;
         // The participants the channel has, which start again with it:
         // nothing to take in, no join to announce.
         let participants = channel_loop.channel.load().participants.clone();
@@ -609,10 +628,7 @@ impl ChannelLoop {
             ResolvedKind::Approver(approver) => {
                 Box::new(ApproverActor::new(approver, participant_runtime))
             }
-            // Built as a thread is delegated in (557, step 3 of 2b).
-            ResolvedKind::Delegate(thread) => {
-                return Err(anyhow!("The delegate of thread {} has no actor to build yet", thread))
-            }
+            ResolvedKind::Delegate(thread) => Box::new(self.build_delegate(thread).await?),
         })
     }
 }

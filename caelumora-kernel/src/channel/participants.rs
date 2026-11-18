@@ -6,6 +6,7 @@ use super::{
     ResolvedParticipant, LEAVE_GRACE,
 };
 use anyhow::{Error, Result};
+use caelumora_api::actor::Actor;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::AgentId;
 use caelumora_domain::chain::Position;
@@ -433,18 +434,25 @@ impl ChannelLoop {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .insert(participant, task);
+        self.drop_actor(participant, &actor, thread);
+        let leave = ActorChange::Leave(participant, name, remover.clone(), thread);
+        let _ = self.changes_tx.send(leave);
+    }
+
+    /// Takes `actor`, of `id`, out of the channel's actors, of `thread` it takes part in and of the
+    /// mentions, and makes it leave (`Actor::leave`): what letting it go means for the running
+    /// channel, a participant's actor (`leave_actor`) or a thread's delegate (`let_delegate_go`).
+    pub(super) fn drop_actor(&self, id: ActorId, actor: &Arc<dyn Actor>, thread: ThreadId) {
         self.actors.rcu(|actors| {
             let mut actors = HashMap::clone(actors);
-            actors.remove(&participant);
+            actors.remove(&id);
             actors
         });
         if let Some(taking_part) = self.thread(thread) {
-            taking_part.remove_actor(participant);
+            taking_part.remove_actor(id);
         }
         self.rebuild_mentions();
         actor.leave();
-        let leave = ActorChange::Leave(participant, name, remover.clone(), thread);
-        let _ = self.changes_tx.send(leave);
     }
 
     /// Waits until the actor `participant` had in the channel before has

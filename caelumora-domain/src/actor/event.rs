@@ -565,7 +565,8 @@ impl ActorEvent {
     }
 
     /// The message the event is or is about, if any: a message said, or one it changes, takes back,
-    /// reclassifies or asks to be answered again - what a rejection of it names (`EventRejected`).
+    /// reclassifies, asks to be answered again or gives to read - what a rejection of it names
+    /// (`EventRejected`).
     pub fn subject_message(&self) -> Option<MessageId> {
         match self {
             ActorEvent::PartialMessageGenerated(m)
@@ -578,6 +579,7 @@ impl ActorEvent {
             ActorEvent::RetryRequested { target: RetryTarget::Message(message), .. } => {
                 Some(*message)
             }
+            ActorEvent::GivenToRead { message, .. } => Some(message.id),
             _ => None,
         }
     }

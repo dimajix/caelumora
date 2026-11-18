@@ -405,8 +405,10 @@ async fn an_external_agent_is_given_what_was_said_since_it_was_last_asked_and_an
 #[tokio::test]
 async fn an_external_agent_is_given_what_a_delegate_gives_it_to_read_and_answers() {
     use crate::external::ExternalEvent;
-    use caelumora_domain::channel::ThreadId;
+    use caelumora_domain::chain::Position;
+    use caelumora_domain::channel::{Brief, Delegation, ThreadId};
     use caelumora_domain::message::MessageRole;
+    use std::collections::VecDeque;
 
     let remote = Arc::new(ScriptedExternalAgent::answering(vec![
         vec![
@@ -444,7 +446,18 @@ async fn an_external_agent_is_given_what_a_delegate_gives_it_to_read_and_answers
         let given = ActorEvent::GivenToRead { recipient: ActorId::Agent(agent), message };
         vec![Envelope::new(context, given)]
     };
-    channel.forge_delegate(given).await;
+    // Delegated by the agent to alice, as far as its delegate goes: alice's answer comes back.
+    let briefed = Brief {
+        message: Message::new(Classification::CHANNEL_DEFAULT),
+        given_at: Some(Position::START),
+    };
+    let delegation = Delegation {
+        giver: ActorId::Agent(agent),
+        recipient: alice,
+        initiator: alice,
+        briefs: VecDeque::from([briefed]),
+    };
+    channel.forge_delegate(delegation, given).await;
     let second = answered(&mut events, agent).await;
     assert_eq!(second[0].content.as_deref(), Some("Found it."), "asked, it answers");
 

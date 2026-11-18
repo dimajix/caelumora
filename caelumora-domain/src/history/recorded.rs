@@ -116,7 +116,7 @@ impl Recipients {
     }
 
     /// Whether it goes to `actor` for what it is: a user or an agent of the
-    /// kinds it names, or an approver. A delegate is reached by name alone.
+    /// kinds it names, or an approver. A delegate is reached as `reaches` says.
     fn of_kind(&self, actor: ActorId) -> bool {
         match actor {
             ActorId::User(_) => self.users,
@@ -128,10 +128,11 @@ impl Recipients {
 
     /// Whether it reached `actor` at the position `seq`, having happened in `happened_in` -
     /// `None`: in the whole channel -, `attended` being where `actor` took part (issue 557): by
-    /// name; as an approver; as a user while it took part; as an agent while it took part in that
-    /// thread, or in any for what happened in the whole channel (`Attended::holds`). An agent
-    /// hears the threads it takes part in, while a user is given everything of the channel and
-    /// sorts it by thread.
+    /// name; as an approver; as a delegate, what goes to the users and happened in its thread or
+    /// the whole channel - what it waits for, the recipient's answer; as a user while it took part;
+    /// as an agent while it took part in that thread, or in any for what happened in the whole
+    /// channel (`Attended::holds`). An agent hears the threads it takes part in, while a user is
+    /// given everything of the channel and sorts it by thread.
     fn reaches(
         &self,
         actor: ActorId,
@@ -143,8 +144,11 @@ impl Recipients {
             ActorId::Agent(_) => attended.iter().any(|at| at.holds(seq, happened_in)),
             _ => attended.iter().any(|at| at.range.contains(&seq)),
         };
+        let its_thread = matches!(actor, ActorId::Delegate(thread)
+            if happened_in.is_none_or(|happened_in| happened_in == thread));
         self.named.contains(&actor)
             || (self.approvers && matches!(actor, ActorId::Approver(_)))
+            || (self.users && its_thread)
             || (self.of_kind(actor) && while_taking_part())
     }
 }
@@ -293,6 +297,21 @@ mod tests {
             Recipients::only(vec![agent]).goes_to(agent, here, Some(elsewhere)),
             "by name, wherever it happened"
         );
+    }
+
+    /// Issue 557: a thread's delegate is given what goes to the users and happens in its thread or
+    /// in the whole channel - what its recipient says, how its turns end -, nothing of another
+    /// thread, and nothing that goes to the agents alone.
+    #[test]
+    fn a_delegate_is_given_what_the_users_are_of_its_thread() {
+        let (here, elsewhere) = (ThreadId::new(), ThreadId::new());
+        let delegate = ActorId::Delegate(here);
+        let to_users = Recipients::participants(false);
+        assert!(to_users.goes_to(delegate, here, Some(here)), "in its thread");
+        assert!(to_users.goes_to(delegate, here, None), "in the whole channel");
+        assert!(!to_users.goes_to(delegate, here, Some(elsewhere)), "not in another thread");
+        let to_agents = Recipients { users: false, ..Recipients::participants(true) };
+        assert!(!to_agents.goes_to(delegate, here, Some(here)), "not what goes to agents alone");
     }
 
     /// Issue 417: a reader is given an entry only if it went to them or

@@ -95,6 +95,154 @@ mod tests {
         error.downcast_ref::<ChannelError>()
     }
 
+    /// Issue 557: what is delegated into a thread its delegate gives the recipient to read there,
+    /// and what the recipient answers comes back to the giver where the thread was opened; a
+    /// thread delegated into takes no other giver, a brief no recipient outside the thread; and
+    /// the delegate goes with its thread, which it keeps open no longer than its recipient.
+    #[tokio::test]
+    async fn what_is_delegated_comes_back_to_its_giver_and_its_delegate_goes_with_the_thread() {
+        let answering = ScriptedAgents(Script::Answers("found it".to_string()));
+        let world = World::with(&[], &[&answering], |_| {}).await;
+        let personality = world.personality("helper", Some(world.alice), &[]).await;
+        let helper = ActorId::Agent(world.agent("helper", world.alice, &personality).await);
+        let alice = World::as_user(world.alice);
+        let hers = ActorId::User(world.alice);
+        let session = world.session_of(&[world.bob], &[], &[]).await;
+        let main = Arc::clone(&session.channels()[0]);
+        let thread = session
+            .open_thread(&alice, main.id(), at_the_line(&main), vec![helper])
+            .await
+            .expect("alice opens a thread with her agent");
+
+        main.delegate(&alice, thread, helper, "look it up".to_string()).await.expect("delegated");
+        let back = |e: &HistoryEntry| {
+            matches!(e, HistoryEntry::GivenToRead { recipient, message, .. }
+                if *recipient == hers && message.sender_id == helper)
+        };
+        let entries = main.history_once(|entries| entries.iter().any(back)).await;
+        let briefed = entries.iter().position(|e| {
+            matches!(e, HistoryEntry::GivenToRead { recipient, message, .. }
+                if *recipient == helper && message.content.as_deref() == Some("look it up"))
+        });
+        let answered = entries.iter().position(
+            |e| matches!(e, HistoryEntry::Said { message } if message.sender_id == helper),
+        );
+        let given_back = entries.iter().position(back);
+        assert!(
+            briefed.is_some() && briefed < answered && answered < given_back,
+            "the brief given, answered, and the answer given back: {entries:?}"
+        );
+        let Some(HistoryEntry::GivenToRead { message, .. }) = given_back.map(|at| &entries[at])
+        else {
+            unreachable!("found above")
+        };
+        assert_eq!(message.content.as_deref(), Some("found it"), "what the turn said");
+        let delegate = ActorId::Delegate(thread);
+        assert!(main.actor(delegate).is_some(), "its delegate runs");
+        assert!(!main.participant_ids().contains(&delegate), "and takes no part in the channel");
+        assert!(main.mentions().lookup("delegate").is_empty(), "nor can it be mentioned");
+
+        let bob = World::as_user(world.bob);
+        let refused = main.delegate(&bob, thread, helper, "mine".to_string()).await.unwrap_err();
+        assert!(
+            matches!(channel_error(&refused), Some(ChannelError::DelegatedOtherwise { .. })),
+            "by another giver: {refused}"
+        );
+        let his = ActorId::User(world.bob);
+        let refused = main.delegate(&alice, thread, his, "yours".to_string()).await.unwrap_err();
+        assert!(
+            matches!(channel_error(&refused), Some(ChannelError::NotInThread { .. })),
+            "to one outside the thread: {refused}"
+        );
+        let line = ThreadId::line(main.id());
+        let refused = main.delegate(&alice, line, hers, "here".to_string()).await.unwrap_err();
+        assert!(
+            matches!(channel_error(&refused), Some(ChannelError::ThreadNotOpen { .. })),
+            "into the line, which nobody opened: {refused}"
+        );
+
+        session.remove_participant(&alice, helper).await.expect("let go");
+        assert!(main.close_thread(&alice, thread).await.expect("closed"), "its delegate with it");
+        main.history_once(|entries| {
+            entries
+                .iter()
+                .any(|e| matches!(e, HistoryEntry::ThreadClosed { thread: t, .. } if *t == thread))
+        })
+        .await;
+        assert!(main.actor(ActorId::Delegate(thread)).is_none(), "which is gone");
+        world.manager.stop(&alice, session.id()).await.unwrap();
+    }
+
+    /// Issue 557: what came of a brief that cannot reach its giver - gone from where the thread was
+    /// opened - is dropped with the brief, and the brief that waited behind it is given.
+    #[tokio::test]
+    async fn a_brief_whose_giver_left_is_dropped_and_the_next_one_given() {
+        let hanging = ScriptedAgents(Script::Hangs);
+        let world = World::with(&[], &[&hanging], |_| {}).await;
+        let personality = world.personality("helper", Some(world.alice), &[]).await;
+        let helper = ActorId::Agent(world.agent("helper", world.alice, &personality).await);
+        let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
+        let session = world.session_of(&[world.bob], &[], &[]).await;
+        let main = Arc::clone(&session.channels()[0]);
+        let thread = session
+            .open_thread(&alice, main.id(), at_the_line(&main), vec![helper])
+            .await
+            .expect("opened");
+        let briefed = |text: &'static str| {
+            move |e: &HistoryEntry| {
+                matches!(e, HistoryEntry::GivenToRead { recipient, message, .. }
+                    if *recipient == helper && message.content.as_deref() == Some(text))
+            }
+        };
+        main.delegate(&bob, thread, helper, "look it up".to_string()).await.expect("delegated");
+        main.delegate(&bob, thread, helper, "and this".to_string()).await.expect("waits");
+        main.history_once(|entries| entries.iter().any(briefed("look it up"))).await;
+
+        session.leave(&bob, ActorId::User(world.bob)).await.expect("bob leaves");
+        main.cancel_actor(&alice, helper).await.expect("its turn ends without an answer");
+        let entries = main.history_once(|entries| entries.iter().any(briefed("and this"))).await;
+        assert!(
+            entries.iter().any(|e| matches!(e, HistoryEntry::EventRejected { .. })),
+            "what came of the first could not reach bob: {entries:?}"
+        );
+        world.manager.stop(&alice, session.id()).await.unwrap();
+    }
+
+    /// Issue 557: a delegation is kept with the channel's state: started again, the channel starts
+    /// its delegate, which gives its brief not again, and brings back what comes of it - here, that
+    /// its recipient left.
+    #[tokio::test]
+    async fn a_delegate_carries_on_after_a_restart() {
+        let hanging = ScriptedAgents(Script::Hangs);
+        let world = World::with(&[], &[&hanging], |_| {}).await;
+        let personality = world.personality("helper", Some(world.alice), &[]).await;
+        let helper = ActorId::Agent(world.agent("helper", world.alice, &personality).await);
+        let alice = World::as_user(world.alice);
+        let hers = ActorId::User(world.alice);
+        let session = world.session_of(&[], &[], &[]).await;
+        let main = Arc::clone(&session.channels()[0]);
+        let thread = session
+            .open_thread(&alice, main.id(), at_the_line(&main), vec![helper])
+            .await
+            .expect("opened");
+        main.delegate(&alice, thread, helper, "look it up".to_string()).await.expect("delegated");
+        let briefed = |e: &HistoryEntry| matches!(e, HistoryEntry::GivenToRead { recipient, .. } if *recipient == helper);
+        main.history_once(|entries| entries.iter().any(briefed)).await;
+
+        world.manager.stop(&alice, session.id()).await.unwrap();
+        let session = world.manager.open(&alice, session.id()).await.unwrap();
+        let main = Arc::clone(&session.channels()[0]);
+        session.remove_participant(&alice, helper).await.expect("let go");
+        let back = |e: &HistoryEntry| {
+            matches!(e, HistoryEntry::GivenToRead { recipient, message, .. }
+                if *recipient == hers
+                    && message.content.as_deref() == Some("It left before it answered."))
+        };
+        let entries = main.history_once(|entries| entries.iter().any(back)).await;
+        assert_eq!(entries.iter().filter(|e| briefed(e)).count(), 1, "given once: {entries:?}");
+        world.manager.stop(&alice, session.id()).await.unwrap();
+    }
+
     /// Issue 557: a thread is opened with its founders taking part in it alone - taken into the
     /// session and the channel, its opening recorded before their joins -, is there again with
     /// them after a restart, and is closed once they were let go.

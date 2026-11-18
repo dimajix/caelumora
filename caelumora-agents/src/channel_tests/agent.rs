@@ -1189,8 +1189,10 @@ async fn a_sleeping_agent_woken_by_a_mention_answers_it() {
 /// was given, and answers it.
 #[tokio::test]
 async fn an_agent_given_something_to_read_wakes_takes_it_in_and_answers() {
-    use caelumora_domain::channel::ThreadId;
+    use caelumora_domain::chain::Position;
+    use caelumora_domain::channel::{Brief, Delegation, ThreadId};
     use caelumora_domain::tool::ToolCall;
+    use std::collections::VecDeque;
 
     let answer = |text: &str, tool_calls| Message {
         role: MessageRole::Assistant,
@@ -1238,7 +1240,18 @@ async fn an_agent_given_something_to_read_wakes_takes_it_in_and_answers() {
         let given = ActorEvent::GivenToRead { recipient: ActorId::Agent(agent), message };
         vec![Envelope::new(context, given)]
     };
-    channel.forge_delegate(given).await;
+    // Delegated by the agent to alice, as far as its delegate goes: alice's answer comes back.
+    let briefed = Brief {
+        message: Message::new(Classification::CHANNEL_DEFAULT),
+        given_at: Some(Position::START),
+    };
+    let delegation = Delegation {
+        giver: ActorId::Agent(agent),
+        recipient: alice,
+        initiator: alice,
+        briefs: VecDeque::from([briefed]),
+    };
+    channel.forge_delegate(delegation, given).await;
 
     let said = |messages: Vec<Message>| {
         messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>()

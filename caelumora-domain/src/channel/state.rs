@@ -1,9 +1,10 @@
 //! What a channel holds while it runs (`ChannelState`): its history and from where it holds it, its
 //! threads, and what of it changed since it was stored (`ChannelStateChange`, issue 193).
 
-use super::{ChannelId, ThreadId, ThreadState};
+use super::{ChannelId, Delegation, ThreadId, ThreadState};
+use crate::actor::ActorId;
 use crate::chain::Position;
-use crate::history::{History, WINDOW};
+use crate::history::{History, HistoryEntry, WINDOW};
 use crate::store::Journaled;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -36,6 +37,34 @@ impl ChannelState {
             history_from: Position::START,
             threads: BTreeMap::from([(ThreadId::line(channel_id), ThreadState::LINE)]),
         }
+    }
+
+    /// Follows what a thread's delegate gave, as `entry` records it at `at` (issue 557,
+    /// `Delegation::follow`); the thread whose delegation it moved on, if it moved one on.
+    pub fn follow_given(&mut self, entry: &HistoryEntry, at: Position) -> Option<ThreadId> {
+        let HistoryEntry::GivenToRead { recipient, message, by: ActorId::Delegate(thread), .. } =
+            entry
+        else {
+            return None;
+        };
+        self.delegation(*thread)?.follow(*recipient, message, at).then_some(*thread)
+    }
+
+    /// Follows the channel refusing what a thread's delegate gave, as `entry` would have recorded
+    /// it (issue 557, `Delegation::refused`); the thread whose delegation it moved on, if it moved
+    /// one on.
+    pub fn follow_refused(&mut self, entry: &HistoryEntry) -> Option<ThreadId> {
+        let HistoryEntry::GivenToRead { recipient, message, by: ActorId::Delegate(thread), .. } =
+            entry
+        else {
+            return None;
+        };
+        self.delegation(*thread)?.refused(*recipient, message).then_some(*thread)
+    }
+
+    /// The delegation of `thread`, if it has one.
+    pub fn delegation(&mut self, thread: ThreadId) -> Option<&mut Delegation> {
+        self.threads.get_mut(&thread).and_then(|held| held.delegation.as_mut())
     }
 
     /// Lets go of what its history holds before its window - the last
@@ -112,10 +141,14 @@ mod tests {
     fn a_new_channel_has_its_line_open() {
         let channel = ChannelId::new();
         let state = ChannelState::new(channel);
-        assert_eq!(
-            state.threads,
-            BTreeMap::from([(ThreadId::line(channel), ThreadState::LINE)]),
-            "its line, alone"
+        let line = ThreadId::line(channel);
+        assert_eq!(state.threads.keys().collect::<Vec<_>>(), [&line], "its line, alone");
+        assert!(
+            matches!(
+                state.threads[&line],
+                ThreadState { opening: None, closed: false, delegation: None }
+            ),
+            "open, hanging nowhere"
         );
     }
 
@@ -135,6 +168,10 @@ mod tests {
         assert_eq!(state.changes().len(), 2, "the small part, whole");
         replayed(&state, &mut copy);
         assert_eq!((copy.channel_id, copy.history_from.get()), (state.channel_id, 1));
-        assert_eq!(copy.threads, state.threads, "its threads with it");
+        let held = |state: &ChannelState| {
+            let threads = state.threads.iter();
+            threads.map(|(id, held)| (*id, held.opening, held.closed)).collect::<Vec<_>>()
+        };
+        assert_eq!(held(&copy), held(&state), "its threads with it");
     }
 }
