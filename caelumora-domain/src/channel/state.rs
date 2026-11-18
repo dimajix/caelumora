@@ -114,13 +114,17 @@ impl Journaled for ChannelState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::actor::testing::context_in;
     use crate::message::testing::{id, make_message};
     use crate::store::testing::{replayed, stored};
 
     #[test]
     fn a_channel_keeps_the_last_entries_of_its_history_once_they_are_stored() {
-        let mut state = ChannelState::new(ChannelId::new());
-        state.history.extend((1..=250).map(|n| make_message(id(n))).collect());
+        let channel = ChannelId::new();
+        let mut state = ChannelState::new(channel);
+        state
+            .history
+            .extend(&context_in(channel), (1..=250).map(|n| make_message(id(n))).collect());
         state.keep_window();
         assert_eq!(
             (state.history.base().get(), state.history_from.get()),
@@ -154,8 +158,9 @@ mod tests {
 
     #[test]
     fn a_channels_state_journals_its_small_part_and_leaves_its_history_to_the_store() {
-        let mut state = ChannelState::new(ChannelId::new());
-        state.history.extend(vec![make_message(id(1))]);
+        let channel = ChannelId::new();
+        let mut state = ChannelState::new(channel);
+        state.history.extend(&context_in(channel), vec![make_message(id(1))]);
         let mut copy = stored(&mut state);
         assert!(copy.history.is_empty(), "the history is not in the document");
         assert!(

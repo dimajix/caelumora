@@ -199,8 +199,10 @@ mod tests {
     use super::*;
     use crate::library::AgentsLibrary;
     use crate::testing;
+    use caelumora_domain::actor::testing::context_in;
     use caelumora_domain::actor::{ActorEvent, ActorId};
     use caelumora_domain::agent::AgentChannelState;
+    use caelumora_domain::channel::ChannelId;
     use caelumora_domain::component::ComponentDescriptor;
     use caelumora_domain::config::AppConfig;
     use caelumora_domain::content::testing::make_content_ref;
@@ -213,12 +215,13 @@ mod tests {
     use caelumora_kernel::testing::World;
     use caelumora_kernel::workspace::WorkspaceSpec;
 
-    /// `message`, said, recorded as the store keeps it.
+    /// `message`, said in a channel's line, recorded as the store keeps it.
     fn recorded(message: Message) -> Value {
         serde_json::to_value(Recorded::new(
             HistoryEntry::Said { message },
             ActorId::System,
             Audience::Everybody,
+            &context_in(ChannelId::new()),
         ))
         .unwrap()
     }

@@ -49,10 +49,11 @@ pub struct AgentContextView {
 /// What the tests of the agents' logic build a view with (issue 370).
 #[cfg(any(test, feature = "test-support"))]
 impl AgentContextView {
-    /// The context of `actor`, an agent, as `state` holds it, in a channel whose history is
-    /// `history` after the agent's join - a participant from its start (issue 417) -, reached by
-    /// nobody: for a test that compares what an agent was given with what the view shows of it.
-    /// Both are put into a store of their own; what it saw is worded with the kernel's texts.
+    /// The context of `actor`, an agent, as `state` holds it, in `channel`, whose history is
+    /// `history` after the agent's join in its line - a participant from its start (issue 417) -,
+    /// reached by nobody: for a test that compares what an agent was given with what the view shows
+    /// of it. Both are put into a store of their own; what it saw is worded with the kernel's
+    /// texts.
     ///
     /// # Panics
     /// If `actor` is no agent.
@@ -60,7 +61,13 @@ impl AgentContextView {
         clippy::expect_used,
         reason = "test code: what fails here fails the test that runs it"
     )]
-    pub async fn of_state(actor: ActorId, mut state: AgentChannelState, history: History) -> Self {
+    pub async fn of_state(
+        actor: ActorId,
+        channel: ChannelId,
+        mut state: AgentChannelState,
+        history: History,
+    ) -> Self {
+        use caelumora_domain::actor::testing::context_in;
         use caelumora_domain::channel::ChannelState;
         use caelumora_domain::history::{Audience, HistoryEntry, Recorded};
         use caelumora_domain::prompt_catalogue::{KERNEL, KERNEL_PROMPTS};
@@ -69,7 +76,6 @@ impl AgentContextView {
         use chrono::Utc;
         let ActorId::Agent(agent) = actor else { panic!("{actor} is no agent") };
         let store = Arc::new(MemoryStore::new());
-        let channel = ChannelId::default();
         store
             .put_agent_channel_state(agent, channel, &mut state)
             .await
@@ -82,7 +88,7 @@ impl AgentContextView {
             at: Utc::now(),
         };
         let mut since_join = History::default();
-        since_join.enter(Recorded::new(joined, actor, Audience::Everybody));
+        since_join.enter(Recorded::new(joined, actor, Audience::Everybody, &context_in(channel)));
         for node in history.all_entries() {
             since_join.enter(node.entry.clone());
         }
@@ -290,6 +296,7 @@ pub enum AgentContextError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_domain::actor::testing::context_in;
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::confidentiality::Confidentiality;
     use caelumora_domain::content::testing::make_content_ref;
@@ -311,6 +318,8 @@ mod tests {
     /// is - here the messages carrying attachments.
     #[tokio::test]
     async fn a_page_of_what_the_agent_saw_is_read_by_a_filter() {
+        let channel = ChannelId::new();
+        let context = context_in(channel);
         let actor = ActorId::Agent(AgentId::new());
         let said = |attachments| Message {
             sender_id: actor,
@@ -320,9 +329,10 @@ mod tests {
         let words = said(Vec::new());
         let attached = said(vec![make_content_ref("notes.png", b"png")]);
         let mut history = History::default();
-        history.extend(vec![words, attached.clone()]);
+        history.extend(&context, vec![words, attached.clone()]);
 
-        let view = AgentContextView::of_state(actor, AgentChannelState::default(), history).await;
+        let view =
+            AgentContextView::of_state(actor, channel, AgentChannelState::default(), history).await;
         let page =
             view.history_page_of(None, 10, Some(Filter::with_attachments())).await.expect("read");
         let ids: Vec<MessageId> =
@@ -332,6 +342,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_turn_under_way_shows_what_it_said_with_what_it_was_produced_from() {
+        let channel = ChannelId::new();
+        let context = context_in(channel);
         let actor = ActorId::Agent(AgentId::new());
         let mut state = AgentChannelState::default();
         let question = Message {
@@ -357,10 +369,10 @@ mod tests {
         let sent = state.said(step.clone());
         // Its channel's history, as it records what was said (issue 417).
         let mut history = History::default();
-        history.extend(vec![question.clone(), sent]);
+        history.extend(&context, vec![question.clone(), sent]);
 
         // Before the turn ended (issue 260).
-        let view = AgentContextView::of_state(actor, state, history).await;
+        let view = AgentContextView::of_state(actor, channel, state, history).await;
         let items = items_of(&view).await;
         assert!(
             items.iter().any(
@@ -381,6 +393,8 @@ mod tests {
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn a_message_context_is_found_only_for_what_the_agent_produced_and_can_still_be_resolved()
     {
+        let channel = ChannelId::new();
+        let context = context_in(channel);
         let actor = ActorId::Agent(AgentId::new());
         let text = |t: &str| Message {
             id: MessageId::new(),
@@ -395,13 +409,14 @@ mod tests {
         let mut history = History::default();
         let question = text("question");
         state.transcript.push(question.clone());
-        history.push(question.clone());
+        history.push(&context, question.clone());
         let answer = produced("answer");
         let before = state.transcript.push(answer.clone());
         history.push(
+            &context,
             answer.clone().produced_from_context(before, state.keep_frame(&FrameRef::default())),
         );
-        let view = AgentContextView::of_state(actor, state.clone(), history.clone()).await;
+        let view = AgentContextView::of_state(actor, channel, state.clone(), history.clone()).await;
 
         let seen = view.context_of(answer.id).await.expect("the agent produced it");
         let ids: Vec<MessageId> = seen
@@ -453,8 +468,8 @@ mod tests {
         // only.
         let mut heard_only = history.clone();
         let dropped = text("dropped");
-        heard_only.push(dropped.clone());
-        let view = AgentContextView::of_state(actor, state.clone(), heard_only).await;
+        heard_only.push(&context, dropped.clone());
+        let view = AgentContextView::of_state(actor, channel, state.clone(), heard_only).await;
         assert!(said(items_of(&view).await).contains(&dropped.id));
         assert_eq!(
             view.in_transcript(&[dropped.id, answer.id]).await.expect("read"),
@@ -472,11 +487,14 @@ mod tests {
         };
         state.prompts.keep(system.text, || "system".to_string());
         let told = produced("told");
-        history.push(told.clone().produced_from_context(
-            before,
-            state.keep_frame(&FrameRef { prompts: vec![system], ..FrameRef::default() }),
-        ));
-        let seen = AgentContextView::of_state(actor, state.clone(), history.clone())
+        history.push(
+            &context,
+            told.clone().produced_from_context(
+                before,
+                state.keep_frame(&FrameRef { prompts: vec![system], ..FrameRef::default() }),
+            ),
+        );
+        let seen = AgentContextView::of_state(actor, channel, state.clone(), history.clone())
             .await
             .context_of(told.id)
             .await
@@ -493,20 +511,26 @@ mod tests {
             at: PromptAt::Start,
             classification: None,
         };
-        history.push(lost.clone().produced_from_context(
-            before,
-            state.keep_frame(&FrameRef { prompts: vec![gone], ..FrameRef::default() }),
-        ));
+        history.push(
+            &context,
+            lost.clone().produced_from_context(
+                before,
+                state.keep_frame(&FrameRef { prompts: vec![gone], ..FrameRef::default() }),
+            ),
+        );
         // Nor one whose frame was never kept (issue 426).
         let unframed = produced("unframed");
-        history.push(unframed.clone().produced_from_context(
-            before,
-            digest::frame(&FrameRef {
-                tools: Some(prompt("never offered")),
-                ..FrameRef::default()
-            }),
-        ));
-        let view = AgentContextView::of_state(actor, state, history).await;
+        history.push(
+            &context,
+            unframed.clone().produced_from_context(
+                before,
+                digest::frame(&FrameRef {
+                    tools: Some(prompt("never offered")),
+                    ..FrameRef::default()
+                }),
+            ),
+        );
+        let view = AgentContextView::of_state(actor, channel, state, history).await;
         assert!(matches!(
             view.context_of(lost.id).await,
             Err(AgentContextError::Unavailable { .. })
@@ -524,6 +548,7 @@ mod tests {
         use caelumora_store::StateStore;
         let agent = AgentId::new();
         let channel = ChannelId::new();
+        let context = context_in(channel);
         let text = |t: &str| Message {
             id: MessageId::new(),
             role: MessageRole::User,
@@ -534,7 +559,7 @@ mod tests {
         let mut history = ChannelState::new(channel);
         let question = text("question");
         state.transcript.push(question.clone());
-        history.history.push(question.clone());
+        history.history.push(&context, question.clone());
         let answer = Message {
             turn_id: Some(TurnId::new()),
             sender_id: ActorId::Agent(agent),
@@ -542,6 +567,7 @@ mod tests {
         };
         let before = state.transcript.push(answer.clone());
         history.history.push(
+            &context,
             answer.clone().produced_from_context(before, state.keep_frame(&FrameRef::default())),
         );
         // A branch begun anew, which the state holds alone.

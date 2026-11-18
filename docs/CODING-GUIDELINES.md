@@ -629,9 +629,13 @@ a cut is wrong: it is a [finding](../AGENTS.md#findings), and the visibility is 
     `testing` module of its kind makes - `make_personality`, `make_session`, `make_user`,
     `make_template`, `make_channel`, `make_message` - and writes beside it only what it differs in
     (`Personality { kind, ..make_personality("remote") }`), so that a new field of the kind changes
-    one place and every test says what is particular about its document. These modules are the
-    domain's, so that its own tests reach them too; what stores documents in `EntityStores` and
-    needs nothing of the kernel - `stored_agent`, `record_users` - is the stores'
+    one place and every test says what is particular about its document. What a test records in a
+    history by hand happens in a context it names: `actor::testing::context_in` - its channel's
+    line, in a session of its own -, or `EventContext::new` where it knows the session; never
+    `EventContext::default()`, whose thread is the line of no channel, so that a reader of the
+    line finds nothing of it (issue 599). These modules are the domain's, so that its own tests
+    reach them too; what stores documents in `EntityStores` and needs nothing of the kernel -
+    `stored_agent`, `record_users` - is the stores'
     (`caelumora_store::testing`), and the policies a test opens them by are
     `caelumora_security::testing`'s. The kernel's `testing` modules build what runs and stores - a
     kernel, a running or a stored session.

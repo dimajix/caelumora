@@ -369,6 +369,7 @@ impl StateStore for JsonStates {
 mod tests {
     use super::super::layout::RuntimeLayout;
     use super::*;
+    use caelumora_domain::actor::testing::context_in;
     use caelumora_domain::actor::ActorState;
     use caelumora_domain::chain::Position;
     use caelumora_domain::confidentiality::Classification;
@@ -645,9 +646,12 @@ mod tests {
         let dir = tempdir().unwrap();
         let states = states(dir.path());
         let channel = ChannelId::new();
+        let context = context_in(channel);
         let key = channel;
         let mut state = ChannelState::new(channel);
-        state.history.extend(vec![make_message(id(1)), make_message(id(2)), make_message(id(3))]);
+        state
+            .history
+            .extend(&context, vec![make_message(id(1)), make_message(id(2)), make_message(id(3))]);
         states.put_channel_state(channel, &mut state).await.unwrap();
         let history = states.history_dir(key).await.unwrap();
         let read = |file: &str| {
@@ -687,7 +691,7 @@ mod tests {
         write("chain-0.json", &chain);
         let mut loaded = states.get_channel_state(channel).await.unwrap();
         assert_eq!(loaded.history.end().get(), 3, "what lies past the head is not there");
-        loaded.history.push(make_message(id(4)));
+        loaded.history.push(&context, make_message(id(4)));
         states.put_channel_state(channel, &mut loaded).await.unwrap();
         assert_eq!(
             states.said(key, &Reader::Channel, id(4)).await.unwrap().map(|(at, _)| at.get()),
@@ -707,7 +711,7 @@ mod tests {
         let channel = ChannelId::new();
         let mut state = ChannelState::new(channel);
         states.put_channel_state(channel, &mut state).await.unwrap();
-        state.history.extend(vec![make_message(id(1))]);
+        state.history.extend(&context_in(channel), vec![make_message(id(1))]);
         states.put_channel_state(channel, &mut state).await.unwrap();
         let journal = journal_path(&states.channel_state_path(channel).await.unwrap());
         assert!(journal.exists());

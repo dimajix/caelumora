@@ -154,13 +154,17 @@ impl Recipients {
 }
 
 impl Recorded {
-    /// `entry`, sent by `sender` to `audience` - to everybody resolved into
-    /// whom it concerns by the rule every channel delivers by
-    /// (`HistoryEntry::recipients`) -, recorded by its holder itself: of no
-    /// envelope, its head names the sender alone, now.
-    pub fn new(entry: HistoryEntry, sender: ActorId, audience: Audience) -> Self {
-        let context =
-            EventContext { sender_id: sender, initiator_id: sender, ..EventContext::default() };
+    /// `entry`, sent by `sender` to `audience` - to everybody resolved into whom it concerns by
+    /// the rule every channel delivers by (`HistoryEntry::recipients`) -, recorded by its holder
+    /// itself with `context` as the head of its envelope - where it happened and in which chain -,
+    /// without a position, now: what `of` records, of no envelope (issue 599).
+    pub fn new(
+        entry: HistoryEntry,
+        sender: ActorId,
+        audience: Audience,
+        context: &EventContext,
+    ) -> Self {
+        let context = EventContext { position: None, ..context.clone() };
         Self::with_head(entry, sender, audience, context, Utc::now())
     }
 
@@ -188,12 +192,20 @@ impl Recorded {
         Self { entry, sender, recipients, context, timestamp }
     }
 
-    /// `entry` as every channel delivers it, sent by whom it names
-    /// (`HistoryEntry::named_sender`): what a holder records of what it was
-    /// told, or did itself.
-    pub(super) fn delivered(entry: HistoryEntry) -> Self {
+    /// `entry` as every channel delivers it, sent by whom it names (`HistoryEntry::named_sender`),
+    /// where `context` says and in its chain: what a holder records of what it was told, or did
+    /// itself. Its head names the entry's sender, not the context's - as the sender and the
+    /// initiator, without a name -, so that it is delivered again from the history as from its
+    /// sender.
+    pub(super) fn delivered(entry: HistoryEntry, context: &EventContext) -> Self {
         let sender = entry.named_sender();
-        Self::new(entry, sender, Audience::Everybody)
+        let head = EventContext {
+            sender_id: sender,
+            initiator_id: sender,
+            sender_name: String::new(),
+            ..context.clone()
+        };
+        Self::new(entry, sender, Audience::Everybody, &head)
     }
 
     /// The envelope it came in, delivered again from the history at the
@@ -262,9 +274,11 @@ impl Recorded {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::actor::testing::context_in;
     use crate::actor::{ActorEvent, EventId, Rejection, RequestReason, RetryTarget};
     use crate::agent::{AgentId, RetryRefused};
     use crate::approval::{ApprovalDecision, ApprovalRequest, ApprovalVerdict};
+    use crate::channel::ChannelId;
     use crate::confidentiality::Classification;
     use crate::context::FrameRef;
     use crate::digest;
@@ -278,7 +292,6 @@ mod tests {
     use crate::turn::GivenUpReason;
     use crate::user::UserId;
     use crate::work::TurnId;
-    use uuid::Uuid;
 
     /// Issue 557: what goes to every participant of a kind reaches an agent where it happened in
     /// its thread or in the whole channel, a user wherever it happened; what goes to someone by
@@ -321,9 +334,9 @@ mod tests {
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     fn a_reader_is_given_what_went_to_them_and_what_they_sent_in_full() {
         use crate::tool::{ToolCall, ToolVisibility};
-        // Each reader taking part all along, in the thread of no channel the entries are made in.
-        const ALL: &[Attended] =
-            &[Attended { thread: ThreadId(Uuid::nil()), range: EVERY_POSITION }];
+        let context = context_in(ChannelId::new());
+        // Each reader taking part all along, in the line the entries are made in.
+        let all = &[Attended { thread: context.thread_id, range: EVERY_POSITION }];
         let agent = ActorId::Agent(AgentId::new());
         let other = ActorId::Agent(AgentId::new());
         let user = ActorId::User(UserId::new());
@@ -343,8 +356,12 @@ mod tests {
             ..make_message(id(1))
         }
         .produced_from_context(None, digest::frame(&FrameRef::default()));
-        let said =
-            Recorded::new(HistoryEntry::Said { message: answer }, agent, Audience::Everybody);
+        let said = Recorded::new(
+            HistoryEntry::Said { message: answer },
+            agent,
+            Audience::Everybody,
+            &context,
+        );
         let calls = |entry: Option<HistoryEntry>| {
             entry
                 .as_ref()
@@ -353,18 +370,18 @@ mod tests {
         };
 
         assert_eq!(
-            calls(said.as_seen_by(Position::START, &Reader::Participant(agent), ALL)),
+            calls(said.as_seen_by(Position::START, &Reader::Participant(agent), all)),
             Some((1, Some("found it".to_string()))),
             "its sender, in full"
         );
         assert!(
-            said.as_seen_by(Position::START, &Reader::Participant(agent), ALL)
+            said.as_seen_by(Position::START, &Reader::Participant(agent), all)
                 .and_then(|e| e.context().map(|_| ()))
                 .is_some(),
             "with what it was produced from"
         );
         for reader in [Reader::Participant(user), Reader::Participant(other), Reader::Outsider] {
-            let seen = said.as_seen_by(Position::START, &reader, ALL);
+            let seen = said.as_seen_by(Position::START, &reader, all);
             assert_eq!(
                 calls(seen.clone()),
                 Some((0, Some("found it".to_string()))),
@@ -376,11 +393,11 @@ mod tests {
             );
         }
         assert!(
-            said.as_seen_by(Position::START, &Reader::Participant(approver), ALL).is_none(),
+            said.as_seen_by(Position::START, &Reader::Participant(approver), all).is_none(),
             "it concerns no approver"
         );
         assert_eq!(
-            calls(said.as_seen_by(Position::START, &Reader::Channel, ALL)),
+            calls(said.as_seen_by(Position::START, &Reader::Channel, all)),
             Some((1, Some("found it".to_string()))),
             "the channel, as it was recorded"
         );
@@ -391,20 +408,22 @@ mod tests {
             },
             agent,
             Audience::Everybody,
+            &context,
         );
         assert!(
-            step.as_seen_by(Position::START, &Reader::Participant(user), ALL).is_some()
-                && step.as_seen_by(Position::START, &Reader::Participant(other), ALL).is_none(),
+            step.as_seen_by(Position::START, &Reader::Participant(user), all).is_some()
+                && step.as_seen_by(Position::START, &Reader::Participant(other), all).is_none(),
             "a step of a plan: the users', no other agent's"
         );
         let ended = Recorded::new(
             HistoryEntry::TurnFinished { turn_id: TurnId::new(), actor: agent, at: Utc::now() },
             agent,
             Audience::Everybody,
+            &context,
         );
         assert!(
-            ended.as_seen_by(Position::START, &Reader::Participant(agent), ALL).is_some()
-                && ended.as_seen_by(Position::START, &Reader::Participant(other), ALL).is_none(),
+            ended.as_seen_by(Position::START, &Reader::Participant(agent), all).is_some()
+                && ended.as_seen_by(Position::START, &Reader::Participant(other), all).is_none(),
             "a turn's end: its own and the users'"
         );
 
@@ -412,9 +431,10 @@ mod tests {
             HistoryEntry::Said { message: make_message(id(3)) },
             ActorId::System,
             Audience::Only(vec![user]),
+            &context,
         );
         assert!(
-            to_one.as_seen_by(Position::START, &Reader::Participant(user), ALL).is_some(),
+            to_one.as_seen_by(Position::START, &Reader::Participant(user), all).is_some(),
             "whom it went to"
         );
         assert!(
@@ -422,23 +442,24 @@ mod tests {
                 .as_seen_by(
                     Position::START,
                     &Reader::Participant(ActorId::User(UserId::new())),
-                    ALL
+                    all
                 )
                 .is_none(),
             "no other user"
         );
         assert!(
-            to_one.as_seen_by(Position::START, &Reader::Outsider, ALL).is_none(),
+            to_one.as_seen_by(Position::START, &Reader::Outsider, all).is_none(),
             "nor an outsider: it did not go to everybody"
         );
         let to_nobody = Recorded::new(
             HistoryEntry::Said { message: Message { sender_id: agent, ..make_message(id(4)) } },
             agent,
             Audience::Only(Vec::new()),
+            &context,
         );
         assert!(
-            to_nobody.as_seen_by(Position::START, &Reader::Participant(agent), ALL).is_some()
-                && to_nobody.as_seen_by(Position::START, &Reader::Participant(user), ALL).is_none(),
+            to_nobody.as_seen_by(Position::START, &Reader::Participant(agent), all).is_some()
+                && to_nobody.as_seen_by(Position::START, &Reader::Participant(user), all).is_none(),
             "to nobody: its sender alone"
         );
     }
@@ -708,7 +729,7 @@ mod tests {
         let answer =
             Message { sender_id: agent, turn_id: Some(TurnId::new()), ..make_message(id(1)) };
         let ended = Envelope::new(
-            context,
+            context.clone(),
             ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![answer] },
         );
         let again = Recorded::of(&ended, agent, Audience::Everybody)
@@ -721,7 +742,8 @@ mod tests {
             Recorded::new(
                 HistoryEntry::Fitted { channel: Classification::PUBLIC },
                 ActorId::None,
-                Audience::Everybody
+                Audience::Everybody,
+                &context
             )
             .envelope(Position::START)
             .is_none(),
@@ -734,15 +756,19 @@ mod tests {
     /// given up is still the last thing.
     #[test]
     fn what_is_recorded_to_be_delivered_again_is_no_item() {
+        let context = context_in(ChannelId::new());
         let (agent, user) = (ActorId::Agent(AgentId::new()), ActorId::User(UserId::new()));
         let turn = TurnId::new();
         let mut history = History::default();
-        history.record(HistoryEntry::TurnGivenUp {
-            turn_id: turn,
-            actor: agent,
-            reason: GivenUpReason::Left,
-            at: Utc::now(),
-        });
+        history.record(
+            &context,
+            HistoryEntry::TurnGivenUp {
+                turn_id: turn,
+                actor: agent,
+                reason: GivenUpReason::Left,
+                at: Utc::now(),
+            },
+        );
         let delivered_alone: Vec<(ActorId, ActorEvent)> = recorded_events(agent, user)
             .into_iter()
             .filter(|(sender, event)| {
@@ -764,7 +790,7 @@ mod tests {
         );
         for (sender, event) in delivered_alone {
             let envelope =
-                Envelope::new(EventContext { sender_id: sender, ..EventContext::default() }, event);
+                Envelope::new(EventContext { sender_id: sender, ..context.clone() }, event);
             assert!(history
                 .enter(Recorded::of(&envelope, sender, Audience::Everybody).expect("recorded")));
         }

@@ -6,6 +6,8 @@
 mod envelope;
 mod event;
 mod state;
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
 
 pub use envelope::{Envelope, EventContext, EventId, Pick, SpanId};
 pub use event::{ActorEvent, Rejection, RequestReason, RetryTarget};

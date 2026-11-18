@@ -1168,25 +1168,23 @@ mod tests {
         let (api, cookie, session, channel) = stopped_session_of_alice(&state).await;
         let alice = ActorId::User(user_id(&api, &cookie).await);
         let other = ThreadId::new();
-        let said_in = |thread_id, text: &str| {
+        let said = |text: &str| {
             let mentions = if text.contains("@alice") { vec![alice] } else { Vec::new() };
-            let message = Message {
+            Message {
                 role: MessageRole::User,
                 mentions,
                 sender_id: alice,
                 content: Some(text.to_string()),
                 ..Message::new(Classification::CHANNEL_DEFAULT)
-            };
-            let context =
-                EventContext { thread_id, ..EventContext::new(session, channel, alice, "alice") };
-            let event = ActorEvent::CompleteMessageGenerated(message);
-            Recorded::of(&Envelope::new(context, event), alice, Audience::Everybody).unwrap()
+            }
         };
         let states = state.kernel.state_store();
         let mut channel_state = states.get_channel_state(channel).await.unwrap();
-        channel_state.history.enter(said_in(ThreadId::line(channel), "in the line"));
-        channel_state.history.enter(said_in(other, "in another thread"));
-        channel_state.history.enter(said_in(other, "@alice, mentioned"));
+        let in_line = EventContext::new(session, channel, alice, "alice");
+        let elsewhere = EventContext { thread_id: other, ..in_line.clone() };
+        channel_state.history.push(&in_line, said("in the line"));
+        channel_state.history.push(&elsewhere, said("in another thread"));
+        channel_state.history.push(&elsewhere, said("@alice, mentioned"));
         states.put_channel_state(channel, &mut channel_state).await.unwrap();
 
         let history = format!("/sessions/{}/channels/{}/history", session.0, channel.0);

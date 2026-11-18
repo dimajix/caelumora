@@ -8,6 +8,7 @@ use crate::connection::{quoted, sql};
 use crate::filter::Condition;
 use crate::plugin::PostgresStorePlugin;
 use caelumora_api::component::Services;
+use caelumora_domain::actor::testing::context_in;
 use caelumora_domain::actor::{ActorId, ActorState, EventContext};
 use caelumora_domain::agent::{AgentChannelState, AgentId};
 use caelumora_domain::approval::ApproverId;
@@ -321,7 +322,7 @@ async fn what_an_agent_waiting_for_an_approval_stored_survives_a_restart() {
         ..Message::new(Classification::CHANNEL_DEFAULT)
     };
     let mut channel_state = ChannelState::new(channel);
-    channel_state.history.push(said("look it up"));
+    channel_state.history.push(&context_in(channel), said("look it up"));
 
     let mut state = AgentChannelState {
         processing_state: ActorState::WaitingForUser,
@@ -422,6 +423,7 @@ async fn the_database_gives_a_reader_what_the_model_gives_them() {
         },
     };
     let mut state = ChannelState::new(channel);
+    let context = context_in(channel);
     for (entry, sender, audience) in [
         (joined(alice), alice, Audience::Everybody),
         (said(alice, Some("hello")), alice, Audience::Everybody),
@@ -454,7 +456,7 @@ async fn the_database_gives_a_reader_what_the_model_gives_them() {
         ),
         (said(bob, Some("after her")), bob, Audience::Everybody),
     ] {
-        state.history.enter(Recorded::new(entry, sender, audience));
+        state.history.enter(Recorded::new(entry, sender, audience, &context));
     }
     store.put_channel_state(channel, &mut state).await.unwrap();
     let asked_of_all = |state: &ChannelState| {

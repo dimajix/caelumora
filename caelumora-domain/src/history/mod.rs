@@ -25,7 +25,7 @@ pub use filter::{HistoryField, KeptItem};
 pub use reader::{Attended, Heard, Reader, EVERY_POSITION};
 pub use recorded::{Audience, Recipients, Recorded};
 
-use crate::actor::ActorId;
+use crate::actor::{ActorId, EventContext};
 use crate::chain::{Chain, Node, Position};
 use crate::confidentiality::Classification;
 use crate::digest;
@@ -142,42 +142,45 @@ impl Chain<Recorded> {
         Some(message)
     }
 
-    /// Appends `msgs`, each as `push` does.
-    pub fn extend(&mut self, msgs: Vec<Message>) {
+    /// Appends `msgs`, each said where `context` says, as `push` records it.
+    pub fn extend(&mut self, context: &EventContext, msgs: Vec<Message>) {
         for m in msgs {
-            self.push(m);
+            self.push(context, m);
         }
     }
 
-    /// Appends `msg`, said - with what it was produced from, if it says.
-    pub fn push(&mut self, msg: Message) {
-        self.record(HistoryEntry::Said { message: msg });
+    /// Appends `msg`, said where `context` says - with what it was produced from, if it says.
+    pub fn push(&mut self, context: &EventContext, msg: Message) {
+        self.record(context, HistoryEntry::Said { message: msg });
     }
 
-    /// Records that message `id` - on whichever branch - is classified
-    /// `classification` from now on (issue 133). `false`, and nothing is
-    /// recorded, if there is no such message or it was taken back
-    /// (`Message::reclassify`); one before what it holds is recorded
-    /// (`is_changed`).
-    pub fn reclassify(&mut self, id: MessageId, classification: Classification) -> bool {
-        self.enter(Recorded::delivered(HistoryEntry::Reclassified { message: id, classification }))
+    /// Records where `context` says that message `id` - on whichever branch - is classified
+    /// `classification` from now on (issue 133). `false`, and nothing is recorded, if there is no
+    /// such message or it was taken back (`Message::reclassify`); one before what it holds is
+    /// recorded (`is_changed`).
+    pub fn reclassify(
+        &mut self,
+        context: &EventContext,
+        id: MessageId,
+        classification: Classification,
+    ) -> bool {
+        let reclassified = HistoryEntry::Reclassified { message: id, classification };
+        self.enter(Recorded::delivered(reclassified, context))
     }
 
-    /// Records that the message `modified.id` - on whichever branch -
-    /// reads as `modified` from now on (issue 234). `false`, and nothing is
-    /// recorded, if there is no such message or it cannot be modified so as
-    /// it stands (`Message::modify`): taken back, or by another sender; one
-    /// before what it holds is recorded (`is_changed`).
-    pub fn modify(&mut self, modified: Message) -> bool {
-        self.enter(Recorded::delivered(HistoryEntry::Modified { message: modified }))
+    /// Records where `context` says that the message `modified.id` - on whichever branch - reads
+    /// as `modified` from now on (issue 234). `false`, and nothing is recorded, if there is no such
+    /// message or it cannot be modified so as it stands (`Message::modify`): taken back, or by
+    /// another sender; one before what it holds is recorded (`is_changed`).
+    pub fn modify(&mut self, context: &EventContext, modified: Message) -> bool {
+        self.enter(Recorded::delivered(HistoryEntry::Modified { message: modified }, context))
     }
 
-    /// Records that the message `id` - on whichever branch - was taken back
-    /// at `at` (issue 234). `false`, and nothing is recorded, if there is no
-    /// such message or it was taken back already; one before what it holds
-    /// is recorded (`is_changed`).
-    pub fn revoke(&mut self, id: MessageId, at: DateTime<Utc>) -> bool {
-        self.enter(Recorded::delivered(HistoryEntry::Revoked { message: id, at }))
+    /// Records where `context` says that the message `id` - on whichever branch - was taken back
+    /// at `at` (issue 234). `false`, and nothing is recorded, if there is no such message or it was
+    /// taken back already; one before what it holds is recorded (`is_changed`).
+    pub fn revoke(&mut self, context: &EventContext, id: MessageId, at: DateTime<Utc>) -> bool {
+        self.enter(Recorded::delivered(HistoryEntry::Revoked { message: id, at }, context))
     }
 
     /// Whether what `change` does to the message `id` is a change to
@@ -193,27 +196,24 @@ impl Chain<Recorded> {
         }
     }
 
-    /// Records that the channel is classified `channel` now, which every
-    /// message said so far - on every branch: all of them were said in the
-    /// channel - fits into from now on (`Classification::fitted_into`).
-    /// Recorded whether or not it changes a message: telling which would
-    /// fold the whole history.
-    pub fn fit_into(&mut self, channel: &Classification) {
-        self.enter(Recorded::delivered(HistoryEntry::Fitted { channel: channel.clone() }));
+    /// Records where `context` says that the channel is classified `channel` now, which every
+    /// message said so far - on every branch: all of them were said in the channel - fits into
+    /// from now on (`Classification::fitted_into`). Recorded whether or not it changes a message:
+    /// telling which would fold the whole history.
+    pub fn fit_into(&mut self, context: &EventContext, channel: &Classification) {
+        self.enter(Recorded::delivered(HistoryEntry::Fitted { channel: channel.clone() }, context));
     }
 
-    /// Records `item`, what happened that is no change of a message (`is_item`):
-    /// a message said - as `push` records it, with what it was produced
-    /// from -, how a turn ended (issue 258), after its messages, where a step
-    /// of its plan began (issue 263), before the messages of the step, a
-    /// command carried out (issue 269) or an activity ended (issue 284),
-    /// before the turn's end, a compaction (issue 16), before what replaced
-    /// the older messages, someone added or removed (issue 408). A change is recorded by its own
-    /// method - `modify`, `revoke`, `reclassify`, `fit_into` -, which says whether it
-    /// applies.
-    pub fn record(&mut self, item: HistoryEntry) {
+    /// Records `item` where `context` says, what happened that is no change of a message
+    /// (`is_item`): a message said - as `push` records it, with what it was produced from -, how a
+    /// turn ended (issue 258), after its messages, where a step of its plan began (issue 263),
+    /// before the messages of the step, a command carried out (issue 269) or an activity ended
+    /// (issue 284), before the turn's end, a compaction (issue 16), before what replaced the older
+    /// messages, someone added or removed (issue 408). A change is recorded by its own method -
+    /// `modify`, `revoke`, `reclassify`, `fit_into` -, which says whether it applies.
+    pub fn record(&mut self, context: &EventContext, item: HistoryEntry) {
         debug_assert!(item.is_item(), "a change is recorded by its own method");
-        self.enter(Recorded::delivered(item));
+        self.enter(Recorded::delivered(item, context));
     }
 
     /// Records `recorded`, as the channel records what enters it (issue
@@ -274,77 +274,126 @@ impl Chain<Recorded> {
 mod tests {
     use super::testing::{items_of, messages_of};
     use super::*;
+    use crate::actor::testing::context_in;
     use crate::actor::{RequestReason, RetryTarget};
     use crate::agent::{AgentId, RetryRefused};
+    use crate::channel::{ChannelId, ThreadId};
     use crate::confidentiality::Confidentiality;
     use crate::message::testing::{id, make_message};
+    use crate::session::SessionId;
+    use crate::user::UserId;
+
+    /// Issue 599: what a history records by hand happens where its context says - its session,
+    /// its channel, its thread and its chain -, and comes from the entry's sender, not the
+    /// context's, so that it is delivered again from the history as from its sender.
+    #[test]
+    fn what_is_recorded_by_hand_happens_where_its_context_says_and_comes_from_its_sender() {
+        let bob = ActorId::User(UserId::new());
+        let context = EventContext {
+            thread_id: ThreadId::new(),
+            span_depth: 2,
+            ..EventContext::new(SessionId::new(), ChannelId::new(), ActorId::System, "system")
+        };
+        let mut history = History::default();
+        history.push(&context, Message { sender_id: bob, ..make_message(id(1)) });
+        let recorded = &history.entries().last().expect("recorded").entry;
+        assert_eq!(recorded.sender, bob);
+        assert_eq!(
+            recorded.context,
+            EventContext {
+                sender_id: bob,
+                initiator_id: bob,
+                sender_name: String::new(),
+                ..context
+            }
+        );
+    }
 
     #[test]
     fn a_turn_given_up_is_found_while_its_end_is_the_last_thing() {
+        let context = context_in(ChannelId::new());
         let (agent, other) = (ActorId::Agent(AgentId::new()), ActorId::Agent(AgentId::new()));
         let turn = TurnId::new();
         let mut history = History::default();
-        history.push(make_message(id(1)));
+        history.push(&context, make_message(id(1)));
         assert_eq!(history.turn_given_up_last(agent), None, "no turn ended");
-        history.record(HistoryEntry::TurnGivenUp {
-            turn_id: turn,
-            actor: agent,
-            reason: GivenUpReason::Left,
-            at: Utc::now(),
-        });
+        history.record(
+            &context,
+            HistoryEntry::TurnGivenUp {
+                turn_id: turn,
+                actor: agent,
+                reason: GivenUpReason::Left,
+                at: Utc::now(),
+            },
+        );
         assert_eq!(history.turn_given_up_last(agent), Some((turn, GivenUpReason::Left)));
         assert_eq!(history.turn_given_up_last(other), None, "another agent's");
         // What was only told or asked of it is no part of the conversation
         // (issue 417).
-        history.record(HistoryEntry::RetryRefused {
-            target: RetryTarget::Turn(turn),
-            reason: RetryRefused::NotLast,
-            actor: other,
-            at: Utc::now(),
-        });
-        history.record(HistoryEntry::ResponseRequested {
-            by: other,
-            reason: RequestReason::Chosen,
-            at: Utc::now(),
-        });
+        history.record(
+            &context,
+            HistoryEntry::RetryRefused {
+                target: RetryTarget::Turn(turn),
+                reason: RetryRefused::NotLast,
+                actor: other,
+                at: Utc::now(),
+            },
+        );
+        history.record(
+            &context,
+            HistoryEntry::ResponseRequested {
+                by: other,
+                reason: RequestReason::Chosen,
+                at: Utc::now(),
+            },
+        );
         assert_eq!(
             history.turn_given_up_last(agent),
             Some((turn, GivenUpReason::Left)),
             "a notice and a request do not count"
         );
-        history.push(make_message(id(2)));
+        history.push(&context, make_message(id(2)));
         assert_eq!(history.turn_given_up_last(agent), None, "something followed it");
     }
 
     #[test]
     fn its_items_are_the_messages_as_they_stand_and_how_turns_ended() {
+        let context = context_in(ChannelId::new());
         let (finished, given_up) = (TurnId::new(), TurnId::new());
         let at = Utc::now();
         let mut history = History::default();
-        history.push(make_message(id(1)));
-        history.record(HistoryEntry::PlanStepStarted {
-            turn_id: finished,
-            actor: ActorId::default(),
-            step_index: 0,
-            total_steps: 1,
-            description: "first".to_string(),
-            at,
-        });
-        history.push(Message { turn_id: Some(finished), ..make_message(id(2)) });
-        history.record(HistoryEntry::TurnFinished {
-            turn_id: finished,
-            actor: ActorId::default(),
-            at,
-        });
-        history.modify(Message { content: Some("changed".to_string()), ..make_message(id(1)) });
-        history.push(Message { turn_id: Some(given_up), ..make_message(id(3)) });
-        history.record(HistoryEntry::TurnGivenUp {
-            turn_id: given_up,
-            actor: ActorId::default(),
-            reason: GivenUpReason::Left,
-            at,
-        });
-        history.fit_into(&Classification::CHANNEL_DEFAULT);
+        history.push(&context, make_message(id(1)));
+        history.record(
+            &context,
+            HistoryEntry::PlanStepStarted {
+                turn_id: finished,
+                actor: ActorId::default(),
+                step_index: 0,
+                total_steps: 1,
+                description: "first".to_string(),
+                at,
+            },
+        );
+        history.push(&context, Message { turn_id: Some(finished), ..make_message(id(2)) });
+        history.record(
+            &context,
+            HistoryEntry::TurnFinished { turn_id: finished, actor: ActorId::default(), at },
+        );
+        history.modify(
+            &context,
+            Message { content: Some("changed".to_string()), ..make_message(id(1)) },
+        );
+        history.push(&context, Message { turn_id: Some(given_up), ..make_message(id(3)) });
+        history.record(
+            &context,
+            HistoryEntry::TurnGivenUp {
+                turn_id: given_up,
+                actor: ActorId::default(),
+                reason: GivenUpReason::Left,
+                at,
+            },
+        );
+        history.fit_into(&context, &Classification::CHANNEL_DEFAULT);
 
         let items = items_of(&history);
         let kinds: Vec<String> = items
@@ -373,21 +422,27 @@ mod tests {
 
     #[test]
     fn a_change_of_a_message_before_what_is_held_is_recorded_for_the_store() {
+        let context = context_in(ChannelId::new());
         let mut history = History::default();
-        history.extend(vec![make_message(id(1)), make_message(id(2)), make_message(id(3))]);
-        assert!(!history.revoke(id(9), Utc::now()), "a message it never held, whole");
+        history
+            .extend(&context, vec![make_message(id(1)), make_message(id(2)), make_message(id(3))]);
+        assert!(!history.revoke(&context, id(9), Utc::now()), "a message it never held, whole");
         history.mark_stored();
         history.keep_from(Position::new(2));
         assert!(
-            history.revoke(id(1), Utc::now()),
+            history.revoke(&context, id(1), Utc::now()),
             "before what it holds: recorded, the store applies it"
         );
         assert!(
-            history.modify(Message { content: Some("changed".to_string()), ..make_message(id(3)) }),
+            history.modify(
+                &context,
+                Message { content: Some("changed".to_string()), ..make_message(id(3)) }
+            ),
             "one it holds as before"
         );
         assert!(
-            history.revoke(id(3), Utc::now()) && !history.revoke(id(3), Utc::now()),
+            history.revoke(&context, id(3), Utc::now())
+                && !history.revoke(&context, id(3), Utc::now()),
             "and taken back once"
         );
         assert_eq!(history.end().get(), 6);
@@ -395,15 +450,19 @@ mod tests {
 
     #[test]
     fn a_range_folded_gives_its_messages_as_the_whole_history_does() {
+        let context = context_in(ChannelId::new());
         let public = Classification::general(Confidentiality::Public);
         let mut history = History::default();
-        history.extend(vec![make_message(id(1)), make_message(id(2))]);
+        history.extend(&context, vec![make_message(id(1)), make_message(id(2))]);
         let from = history.end();
-        history.extend(vec![make_message(id(3)), make_message(id(4))]);
-        history.modify(Message { content: Some("changed".to_string()), ..make_message(id(3)) });
-        history.revoke(id(1), Utc::now());
-        history.fit_into(&public);
-        history.reclassify(id(4), Classification::general(Confidentiality::Internal));
+        history.extend(&context, vec![make_message(id(3)), make_message(id(4))]);
+        history.modify(
+            &context,
+            Message { content: Some("changed".to_string()), ..make_message(id(3)) },
+        );
+        history.revoke(&context, id(1), Utc::now());
+        history.fit_into(&context, &public);
+        history.reclassify(&context, id(4), Classification::general(Confidentiality::Internal));
 
         let whole: Vec<Message> = fold(history.all_entries()).into_iter().map(|(_, m)| m).collect();
         let range: Vec<(Position, Message)> =
@@ -429,6 +488,7 @@ mod tests {
 
     #[test]
     fn a_reclassification_is_recorded_and_read_into_the_messages_as_they_stand() {
+        let context = context_in(ChannelId::new());
         let public = Classification::general(Confidentiality::Public);
         let internal = Classification::general(Confidentiality::Internal);
         let said = |n, classification: &Classification| Message {
@@ -436,18 +496,24 @@ mod tests {
             ..make_message(id(n))
         };
         let mut history = History::default();
-        history.extend(vec![said(1, &internal)]);
+        history.extend(&context, vec![said(1, &internal)]);
         let fork = history.digest();
-        history.extend(vec![said(2, &internal)]);
+        history.extend(&context, vec![said(2, &internal)]);
         history.move_head(fork.as_ref());
-        history.extend(vec![said(3, &internal)]);
+        history.extend(&context, vec![said(3, &internal)]);
         let before = history.digest();
 
-        assert!(history.reclassify(id(2), public.clone()), "on the branch no longer active");
-        assert!(!history.reclassify(id(9), public.clone()), "never said here");
+        assert!(
+            history.reclassify(&context, id(2), public.clone()),
+            "on the branch no longer active"
+        );
+        assert!(!history.reclassify(&context, id(9), public.clone()), "never said here");
         let mut revoked = history.clone();
-        revoked.revoke(id(1), Utc::now());
-        assert!(!revoked.reclassify(id(1), public.clone()), "taken back: nothing left to release");
+        revoked.revoke(&context, id(1), Utc::now());
+        assert!(
+            !revoked.reclassify(&context, id(1), public.clone()),
+            "taken back: nothing left to release"
+        );
         assert_ne!(history.digest(), before, "recorded: the digest covers it");
         assert_eq!(history.all_entries().len(), 4, "one entry");
         assert_eq!(
@@ -462,8 +528,8 @@ mod tests {
         );
 
         let entries = history.all_entries().len();
-        history.fit_into(&public);
-        history.fit_into(&public);
+        history.fit_into(&context, &public);
+        history.fit_into(&context, &public);
         assert_eq!(
             history.all_entries().len(),
             entries + 2,
@@ -484,15 +550,16 @@ mod tests {
 
     #[test]
     fn what_was_recorded_since_the_history_was_stored_replays_onto_it() {
+        let context = context_in(ChannelId::new());
         let public = Classification::general(Confidentiality::Public);
         let mut history = History::default();
-        history.extend(vec![make_message(id(1)), make_message(id(2))]);
+        history.extend(&context, vec![make_message(id(1)), make_message(id(2))]);
         let mut stored: History =
             serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
         history.mark_stored();
 
-        history.reclassify(id(2), public.clone());
-        history.fit_into(&public);
+        history.reclassify(&context, id(2), public.clone());
+        history.fit_into(&context, &public);
         let changes = history.changes().expect("changed");
         assert_eq!(changes.entries.len(), 2, "one entry each: {changes:?}");
         stored.apply(changes).unwrap();
@@ -502,6 +569,7 @@ mod tests {
 
     #[test]
     fn a_change_is_recorded_and_read_into_the_messages_as_they_stand() {
+        let context = context_in(ChannelId::new());
         let at = Utc::now();
         let modified = |n, content: &str| Message {
             content: Some(content.to_string()),
@@ -509,19 +577,20 @@ mod tests {
             ..make_message(id(n))
         };
         let mut history = History::default();
-        history.extend(vec![make_message(id(1))]);
+        history.extend(&context, vec![make_message(id(1))]);
         let fork = history.digest();
-        history.extend(vec![make_message(id(2))]);
+        history.extend(&context, vec![make_message(id(2))]);
         history.move_head(fork.as_ref());
-        history.extend(vec![make_message(id(3))]);
+        history.extend(&context, vec![make_message(id(3))]);
         let before = history.digest();
 
-        assert!(history.modify(modified(1, "corrected")), "on the active path");
-        assert!(history.revoke(id(2), at), "on a branch no longer active");
-        assert!(!history.modify(modified(9, "never said")), "never said here");
-        assert!(!history.modify(modified(2, "too late")), "taken back already");
+        assert!(history.modify(&context, modified(1, "corrected")), "on the active path");
+        assert!(history.revoke(&context, id(2), at), "on a branch no longer active");
+        assert!(!history.modify(&context, modified(9, "never said")), "never said here");
+        assert!(!history.modify(&context, modified(2, "too late")), "taken back already");
         assert!(
-            !history.modify(Message { sender_id: ActorId::System, ..make_message(id(3)) }),
+            !history
+                .modify(&context, Message { sender_id: ActorId::System, ..make_message(id(3)) }),
             "by another sender"
         );
         assert_ne!(history.digest(), before, "recorded: the digest covers it");
@@ -548,13 +617,14 @@ mod tests {
 
     #[test]
     fn a_change_since_the_history_was_stored_replays_onto_it() {
+        let context = context_in(ChannelId::new());
         let mut history = History::default();
-        history.extend(vec![make_message(id(1)), make_message(id(2))]);
+        history.extend(&context, vec![make_message(id(1)), make_message(id(2))]);
         let mut stored: History =
             serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
         history.mark_stored();
 
-        history.revoke(id(2), Utc::now());
+        history.revoke(&context, id(2), Utc::now());
         stored.apply(history.changes().expect("changed")).unwrap();
         assert_eq!(stored.digest(), history.digest());
         assert!(stored.message(id(2)).is_some_and(|m| m.revoked.is_some()));

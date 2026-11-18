@@ -915,7 +915,9 @@ impl HistoryEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::actor::testing::context_in;
     use crate::agent::AgentId;
+    use crate::channel::ChannelId;
     use crate::confidentiality::Confidentiality;
     use crate::context::FrameRef;
     use crate::digest;
@@ -1009,12 +1011,14 @@ mod tests {
 
     #[test]
     fn a_history_keeps_what_its_messages_were_produced_from() {
+        let context = context_in(ChannelId::new());
         let transcript = Some(message_chain(None, &make_message(id(9))));
         let frame = digest::frame(&FrameRef::default());
         let turn = TurnId::new();
         let mut history = History::default();
-        history.extend(vec![make_message(id(1))]);
+        history.extend(&context, vec![make_message(id(1))]);
         history.push(
+            &context,
             Message { turn_id: Some(turn), ..make_message(id(2)) }
                 .produced_from_context(transcript, frame),
         );

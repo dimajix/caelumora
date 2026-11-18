@@ -14,6 +14,7 @@ use crate::history::HistoryStore;
 use crate::memberships::StoreMemberships;
 use crate::transcript::TranscriptStore;
 use crate::{EntityStore, EntityStores, PersistenceBackend, Presence, StateStore};
+use caelumora_domain::actor::testing::context_in;
 use caelumora_domain::actor::{ActorEvent, Envelope, EventContext};
 use caelumora_domain::actor::{ActorId, ActorState};
 use caelumora_domain::agent::testing::make_personality;
@@ -1296,6 +1297,7 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
     use caelumora_domain::confidentiality::Confidentiality;
     use caelumora_domain::message::testing::{id, make_message};
     let (channel, agent) = (ChannelId::new(), AgentId::new());
+    let context = context_in(channel);
     let key = channel;
     assert!(
         histories
@@ -1310,23 +1312,29 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
 
     let mut state = ChannelState::new(channel);
     for n in 1..=300 {
-        state.history.push(make_message(id(n)));
+        state.history.push(&context, make_message(id(n)));
     }
     // A message carrying a call described (issue 587), as a person's call is.
     let described = ToolCall {
         description: Some("Run in the workspace:\nls -la".to_string()),
         ..make_tool_call("run_command")
     };
-    state.history.push(Message { tool_calls: vec![described], ..make_message(id(301)) });
+    state.history.push(&context, Message { tool_calls: vec![described], ..make_message(id(301)) });
     states.put_channel_state(channel, &mut state).await.expect("put");
     assert!(state.history.changes().is_none(), "the history is marked stored");
     for n in 302..=600 {
-        state.history.push(make_message(id(n)));
+        state.history.push(&context, make_message(id(n)));
     }
-    state.history.modify(Message { content: Some("changed".to_string()), ..make_message(id(1)) });
-    assert!(state.history.revoke(id(300), Utc::now()));
-    state.history.fit_into(&Classification::general(Confidentiality::Public));
-    assert!(state.history.reclassify(id(599), Classification::general(Confidentiality::Public)));
+    state
+        .history
+        .modify(&context, Message { content: Some("changed".to_string()), ..make_message(id(1)) });
+    assert!(state.history.revoke(&context, id(300), Utc::now()));
+    state.history.fit_into(&context, &Classification::general(Confidentiality::Public));
+    assert!(state.history.reclassify(
+        &context,
+        id(599),
+        Classification::general(Confidentiality::Public)
+    ));
     states.put_channel_state(channel, &mut state).await.expect("put what changed");
     let expected: Vec<String> = items_of(&state.history).iter().map(standing).collect();
 
@@ -1426,7 +1434,7 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
         "from where the state holds it"
     );
     let mut going_on = loaded;
-    going_on.history.push(make_message(id(601)));
+    going_on.history.push(&context, make_message(id(601)));
     states
         .put_channel_state(channel, &mut going_on)
         .await
@@ -1468,6 +1476,7 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
             },
             ActorId::System,
             Audience::Everybody,
+            &context,
         ));
         more.history.enter(Recorded::new(
             HistoryEntry::ParticipantJoined {
@@ -1479,12 +1488,14 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
             },
             speaker,
             Audience::Everybody,
+            &context,
         ));
     }
     more.history.enter(Recorded::new(
         HistoryEntry::Said { message: answer },
         speaker,
         Audience::Everybody,
+        &context,
     ));
     more.history.enter(Recorded::new(
         HistoryEntry::Said {
@@ -1492,6 +1503,7 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
         },
         ActorId::System,
         Audience::Only(vec![user]),
+        &context,
     ));
     states.put_channel_state(channel, &mut more).await.expect("put");
     let calls = |said: Option<(Position, HistoryEntry)>| {
@@ -1526,12 +1538,12 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
     );
     assert_eq!(
         histories.attendance(key, other).await.unwrap(),
-        vec![Attended { thread: ThreadId::default(), range: EVERY_POSITION }],
+        vec![Attended { thread: context.thread_id, range: EVERY_POSITION }],
         "a participant from what was shared, and still"
     );
     assert!(histories.attendance(key, stranger).await.unwrap().is_empty());
     let attending = histories.attending(key).await.unwrap();
-    assert_eq!(attending.get(&other), Some(&ThreadId::default()), "taking part now, and where");
+    assert_eq!(attending.get(&other), Some(&context.thread_id), "taking part now, and where");
     assert!(!attending.contains_key(&stranger), "never was one");
     let last = |page: HistoryPage| {
         page.entries().filter_map(HistoryEntry::said).map(|m| m.id).collect::<Vec<_>>()
@@ -1588,7 +1600,7 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
                 sender_id: speaker,
                 initiator_id: user,
                 agent_hops: 2,
-                ..EventContext::default()
+                ..context.clone()
             },
             event,
         )
@@ -1610,7 +1622,7 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
         ActorEvent::IntermediateMessageGenerated(by_speaker(702, turn, true)),
     );
     for n in 0..300 {
-        turns.history.push(Message { sender_id: user, ..make_message(id(800 + n)) });
+        turns.history.push(&context, Message { sender_id: user, ..make_message(id(800 + n)) });
     }
     record(&mut turns.history, ActorEvent::CompleteMessageGenerated(by_speaker(703, turn, false)));
     let ended = turns.history.end();
@@ -1667,7 +1679,7 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
     let listener = ActorId::Agent(AgentId::new());
     let (its, another) = (ThreadId::new(), ThreadId::new());
     let in_thread = |thread, sender, event| {
-        let context = EventContext { thread_id: thread, ..EventContext::default() };
+        let context = EventContext { thread_id: thread, ..context.clone() };
         let context = EventContext { sender_id: sender, initiator_id: sender, ..context };
         Recorded::of(&Envelope::new(context, event), sender, Audience::Everybody).expect("recorded")
     };

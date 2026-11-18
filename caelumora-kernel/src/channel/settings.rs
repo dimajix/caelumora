@@ -3,6 +3,7 @@
 
 use super::{ChannelActor, ChannelError, ChannelLoop};
 use anyhow::Result;
+use caelumora_domain::actor::{ActorId, EventContext};
 use caelumora_domain::approval::ApprovalRule;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_security::confidentiality::ConfidentialityQuestions;
@@ -141,7 +142,8 @@ impl ChannelLoop {
             self.cancel_actors(None);
         }
         let mut state = self.state.lock().await;
-        state.history.fit_into(&classification);
+        let own = EventContext::new(self.session_id, self.id, ActorId::None, String::new());
+        state.history.fit_into(&own, &classification);
         self.store_state(&mut state).await?;
         info!(channel = %self.id, %classification, lowered, by = %context.caller_id, "Channel reclassified");
         Ok(())

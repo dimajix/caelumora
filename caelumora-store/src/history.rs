@@ -429,7 +429,8 @@ pub fn page_of(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_domain::actor::RequestReason;
+    use caelumora_domain::actor::testing::context_in;
+    use caelumora_domain::actor::{EventContext, RequestReason};
     use caelumora_domain::channel::ThreadId;
     use caelumora_domain::confidentiality::{
         Classification, Compartment, Compartments, Confidentiality, Reading,
@@ -447,7 +448,7 @@ mod tests {
     /// Issue 557: a participant takes part in the thread the context of its join names.
     #[test]
     fn a_participant_takes_part_in_the_thread_its_join_names() {
-        use caelumora_domain::actor::{ActorEvent, Envelope, EventContext};
+        use caelumora_domain::actor::{ActorEvent, Envelope};
         let alice = ActorId::User(UserId::new());
         let thread = ThreadId::new();
         let context = EventContext { thread_id: thread, ..EventContext::default() };
@@ -467,7 +468,7 @@ mod tests {
     /// left.
     #[test]
     fn who_takes_part_now_is_whoever_has_a_range_open() {
-        use caelumora_domain::actor::{ActorEvent, Envelope, EventContext};
+        let context = context_in(ChannelId::new());
         let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
         let mut history = History::default();
         let left = HistoryEntry::ParticipantLeft {
@@ -479,13 +480,11 @@ mod tests {
             at: Utc::now(),
         };
         for (entry, sender) in [(joined(alice), alice), (left, alice)] {
-            assert!(history.enter(Recorded::new(entry, sender, Audience::Everybody)));
+            assert!(history.enter(Recorded::new(entry, sender, Audience::Everybody, &context)));
         }
         let thread = ThreadId::new();
-        let context = EventContext { thread_id: thread, ..EventContext::default() };
-        let joined = ActorEvent::ParticipantJoined { participant: bob, name: "bob".to_string() };
-        let recorded = Recorded::of(&Envelope::new(context, joined), bob, Audience::Everybody);
-        assert!(history.enter(recorded.expect("a join is recorded")));
+        let elsewhere = EventContext { thread_id: thread, ..context };
+        assert!(history.enter(Recorded::new(joined(bob), bob, Audience::Everybody, &elsewhere)));
         let attending = Attendance::of(history.all_entries()).attending();
         assert_eq!(attending, HashMap::from([(bob, thread)]), "bob, in the thread he joined");
     }
@@ -517,14 +516,18 @@ mod tests {
 
     #[test]
     fn items_derived_entry_by_entry_are_the_history_folded() {
+        let context = context_in(ChannelId::new());
         let mut history = History::default();
-        history.push(make_message(id(1)));
-        history.push(make_message(id(2)));
-        history.modify(Message { content: Some("changed".to_string()), ..make_message(id(1)) });
-        history.push(make_message(id(3)));
-        assert!(history.revoke(id(2), Utc::now()));
-        history.fit_into(&Classification::CHANNEL_DEFAULT);
-        assert!(history.reclassify(id(3), Classification::CHANNEL_DEFAULT));
+        history.push(&context, make_message(id(1)));
+        history.push(&context, make_message(id(2)));
+        history.modify(
+            &context,
+            Message { content: Some("changed".to_string()), ..make_message(id(1)) },
+        );
+        history.push(&context, make_message(id(3)));
+        assert!(history.revoke(&context, id(2), Utc::now()));
+        history.fit_into(&context, &Classification::CHANNEL_DEFAULT);
+        assert!(history.reclassify(&context, id(3), Classification::CHANNEL_DEFAULT));
 
         let mut items = StandingItems::default();
         for node in history.all_entries() {
@@ -573,6 +576,7 @@ mod tests {
 
     #[test]
     fn a_page_is_cut_from_the_newest_items() {
+        let context = context_in(ChannelId::new());
         let message = |seq: u64| Message {
             content: Some(if seq.is_multiple_of(2) { "odd" } else { "even" }.to_string()),
             ..make_message(id(seq as u128 + 1))
@@ -604,7 +608,9 @@ mod tests {
         );
         let odd = Filter::containing("odd");
         let kept: Vec<(Position, Recorded)> = newest(5)
-            .map(|(seq, entry)| (seq, Recorded::new(entry, ActorId::None, Audience::Everybody)))
+            .map(|(seq, entry)| {
+                (seq, Recorded::new(entry, ActorId::None, Audience::Everybody, &context))
+            })
             .collect();
         let page = page_of(
             kept.iter().map(|item| seen(&Reader::Channel, &[], Some(&odd), item)),
@@ -625,7 +631,9 @@ mod tests {
 
     /// Whether `filter` keeps `entry`, recorded as everybody was given it.
     fn keeps(filter: &Filter<HistoryField>, entry: HistoryEntry) -> bool {
-        let item = (Position::START, Recorded::new(entry, ActorId::System, Audience::Everybody));
+        let context = context_in(ChannelId::new());
+        let item =
+            (Position::START, Recorded::new(entry, ActorId::System, Audience::Everybody, &context));
         seen(&Reader::Channel, &[], Some(filter), &item).unwrap().is_some()
     }
 
@@ -905,10 +913,12 @@ mod tests {
     /// read back as it was recorded; a page's filter may name both.
     #[test]
     fn an_item_is_kept_with_its_position_and_whether_it_is_published() {
+        let context = context_in(ChannelId::new());
         let item = Recorded::new(
             HistoryEntry::Said { message: make_message(id(1)) },
             ActorId::System,
             Audience::Everybody,
+            &context,
         );
         let kept = KeptItem::of(Position::new(7), item);
         let read: KeptItem = serde_json::from_value(serde_json::to_value(&kept).unwrap()).unwrap();
@@ -927,17 +937,18 @@ mod tests {
             "by its position"
         );
         assert!(at(Filter::eq(HistoryField::Published, true)), "and whether it is published");
-        // Issue 557: with the thread it happened in - its context's, of no channel here -, none for
-        // what happened in the whole channel.
-        assert_eq!(read.thread, Some(ThreadId::default()), "the thread it happened in");
+        // Issue 557: with the thread it happened in - its context's -, none for what happened in
+        // the whole channel.
+        assert_eq!(read.thread, Some(context.thread_id), "the thread it happened in");
         assert!(
-            at(Filter::in_thread(ThreadId::default())) && !at(Filter::in_thread(ThreadId::new())),
+            at(Filter::in_thread(context.thread_id)) && !at(Filter::in_thread(ThreadId::new())),
             "by its thread"
         );
         let revoked = Recorded::new(
             HistoryEntry::Revoked { message: id(1), at: Utc::now() },
             ActorId::System,
             Audience::Everybody,
+            &context,
         );
         assert_eq!(KeptItem::of(Position::new(8), revoked).thread, None, "of the whole channel");
     }
@@ -950,6 +961,7 @@ mod tests {
     #[test]
     fn what_went_to_every_participant_is_given_to_who_was_one_then() {
         use caelumora_domain::user::UserId;
+        let context = context_in(ChannelId::new());
         let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
         let said = |n: u128, by: ActorId| HistoryEntry::Said {
             message: Message { sender_id: by, ..make_message(id(n)) },
@@ -987,7 +999,7 @@ mod tests {
             (said(4, bob), bob, Audience::Everybody),     // 7
             (said(5, bob), bob, Audience::Only(vec![alice])), // 8
         ] {
-            assert!(history.enter(Recorded::new(entry, sender, audience)));
+            assert!(history.enter(Recorded::new(entry, sender, audience, &context)));
         }
         let attendance = Attendance::of(history.all_entries());
         let starts_and_ends = |participant| {
@@ -1034,6 +1046,7 @@ mod tests {
     /// back only where its share reaches further; the leave closes the one range.
     #[test]
     fn a_join_while_its_participant_takes_part_continues_its_range() {
+        let context = context_in(ChannelId::new());
         let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
         let said = |n: u128| HistoryEntry::Said {
             message: Message { sender_id: bob, ..make_message(id(n)) },
@@ -1070,7 +1083,7 @@ mod tests {
             ), // 8
             (said(4), bob),         // 9: after she left
         ] {
-            assert!(history.enter(Recorded::new(entry, sender, Audience::Everybody)));
+            assert!(history.enter(Recorded::new(entry, sender, Audience::Everybody, &context)));
         }
         let ranges: Vec<_> = Attendance::of(history.all_entries())
             .of_participant(alice)

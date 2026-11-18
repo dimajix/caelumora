@@ -1063,19 +1063,6 @@ mod tests {
     use std::time::Duration;
     use tokio::time;
 
-    /// `recorded`, of the line of `channel` - as what enters it in an envelope made for it is
-    /// (`EventContext::new`, issue 557), where a history built by hand names no thread.
-    fn in_line_of(channel: ChannelId, recorded: Recorded) -> Recorded {
-        let context = EventContext { thread_id: ThreadId::line(channel), ..recorded.context };
-        Recorded { context, ..recorded }
-    }
-
-    /// `message`, said by its sender in the line of `channel` (`in_line_of`).
-    fn said_in_line(channel: ChannelId, message: &Message) -> Recorded {
-        let said = HistoryEntry::Said { message: message.clone() };
-        in_line_of(channel, Recorded::new(said, message.sender_id, Audience::Everybody))
-    }
-
     /// All of the history `view` shows, as one page.
     async fn whole(view: &dyn ChannelReader) -> ViewResult<HistoryPage> {
         view.history_page_of(None, 10_000, None).await
@@ -1176,11 +1163,14 @@ mod tests {
             .unwrap();
         // Its channel's history, as it records what was said (issue 417).
         let mut channel_state = kernel.state_store().get_channel_state(channel.id).await.unwrap();
-        channel_state.history.extend(vec![
-            question.clone(),
-            answer.clone().produced_from_context(given.transcript, frame),
-            later,
-        ]);
+        channel_state.history.extend(
+            &EventContext::new(channel.session_id, channel.id, ActorId::None, String::new()),
+            vec![
+                question.clone(),
+                answer.clone().produced_from_context(given.transcript, frame),
+                later,
+            ],
+        );
         kernel.state_store().put_channel_state(channel.id, &mut channel_state).await.unwrap();
 
         let for_alice =
@@ -1657,6 +1647,8 @@ mod tests {
         let asking =
             Message { mentions: vec![ActorId::User(alice.id)], ..said(&bob, "@alice, a question") };
         // Alice and dave from the start, bob joined after dave's hello (issue 417).
+        let context =
+            EventContext::new(channel.session_id, channel.id, ActorId::None, String::new());
         let joined = |who: &User| {
             Recorded::new(
                 HistoryEntry::ParticipantJoined {
@@ -1668,24 +1660,22 @@ mod tests {
                 },
                 ActorId::User(alice.id),
                 Audience::Everybody,
+                &context,
             )
         };
         let mut state = ChannelState::new(channel.id);
-        let in_line = |recorded| in_line_of(channel.id, recorded);
-        state.history.enter(in_line(joined(&alice)));
-        state.history.enter(in_line(joined(&dave)));
-        state.history.enter(said_in_line(channel.id, &hello));
-        state.history.enter(in_line(joined(&bob)));
+        state.history.enter(joined(&alice));
+        state.history.enter(joined(&dave));
+        state.history.push(&context, hello.clone());
+        state.history.enter(joined(&bob));
         for message in [&hers, &step, &notice, &asking] {
-            state.history.enter(said_in_line(channel.id, message));
+            state.history.push(&context, message.clone());
         }
         // Said in another thread (issue 557): left out of the line's view but where it mentions the
         // viewer, and counted there alone.
         let aside = Message { mentions: vec![ActorId::User(bob.id)], ..said(&dave, "@bob, aside") };
-        let in_line = said_in_line(channel.id, &aside);
-        let thread_id = ThreadId::new();
-        let context = EventContext { thread_id, ..in_line.context };
-        state.history.enter(Recorded { context, ..in_line });
+        let elsewhere = EventContext { thread_id: ThreadId::new(), ..context };
+        state.history.push(&elsewhere, aside.clone());
         manager.kernel().state_store().put_channel_state(channel.id, &mut state).await.unwrap();
 
         let unread_of = |viewer: &User| {
@@ -1830,6 +1820,8 @@ mod tests {
         // And so does the agent, though alice, for whom it acts, sees it all
         // (issue 417).
         let alice_id = ActorId::User(alice.id);
+        let context =
+            EventContext::new(channel.session_id, channel.id, ActorId::None, String::new());
         let joined = |who: ActorId| {
             Recorded::new(
                 HistoryEntry::ParticipantJoined {
@@ -1841,15 +1833,15 @@ mod tests {
                 },
                 alice_id,
                 Audience::Everybody,
+                &context,
             )
         };
         let mut state = ChannelState::new(channel.id);
-        let in_line = |recorded| in_line_of(channel.id, recorded);
-        state.history.enter(in_line(joined(alice_id)));
-        state.history.enter(said_in_line(channel.id, &first));
-        state.history.enter(in_line(joined(ActorId::User(bob.id))));
-        state.history.enter(in_line(joined(ActorId::Agent(helper.id))));
-        state.history.enter(said_in_line(channel.id, &second));
+        state.history.enter(joined(alice_id));
+        state.history.push(&context, first.clone());
+        state.history.enter(joined(ActorId::User(bob.id)));
+        state.history.enter(joined(ActorId::Agent(helper.id)));
+        state.history.push(&context, second.clone());
         kernel.state_store().put_channel_state(channel.id, &mut state).await.unwrap();
         // What the agent noted and saw.
         let mut agent_state = AgentChannelState::default();
@@ -2010,11 +2002,14 @@ mod tests {
         let session = stored(&manager, session, &mut [team.clone(), hers.clone()]).await;
         // Classified as team is: the flow rule alone would let team read it all.
         let mut state = kernel.state_store().get_channel_state(hers.id).await.unwrap();
-        state.history.extend(vec![Message {
-            id: MessageId::new(),
-            content: Some("hers alone".to_string()),
-            ..Message::new(hers.classification.clone())
-        }]);
+        state.history.extend(
+            &EventContext::new(hers.session_id, hers.id, ActorId::None, String::new()),
+            vec![Message {
+                id: MessageId::new(),
+                content: Some("hers alone".to_string()),
+                ..Message::new(hers.classification.clone())
+            }],
+        );
         kernel.state_store().put_channel_state(hers.id, &mut state).await.unwrap();
         let mut agent_state = AgentChannelState::default();
         let note = |text: &str| Change::Add {
@@ -2604,12 +2599,15 @@ mod tests {
         };
         let session = stored(&manager, session, &mut [channel.clone(), deleted.clone()]).await;
         let mut state = kernel.state_store().get_channel_state(channel.id).await.unwrap();
-        state.history.extend(vec![Message {
-            id: MessageId::new(),
-            sender_id: ActorId::Agent(helper.id),
-            content: Some("I was here".to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
-        }]);
+        state.history.extend(
+            &EventContext::new(channel.session_id, channel.id, ActorId::None, String::new()),
+            vec![Message {
+                id: MessageId::new(),
+                sender_id: ActorId::Agent(helper.id),
+                content: Some("I was here".to_string()),
+                ..Message::new(Classification::CHANNEL_DEFAULT)
+            }],
+        );
         kernel.state_store().put_channel_state(channel.id, &mut state).await.unwrap();
 
         let views = manager.views(as_user(alice.id));
