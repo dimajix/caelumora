@@ -1,6 +1,6 @@
 # 599 — A history built by hand names no thread of its channel
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -96,3 +96,6 @@ In two steps:
   reader of an entry is given, one of how a store keeps an item, and the stores' suite on who
   takes part -; they hold the context's thread now. A test holds what the history's methods put
   into the head of what they record, and CODING-GUIDELINES.md names the rule for the tests.
+- **2026-11-18** — Step 2: what only tests record by hand - `push`, `extend`, `record`, `modify`,
+  `revoke` and `reclassify` - is an `impl` block of `history::testing`, guarded as the module is;
+  the history's own API keeps `enter` and `fit_into`, the channel's ways of recording. Done.

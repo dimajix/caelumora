@@ -33,7 +33,6 @@ use crate::digest::Digest;
 use crate::message::{Message, MessageId};
 use crate::turn::GivenUpReason;
 use crate::work::TurnId;
-use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
 /// The conversation as it happened - a chain like a `Transcript`. What it
@@ -142,47 +141,6 @@ impl Chain<Recorded> {
         Some(message)
     }
 
-    /// Appends `msgs`, each said where `context` says, as `push` records it.
-    pub fn extend(&mut self, context: &EventContext, msgs: Vec<Message>) {
-        for m in msgs {
-            self.push(context, m);
-        }
-    }
-
-    /// Appends `msg`, said where `context` says - with what it was produced from, if it says.
-    pub fn push(&mut self, context: &EventContext, msg: Message) {
-        self.record(context, HistoryEntry::Said { message: msg });
-    }
-
-    /// Records where `context` says that message `id` - on whichever branch - is classified
-    /// `classification` from now on (issue 133). `false`, and nothing is recorded, if there is no
-    /// such message or it was taken back (`Message::reclassify`); one before what it holds is
-    /// recorded (`is_changed`).
-    pub fn reclassify(
-        &mut self,
-        context: &EventContext,
-        id: MessageId,
-        classification: Classification,
-    ) -> bool {
-        let reclassified = HistoryEntry::Reclassified { message: id, classification };
-        self.enter(Recorded::delivered(reclassified, context))
-    }
-
-    /// Records where `context` says that the message `modified.id` - on whichever branch - reads
-    /// as `modified` from now on (issue 234). `false`, and nothing is recorded, if there is no such
-    /// message or it cannot be modified so as it stands (`Message::modify`): taken back, or by
-    /// another sender; one before what it holds is recorded (`is_changed`).
-    pub fn modify(&mut self, context: &EventContext, modified: Message) -> bool {
-        self.enter(Recorded::delivered(HistoryEntry::Modified { message: modified }, context))
-    }
-
-    /// Records where `context` says that the message `id` - on whichever branch - was taken back
-    /// at `at` (issue 234). `false`, and nothing is recorded, if there is no such message or it was
-    /// taken back already; one before what it holds is recorded (`is_changed`).
-    pub fn revoke(&mut self, context: &EventContext, id: MessageId, at: DateTime<Utc>) -> bool {
-        self.enter(Recorded::delivered(HistoryEntry::Revoked { message: id, at }, context))
-    }
-
     /// Whether what `change` does to the message `id` is a change to
     /// record: whether it changes the message as it stands, if it holds
     /// it. Held from a position on (issue 379), it may not hold a message
@@ -204,23 +162,11 @@ impl Chain<Recorded> {
         self.enter(Recorded::delivered(HistoryEntry::Fitted { channel: channel.clone() }, context));
     }
 
-    /// Records `item` where `context` says, what happened that is no change of a message
-    /// (`is_item`): a message said - as `push` records it, with what it was produced from -, how a
-    /// turn ended (issue 258), after its messages, where a step of its plan began (issue 263),
-    /// before the messages of the step, a command carried out (issue 269) or an activity ended
-    /// (issue 284), before the turn's end, a compaction (issue 16), before what replaced the older
-    /// messages, someone added or removed (issue 408). A change is recorded by its own method -
-    /// `modify`, `revoke`, `reclassify`, `fit_into` -, which says whether it applies.
-    pub fn record(&mut self, context: &EventContext, item: HistoryEntry) {
-        debug_assert!(item.is_item(), "a change is recorded by its own method");
-        self.enter(Recorded::delivered(item, context));
-    }
-
-    /// Records `recorded`, as the channel records what enters it (issue
-    /// 417): an item after the last; a change - a modification, a
-    /// revocation, a reclassification - only if it applies, as `modify`,
-    /// `revoke` and `reclassify` say; a fitting always. Returns whether it
-    /// recorded it.
+    /// Records `recorded`, as the channel records what enters it (issue 417): an item after the
+    /// last; a change - a modification, a revocation, a reclassification - only if it applies to
+    /// the message as it stands (`Message::modify`, `Message::revoke`, `Message::reclassify`), or
+    /// the message may have been said before what the history holds (`is_changed`); a fitting
+    /// always. Returns whether it recorded it.
     pub fn enter(&mut self, recorded: Recorded) -> bool {
         let applies = match &recorded.entry {
             HistoryEntry::Modified { message: modified } => {
@@ -282,6 +228,7 @@ mod tests {
     use crate::message::testing::{id, make_message};
     use crate::session::SessionId;
     use crate::user::UserId;
+    use chrono::Utc;
 
     /// Issue 599: what a history records by hand happens where its context says - its session,
     /// its channel, its thread and its chain -, and comes from the entry's sender, not the
