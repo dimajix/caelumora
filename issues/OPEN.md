@@ -72,6 +72,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
+| [593](593-every-lifecycle-change-is-guarded-in-a-way-of-its-own.md) | open | high | refactoring | A change of an object's lifecycle - a session started or deleted, a participant taken in or let go, a thread opened or closed - is guarded each by a mechanism of its own, built after a race showed, so that every new change of a lifecycle brings new races, found by reasoning in review, hardly by a test, and fixed by yet another mechanism. |
 | [556](556-what-an-id-lies-in-is-found-by-searching.md) | open | medium | question | The stores, the state stores and the storages of content are told an entity by its id alone, so a backend whose layout follows what encloses an entity - `home` of issue 554 - has to search for it; the events answered the same question with `Address`, and whether an access path derived from an id should serve both is open. |
 
 ## Integrations
