@@ -354,13 +354,27 @@ URL, with the tool `fetch_page`:
     with `copy_attachment` in any charset; the charset the response named is not kept.
 *   **What it reaches.** `http` and `https` alone, at most five redirects. A fetch goes through the
     proxy the environment names (`HTTPS_PROXY`, `NO_PROXY`), as the server reaches the internet.
-    Where it connects itself - to an address written in the URL, to a host the proxy is not asked
-    for, at every redirect - it refuses an address inside the network: the host itself, private,
-    shared and link-local networks, and what is reserved. A name is judged by every address it
-    resolves to, as it is resolved for the connection, so that what was judged is what is reached.
-    The connection to a proxy is made wherever it lies, but no page is fetched from a proxy's host.
-    Through the proxy, the proxy decides what is reached (issue
-    [545](../issues/545-web-fetch-through-the-proxy-reaches-anything.md)).
+    It refuses an address inside the network: the host itself; the networks that are private,
+    shared (`100.64.0.0/10`), link-local - the metadata service of a cloud, `169.254.169.254` -,
+    unique local, reserved, for benchmarks (`198.18.0.0/15`, which VPNs use inside networks), for
+    documentation, for the IETF's protocols (`192.0.0.0/24`), or for NAT64 inside a network
+    (`64:ff9b:1::/48`); multicast groups; and an IPv6 address that carries an IPv4 one - mapped, by
+    NAT64, by 6to4 - by that one. An address written in the URL is refused always, at every
+    redirect too; a name where the client resolves it itself, for a host the proxy is not asked
+    for, by every address it resolves to, as it is resolved for the connection, so that what was
+    judged is what is reached. The connection to a proxy is made wherever it lies, but no page is
+    fetched from a proxy's host.
+*   **What the proxy has to refuse.** Through the proxy, the proxy resolves a name and connects;
+    Caelumora sees only the proxy's address, so the proxy's rules decide what a fetch reaches by a
+    name (issue [545](../issues/545-web-fetch-through-the-proxy-reaches-anything.md)). A proxy the
+    server goes through has to refuse it the destinations above, by the address it resolves a name
+    to: the metadata service by whatever name, `metadata.google.internal` among them. What the
+    server itself reaches inside the network - a model's endpoint, an intranet service - is named
+    in `NO_PROXY`: it is connected to directly, and so refused to a fetch by Caelumora's own check.
+    Where a server's proxy reaches hosts inside the network for it, every agent with `fetch_page`
+    reaches them too, by name. On AWS, IMDSv2 is to be required: like the metadata services of
+    Google's and Microsoft's clouds, it then answers no request without a header of its own, which
+    a fetch never sends.
 *   **Confidentiality.** What a URL carries goes to anyone: the tool set's destination is `public`,
     not configurable, so the tool is offered in public channels alone. A page is classified
     `public`, as anything anyone can fetch. What it says is written by anyone - the tool's

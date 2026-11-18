@@ -1,9 +1,10 @@
 //! How a page is fetched (issue 544): through the proxy the environment names, as the server
-//! reaches the internet, and where the client connects itself - to an address written in the URL,
-//! to a host the proxy is not asked for, on every redirect - never from an address inside the
-//! network (`address::is_public`). Through the proxy, the proxy decides what it reaches (issue
-//! 545). The proxies' own hosts are connected to wherever they lie, as the proxies they are, but no
-//! page is fetched from them.
+//! reaches the internet, and never from an address inside the network (`address::is_public`): an
+//! address written in the URL always, on every redirect too (`Reach::follows`), a name where the
+//! client resolves it itself, for a host the proxy is not asked for (`PublicResolver`). Through
+//! the proxy, which resolves a name itself, the proxy's rules decide what a name reaches, and they
+//! have to refuse the same (issue 545, TOOLS.md). The proxies' own hosts are connected to wherever
+//! they lie, as the proxies they are, but no page is fetched from them.
 //!
 //! A name is judged by every address it resolves to, by the resolver the client connects with, so
 //! that what was judged is what is connected to: a name resolved again in between could have

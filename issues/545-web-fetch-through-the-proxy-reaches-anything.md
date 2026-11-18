@@ -1,6 +1,6 @@
 # 545 — A page fetched through a proxy may lie inside the network
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Tools and approvals
@@ -57,3 +57,20 @@ directly, and so checked.
 
 - **2026-11-07** — Opened while planning issue 544: the server has to use the proxy of its
   environment, and the check of addresses for fetches through it was deferred to this issue.
+- **2026-11-18** — Decided with the maintainer and done: the proxy's rules are relied on, and
+  TOOLS.md says what they have to refuse - the destinations `web_fetch` refuses where it connects
+  itself, by the address the proxy resolves -, and that what the server reaches inside the network
+  is named in `NO_PROXY`, where `web_fetch`'s own check holds. The check belongs where the
+  connection is made, as egress proxies for untrusted requests do it (Stripe's Smokescreen
+  resolves, refuses and connects to the address it checked). Resolving before sending was not
+  taken: the proxy resolves again, and in networks with a proxy the server often resolves no names
+  of the internet at all, so that it would either refuse every fetch or let unresolved names pass.
+  Nor was a `CONNECT` to the checked address: besides a connector below `reqwest`, it works for
+  `https` alone - a request for `http` goes to the proxy by its URL -, a proxy that filters by name
+  is evaded or refuses it, and one that inspects TLS may make its certificate for the name of the
+  `CONNECT`. A proxy of `web_fetch`'s own waits for an operator who cannot keep the server's
+  internal hosts in `NO_PROXY`. An address written in the URL stays refused through the proxy too
+  (`Reach::follows`); only a name the proxy resolves to an address inside the network is the
+  proxy's to refuse. The metadata services of Google's and Microsoft's clouds answer no request
+  without a header of their own, which `web_fetch` never sends; on AWS, IMDSv2 does the same, which
+  TOOLS.md asks to be required.
