@@ -396,3 +396,13 @@ neither guards a lifecycle.
   again - holds back every stop of the shutdown, within `SHUTDOWN_BOUND`. A procedure keeps its
   place in the queue of one key alone, fair for each key and not across keys; one that panics is
   not undone.
+- **2026-11-18** — Step 1 committed. Step 2 implemented, not committed yet: every change handed to
+  `run` goes through `ChannelLoop::request` and is answered once `run` carried it out (`Answer`) -
+  a start once the actor runs and its join is announced, a leave once its task has ended and its
+  leave is announced, an opening once announced, a closing once the thread is closed, a brief once
+  handed to the delegate -, dropped with `run` where it is still under way. Nobody reads the
+  answers before the later steps, as the maintainer decided against giving the leave alone its
+  answer with its one reader of today (`ChannelLoop::left`); `Answer` says so by an expectation of
+  `dead_code`. A leave asked for again while the actor is leaving - one let go while it rests -
+  is announced once and answered to both; a brief dropped for a thread no longer open counts as
+  carried out.

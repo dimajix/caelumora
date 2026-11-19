@@ -101,7 +101,7 @@ impl ChannelLoop {
             threads.insert(thread, Arc::clone(&opened));
             threads
         });
-        let _ = self.changes_tx.send(ActorChange::Open(thread, opening, context.clone()));
+        let _ = self.request(ActorChange::Open(thread, opening, context.clone()));
         let mut founded = Vec::with_capacity(founders.len());
         for founder in founders {
             let founding =
@@ -139,7 +139,7 @@ impl ChannelLoop {
         if let Some(opened) = self.thread(thread) {
             opened.advance(Phase::Founding, Phase::Closing);
         }
-        let _ = self.changes_tx.send(ActorChange::Close(thread, context.clone()));
+        let _ = self.request(ActorChange::Close(thread, context.clone()));
     }
 
     /// Closes `thread` on behalf of `context` (issue 557): nothing more is said in it. Asked of
@@ -186,7 +186,7 @@ impl ChannelLoop {
         if !open.advance(Phase::Open, Phase::Closing) {
             return Ok(false);
         }
-        let _ = self.changes_tx.send(ActorChange::Close(thread, context.clone()));
+        let _ = self.request(ActorChange::Close(thread, context.clone()));
         info!("Thread {} of channel {} is closed by {}", thread, self.id, context.caller_id);
         Ok(true)
     }

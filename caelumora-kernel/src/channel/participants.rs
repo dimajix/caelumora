@@ -311,7 +311,7 @@ impl ChannelLoop {
                 if let Some(&thread) = self.attending().await.get(&participant) {
                     let name = self.name_of(participant).await;
                     let leave = ActorChange::Leave(participant, name, context.clone(), thread);
-                    let _ = self.changes_tx.send(leave);
+                    let _ = self.request(leave);
                 }
             }
         }
@@ -436,7 +436,7 @@ impl ChannelLoop {
             .insert(participant, task);
         self.drop_actor(participant, &actor, thread);
         let leave = ActorChange::Leave(participant, name, remover.clone(), thread);
-        let _ = self.changes_tx.send(leave);
+        let _ = self.request(leave);
     }
 
     /// Takes `actor`, of `id`, out of the channel's actors, of `thread` it takes part in and of the

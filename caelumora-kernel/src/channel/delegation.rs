@@ -86,7 +86,7 @@ impl ChannelLoop {
         let brief = Brief { message, given_at: None };
         let briefs = VecDeque::from([brief]);
         let delegation = Delegation { giver, recipient, initiator: context.initiator_id, briefs };
-        let _ = self.changes_tx.send(ActorChange::Delegate(thread, delegation));
+        let _ = self.request(ActorChange::Delegate(thread, delegation));
         debug!("{} delegates into thread {} of channel {}", giver, thread, self.id);
         Ok(())
     }

@@ -64,7 +64,7 @@ use std::time::Duration;
 use thread::Thread;
 #[cfg(any(test, feature = "test-support"))]
 use tokio::sync::broadcast;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::time;
 use tokio_util::task::TaskTracker;
 use tracing::{info, warn};
@@ -223,8 +223,39 @@ async fn stopped(tasks: &[TaskTracker]) -> bool {
     time::timeout(STOP_GRACE, future::join_all(tasks.iter().map(TaskTracker::wait))).await.is_ok()
 }
 
-/// A change to the actors a running channel runs (issue 46), carried out by
-/// `run`, which owns their tasks.
+/// A change handed to `run` (`ChannelLoop::request`), with whom `run` answers once it has carried
+/// it out (issue 593).
+struct Request {
+    change: ActorChange,
+    carried_out: oneshot::Sender<()>,
+}
+
+/// What `run` answers a change it was handed (`ChannelLoop::request`, issue 593): that it carried
+/// it out - the actor started and its join announced, or found removed again; the actor's leave
+/// announced once its task has ended; the thread's opening announced; the thread closed once
+/// whoever left it has left; the brief handed to the delegate, or dropped for a thread no longer
+/// open -, or nothing, if `run` ended with the change under way or the channel is gone. A change
+/// handed in while `run` does not run waits until it runs again.
+#[derive(Debug)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "read by the procedures of the later steps of issue 593")
+)]
+struct Answer(oneshot::Receiver<()>);
+
+impl Answer {
+    /// Waits for the answer: whether `run` carried the change out.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "read by the procedures of the later steps of issue 593")
+    )]
+    async fn carried_out(self) -> bool {
+        self.0.await.is_ok()
+    }
+}
+
+/// A change of what a running channel runs - its actors (issue 46), its threads (issue 557) -,
+/// carried out by `run`, which owns the actors' tasks.
 enum ActorChange {
     /// The actor to start - every actor of the channel is started so, as the channel is built and
     /// as a participant joins -, from which position on it is given the history - `None`: what is
@@ -296,9 +327,11 @@ pub struct ChannelLoop {
     /// Held while `mentions` is built and stored, so that a build from older actors - a join and
     /// a rename at once - does not replace a newer one (issue 585).
     building_mentions: sync::Mutex<()>,
-    /// Actors for `run` to start or stop; `run` takes the receiver.
-    changes_tx: mpsc::UnboundedSender<ActorChange>,
-    changes_rx: Mutex<mpsc::UnboundedReceiver<ActorChange>>,
+    /// The changes handed to `run` (`request`) - actors to start or let go, threads to open or
+    /// close, briefs to hand to a delegate -, each with its answer; `run` locks the receiver while
+    /// it runs.
+    requests_tx: mpsc::UnboundedSender<Request>,
+    requests_rx: Mutex<mpsc::UnboundedReceiver<Request>>,
     state: Mutex<ChannelState>,
     state_store: Arc<dyn StateStore>,
     /// The read side of the histories (issue 379): the channel's own, as it
@@ -339,7 +372,7 @@ impl ChannelLoop {
         let threads = state.threads.clone();
         let state = Mutex::new(state);
 
-        let (changes_tx, changes_rx) = mpsc::unbounded_channel();
+        let (requests_tx, requests_rx) = mpsc::unbounded_channel();
         let channel_loop = Arc::new(Self {
             id,
             session_id,
@@ -356,8 +389,8 @@ impl ChannelLoop {
             threads: ArcSwap::from_pointee(HashMap::new()),
             mentions: ArcSwap::from_pointee(MentionDirectory::default()),
             building_mentions: sync::Mutex::new(()),
-            changes_tx,
-            changes_rx: Mutex::new(changes_rx),
+            requests_tx,
+            requests_rx: Mutex::new(requests_rx),
             state,
             state_store,
             history_store,
@@ -506,7 +539,15 @@ impl ChannelLoop {
             actors
         });
         self.rebuild_mentions();
-        let _ = self.changes_tx.send(ActorChange::Start(adopted, from, joined));
+        let _ = self.request(ActorChange::Start(adopted, from, joined));
+    }
+
+    /// Hands `change` to `run`, which carries the changes out one after the other, those handed to
+    /// it before it ran first; what it answers once it carried it out.
+    fn request(&self, change: ActorChange) -> Answer {
+        let (carried_out, answer) = oneshot::channel();
+        let _ = self.requests_tx.send(Request { change, carried_out });
+        Answer(answer)
     }
 
     pub fn id(&self) -> ChannelId {
