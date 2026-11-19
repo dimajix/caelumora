@@ -523,7 +523,11 @@ impl SessionManager {
             Found::Stored(session) => {
                 let hold = self.hold(id)?;
                 let channels = self.load_channels(&session).await?;
-                self.spawn_session(admitted, session, channels, hold).await
+                let started = self.spawn_session(admitted, session, channels, hold).await?;
+                // An agent deleted or restored while its channels were built: the follower missed
+                // it, as the session ran nowhere yet (`procedure::participant::Follow`).
+                started.follow_agents_held(admitted, None).await;
+                Ok(started)
             }
         }
     }
@@ -1092,6 +1096,8 @@ mod tests {
     use crate::component::BUNDLE_REF_KIND;
     use crate::error::is_forbidden;
     use crate::kernel::Kernel;
+    use crate::procedure::follower::AgentFollower;
+    use crate::procedure::participant::Follow;
     use crate::procedure::session::SHUTDOWN_BOUND;
     use crate::procedure::{
         Admitted, Compensation, Deferred, Key, Locks, Procedure, ProcedureError,
@@ -1442,7 +1448,7 @@ mod tests {
     async fn a_deleted_agent_rests_in_its_channels_keeps_its_name_and_comes_back_restored() {
         use caelumora_domain::channel::Participant;
         /// Waits until `holds` does, at most two seconds: a running channel
-        /// follows the agent as the session learns of it.
+        /// follows the agent as the follower of the agents learns of it.
         async fn until(holds: impl Fn() -> bool, what: &str) {
             let waited = async {
                 while !holds() {
@@ -1455,6 +1461,8 @@ mod tests {
         }
         let kernel = test_kernel();
         let manager = SessionManager::new(Arc::clone(&kernel));
+        // Followed as the programs follow them (issue 593).
+        let _followed = AgentFollower::spawn(&manager);
         let agents = kernel.agent_manager();
         let (system, ctx) = (SecurityContext::system(), SecurityContext::default());
         let helper = stored_agent(
@@ -1564,7 +1572,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_session_that_missed_an_agent_being_deleted_finds_out_as_it_looks_again() {
+    async fn an_agent_deleted_unheard_of_is_found_out_as_the_session_is_followed_again() {
         use caelumora_domain::channel::Participant;
         let kernel = test_kernel();
         let manager = SessionManager::new(Arc::clone(&kernel));
@@ -1591,13 +1599,15 @@ mod tests {
             .delete(&system, helper.id, &Removal::now(system.caller_id))
             .await
             .unwrap();
-        session.follow_agents(None).await;
+        let following = Follow::session(&manager, session.id());
+        kernel.procedures().run(following).await.unwrap();
         assert!(!talk.participant_ids().contains(&actor), "looking again, it stops the actor");
         let announced = rx.drain().await;
         assert!(announced.iter().any(|e| matches!(e.about::<Channel>(), Some((address, change)) if address == (session.id(), talk.id()) && change.data::<ActorId>(channel::LEFT) == Some(ActorId::Agent(helper.id)))), "as a leave: {announced:?}");
 
         kernel.entity_stores().agents.restore(&system, helper.id).await.unwrap();
-        session.follow_agents(None).await;
+        let following = Follow::session(&manager, session.id());
+        kernel.procedures().run(following).await.unwrap();
         assert!(talk.participant_ids().contains(&actor), "and starts it again");
         let announced = rx.drain().await;
         assert!(announced.iter().any(|e| matches!(e.about::<Channel>(), Some(((_, c), change)) if c == talk.id() && change.data::<ActorId>(channel::JOINED) == Some(ActorId::Agent(helper.id)))), "as a join: {announced:?}");

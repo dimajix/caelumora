@@ -487,3 +487,18 @@ case; it is decided there, and may make this unnecessary.
   procedure's `changing` was let go. Taking someone in by `TakeIn::added` opens the session as
   reading it, as the REST server did before; who left a session by their own act and was not let
   go from every channel of it no longer reaches it, and whoever may change it finishes it.
+- **2026-11-19** — Step 3a committed. Step 3b implemented, not committed yet: the agents deleted
+  and restored are followed by `procedure::participant::Follow` - `agent`, in every running
+  session whose channels list it, or `session`, every agent of one -, holding the agent's part in
+  each session (`Key::Participant`) and its channels shared, by the building block
+  `SessionLoop::follow_agents_held`; the kernel's follower (`AgentFollower`), which the server
+  program, the terminal and the tests' `World` start, carries one out for every deletion and
+  restore, each in a task of its own so that it misses no event while one waits, and one for every
+  running session after it lost events. The session's loop follows renames alone. A session
+  follows its agents as it starts, in `SessionManager::open_held`, holding it exclusively: the
+  follower does not find it running before it is registered, and an agent deleted while its
+  channels were built would be missed. From the review: the follower is an entry point of its own
+  (`procedure::follower`), beside the procedures; `Follow` holds an agent in every running session,
+  not only where it is listed, so that one taken in meanwhile is followed after the taking in, and
+  following a session follows the agents it holds there alone; a restored agent's actor is waited
+  for until `run` started it, as taking in waits.

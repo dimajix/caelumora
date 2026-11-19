@@ -26,6 +26,7 @@
 
 mod compensation;
 mod executor;
+pub mod follower;
 mod locks;
 pub mod participant;
 pub mod project;

@@ -807,21 +807,22 @@ A missing record is `StoreError::NotFound`, which a lookup that expects it may b
 
 ### Following changes
 
-Neither the actors nor the sessions take over changes of themselves - a running session's
-controller is the one writer of it and holds every change live already; taken over again on top of
-what changed since, a join would list one let go after it (issue
-[590](../issues/590-a-session-lets-nobody-go.md)). A running session follows only whom it takes
-in, whether its agents are deleted or restored, which decides which actors run in its channels, and
-whether its participants are renamed, which decides whom a mention addresses (see
+Neither the actors nor the sessions take over changes of themselves - a running session's controller
+is the one writer of it and holds every change live already; taken over again on top of what changed
+since, a join would list one let go after it (issue
+[590](../issues/590-a-session-lets-nobody-go.md)). A running session follows only whom it takes in,
+whether its participants are renamed, which decides whom a mention addresses; whether its agents are
+deleted or restored, which decides which actors run in its channels, the follower of the agents
+follows for every running session (`procedure::follower::AgentFollower`, see
 [CHANNELS.md](CHANNELS.md)). The `ControllerManager` takes every announced change to an agent, a
 user, a workspace or a project into its live controller, once per instance - the place where changes
 made in other instances will arrive (see [Several instances](#several-instances)). An event carries
 the resulting value, so taking over an instance's own change again changes nothing; a workspace and
 a project are read again as stored instead, since the announcement of a new access list does not
 carry it. A text in it that does not fit the domain's value is left out and logged. Changes whose
-announcements it lost it makes up for by reading every live controller again as stored (issue
-502). Reading again holds the lock of a change, so that a change of this instance under way is not
-set back by what was read before it.
+announcements it lost it makes up for by reading every live controller again as stored (issue 502).
+Reading again holds the lock of a change, so that a change of this instance under way is not set
+back by what was read before it.
 
 No change of a personality is announced. Its controller takes in the personality as stored whenever
 it is asked for - as an agent of it is resolved to take part, and by the `CommandReaper` - and from

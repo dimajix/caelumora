@@ -33,7 +33,6 @@ use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::{Agent, AgentUpdateEvent};
 use caelumora_domain::channel::{self, Channel, ChannelId};
 use caelumora_domain::confidentiality::Classification;
-use caelumora_domain::event::EntityChange;
 use caelumora_domain::event::{Announcing, GlobalEvent};
 use caelumora_domain::group::Group;
 use caelumora_domain::group::GroupId;
@@ -264,10 +263,10 @@ pub struct SessionLoop {
     start_tx: mpsc::UnboundedSender<ChannelId>,
     /// Taken by `run`, which is how it knows it is not already running.
     start_rx: Mutex<mpsc::UnboundedReceiver<ChannelId>>,
-    /// The events about its agents' lifecycle and its participants' names, subscribed to as the
-    /// session is made, so that nothing of whom it takes in before it runs is missed; taken by
-    /// `run`, which follows them. Taking them into their controllers is the `ControllerManager`'s
-    /// (issue 121).
+    /// The events about its participants' names, subscribed to as the session is made, so that
+    /// nothing of whom it takes in before it runs is missed; taken by `run`, which follows them.
+    /// Whether its agents exist the follower of the agents follows (`procedure::follower`, issue
+    /// 593); taking them into their controllers is the `ControllerManager`'s (issue 121).
     subscription: Mutex<EventSubscription>,
     /// What the participants it takes in are followed by on `subscription` (issue 590), from
     /// wherever it takes them in.
@@ -481,10 +480,10 @@ impl SessionLoop {
     /// Runs the session's channels, those it has and those created while it runs, until the session
     /// is stopped - which aborts this, and with it every channel (issue 593).
     ///
-    /// Its channels follow whether its agents exist (issue 314): told of an agent deleted or
-    /// restored, and of every agent as it starts and after it lost events - so that nothing that
-    /// happened meanwhile is missed. They follow the names of its participants alike: told of a
-    /// participant renamed, and after it lost events.
+    /// Its channels follow the names of its participants: told of a participant renamed, and after
+    /// it lost events (issue 585). Whether its agents exist they follow by the follower of the
+    /// agents (`procedure::follower::AgentFollower`, issue 593), which changes no lifecycle of
+    /// theirs from here.
     ///
     /// # Errors
     /// If it runs already, or a channel panicked, which ends it with every channel - logged by
@@ -498,7 +497,6 @@ impl SessionLoop {
 
         let mut join_set = JoinSet::new();
         let mut following = true;
-        self.follow_agents(None).await;
 
         loop {
             tokio::select! {
@@ -516,13 +514,11 @@ impl SessionLoop {
                 }
                 received = subscription.receiver().recv(), if following => {
                     match received {
-                        Ok(global_event) => self.handle_global_event(&global_event).await,
+                        Ok(global_event) => self.handle_global_event(&global_event),
                         Err(RecvError::Lagged(lost)) => {
-                            tracing::warn!("Session {} lost {} events and looks at its participants again", self.id, lost);
-                            // An agent deleted or restored meanwhile is followed (issue 502), and
-                            // one renamed meanwhile is mentioned by its name (issue 585). Whom it
+                            tracing::warn!("Session {} lost {} events and looks at its participants' names again", self.id, lost);
+                            // One renamed meanwhile is mentioned by its name (issue 585). Whom it
                             // takes in it follows as it takes them in, which loses nothing.
-                            self.follow_agents(None).await;
                             self.rebuild_mentions();
                         }
                         // Not while the session holds the bus.
@@ -533,14 +529,9 @@ impl SessionLoop {
         }
     }
 
-    async fn handle_global_event(&self, global_event: &GlobalEvent) {
+    fn handle_global_event(&self, global_event: &GlobalEvent) {
         if let Some((participant, name)) = renamed(global_event) {
             self.participant_renamed(participant, &name);
-        }
-        if let Some((id, EntityChange::Deleted | EntityChange::Restored)) =
-            global_event.about::<Agent>()
-        {
-            self.follow_agents(Some(id)).await
         }
     }
 

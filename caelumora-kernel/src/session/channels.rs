@@ -6,6 +6,7 @@ use super::{
 };
 use crate::channel::ChannelLoop;
 use crate::group::keep_participants;
+use crate::procedure::Admitted;
 use crate::scoped::ScopeNotEmpty;
 use crate::view::{channel_reading, ReadingBasis};
 use anyhow::{Error, Result};
@@ -25,6 +26,7 @@ use caelumora_domain::value::name::Name;
 use caelumora_security::{ActionType, Enforcement, SecurityContext};
 use caelumora_store::Deleted;
 use futures::future;
+use std::collections::HashSet;
 use std::slice;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
@@ -59,10 +61,15 @@ impl SessionLoop {
         self.channels.get(&channel_id).map(|entry| entry.listed())
     }
 
-    /// Has every channel of the session follow whether its agents exist
-    /// (issue 314) - `only`, or every agent if `None`: a deleted one rests in
-    /// them, a restored one runs again (`ChannelLoop::follow_agents`).
-    pub(crate) async fn follow_agents(&self, only: Option<AgentId>) {
+    /// Has every channel of the session follow whether its agents exist (issue 314), for
+    /// `procedure::participant::Follow` and a session as it starts (`SessionManager::open_held`) -
+    /// those of `only`, or every agent if `None`: a deleted one rests in them, a restored one runs
+    /// again (`ChannelLoop::follow_agents`).
+    pub(crate) async fn follow_agents_held(
+        &self,
+        _: &Admitted<'_>,
+        only: Option<&HashSet<AgentId>>,
+    ) {
         for channel in self.channels() {
             channel.follow_agents(only).await;
         }

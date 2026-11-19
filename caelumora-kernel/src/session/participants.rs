@@ -411,6 +411,7 @@ mod tests {
     use crate::component::BUNDLE_REF_KIND;
     use crate::event::SubscriptionTopic;
     use crate::kernel::Kernel;
+    use crate::procedure::follower::AgentFollower;
     use crate::session::testing::*;
     use crate::session::ChannelSpec;
     use crate::session::{SessionError, SessionLoop, SessionManager};
@@ -814,7 +815,7 @@ mod tests {
     }
 
     /// Deletes `agent` and waits until its actor stopped in `channel`: the
-    /// session heard of the deletion.
+    /// kernel's follower heard of the deletion.
     async fn deleted_stops_in(
         kernel: &Kernel,
         ctx: &SecurityContext,
@@ -829,13 +830,15 @@ mod tests {
         };
         time::timeout(Duration::from_secs(2), stopped)
             .await
-            .expect("its actor stops: the session heard of it");
+            .expect("its actor stops: the follower heard of it");
     }
 
     #[tokio::test]
     async fn an_agent_taken_in_later_is_followed_as_one_taken_in_from_the_start() {
         let kernel = test_kernel();
         let manager = SessionManager::new(Arc::clone(&kernel));
+        // Followed as the programs follow them (issue 593).
+        let _followed = AgentFollower::spawn(&manager);
         let helper = stored_agent(
             kernel.entity_stores(),
             "helper",
@@ -855,7 +858,7 @@ mod tests {
             .await
             .expect("taken in");
         assert!(main.participant_ids().contains(&actor), "it runs in the channel");
-        // Announced, and followed by the session as it took it in.
+        // Announced, and followed by the follower of the agents as any agent.
         let announced = |events: &[GlobalEvent]| {
             events.iter().any(|e| matches!(e.about::<Session>().and_then(|(_, change)| change.update::<SessionUpdateEvent>()),
             Some(SessionUpdateEvent::ParticipantJoined(p)) if p.actor_id() == actor))

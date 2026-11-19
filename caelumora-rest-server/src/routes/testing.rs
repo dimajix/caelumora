@@ -48,6 +48,8 @@ pub(super) fn state_with(config: AppConfig) -> Arc<AppState> {
         )),
         controllers: Arc::clone(kernel.controller_manager()),
     });
+    // No follower of the agents (`AgentFollower`): what the server's tests ask follows no agent's
+    // deletion, and the state the server is given holds none - the server program does.
     let session_manager = SessionManager::new(Arc::clone(&kernel));
     let project_manager = Arc::new(ProjectManager::new(Arc::clone(&session_manager)));
     Arc::new(AppState {

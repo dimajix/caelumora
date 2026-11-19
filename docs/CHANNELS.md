@@ -713,28 +713,32 @@ agent said and saw stays readable for whoever may read its context.
 Deleting an agent (`AgentManager::delete`) marks it and changes no channel: it rests in every
 channel it takes part in until it is restored. The channels follow its mark instead:
 
-*   a running session, told of the deletion, has the agent's actor leave each of its channels, in
-    the kernel's name, and announces it as a leave (`channel::LEFT`);
+*   the follower of the agents, told of the deletion (`procedure::follower::AgentFollower`, issue
+    593) - which every program that runs sessions starts beside its `SessionManager`, the server
+    program and the terminal -, has the agent's actor leave each channel of a running session that
+    lists it, in the kernel's name, by a procedure that holds the agent there
+    (`participant::Follow`), and announces it as a leave (`channel::LEFT`);
 *   a channel that starts leaves it out, as any participant that no longer exists -
     `Participation::resolve` asks the store whether it exists, not the controllers, which keep an
     agent's controller while an actor of it still runs;
 *   the views show it as a former participant, removed as its mark says, and keep its name, so that
     what it said keeps its sender.
 
-A session subscribes to the events of its agents as it is made, follows each one it takes in as it
-takes them in, and looks at all of them again as it starts and after it lost events, so that a
-deletion or a restore it did not hear of is not missed. It follows its users alike, for their
-renames (see [`@`-Mentions](#-mentions)).
+The follower follows every agent's deletion and restoring, and after it lost events looks at the
+agents of every running session again; a session looks at all its agents as it starts, as opening
+it does (`SessionManager::open_held`), so that a deletion or a restore while its channels were built
+is not missed. A session subscribes to the events of its participants as it is made, and follows
+each one it takes in as it takes them in, for their renames (see [`@`-Mentions](#-mentions)).
 
 Restoring the agent is refused if another agent took its name in its scope meanwhile. Otherwise it
-takes part again in every channel it rested in: a running session builds its actor anew, gives it
-the part of the history it may see, as when it joined, and announces it as a join. Removing a
-resting agent from a channel changes the document, and the agent does not come back there; its
-leave was recorded as it began to rest, or, deleted while the channel did not run, is recorded as
-it is removed (see [How others learn of it](#how-others-learn-of-it)).
-Purging it removes its document and its state, its own and in every channel; in the channels it
-rested in it stays a former participant, without when it left. An agent of a session's or a
-channel's scope goes with that session or channel (see [Sessions](#sessions)).
+takes part again in every channel it rested in: the follower has its actor built anew, given the
+part of the history it may see, as when it joined, and announced as a join. Removing a resting agent
+from a channel changes the document, and the agent does not come back there; its leave was recorded
+as it began to rest, or, deleted while the channel did not run, is recorded as it is removed (see
+[How others learn of it](#how-others-learn-of-it)). Purging it removes its document and its state,
+its own and in every channel; in the channels it rested in it stays a former participant, without
+when it left. An agent of a session's or a channel's scope goes with that session or channel (see
+[Sessions](#sessions)).
 
 ### Leaving a channel
 

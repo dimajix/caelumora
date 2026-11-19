@@ -30,6 +30,7 @@ use crate::controller::WorkspaceController;
 use crate::error::refusal;
 use crate::kernel::{Kernel, KernelBuilder, ParticipantRuntime};
 use crate::plugin::Plugin;
+use crate::procedure::follower::AgentFollower;
 use crate::project::{ProjectError, ProjectManager};
 use crate::session::testing::{shared_store, SharedLocks};
 use crate::session::{SessionError, SessionLoop, SessionManager};
@@ -350,6 +351,8 @@ pub struct World {
     pub manager: Arc<SessionManager>,
     /// Made beside `manager`, as the programs make it (issue 467).
     pub projects: Arc<ProjectManager>,
+    /// Whether the agents of its sessions exist, followed as long as the world lasts (issue 593).
+    _agents_followed: AgentFollower,
     pub alice: UserId,
     pub bob: UserId,
     pub carol: UserId,
@@ -458,12 +461,14 @@ impl World {
         memberships.bind(&kernel.entity_stores().groups);
         let manager = SessionManager::new(Arc::clone(&kernel));
         let projects = Arc::new(ProjectManager::new(Arc::clone(&manager)));
+        let agents_followed = AgentFollower::spawn(&manager);
         let mut world = Self {
             access_policy: recorder,
             store,
             kernel,
             manager,
             projects,
+            _agents_followed: agents_followed,
             alice: UserId::new(),
             bob: UserId::new(),
             carol: UserId::new(),

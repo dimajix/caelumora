@@ -20,6 +20,7 @@ use caelumora_decision::plugin::DecisionPlugin;
 use caelumora_domain::config::AppConfig;
 use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_kernel::plugin::Plugin;
+use caelumora_kernel::procedure::follower::AgentFollower;
 use caelumora_kernel::procedure::session;
 use caelumora_kernel::procedure::ProcedureExecutor;
 use caelumora_kernel::project::ProjectManager;
@@ -93,6 +94,8 @@ async fn main() -> Result<()> {
     }
     let kernel = Arc::new(builder.build()?);
     let session_manager = SessionManager::new(Arc::clone(&kernel));
+    // Whether the agents of the running sessions exist, followed as long as the server runs.
+    let _agents_followed = AgentFollower::spawn(&session_manager);
     let user_manager = Arc::clone(kernel.user_manager());
     if user_manager.is_empty() {
         tracing::warn!(

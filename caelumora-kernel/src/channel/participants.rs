@@ -22,7 +22,7 @@ use caelumora_domain::security::SecurityAttributes;
 use caelumora_domain::store::Stored;
 use caelumora_domain::value::name::{named, Name};
 use caelumora_security::{ActionType, SecurityContext, JOIN};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::time;
 use tracing::{info, warn};
@@ -363,18 +363,18 @@ impl ChannelLoop {
     /// is asked, not again whether it may run. One change of a participant at a time (`changing`,
     /// issue 564), as `take_in` makes it: an agent being taken in or let go meanwhile is looked at
     /// once that is done, and not at all once it is no longer listed.
-    pub(crate) async fn follow_agents(&self, only: Option<AgentId>) {
+    pub(crate) async fn follow_agents(&self, only: Option<&HashSet<AgentId>>) {
         let agents: Vec<Participant> = self
             .channel()
             .participants
             .iter()
-            .filter(|p| matches!(p, Participant::Agent(id) if only.is_none_or(|only| only == *id)))
+            .filter(|p| matches!(p, Participant::Agent(id) if only.is_none_or(|only| only.contains(id))))
             .cloned()
             .collect();
         for participant in agents {
             let Participant::Agent(id) = participant else { continue };
             let actor = participant.actor_id();
-            let _changing = self.changing.lock(actor).await;
+            let changing = self.changing.lock(actor).await;
             // Removed meanwhile, by whoever held the lock before: nothing to follow.
             if !self.channel().lists(actor) {
                 continue;
@@ -386,8 +386,8 @@ impl ChannelLoop {
                     Ok(false) => {
                         let system = SecurityContext::system();
                         let left = self.leave_actor(actor, running, &system);
-                        // In the session's loop until following is a procedure (issue 593, step
-                        // 3b); a channel it has not started has no task to wait for (`left`).
+                        // For a procedure that holds the agent (`participant::Follow`), or a
+                        // session it starts, whose channels have no task to wait for (`left`).
                         self.left(actor, left).await;
                         self.channel.announce_resting(id, true);
                         info!("{} was deleted and rests in channel {}", actor, self.id);
@@ -400,25 +400,29 @@ impl ChannelLoop {
                 None => {
                     let rejoined = async {
                         let Some(resolved) = self.resolve(&participant).await? else {
-                            return Ok(false);
+                            return Ok(None);
                         };
                         self.participation.require_runnable(&resolved).await?;
                         let (from, thread) = self.rejoining(actor).await?;
                         let thread = self.open_or_line(Some(thread));
                         let joined = SecurityContext::system();
-                        self.start_participant(resolved, thread, Some(from), Some(&joined)).await?;
-                        Ok::<_, Error>(true)
+                        let from = Some(from);
+                        let started = self.start_participant(resolved, thread, from, Some(&joined));
+                        Ok::<_, Error>(Some(started.await?))
                     }
                     .await;
                     match rejoined {
-                        Ok(true) => {
+                        Ok(Some(started)) => {
+                            // Started once `run` answers, as taking in waits for it (`take_in`).
+                            drop(changing);
+                            started.carried_out().await;
                             self.channel.announce_resting(id, false);
                             info!(
                                 "{} was restored and takes part in channel {} again",
                                 actor, self.id
                             );
                         }
-                        Ok(false) => {}
+                        Ok(None) => {}
                         Err(e) => warn!(
                             "{} of channel {} cannot be run and is left out: {:#}",
                             actor, self.id, e
@@ -1472,7 +1476,7 @@ mod tests {
                 Again::Added => {
                     main.add_participant(&alice, actor, HistoryAccess::None).await.unwrap();
                 }
-                Again::Followed => main.follow_agents(Some(helper)).await,
+                Again::Followed => main.follow_agents(Some(&HashSet::from([helper]))).await,
                 // The session follows the agent as it learns of the restore.
                 Again::Restored => {}
             }

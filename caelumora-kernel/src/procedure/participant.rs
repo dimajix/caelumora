@@ -1,22 +1,27 @@
 //! The procedures of a participant's lifecycle (issue 593): taking someone into a session - and
-//! into a channel of it -, added or joining, and letting them go, removed or leaving, from the
-//! session with every channel of it or from one channel.
+//! into a channel of it -, added or joining, letting them go, removed or leaving, from the session
+//! with every channel of it or from one channel, and following an agent's deletion and restoring
+//! in the channels that list it.
 //!
-//! Each locks the participant exclusively (`Key::Participant`), its session as opening it does -
-//! shared where it runs, exclusively where it starts it -, and the channels it changes shared; and
-//! carries the change out by the building blocks of the `SessionLoop` and the `ChannelLoop`, which
-//! ask for the proof that it holds them (`Admitted`). It holds them until `run` has carried the
-//! change out: a newcomer's actor started and its join announced, a leaver's actor ended and its
-//! leave announced - so that nobody takes the same participant in or lets them go meanwhile.
+//! Each locks the participant exclusively (`Key::Participant`) and the channels it changes shared.
+//! Taking in and letting go lock the session as opening it does, shared where it runs, exclusively
+//! where it starts it; following, which opens none, locks the running sessions shared with their
+//! participants. Each carries the change out by the building blocks of the `SessionLoop` and the
+//! `ChannelLoop`, which ask for the proof that it holds them (`Admitted`), and holds what it locked
+//! until `run` has carried the change out - an actor started and its join announced, an actor
+//! ended and its leave announced -, so that nobody takes the same participant in or lets them go
+//! meanwhile.
 
 use super::session::lock_to_open;
 use super::{Admitted, Compensation, Deferred, Key, Locks, Procedure};
 use crate::session::{SessionError, SessionLoop, SessionManager};
 use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::channel::{ChannelId, HistoryAccess};
+use caelumora_domain::agent::AgentId;
+use caelumora_domain::channel::{ChannelId, HistoryAccess, Participant};
 use caelumora_domain::session::SessionId;
 use caelumora_security::SecurityContext;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 /// Takes a participant into a session, and into a channel of it at once if one is named - added
@@ -238,12 +243,95 @@ impl Procedure for LetGo {
     }
 }
 
+/// Has the running channels follow whether an agent exists (issue 314): a deleted agent rests in
+/// them, its actor stopped; a restored one runs again (`SessionLoop::follow_agents_held`). Holds
+/// the agents it follows in each running session (`Key::Participant`) - an agent in every one, so
+/// that whoever takes it in meanwhile is followed after - and the sessions' channels shared.
+pub struct Follow {
+    sessions: Arc<SessionManager>,
+    followed: Followed,
+}
+
+/// What a `Follow` follows.
+enum Followed {
+    /// One agent, in every running session.
+    Agent(AgentId),
+    /// Every agent of one running session.
+    Session(SessionId),
+}
+
+impl Follow {
+    /// Agent `agent` in every running session whose channels list it.
+    pub fn agent(sessions: &Arc<SessionManager>, agent: AgentId) -> Self {
+        Self { sessions: Arc::clone(sessions), followed: Followed::Agent(agent) }
+    }
+
+    /// Every agent of running session `session`, after its follower lost events.
+    pub fn session(sessions: &Arc<SessionManager>, session: SessionId) -> Self {
+        Self { sessions: Arc::clone(sessions), followed: Followed::Session(session) }
+    }
+}
+
+#[async_trait]
+impl Procedure for Follow {
+    /// The sessions it follows agents in, each with the agents it holds there.
+    type Plan = Vec<(SessionId, HashSet<AgentId>)>;
+    type Output = ();
+    type Error = SessionError;
+
+    async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<Self::Plan, Deferred> {
+        let ids = match self.followed {
+            Followed::Session(session) => vec![session],
+            Followed::Agent(_) => self.sessions.running_ids(),
+        };
+        let mut followed = Vec::new();
+        for id in ids {
+            let Some(running) = self.sessions.running(id) else { continue };
+            let agents: HashSet<AgentId> = match self.followed {
+                Followed::Agent(agent) => HashSet::from([agent]),
+                Followed::Session(_) => running
+                    .listed_channels()
+                    .iter()
+                    .flat_map(|(channel, _)| channel.participants.iter())
+                    .filter_map(|participant| match participant {
+                        Participant::Agent(agent) => Some(*agent),
+                        Participant::User(_) => None,
+                    })
+                    .collect(),
+            };
+            for agent in &agents {
+                locks.exclusive(Key::Participant(id, ActorId::Agent(*agent)))?;
+            }
+            for channel in &running.session().channels {
+                locks.shared(Key::Channel(id, *channel))?;
+            }
+            followed.push((id, agents));
+        }
+        Ok(followed)
+    }
+
+    /// Nothing fails: what cannot be read or run is logged and left as it is.
+    async fn carry_out(
+        self,
+        followed: Self::Plan,
+        admitted: &Admitted<'_>,
+        _: &mut Compensation,
+    ) -> Result<(), SessionError> {
+        for (id, agents) in followed {
+            if let Some(running) = self.sessions.running(id) {
+                running.follow_agents_held(admitted, Some(&agents)).await;
+            }
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{LetGo, TakeIn};
+    use super::{Follow, LetGo, TakeIn};
     use crate::procedure::testing::{waits_for, Held};
     use crate::procedure::Key;
-    use crate::testing::World;
+    use crate::testing::{Script, ScriptedAgents, World};
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::channel::HistoryAccess;
     use std::sync::Arc;
@@ -298,5 +386,31 @@ mod tests {
         let adding = TakeIn::added(&world.manager, &alice, id, ActorId::User(world.carol), None);
         waits_for(held, &executor, adding).await.expect("started and taken in once it is let go");
         world.manager.stop(&alice, id).await.unwrap();
+    }
+
+    /// Following an agent holds its part in every running session - also one that does not list
+    /// it yet, so that whoever takes it in meanwhile is followed after -; following a session after
+    /// lost events holds every agent of it.
+    #[tokio::test]
+    async fn following_holds_the_agent_in_every_running_session() {
+        let world = World::with(&[], &[&ScriptedAgents(Script::Hangs)], |_| {}).await;
+        let executor = Arc::clone(world.kernel.procedures());
+        let alice = World::as_user(world.alice);
+        let personality = world.personality("plain", None, &[]).await;
+        let helper = world.agent("helper", world.alice, &personality).await;
+        let with = world.shared_session(&[helper], &[]).await.id();
+        let without = world.shared_session(&[], &[]).await.id();
+        let agent = ActorId::Agent(helper);
+
+        let held = Held::key(&executor, Key::Participant(with, agent), true).await;
+        waits_for(held, &executor, Follow::agent(&world.manager, helper)).await.unwrap();
+
+        let held = Held::key(&executor, Key::Participant(without, agent), true).await;
+        waits_for(held, &executor, Follow::agent(&world.manager, helper)).await.unwrap();
+
+        let held = Held::key(&executor, Key::Participant(with, agent), true).await;
+        waits_for(held, &executor, Follow::session(&world.manager, with)).await.unwrap();
+        world.manager.stop(&alice, with).await.unwrap();
+        world.manager.stop(&alice, without).await.unwrap();
     }
 }

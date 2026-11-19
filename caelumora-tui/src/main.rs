@@ -33,6 +33,7 @@ use caelumora_kernel::controller::UserController;
 use caelumora_kernel::event::EventBus;
 use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_kernel::plugin::Plugin;
+use caelumora_kernel::procedure::follower::AgentFollower;
 use caelumora_kernel::procedure::session;
 use caelumora_kernel::project::ProjectManager;
 use caelumora_kernel::session::{SessionLoop, SessionManager};
@@ -271,6 +272,8 @@ async fn main() -> Result<()> {
     let security = controller.security_context(Default::default(), Default::default());
 
     let session_manager = SessionManager::new(Arc::clone(&kernel));
+    // Whether the agents of the running sessions exist, followed as long as the terminal runs.
+    let _agents_followed = AgentFollower::spawn(&session_manager);
     let projects = ProjectManager::new(Arc::clone(&session_manager));
     // Where the program was started, its project and workspace, if it works there.
     let place = match config.workspaces.storage.contains_key(HERE) {
