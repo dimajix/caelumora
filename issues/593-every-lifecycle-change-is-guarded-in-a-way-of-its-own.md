@@ -647,3 +647,13 @@ case; it is decided there, and may make this unnecessary.
   `abandon_channel_held` go. As the maintainer decided, a deletion whose mark the store no longer
   finds - only by another process, under the channel's lock - answers `ChannelNotFound` rather
   than `false`, so that its compensation runs.
+- **2026-11-19** — Step 5c, its part of channels, committed. Its part of sessions planned in three
+  steps - moving a session into a project, deleting and restoring one, creating one -, as the
+  maintainer decided with a helper that undoes the steps of one session at once if they fail
+  (`procedure::all_or_nothing`), for the `ProjectManager`, which deletes and restores the sessions
+  of a project one by one, until the part of projects takes that over. The first implemented, not
+  committed yet: `procedure::session::move_to`, shared by `Move` and the creation of a session,
+  orchestrates what `SessionLoop::update_project` did. The session asks first
+  (`project_to_move_to`, answering a `MoveTarget`: shared, its own, or a new own, in place of a
+  flag), and offers the steps: making its new own and purging it, sharing a project with its
+  participants and taking the entry away, storing where it lies. `roll_back_project_change` goes.

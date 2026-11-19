@@ -3,8 +3,8 @@
 //! out (`procedure::session`, issue 593).
 
 use super::{
-    load_own, make_own, purge_channel_document, require_attachable, require_classification,
-    SessionError, SessionLoop, SessionSpec,
+    load_own, make_own, purge_channel_document, purge_own, require_attachable,
+    require_classification, SessionError, SessionLoop, SessionSpec,
 };
 use crate::agent::AgentManager;
 use crate::attachment::AttachmentManager;
@@ -14,6 +14,7 @@ use crate::group::{keep_participants, GroupManager};
 use crate::kernel::Kernel;
 #[cfg(any(test, feature = "test-support"))]
 use crate::procedure::participant::{take_in, Entry};
+use crate::procedure::session::move_to;
 use crate::procedure::{Admitted, Compensation};
 use crate::scoped::{purge_for_good, ScopeNotEmpty, ScopedEntities};
 use crate::template::{
@@ -222,8 +223,8 @@ impl SessionManager {
         }
     }
 
-    /// Creates session `id` from the template `template_id` as `spec` asks, on behalf of
-    /// `context`, whose user owns it and is the template's "user", and starts it (issue 88), for
+    /// Creates session `id` from the template `template_id` as `spec` asks, on behalf of `context`,
+    /// whose user owns it and is the template's "user", and starts it (issue 88), for
     /// `procedure::session::Create`, which holds it until it is complete and rolls its creation
     /// back if any of it fails. One of the user's own workspaces that `spec` chooses is attached as
     /// the session is made; the rest - a workspace to be found or made, the agents, the share of
@@ -237,7 +238,7 @@ impl SessionManager {
     /// a `TemplateError` if the template cannot be made into a session; what attaching an existing
     /// workspace, making one or sharing one reports; `SessionError::ChannelUnavailable` if the
     /// components of one of its channels cannot be read in the owner's name (issue 463); what
-    /// putting it into the project reports (`SessionLoop::update_project`); whatever creating the
+    /// putting it into the project reports (`procedure::session::move_to`); whatever creating the
     /// session reports.
     pub(crate) async fn make_from_template(
         &self,
@@ -308,12 +309,12 @@ impl SessionManager {
     /// `context`: the workspace to be found or made - one `spec` chooses to be made for it alone,
     /// else the template's - found or made and attached, then the template's agents found or made
     /// and taken in (issues 227, 344), and its users and agents - `participants`, as
-    /// `resolve_participants` gives them - taken into the channels that name them as their
-    /// founders (issue 420); then one of the user's own workspaces that `spec` chooses shared with
-    /// its participants as far as it says (issue 23), and the session put into the shared project
-    /// `spec` names by the one way into a project (`SessionLoop::update_project`, issue 467). A
-    /// workspace made for it that is not in its scope - which goes with the session as its
-    /// creation is rolled back - is deleted here if any of that fails.
+    /// `resolve_participants` gives them - taken into the channels that name them as their founders
+    /// (issue 420); then one of the user's own workspaces that `spec` chooses shared with its
+    /// participants as far as it says (issue 23), and the session put into the shared project
+    /// `spec` names by the one way into a project (`procedure::session::move_to`, issue 467). A
+    /// workspace made for it that is not in its scope - which goes with the session as its creation
+    /// is rolled back - is deleted here if any of that fails.
     ///
     /// # Errors
     /// What finding or making the workspace or the agents reports, or taking them in, sharing the
@@ -366,7 +367,7 @@ impl SessionManager {
                 controller.share(context, group, *grant).await?;
             }
             if let Some(project) = spec.project {
-                session.update_project(admitted, context, Some(project)).await?;
+                move_to(admitted, log, session, context, Some(project)).await?;
             }
             Ok(())
         }
@@ -457,7 +458,7 @@ impl SessionManager {
             for channel in channels.iter() {
                 let _ = purge_channel_document(&self.stores, channel.id).await;
             }
-            let _ = self.purge_own(own).await;
+            let _ = purge_own(&self.stores, own.id).await;
             let _ =
                 purge_for_good(self.stores.groups.as_ref(), GroupId::of_session(session.id)).await;
             let _ = purge_for_good(self.stores.sessions.as_ref(), session.id).await;
@@ -910,18 +911,6 @@ impl SessionManager {
             .items)
     }
 
-    /// Removes `own`, the own project of a session purged or whose making failed, for good with the
-    /// group of its members, in the kernel's name; what lay in its scope is the caller's to have
-    /// purged.
-    ///
-    /// # Errors
-    /// Whatever the store reports.
-    async fn purge_own(&self, own: &Project) -> StoreResult<()> {
-        purge_for_good(self.stores.groups.as_ref(), GroupId::of_project(own.id)).await?;
-        purge_for_good(self.stores.projects.as_ref(), own.id).await?;
-        Ok(())
-    }
-
     /// Removes the deleted session `id` for good on behalf of `context` (issue 164), in the order
     /// of every purge of what has something behind it (`purge_behind`): its purge begun, then - in
     /// the kernel's name, since the purge was permitted - what lies behind it (`remove_behind`),
@@ -997,7 +986,7 @@ impl SessionManager {
         self.scoped.purge_lying_in(&held_by(id, &owns)).await?;
         purge_for_good(self.stores.groups.as_ref(), GroupId::of_session(id)).await?;
         for own in &owns {
-            self.purge_own(own).await?;
+            purge_own(&self.stores, own.id).await?;
         }
         Ok(())
     }
@@ -1111,7 +1100,7 @@ mod tests {
     };
     use crate::project::{ProjectManager, ProjectSpec};
     use crate::session::testing::*;
-    use crate::session::SessionLoop;
+    use crate::session::{load_own, purge_own, SessionLoop};
     use crate::session::{SessionError, SessionManager, SessionSpec};
     use crate::testing::TestKernel;
     use crate::view::Viewer;
@@ -2089,6 +2078,37 @@ mod tests {
                 .any(|entry| entry.subject == Subject::Group(GroupId::of_session(session.id()))),
             "the share is taken back: {shared:?}"
         );
+    }
+
+    /// Issue 593: a session taken out of a shared project into a new own - the one in its scope was
+    /// lifted - that cannot be stored there lies where it lay, and the own made for it is purged
+    /// again.
+    #[tokio::test]
+    async fn a_session_that_cannot_be_taken_into_a_new_own_leaves_none_behind() {
+        let (kernel, passing) = failing_kernel(Session::KIND);
+        let stores = kernel.entity_stores().clone();
+        let manager = SessionManager::new(kernel);
+        let owner = UserId::new();
+        let ctx =
+            SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
+        let session = create(&manager, &ctx, make_session("moving", owner)).await.unwrap();
+        let project = ProjectManager::new(Arc::clone(&manager))
+            .create(&ctx, ProjectSpec::new("report", Scope::UserScope { user_id: owner }))
+            .await
+            .unwrap();
+        manager.update_project(&ctx, session.id(), Some(project.id)).await.unwrap();
+        // Its own gone, as lifting it takes it out of the session's scope.
+        let own = load_own(&stores, session.id()).await.unwrap().expect("its own");
+        purge_own(&stores, own.id).await.unwrap();
+
+        passing.store(0, Ordering::SeqCst);
+        manager
+            .update_project(&ctx, session.id(), None)
+            .await
+            .expect_err("the session cannot be stored");
+        assert_eq!(session.session().project, project.id, "it lies where it lay");
+        let made = load_own(&stores, session.id()).await.unwrap();
+        assert!(made.is_none(), "the own made for it is purged: {made:?}");
     }
 
     /// Issue 554: a session runs in one process of those that share the stores - held while it

@@ -10,6 +10,7 @@ pub mod testing;
 
 pub(crate) use manager::Found;
 pub use manager::SessionManager;
+pub(crate) use settings::MoveTarget;
 pub use spec::{ChannelSpec, SessionSpec};
 
 use crate::channel::{ChannelLoop, Participation};
@@ -292,6 +293,18 @@ async fn load_own(stores: &EntityStores, id: SessionId) -> StoreResult<Option<Pr
         .find_by_name(&SecurityContext::system(), &Project::own_name(id))
         .await
         .optional()
+}
+
+/// Removes `own`, the own project of a session, for good with the group of its members, in the
+/// kernel's name: as the session is purged, its making failed, or it was moved into an own made
+/// for it that it does not lie in after all. What lay in its scope is the caller's to have purged.
+///
+/// # Errors
+/// Whatever the store reports.
+async fn purge_own(stores: &EntityStores, own: ProjectId) -> StoreResult<()> {
+    purge_for_good(stores.groups.as_ref(), GroupId::of_project(own)).await?;
+    purge_for_good(stores.projects.as_ref(), own).await?;
+    Ok(())
 }
 
 /// Makes `own`, a session's own project, with the group of its members, in the kernel's name (issue

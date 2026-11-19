@@ -8,7 +8,7 @@
 //! holds the session (`Admitted`).
 
 use super::{Admitted, Compensation, Deferred, Key, Locks, Procedure, ProcedureExecutor};
-use crate::session::{SessionError, SessionLoop, SessionManager, SessionSpec};
+use crate::session::{MoveTarget, SessionError, SessionLoop, SessionManager, SessionSpec};
 use async_trait::async_trait;
 use caelumora_domain::project::ProjectId;
 use caelumora_domain::removal::Removal;
@@ -356,7 +356,7 @@ async fn lock_with_its_project(
 }
 
 /// Puts session `id` into the shared project `project` on behalf of `context`, or with `None` into
-/// a project of its own again (`SessionLoop::update_project`, issue 467) - starting it, if it does
+/// a project of its own again (`move_to`, issue 467) - starting it, if it does
 /// not run. Locks the project it goes to shared, so that it is not deleted meanwhile: deleting a
 /// project enumerates the sessions that lie in it, and one put into it meanwhile would be missed.
 /// The project it leaves needs no lock: deleting that one locks the session, and enumerates anew
@@ -395,17 +395,71 @@ impl Procedure for Move {
     }
 
     /// # Errors
-    /// As `Open`, and as `SessionLoop::update_project`.
+    /// As `Open`, and as `move_to`.
     async fn carry_out(
         self,
         (): (),
         admitted: &Admitted<'_>,
-        _: &mut Compensation,
+        log: &mut Compensation,
     ) -> Result<(), SessionError> {
         let Self { sessions, context, id, project } = self;
         let session = sessions.open_held(admitted, &context, id).await?;
-        Ok(session.update_project(admitted, &context, project).await?)
+        move_to(admitted, log, &session, &context, project).await
     }
+}
+
+/// Puts `session` into the shared project `project` on behalf of `context`, or with `None` takes it
+/// out into its own (issue 467), for a procedure that holds the session exclusively and the project
+/// it goes to shared - `Move`, and the creation of a session (issue 593). Asked first
+/// (`SessionLoop::project_to_move_to`); nothing where it lies already. The project it goes to is
+/// shared with its participants for reading, or its new own made, before the session is stored as
+/// lying there, so that it never lies where its participants read nothing - taken back by `log` if
+/// storing it fails -; then a new own is announced, and the shared project it left has the entry of
+/// its participants taken away, in the kernel's name - what cannot be is logged. Nothing moves:
+/// what went to the project before stays there, only what comes now goes to the other.
+///
+/// # Errors
+/// As `SessionLoop::project_to_move_to`; whatever making, sharing or storing reports.
+pub(crate) async fn move_to(
+    admitted: &Admitted<'_>,
+    log: &mut Compensation,
+    session: &Arc<SessionLoop>,
+    context: &SecurityContext,
+    project: Option<ProjectId>,
+) -> Result<(), SessionError> {
+    let Some(mut target) = session.project_to_move_to(context, project).await? else {
+        return Ok(());
+    };
+    let left = session.load_shared_project().await?;
+    match &mut target {
+        MoveTarget::NewOwn(own) => {
+            session.make_own_project_held(admitted, own).await?;
+            let (session, own) = (Arc::clone(session), own.id);
+            log.record("making a session's own project", move |admitted| {
+                Box::pin(async move { session.purge_own_project_held(admitted, own).await })
+            });
+        }
+        MoveTarget::Shared(shared) => {
+            session.share_project_held(admitted, shared.id).await?;
+            let (session, shared) = (Arc::clone(session), shared.id);
+            log.record("sharing a project with a session's participants", move |admitted| {
+                Box::pin(async move { session.unshare_project_held(admitted, shared).await })
+            });
+        }
+        MoveTarget::Own(_) => {}
+    }
+    let to = target.project().id;
+    session.store_project_held(admitted, context, to).await?;
+    if let MoveTarget::NewOwn(own) = &target {
+        session.announce_own_made(own);
+    }
+    if let Some(left) = left {
+        if let Err(e) = session.unshare_project_held(admitted, left.id).await {
+            warn!(session = %session.id(), project = %left.id, "The project a session left is still shared with its participants: {e:#}");
+        }
+    }
+    info!(session = %session.id(), project = %to, by = %context.caller_id, "Session's project changed");
+    Ok(())
 }
 
 /// Stops every session that runs as the process ends (issue 297), as `Stop` stops one, all at

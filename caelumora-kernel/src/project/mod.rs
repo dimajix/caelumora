@@ -3,8 +3,8 @@
 //! it and what lies in its scope; what a project is - its name, description, members, access list
 //! and where it lies - its controller changes (`controller::ProjectController`). A session's own
 //! project is the session's: the `SessionManager` makes, deletes, restores and purges it with the
-//! session. A session is put into a project or taken out into its own by its
-//! `SessionLoop::update_project`, which makes it a new own where its own was lifted.
+//! session. A session is put into a project or taken out into its own by
+//! `procedure::session::move_to`, which makes it a new own where its own was lifted.
 
 mod manager;
 mod spec;
