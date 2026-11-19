@@ -147,9 +147,9 @@ the command does is checked on its own as well, in the issuer's context - the on
 the session read in, too (`UserActor::security_context`): `/agent wakeup` asks for `WakeChannel`.
 `/participant nudge` asks nothing more: it asks someone to respond, as an `@`-mention does, which
 asks nothing of the policy either. `/participant add` asks what taking someone in asks
-(`SessionLoop::add_participant`: `UpdateSession` unless they are in the session already,
+(`procedure::participant::TakeIn::added`: `UpdateSession` unless they are in the session already,
 `UpdateChannel`), `/participant remove` what reading the channel and taking someone out of it ask
-(`ChannelLoop::remove_participant`: `UpdateChannel`), `/agent create` what making an agent asks
+(`LetGo::removed` with the channel: `UpdateChannel`), `/agent create` what making an agent asks
 (`AgentManager::create`), and `/agent delete` what reading the session's agents and deleting one ask
 (`AgentManager::delete`: `DeleteAgent`), so whoever reads the channel sees them, and those without
 the right are refused on running them. `/participant list` asks what reading the channel asks, as
@@ -163,8 +163,8 @@ they are issued in asks (`UpdateChannel`).
 `/channel create` asks what making a channel asks (`SessionLoop::create_channel`: `CreateChannel`,
 `UpdateSession`), with the issuer alone in it, `/channel delete` what reading the channel named and
 deleting it ask (`SessionLoop::delete_channel`: `DeleteChannel`, `UpdateSession`), and
-`/channel join` what joining it asks, through the session (`SessionLoop::join`: `JoinChannel`).
-`/channel leave` asks what leaving asks (`ChannelLoop::leave`: `LeaveChannel`), and with an agent
+`/channel join` what joining it asks, through the session (`TakeIn::joining`: `JoinChannel`).
+`/channel leave` asks what leaving asks (`LetGo::leaving`: `LeaveChannel`), and with an agent
 named what reading the channel asks besides. `/workspace run` asks what an agent's command asks in
 the workspace, in the issuer's name (`WorkspaceController::shell_in`): reading the session and the
 channel, the workspace usable there, `WriteWorkspace`; and its call what every message asks as the

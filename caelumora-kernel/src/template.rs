@@ -7,6 +7,7 @@
 //! or made once the session is, and taken into it as anyone is taken into a running session.
 
 use crate::agent::{AgentManager, AgentSpec};
+use crate::procedure::Admitted;
 use crate::session::{SessionError, SessionLoop};
 use crate::workspace::{WorkspaceManager, WorkspaceSpec};
 use anyhow::Result;
@@ -78,9 +79,10 @@ pub(crate) async fn resolve_participants(
 /// `context` may put it, and taken into the session first.
 ///
 /// # Errors
-/// As `AgentManager::find_or_create`, `SessionLoop::add_participant` and `ChannelLoop::found`;
-/// who took part before stays.
+/// As `AgentManager::find_or_create`, `SessionLoop::add_participant_held` and
+/// `ChannelLoop::found`; who took part before stays.
 pub(crate) async fn take_in_participants(
+    admitted: &Admitted<'_>,
     agent_manager: &AgentManager,
     context: &SecurityContext,
     template: &SessionTemplate,
@@ -94,7 +96,7 @@ pub(crate) async fn take_in_participants(
     for (name, spec) in agents {
         let (agent, _) = agent_manager.find_or_create(context, &spec).await?;
         let participant = ActorId::Agent(agent.id);
-        session.add_participant(context, participant, None).await?;
+        session.add_participant_held(admitted, context, participant, None).await?;
         founders.push((name, participant));
     }
     for (name, participant) in founders {

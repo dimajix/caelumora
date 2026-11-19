@@ -1,7 +1,8 @@
 //! The writer of sub-agents (issue 558), bound to the session of an agent's work: made of the
-//! kernel's building blocks alone - an agent made (`AgentManager`), a thread founded with it
-//! (`SessionLoop::open_thread`), a brief delegated into it (`ChannelLoop::delegate`), and the agent
-//! let go, its thread closed and the agent deleted as its work ends (issue 557). It acts in the
+//! kernel's building blocks and procedures - an agent made (`AgentManager`), a thread founded with
+//! it (`SessionLoop::open_thread`), a brief delegated into it (`ChannelLoop::delegate`), and the
+//! agent let go (`procedure::participant::LetGo`, issue 593), its thread closed and the agent
+//! deleted as its work ends (issue 557). It acts in the
 //! work's context, each operation of the kernel checking itself: the agent of the work gives, its
 //! owner owns what it starts.
 
@@ -19,6 +20,7 @@ use caelumora_domain::value::name::Name;
 use caelumora_kernel::agent::{AgentError, AgentManager, AgentSpec};
 use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::error::{refusal, user_message};
+use caelumora_kernel::procedure::participant::LetGo;
 use caelumora_kernel::session::{SessionError, SessionLoop};
 use caelumora_kernel::view::SessionView;
 use caelumora_security::SecurityContext;
@@ -184,10 +186,14 @@ impl SubAgents {
         agent: AgentId,
     ) -> SubAgentResult<()> {
         let context = self.context();
-        match session.leave(context, ActorId::Agent(agent)).await {
+        let sessions = session
+            .sessions()
+            .ok_or_else(|| SubAgentError::Failed("the kernel's sessions are gone".to_string()))?;
+        let leaving = LetGo::leaving(&sessions, context, session.id(), ActorId::Agent(agent), None);
+        match session.procedures().run(leaving).await {
             Ok(()) => {}
-            Err(error) if let_go_already(&error) => {}
-            Err(error) => return Err(told(error)),
+            Err(SessionError::NotAParticipant { .. }) => {}
+            Err(error) => return Err(told(error.untyped())),
         }
         channel.close_thread(context, thread).await.map_err(told)?;
         self.agents.delete(context, agent).await.map_err(told)?;
@@ -241,11 +247,6 @@ async fn apart<T: Send + 'static>(
         warn!("Sub-agents' work ended without an answer: {}", ended);
         SubAgentError::Failed("it ended without an answer; the log tells why".to_string())
     })?
-}
-
-/// Whether `error` says that the agent takes no part in the session any more.
-fn let_go_already(error: &Error) -> bool {
-    matches!(error.downcast_ref::<SessionError>(), Some(SessionError::NotAParticipant { .. }))
 }
 
 /// What the kernel refused the work or failed with, `error`, as a sub-agents' error: a refusal of

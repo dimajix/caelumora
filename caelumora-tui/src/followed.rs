@@ -1010,7 +1010,7 @@ mod tests {
     async fn running(
         kernel: Arc<Kernel>,
     ) -> (Arc<SessionManager>, Arc<SessionLoop>, SecurityContext) {
-        let manager = Arc::new(SessionManager::new(kernel));
+        let manager = SessionManager::new(kernel);
         let (session_loop, ctx, _) = running_session_of_a_user(&manager).await;
         (manager, session_loop, ctx)
     }
@@ -1428,7 +1428,7 @@ mod tests {
     #[tokio::test]
     async fn an_approval_answered_is_pending_for_the_user_no_more_until_it_ends() {
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let (session_loop, ctx, _) = running_session_of_a_user(&manager).await;
         let channel = session_loop.channels().into_iter().next().expect("the main channel");
         let agent_id = an_agent_in(&kernel, &session_loop, &ctx, channel.id()).await;
@@ -1460,7 +1460,7 @@ mod tests {
     #[tokio::test]
     async fn an_approval_answered_stays_so_where_the_answer_is_refused_or_given_by_a_rule() {
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let (session_loop, ctx, _) = running_session_of_a_user(&manager).await;
         let channel = session_loop.channels().into_iter().next().expect("the main channel");
         let agent_id = an_agent_in(&kernel, &session_loop, &ctx, channel.id()).await;
@@ -1762,7 +1762,7 @@ mod tests {
     /// message printed so is not printed again as the channel shows it (issue 569).
     #[tokio::test]
     async fn what_was_said_so_far_is_printed_once_as_the_user_begins_to_talk() {
-        let manager = Arc::new(SessionManager::new(test_kernel()));
+        let manager = SessionManager::new(test_kernel());
         let (session_loop, owner, other) = running_session_of_a_user(&manager).await;
         let side = spec("side", vec![owner.caller_id, other]);
         let channel = session_loop.create_channel(&owner, side).await.expect("the owner makes it");

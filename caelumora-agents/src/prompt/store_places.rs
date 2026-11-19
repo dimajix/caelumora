@@ -172,7 +172,7 @@ mod tests {
             ..session
         };
         let as_owner = SecurityContext::new(owned_by, Default::default(), Default::default());
-        let session_loop = Arc::new(SessionManager::new(Arc::clone(&kernel)))
+        let session_loop = SessionManager::new(Arc::clone(&kernel))
             .create(&as_owner, session, vec![channel])
             .await
             .unwrap();

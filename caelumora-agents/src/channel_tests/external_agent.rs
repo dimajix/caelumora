@@ -2096,7 +2096,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
         ..Default::default()
     }
     .build();
-    let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+    let manager = SessionManager::new(Arc::clone(&kernel));
 
     let (alice, bob) = (make_user("alice"), make_user("bob"));
     let participants = record_users(kernel.entity_stores(), &[&alice, &bob]).await;

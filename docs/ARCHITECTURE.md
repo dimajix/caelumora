@@ -473,18 +473,23 @@ What changes an entity is split by what it changes:
 A **procedure** is one change of a lifecycle across the objects it touches (issue
 [593](../issues/593-every-lifecycle-change-is-guarded-in-a-way-of-its-own.md)): a session created,
 opened, stopped, deleted, restored, purged or put into another project, a shared project deleted,
-restored or purged. An entry point - a REST handler, the terminal - makes it, as what it asks
-for, and the kernel's `ProcedureExecutor` carries it out in a task of its own. It locks what it
-finds from the top down, by a key that names the object's path (`Key`), each key's parents shared
-with it: exclusively what it changes, shared what has to stay as it is. An object it finds locked
-defers it: it lets go of everything, waits for that object and enumerates again, so that nothing
-waits while it holds anything and no order of locks is needed; who waits at an object admits
-nobody after them. Holding its objects, it checks the state it finds and the permissions, once, and
-carries the change out by the building blocks of the objects, which ask for the proof that it holds
-them (`Admitted`) and know nothing of locking; how to undo each step it records, and the executor
-undoes it if a later step fails (`Compensation`). No procedure is carried out within another - it
-would wait for itself -, and the executor refuses it. The lifecycles of participants, channels and
-threads become procedures in the steps the issue records.
+restored or purged, someone taken into a session or let go from it. An entry point - a REST handler,
+the terminal, a command run in a channel, a plugin's writer - makes it, as what it asks for, and the
+kernel's `ProcedureExecutor` carries it out in a task of its own; who reaches the session from
+within it finds the executor and the `SessionManager` there (`SessionLoop::procedures`, `sessions`),
+the latter known to the kernel weakly, since it holds the kernel (`Kernel::sessions`, issue 601). It
+locks what it finds from the top down, by a key that names the object's path (`Key`), each key's
+parents shared with it: exclusively what it changes, shared what has to stay as it is. An object it
+finds locked defers it: it lets go of everything, waits for that object and enumerates again, so
+that nothing waits while it holds anything and no order of locks is needed; who waits at an object
+admits nobody after them. Holding its objects, it checks the state it finds and the permissions,
+once, and carries the change out by the building blocks of the objects, which ask for the proof that
+it holds them (`Admitted`) and know nothing of locking; how to undo each step it records, and the
+executor undoes it if a later step fails (`Compensation`). No procedure is carried out within
+another - it would wait for itself -, and the executor refuses it. A procedure that a channel's
+`run` carries a step out for holds its objects until `run` answers. The lifecycles of channels and
+threads, and an agent's deletion followed in its channels, become procedures in the steps the issue
+records.
 
 An attachment is no entity: it is part of its message, read and taken back with it. The lifecycle
 of its content is the `AttachmentManager`'s: kept as it is uploaded for a message - or copied, as an

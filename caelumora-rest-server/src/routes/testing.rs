@@ -48,7 +48,7 @@ pub(super) fn state_with(config: AppConfig) -> Arc<AppState> {
         )),
         controllers: Arc::clone(kernel.controller_manager()),
     });
-    let session_manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+    let session_manager = SessionManager::new(Arc::clone(&kernel));
     let project_manager = Arc::new(ProjectManager::new(Arc::clone(&session_manager)));
     Arc::new(AppState {
         auth,

@@ -328,11 +328,14 @@ The procedures, by step, each step reviewed and committed on its own:
    and a leave it finishes as an actor starts under the same id closes the threads that waited for
    it; then, as a second step between, a channel no longer stops by itself once its last actor
    ended, but runs on, empty, until its session stops or it is deleted.
-3. Participants: `participant::TakeIn` (added or joining, into the session and a channel of it),
-   `LetGo` (removed or leaving, from the session with every channel of it, or from one channel),
-   `Follow` (agents deleted or restored), with the follower of the events; `changing` of both loops,
-   `ChannelLoop::leaving`, `ChannelError::StillLeaving` and the rollbacks of taking in go. Taking
-   founders in is code that creating a session or a channel and opening a thread share.
+3. Participants, in two steps: first `participant::TakeIn` (added or joining, into the session and
+   a channel of it) and `LetGo` (removed or leaving, from the session with every channel of it, or
+   from one channel), in place of `SessionManager::join`, `ChannelLoop::leaving` and
+   `ChannelError::StillLeaving`; then `Follow` (agents deleted or restored), with the follower of
+   the events. `changing` of both loops and the rollbacks of taking in go with the last way in that
+   is no procedure yet - founding a channel or a thread, steps 4 and 5 -, as the maintainer
+   decided: until then they keep those ways and the procedures apart. Taking founders in is code
+   that creating a session or a channel and opening a thread share.
 4. Channels: `channel::Create` (with its founders), `Delete`, `Restore` (letting go whom the
    session let go meanwhile), `Start` (one left out as its session started), `Reclassify`; the
    order of locks in `SessionLoop::restore_channel` goes.
@@ -452,3 +455,35 @@ case; it is decided there, and may make this unnecessary.
 - **2026-11-19** — Committed. At the maintainer's decision documented rather than handled: a
   channel that panics ends its session's loop with every channel, while the session stays
   registered as running until it is stopped (`SessionLoop::run`, CHANNELS.md).
+- **2026-11-19** — Step 3a implemented, not committed yet, as the maintainer decided on its
+  interface: `procedure::participant::TakeIn` (`added`, `joining`) and `LetGo` (`removed`,
+  `leaving`, from the session or with a channel named from it alone), each holding the participant
+  (`Key::Participant`) and the channels it changes until `run` has carried the change out, opening
+  a stopped session as it starts - one taking someone in by their own act in the kernel's name for
+  who may join or read it (`SessionManager::open_to_take_in`, in place of `SessionManager::join`),
+  the others as opening a session does (`lock_to_open`, shared with `session::Open`). The building
+  blocks are the loops' `…_held` (`add_participant_held`, `join_held`, `remove_participant_held`,
+  `leave_held` of the `SessionLoop`; `remove_participant_held`, `leave_held` of the
+  `ChannelLoop`). The REST server, the commands `/participant add`, `/participant remove`,
+  `/channel join` and `/channel leave` (`CommandContext::carry_out`) and the sub-agents' end make
+  the procedures; who reaches a session from within it finds the executor and the session manager
+  there (`SessionLoop::procedures`, `sessions`), the kernel knowing the latter weakly
+  (`Kernel::sessions`, issue 601). `run`'s answers are read now: taking someone in waits for the
+  start, letting go for the leave, at most `LEAVE_GRACE` - in place of `ChannelLoop::leaving` and
+  `left`'s wait for the old actor's task, and of `ChannelError::StillLeaving`, whose answer
+  `409 still_leaving` is gone; a channel that stops before it started a newcomer answers
+  `ChannelError::Stopped` (`409 channel_stopped`). Taking in waits for the start without
+  `changing`, which the session's following of its agents takes in the loop that starts the
+  channels: waiting under it locked the two; a founder does not wait, founding being no procedure
+  yet. Letting go waits for the leave holding the channel's `changing`, so that founding a thread,
+  no procedure yet, does not take in one whose old actor still ends; it waits only where `run` has
+  started - before, no actor had a task -, so that the following of the agents, which waits as
+  well until step 3b moves it out of the session's loop, never waits for a channel the loop has
+  not started. A channel taken out of its session before it started drops its requests
+  (`ChannelLoop::never_to_run`), so that nobody waits for its answer for good. Letting go from the
+  session lets go from its running channels all at once, and locks every channel of the session.
+  As the maintainer decided, `changing` stays until founding is a procedure, and with it the
+  rollbacks of taking in within the building blocks: in a compensation they would run after the
+  procedure's `changing` was let go. Taking someone in by `TakeIn::added` opens the session as
+  reading it, as the REST server did before; who left a session by their own act and was not let
+  go from every channel of it no longer reaches it, and whoever may change it finishes it.

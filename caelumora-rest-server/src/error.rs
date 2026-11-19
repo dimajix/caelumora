@@ -540,7 +540,7 @@ impl From<ChannelError> for ApiError {
             ChannelError::AlreadyParticipant { .. } => {
                 Self::conflict("already_participant", detail)
             }
-            ChannelError::StillLeaving { .. } => Self::conflict("still_leaving", detail),
+            ChannelError::Stopped { .. } => Self::conflict("channel_stopped", detail),
             ChannelError::NudgesItself { .. } => Self::bad_request("nudges_itself", detail),
             ChannelError::NotAParticipant { .. } | ChannelError::ParticipantGone { .. } => {
                 Self::not_found("participant_not_found", detail)
@@ -958,8 +958,8 @@ mod tests {
             "already_participant"
         );
         assert_eq!(
-            channel_error(ChannelError::StillLeaving { participant: someone, channel }),
-            "still_leaving"
+            channel_error(ChannelError::Stopped { participant: someone, channel }),
+            "channel_stopped"
         );
         assert_eq!(
             channel_error(ChannelError::ParticipantGone { participant: someone, channel }),

@@ -12,7 +12,6 @@ use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use crate::group::{keep_participants, GroupManager};
 use crate::kernel::Kernel;
-use crate::procedure::session::Open;
 use crate::procedure::Admitted;
 use crate::scoped::{purge_for_good, ScopeNotEmpty, ScopedEntities};
 use crate::template::{
@@ -22,10 +21,11 @@ use crate::view::{Viewer, Views};
 use crate::workspace::reaper::CommandReaper;
 use crate::workspace::WorkspaceManager;
 use anyhow::{Error, Result};
-use caelumora_domain::actor::ActorId;
+#[cfg(any(test, feature = "test-support"))]
+use caelumora_domain::channel::ChannelId;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_domain::channel::Participant;
-use caelumora_domain::channel::{Channel, ChannelField, ChannelId};
+use caelumora_domain::channel::{Channel, ChannelField};
 use caelumora_domain::event::{Announcing, GlobalEvent};
 use caelumora_domain::group::{Group, GroupId};
 use caelumora_domain::project::{Project, ProjectId};
@@ -120,8 +120,9 @@ impl Found {
 }
 
 impl SessionManager {
-    pub fn new(kernel: Arc<Kernel>) -> Self {
-        Self {
+    /// The session manager of `kernel`, which knows it from then on (`Kernel::sessions`).
+    pub fn new(kernel: Arc<Kernel>) -> Arc<Self> {
+        let manager = Arc::new(Self {
             sessions: DashMap::new(),
             handles: DashMap::new(),
             locks: kernel.session_locks().map(Arc::clone),
@@ -138,7 +139,9 @@ impl SessionManager {
             groups: Arc::clone(kernel.group_manager()),
             attachments: Arc::clone(kernel.attachment_manager()),
             kernel,
-        }
+        });
+        manager.kernel.know_sessions(&manager);
+        manager
     }
 
     /// Build the runtime loop for an (already-persisted) session, register it, spawn its
@@ -348,7 +351,8 @@ impl SessionManager {
                 session.attach_workspace(context, Some(workspace)).await?;
             }
             let (users, agents) = participants;
-            take_in_participants(&self.agents, context, template, session, users, agents).await?;
+            take_in_participants(admitted, &self.agents, context, template, session, users, agents)
+                .await?;
             // Shared once the session it is shared with exists (issue 23).
             if let Some(WorkspaceChoice::Existing { id, share: Some(grant) }) = &spec.workspace {
                 let controller = self.controllers.workspace_controller(*id).await?;
@@ -468,20 +472,18 @@ impl SessionManager {
         Ok(channels)
     }
 
-    /// Takes `participant` - whom `context` acts for: themselves, or their own agent - into session
-    /// `id` by their own act, and with `into` into that channel (issue 221, `SessionLoop::join`).
-    /// The session is opened in the kernel's name if an entry of its access list lets `context`
-    /// join it, or they may read it: who may join reads nothing of it before they did.
+    /// Session `id`, to take someone into it on behalf of `context`, for a procedure that holds it
+    /// as `open_held` says: opened in the kernel's name if an entry of its access list lets
+    /// `context` join it, or they may read it - who may join reads nothing of it before they did.
     ///
     /// # Errors
-    /// `SessionError::NotFound` if there is no such session or `context` may
-    /// neither join nor read it; as `SessionLoop::join` otherwise.
-    pub async fn join(
-        self: &Arc<Self>,
+    /// `SessionError::NotFound` if there is no such session or `context` may neither join nor read
+    /// it; as `open_held` otherwise.
+    pub(crate) async fn open_to_take_in(
+        &self,
+        admitted: &Admitted<'_>,
         context: &SecurityContext,
         id: SessionId,
-        participant: ActorId,
-        into: Option<ChannelId>,
     ) -> Result<Arc<SessionLoop>> {
         let not_found = || SessionError::NotFound(id);
         let system = SecurityContext::system();
@@ -495,12 +497,7 @@ impl SessionManager {
         if !reachable {
             return Err(not_found().into());
         }
-        // Until taking someone in is a procedure of its own (issue 593), which starts the session
-        // where it does not run.
-        let opening = Open::new(self, &system, id);
-        let session_loop = self.kernel.procedures().run(opening).await?;
-        session_loop.join(context, participant, into).await?;
-        Ok(session_loop)
+        self.open_held(admitted, &system, id).await
     }
 
     /// Session `id` for `context`, for a procedure that holds it - exclusively where it does not
@@ -1160,7 +1157,7 @@ mod tests {
     #[tokio::test]
     async fn create_session_emits_created_then_started() {
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let mut rx = kernel.event_bus().subscribe_all();
         let ctx = SecurityContext::default();
 
@@ -1195,7 +1192,7 @@ mod tests {
     #[tokio::test]
     async fn delete_session_emits_stopped_then_deleted() {
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let ctx = SecurityContext::default();
 
         let session = make_session("s2", UserId::new());
@@ -1230,7 +1227,7 @@ mod tests {
     #[tokio::test]
     async fn stopping_a_session_announces_its_channels_stopped_then_itself() {
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let session = make_session("s3", UserId::new());
         let session_id = session.id;
         let channel_id = session.channels[0];
@@ -1260,7 +1257,7 @@ mod tests {
     #[tokio::test]
     async fn opening_a_stored_session_emits_started_but_not_created() {
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let ctx = SecurityContext::default();
 
         // Persist a session directly, without going through `create`.
@@ -1291,7 +1288,7 @@ mod tests {
     #[tokio::test]
     async fn a_session_asked_for_at_the_same_time_starts_once() {
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let ctx = SecurityContext::default();
         let session = make_session("concurrent", UserId::new());
         let session_id = session.id;
@@ -1349,7 +1346,7 @@ mod tests {
         }
 
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let ctx = SecurityContext::default();
         let session = make_session("stopped", UserId::new());
         let session_id = session.id;
@@ -1457,7 +1454,7 @@ mod tests {
                 .unwrap_or_else(|_| panic!("{what}"));
         }
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let agents = kernel.agent_manager();
         let (system, ctx) = (SecurityContext::system(), SecurityContext::default());
         let helper = stored_agent(
@@ -1570,7 +1567,7 @@ mod tests {
     async fn a_session_that_missed_an_agent_being_deleted_finds_out_as_it_looks_again() {
         use caelumora_domain::channel::Participant;
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let (system, ctx) = (SecurityContext::system(), SecurityContext::default());
         let helper = stored_agent(
             kernel.entity_stores(),
@@ -1631,7 +1628,7 @@ mod tests {
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn a_session_is_created_from_a_template_for_its_owner() {
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let (owner, template) = pairing(&kernel).await;
         let hers =
             SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
@@ -1798,7 +1795,7 @@ mod tests {
     async fn a_session_whose_workspace_cannot_be_shared_is_not_made() {
         let (kernel, passing) = failing_kernel(Workspace::KIND);
         let stores = kernel.entity_stores().clone();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let (owner, template) = pairing(&kernel).await;
         let hers =
             SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
@@ -1836,7 +1833,7 @@ mod tests {
         let (entities, states) = (Arc::new(MemoryStore::new()), Arc::new(MemoryStore::new()));
         let store = Persistence::new(entities, Arc::<MemoryStore>::clone(&states)).unwrap();
         let kernel = TestKernel { store, ..Default::default() }.build();
-        let manager = Arc::new(SessionManager::new(kernel));
+        let manager = SessionManager::new(kernel);
         let stores = manager.kernel().entity_stores();
         let ctx = SecurityContext::default();
         let session = make_session("two-stores", UserId::new());
@@ -1900,7 +1897,7 @@ mod tests {
         let kernel = test_kernel();
         let stores = kernel.entity_stores().clone();
         let mut events = kernel.event_bus().subscribe_all();
-        let manager = Arc::new(SessionManager::new(kernel));
+        let manager = SessionManager::new(kernel);
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
         let owner = UserId::new();
         let session = make_session("with-results", owner);
@@ -1984,7 +1981,7 @@ mod tests {
     async fn a_session_keeps_its_groups_and_its_project_all_or_none() {
         let (kernel, passing) = failing_kernel(Project::KIND);
         let stores = kernel.entity_stores().clone();
-        let manager = Arc::new(SessionManager::new(kernel));
+        let manager = SessionManager::new(kernel);
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
         let session = make_session("kept", UserId::new());
         let id = session.id;
@@ -2045,7 +2042,7 @@ mod tests {
     async fn a_session_that_cannot_be_put_into_a_project_leaves_it_unshared() {
         let (kernel, passing) = failing_kernel(Session::KIND);
         let stores = kernel.entity_stores().clone();
-        let manager = Arc::new(SessionManager::new(kernel));
+        let manager = SessionManager::new(kernel);
         let owner = UserId::new();
         let ctx =
             SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
@@ -2083,7 +2080,7 @@ mod tests {
     #[tokio::test]
     async fn a_session_another_process_holds_is_left_to_it() {
         let (kernel, locks) = shared_kernel();
-        let manager = Arc::new(SessionManager::new(kernel));
+        let manager = SessionManager::new(kernel);
         let ctx = SecurityContext::default();
         let session = make_session("shared", UserId::new());
         let id = session.id;
@@ -2122,7 +2119,7 @@ mod tests {
         let (kernel, passing) = failing_kernel(Channel::KIND);
         let stores = kernel.entity_stores().clone();
         let states = Arc::clone(kernel.state_store());
-        let manager = Arc::new(SessionManager::new(kernel));
+        let manager = SessionManager::new(kernel);
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
         let session = make_session("purged", UserId::new());
         let (id, channel_id) = (session.id, session.channels[0]);
@@ -2193,7 +2190,7 @@ mod tests {
         let bundles = Arc::clone(&kernel.entity_stores().component_bundles);
         let agents = Arc::clone(&kernel.entity_stores().agents);
         let stores = kernel.entity_stores().clone();
-        let manager = Arc::new(SessionManager::new(kernel));
+        let manager = SessionManager::new(kernel);
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
         let session = make_session("scoped", UserId::new());
         let id = session.id;
@@ -2314,7 +2311,7 @@ mod tests {
         let agents = Arc::clone(&kernel.entity_stores().agents);
         let states = Arc::clone(kernel.state_store());
         let mut events = kernel.event_bus().subscribe_all();
-        let manager = Arc::new(SessionManager::new(kernel));
+        let manager = SessionManager::new(kernel);
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
         let session = make_session("scoped", UserId::new());
         let id = session.id;
@@ -2433,7 +2430,7 @@ mod tests {
             ..Default::default()
         }
         .build();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let alice = make_user("alice");
         let participants = record_users(kernel.entity_stores(), &[&alice]).await;
         let thinker = stored_agent(
@@ -2556,7 +2553,7 @@ mod tests {
     #[tokio::test]
     async fn a_restart_starts_again_the_sessions_with_work_under_way_and_no_other() {
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let ctx = SecurityContext::default();
         let sessions = ["interrupted", "waiting", "idle", "deleted"]
             .map(|name| make_session(name, UserId::new()));

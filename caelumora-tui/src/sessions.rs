@@ -478,7 +478,7 @@ pub(crate) mod testing {
         record_users(kernel.entity_stores(), &[&user]).await;
         let owner =
             SecurityContext::new(ActorId::User(user.id), Default::default(), Default::default());
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let projects = ProjectManager::new(Arc::clone(&manager));
         let place = place_of(&kernel, &projects, &owner, user.id, directory.path()).await.unwrap();
         let sessions = sessions_of(&kernel, &manager, &owner, Some(place)).await;
@@ -553,7 +553,7 @@ mod tests {
     #[tokio::test]
     async fn a_session_is_started_from_the_template_named_and_others_by_the_directory() {
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let (_, owner, _) = running_session_of_a_user(&manager).await;
         let sessions = testing::sessions_of(&kernel, &manager, &owner, None).await;
 

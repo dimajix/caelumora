@@ -746,6 +746,7 @@ impl KernelBuilder {
             prompts,
             seed_sections: self.seed_sections,
             procedures: Arc::new(ProcedureExecutor::new()),
+            sessions: Default::default(),
         })
     }
 }

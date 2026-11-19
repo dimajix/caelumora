@@ -617,24 +617,31 @@ is permitted and can succeed.
 
 ## Participants
 
-Participants of the session can be added to and removed from a running channel, and leave it.
-Changing the participants is an operation of the channel (`ChannelLoop::add_participant`,
-`remove_participant`, `leave`), but whoever takes someone into a channel goes through the session
-(`SessionLoop::add_participant`, `join`, also for one in the session already): it makes the changes
-of one participant one at a time, before the channel does (issue 590), so that a rollback of the
-session's part never takes out one another took into a channel meanwhile, nor taking in and letting
-go cross; founding a channel holds it for each founder. Like renaming, the change is made
-by the channel's one writer, the `ChannelController`, by the rules of the channel's document: who
-comes in is no longer a former participant and has their invitation used up (`Channel::take_in`),
-who is removed is kept as a former participant (`Channel::let_go`, issue 164). It stores the
-channel - asked as `UpdateChannel` of whoever changes it, by default its owner, and in the kernel's
-name for one who joined, founded or left it -, lets the group of its participants follow and
-announces who joined or left. One whose actor then cannot start has the addition rolled back as the
-channel had them before (`Channel::undo_take_in`), announced as a leave. The changes of one
-participant - taken in, let go, its actor following its agent's deletion and restoring - are made
-one at a time, so that two who add the same participant at once take them in once, and a rollback
-never takes out one whose actor another started. Events only announce; nothing changes a channel
-because an event arrived.
+Participants of the session can be added to and removed from a running channel, and leave it. Taking
+someone in and letting them go are procedures (issue 593, see [ARCHITECTURE.md](ARCHITECTURE.md)):
+`procedure::participant::TakeIn` (added, or joining by their own act), into the session and with a
+channel named into that channel at once, and `procedure::participant::LetGo` (removed, or leaving),
+from the session with every channel of it, or from one channel. Each holds the participant
+(`Key::Participant`) and the channels it changes until the channel's `run` has carried the change
+out - the newcomer's actor started and its join announced, the leaver's actor ended and its leave
+announced -, and opens a stopped session as it starts. The building blocks are the session's
+(`SessionLoop::add_participant_held`, `join_held`, `remove_participant_held`, `leave_held`) and the
+channel's (`ChannelLoop::remove_participant_held`, `leave_held`); whoever takes someone into a
+channel goes through the session's, also for one in the session already. Until founding a channel or
+a thread is a procedure too, the session and the channel make the changes of one participant one at
+a time besides (`changing`, issue 590), so that a rollback of the session's part never takes out one
+another took into a channel meanwhile, nor taking in and letting go cross; founding a channel holds
+it for each founder. Like renaming, the change is made by the channel's one writer, the
+`ChannelController`, by the rules of the channel's document: who comes in is no longer a former
+participant and has their invitation used up (`Channel::take_in`), who is removed is kept as a
+former participant (`Channel::let_go`, issue 164). It stores the channel - asked as `UpdateChannel`
+of whoever changes it, by default its owner, and in the kernel's name for one who joined, founded or
+left it -, lets the group of its participants follow and announces who joined or left. One whose
+actor then cannot start has the addition rolled back as the channel had them before
+(`Channel::undo_take_in`), announced as a leave. The changes of one participant - taken in, let go,
+its actor following its agent's deletion and restoring - are made one at a time, so that two who add
+the same participant at once take them in once, and a rollback never takes out one whose actor
+another started. Events only announce; nothing changes a channel because an event arrived.
 
 Adding is asked first as `UpdateChannel`, before anything of the newcomer is looked at, and then as
 `cleared` with the channel's classification, where a policy can hold the channel's level against the
@@ -653,10 +660,11 @@ and when a channel is reclassified.
 ### Taking someone into the session
 
 Who is not in the session yet is taken into it first, and with a channel named into that channel at
-once - by whoever may change the session (`SessionLoop::add_participant`), or by their own act where
-an entry of the session's access list grants them `Join` (`SessionLoop::join`;
-`SessionManager::join` opens the session for one who may join but not read it). Who joins takes in
-themselves or their own agent, never someone else. A third way in is founding a thread
+once - by whoever may change the session (`TakeIn::added`), which opens it as opening any session
+does, or by their own act where an entry of the session's access list grants them `Join`
+(`TakeIn::joining`), which opens it in the kernel's name for one who may join or read it
+(`SessionManager::open_to_take_in`): who joins reads nothing of it before they did. Who joins takes
+in themselves or their own agent, never someone else. A third way in is founding a thread
 (`SessionLoop::open_thread`, see [Its threads](#its-threads)): its founders, the opener's own, are
 taken into the session and the channel in the kernel's name, opening the thread being permitted.
 
@@ -731,9 +739,9 @@ channel's scope goes with that session or channel (see [Sessions](#sessions)).
 ### Leaving a channel
 
 Who takes part leaves a channel by their own act, and takes their own agent out of it the same way
-(`ChannelLoop::leave`), without the right to change it: removing anyone is whoever may change the
-channel's, leaving is everyone's for themselves. Removing and leaving go out by one way, as adding,
-joining and founding come in by one.
+(`LetGo::leaving` with the channel), without the right to change it: removing anyone is whoever may
+change the channel's, leaving is everyone's for themselves. Removing and leaving go out by one way,
+as adding, joining and founding come in by one.
 
 *   **Asked as joining is**: the one who leaves is whom the caller acts for, or their own agent
     (`Participation::require_own_act`), before anything is asked in their name, and `LeaveChannel`
@@ -753,8 +761,8 @@ joining and founding come in by one.
 ### Letting someone go from the session
 
 Who takes part in a session is let go from it by whoever may change it
-(`SessionLoop::remove_participant`), or leaves it by their own act, themselves or their own agent
-(`leave`) - asked as leaving a channel is, as `LeaveSession` (issue
+(`LetGo::removed`), or leaves it by their own act, themselves or their own agent
+(`LetGo::leaving`) - asked as leaving a channel is, as `LeaveSession` (issue
 [590](../issues/590-a-session-lets-nobody-go.md)). Whoever a channel lists takes part in its
 session, so they go out of every channel of it as well:
 
@@ -779,7 +787,8 @@ session, so they go out of every channel of it as well:
     attendance ends only there.
 *   **Not rolled back.** Taking them out of a channel ended their turn, so a channel that fails
     leaves its error to the caller, and asking again - for one out of the session and still in a
-    channel of it - finishes it.
+    channel of it - finishes it: by whoever may change the session, as who left by their own act
+    no longer reaches it once they are out of it (issue 593).
 *   **Nothing is deleted.** What they said stays in the histories, and an agent's state stays; the
     session keeps no former participants of its own, its channels keep theirs. A personal
     invitation was used up as they came in. No rule for the owner or the last one, as for a
@@ -843,10 +852,12 @@ so - and its state is kept, for the record and for a later return. The approver 
 agent's pending approvals as denied, so that nothing keeps waiting, and decides the others again,
 since who may approve them changed. The approver itself is no participant and is never removed.
 
-A participant added again while its old actor still ends waits for it, at most a little past the
-grace, and is refused as still leaving after that. The new actor thus loads the state as the old one
-left it, and never runs next to it. What the old actor sent before it ended is routed before the new
-one starts under the same id. An actor removed before the run loop started it is never started.
+Whoever lets a participant go waits until `run` answers that its actor has ended, at most a little
+past the grace (`LEAVE_GRACE`), holding the participant: who takes them in again waits for that
+(issue 593). The new actor thus loads the state as the old one left it, and never runs next to it -
+but beside one that does not end even when aborted, which is logged and no longer refuses who comes
+after it. What the old actor sent before it ended is routed before the new one starts under the same
+id. An actor removed before the run loop started it is never started.
 
 ### How others learn of it
 

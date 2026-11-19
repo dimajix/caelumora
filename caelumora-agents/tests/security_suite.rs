@@ -3584,8 +3584,9 @@ async fn adding_an_agent_needs_owning_the_channel_and_the_agent_its_personality(
     assert_eq!(
         asked,
         checks(&[
-            // The session's way: the channel reached and changed, the agent read, may it run and
-            // is it cleared - before anything is stored.
+            // The session opened (issue 593), its way: the channel reached and changed, the agent
+            // read, may it run and is it cleared - before anything is stored.
+            "alice: GetSession(alice's) yes",
             "alice: GetChannel(alice's) yes",
             "alice: Cleared(alice) yes",
             "alice: UpdateChannel(alice's) yes",
@@ -3617,6 +3618,7 @@ async fn adding_an_agent_needs_owning_the_channel_and_the_agent_its_personality(
     assert_eq!(
         asked,
         checks(&[
+            "alice: GetSession(alice's) yes",
             "alice: GetChannel(alice's) yes",
             "alice: Cleared(alice) yes",
             "alice: UpdateChannel(alice's) yes",
@@ -3643,6 +3645,10 @@ async fn removing_an_agent_needs_owning_the_channel() {
     assert_eq!(
         asked,
         checks(&[
+            // The session opened and the channel reached, as letting go from it does (issue 593).
+            "bob: GetSession(alice's) yes",
+            "bob: GetChannel(alice's) yes",
+            "bob: Cleared(bob) yes",
             "bob: GetChannel(alice's) yes",
             "bob: Cleared(bob) yes",
             "bob: UpdateChannel(alice's) no"
@@ -3656,6 +3662,9 @@ async fn removing_an_agent_needs_owning_the_channel() {
     assert_eq!(
         asked,
         checks(&[
+            "alice: GetSession(alice's) yes",
+            "alice: GetChannel(alice's) yes",
+            "alice: Cleared(alice) yes",
             "alice: GetChannel(alice's) yes",
             "alice: Cleared(alice) yes",
             "alice: UpdateChannel(alice's) yes"

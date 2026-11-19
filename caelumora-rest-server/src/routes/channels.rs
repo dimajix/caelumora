@@ -29,6 +29,7 @@ use caelumora_domain::value::name::Name;
 use caelumora_kernel::actor::user::{ChannelWatch, Lagged, UserActor};
 use caelumora_kernel::actor::Shown;
 use caelumora_kernel::channel::ChannelLoop;
+use caelumora_kernel::procedure::participant::{LetGo, TakeIn};
 use caelumora_kernel::session::ChannelSpec;
 use caelumora_kernel::view::{Reached, SessionView, Views};
 use caelumora_rest_api::actor::ActorPath;
@@ -366,14 +367,11 @@ pub(super) async fn add_participant(
     Json(payload): Json<AddParticipantRequest>,
 ) -> Result<Json<ChannelResponse>, ApiError> {
     // Through the session: one not in it yet is taken into it, too (issue 221).
-    let session = ensure_session(&state, &user, session_id).await?;
-    session
-        .add_participant(
-            &user.security_context(),
-            payload.participant,
-            Some((channel_id, payload.history)),
-        )
-        .await?;
+    let context = user.security_context();
+    let into = Some((channel_id, payload.history));
+    let adding =
+        TakeIn::added(&state.session_manager, &context, session_id, payload.participant, into);
+    state.procedures.run(adding).await?;
     Ok(Json(channel_response(&state, &user, session_id, channel_id).await?))
 }
 
@@ -416,21 +414,24 @@ pub(super) async fn remove_participant(
     Path((session_id, channel_id, ActorPath(participant))): Path<(SessionId, ChannelId, ActorPath)>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let (_, channel) = open_channel(&state, &user, session_id, channel_id).await?;
     let context = user.security_context();
-    channel.remove_participant(&context, participant).await?;
+    let from = Some(channel_id);
+    let removing = LetGo::removed(&state.session_manager, &context, session_id, participant, from);
+    state.procedures.run(removing).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// Takes participant `aid` - the authenticated user, or an agent of theirs - out of the channel by
-/// their own act (issue 562), without the right to change it (`ChannelLoop::leave`).
+/// their own act (issue 562), without the right to change it (`LetGo::leaving`).
 pub(super) async fn leave(
     State(state): State<Arc<AppState>>,
     Path((session_id, channel_id, ActorPath(participant))): Path<(SessionId, ChannelId, ActorPath)>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let (_, channel) = open_channel(&state, &user, session_id, channel_id).await?;
-    channel.leave(&user.security_context(), participant).await?;
+    let context = user.security_context();
+    let from = Some(channel_id);
+    let leaving = LetGo::leaving(&state.session_manager, &context, session_id, participant, from);
+    state.procedures.run(leaving).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -7,36 +7,40 @@
 use super::{ChannelRun, SessionError, SessionLoop};
 use crate::channel::{ChannelLoop, Entry, ResolvedParticipant};
 use crate::event::SubscriptionTopic;
+use crate::procedure::Admitted;
 use anyhow::{anyhow, Result};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::channel::{Channel, ChannelId, HistoryAccess, Participant};
 use caelumora_domain::session::Session;
 use caelumora_domain::store::{StoreError, Stored};
 use caelumora_security::{ActionType, Enforcement, SecurityContext, JOIN};
+use futures::future;
 use std::sync::Arc;
 use tracing::{info, warn};
 
 impl SessionLoop {
     /// Takes `participant` - a user, or an agent `context` may read (issue 14: nobody brings in
-    /// an agent whose tools they may not use) - into the session on behalf of `context`, who may
-    /// change it (`UpdateSession`, asked before anything else), and with `into` into that channel
-    /// at once, seeing as much of its history as granted there - as whoever may change the
-    /// channel (`UpdateChannel`). One in the session already is only added to the channel, which
-    /// needs no right to change the session (issue 46). Everything is asked before anything is
-    /// stored - their clearance for the channel too; the session is stored first, then the
-    /// channel: one the channel cannot take in after all - refused, or failed as their actor
-    /// starts - is rolled back out of the session as it had them before (`roll_back_taking_in`,
-    /// issue 590). One change of a participant at a time (`changing`): who takes the same person
-    /// in, or lets them go, meanwhile waits, so that a rollback never takes out one whom another
-    /// took into a channel.
+    /// an agent whose tools they may not use) - into the session on behalf of `context`, for
+    /// `procedure::participant::TakeIn`, who may change it (`UpdateSession`, asked before anything
+    /// else), and with `into` into that channel at once, seeing as much of its history as granted
+    /// there - as whoever may change the channel (`UpdateChannel`). One in the session already is
+    /// only added to the channel, which needs no right to change the session (issue 46).
+    /// Everything is asked before anything is stored - their clearance for the channel too; the
+    /// session is stored first, then the channel: one the channel cannot take in after all -
+    /// refused, or failed as their actor starts - is rolled back out of the session as it had them
+    /// before (`roll_back_taking_in`, issue 590). One change of a participant at a time
+    /// (`changing`), until founding a channel or a thread is a procedure too (issue 593): who
+    /// takes the same person in, or lets them go, meanwhile waits, so that a rollback never takes
+    /// out one whom another took into a channel.
     ///
     /// # Errors
     /// `StoreError::PermissionDenied` if `context` may not change the session or the channel;
     /// `SessionError::ChannelNotFound` for a channel they may not read;
     /// `SessionError::AlreadyParticipant` for one in the session already and no channel named;
     /// as `take_in` otherwise, and as `ChannelLoop::add_participant`.
-    pub async fn add_participant(
+    pub(crate) async fn add_participant_held(
         &self,
+        _: &Admitted<'_>,
         context: &SecurityContext,
         participant: ActorId,
         into: Option<(ChannelId, HistoryAccess)>,
@@ -80,18 +84,20 @@ impl SessionLoop {
     }
 
     /// Takes `participant` - whom `context` acts for: themselves, or their own agent - into the
-    /// session by their own act, where an entry of its access list lets them join (`JOIN`), and
-    /// with `into` into that channel at once, where the channel's list lets them join as well
-    /// (`ChannelLoop::join`). Asked and stored as `add_participant`, but stored in the kernel's
-    /// name once joining was permitted; one the channel cannot take in is rolled back out of the
-    /// session, their invitation to it given back (`roll_back_taking_in`, issue 590).
+    /// session by their own act, for `procedure::participant::TakeIn`, where an entry of its access
+    /// list lets them join (`JOIN`), and with `into` into that channel at once, where the channel's
+    /// list lets them join as well (`ChannelLoop::join`). Asked and stored as
+    /// `add_participant_held`, but stored in the kernel's name once joining was permitted; one the
+    /// channel cannot take in is rolled back out of the session, their invitation to it given back
+    /// (`roll_back_taking_in`, issue 590).
     ///
     /// # Errors
     /// `StoreError::PermissionDenied` if they may not join the session or the channel;
     /// `SessionError::ChannelNotFound` if there is no such channel, `ChannelUnavailable` if it does
-    /// not run (issue 463); as `add_participant` otherwise.
-    pub async fn join(
+    /// not run (issue 463); as `add_participant_held` otherwise.
+    pub(crate) async fn join_held(
         &self,
+        _: &Admitted<'_>,
         context: &SecurityContext,
         participant: ActorId,
         into: Option<ChannelId>,
@@ -242,14 +248,15 @@ impl SessionLoop {
         channel.found(context, participant).await
     }
 
-    /// Lets `participant` go from the session on behalf of `context`, who may change it
-    /// (`UpdateSession`, asked before anything else), and from every channel of it (issue 590):
-    /// then as [`Self::let_go`] says.
+    /// Lets `participant` go from the session on behalf of `context`, for
+    /// `procedure::participant::LetGo`, who may change it (`UpdateSession`, asked before anything
+    /// else), and from every channel of it (issue 590): then as [`Self::let_go`] says.
     ///
     /// # Errors
     /// `StoreError::PermissionDenied` if `context` may not change the session; as `let_go`.
-    pub async fn remove_participant(
+    pub(crate) async fn remove_participant_held(
         &self,
+        _: &Admitted<'_>,
         context: &SecurityContext,
         participant: ActorId,
     ) -> Result<()> {
@@ -269,16 +276,21 @@ impl SessionLoop {
     }
 
     /// Takes `participant` - whom `context` acts for: themselves, or their own agent - out of the
-    /// session by their own act (issue 590), without the right to change it: leaving
-    /// (`LeaveSession`) is asked in the participant's own context, an agent's by its owner, as
-    /// leaving a channel is (`ChannelLoop::leave`). Stored in the kernel's name once leaving was
-    /// permitted; then as [`Self::let_go`] says. One that cannot be resolved, a deleted agent,
-    /// cannot leave: whoever may change the session lets it go.
+    /// session by their own act (issue 590), for `procedure::participant::LetGo`, without the right
+    /// to change it: leaving (`LeaveSession`) is asked in the participant's own context, an agent's
+    /// by its owner, as leaving a channel is (`ChannelLoop::leave_held`). Stored in the kernel's
+    /// name once leaving was permitted; then as [`Self::let_go`] says. One that cannot be resolved,
+    /// a deleted agent, cannot leave: whoever may change the session lets it go.
     ///
     /// # Errors
     /// `SessionError::NotAParticipant`; `StoreError::PermissionDenied` if they may not leave; what
     /// resolving the participant reports (`Participation::resolve`); as `let_go`.
-    pub async fn leave(&self, context: &SecurityContext, participant: ActorId) -> Result<()> {
+    pub(crate) async fn leave_held(
+        &self,
+        _: &Admitted<'_>,
+        context: &SecurityContext,
+        participant: ActorId,
+    ) -> Result<()> {
         let Some(leaver) = self.listed_anywhere(participant) else {
             return Err(SessionError::NotAParticipant { session: self.id, participant }.into());
         };
@@ -321,18 +333,19 @@ impl SessionLoop {
             Ok(_) | Err(StoreError::NotFound { .. }) => {}
             Err(error) => return Err(error.into()),
         }
-        let channels = self.session().channels.clone();
-        for channel in channels {
+        // The running channels all at once, each waiting until its actor ended (issue 593).
+        let mut running = Vec::new();
+        for channel in self.session().channels.clone() {
             match self.listed_channel(channel) {
-                Some((_, ChannelRun::Running(running))) => {
-                    running.let_go_with_the_session(context, participant).await?;
-                }
+                Some((_, ChannelRun::Running(channel_loop))) => running.push(channel_loop),
                 Some((_, ChannelRun::Unavailable(_))) => {
                     self.let_go_where_unavailable(context, channel, participant).await?;
                 }
                 None => {}
             }
         }
+        let letting_go = running.iter().map(|c| c.let_go_with_the_session(context, participant));
+        future::join_all(letting_go).await.into_iter().collect::<Result<Vec<()>>>()?;
         info!(
             session = %self.id,
             participant = %participant,
@@ -730,7 +743,8 @@ mod tests {
     }
 
     /// Issue 590: one let go from the session whom a channel failed to let go - nothing rolls them
-    /// back into the session - is let go from it by asking again, by their own act too.
+    /// back into the session - is let go from it by asking again: by whoever may change it, since
+    /// by their own act they no longer reach the session, as letting go opens it (issue 593).
     #[tokio::test]
     async fn asking_again_finishes_letting_go_where_a_channel_failed() {
         let world = World::new().await;
@@ -741,9 +755,12 @@ mod tests {
         session.session_controller.remove_participant(&World::system(), bob).await.unwrap();
         assert!(main.channel().lists(bob), "still in its channel");
 
-        session.leave(&World::as_user(world.bob), bob).await.expect("he finishes it");
+        let unreached = session.leave(&World::as_user(world.bob), bob).await.expect_err("unread");
+        assert!(matches!(unreached.downcast_ref(), Some(SessionError::NotFound(_))), "{unreached}");
+        let alice = World::as_user(world.alice);
+        session.remove_participant(&alice, bob).await.expect("she finishes it");
         assert!(!main.channel().lists(bob), "out of the channel too");
-        let again = session.leave(&World::as_user(world.bob), bob).await.expect_err("nowhere");
+        let again = session.remove_participant(&alice, bob).await.expect_err("nowhere");
         assert!(
             matches!(again.downcast_ref(), Some(SessionError::NotAParticipant { .. })),
             "{again}"
@@ -775,7 +792,8 @@ mod tests {
             .join(&as_user(&carol), carol_id, Some(main.id()))
             .await
             .expect_err("carol is not let in");
-        assert!(refused_by_the_store(&uninvited), "{uninvited}");
+        // Neither invited nor reading it, she does not find it, as joining opens it (issue 593).
+        assert!(matches!(uninvited.downcast_ref(), Some(SessionError::NotFound(_))), "{uninvited}");
         let for_another = session
             .join(&as_user(&bob), carol_id, None)
             .await
@@ -817,7 +835,7 @@ mod tests {
     #[tokio::test]
     async fn an_agent_taken_in_later_is_followed_as_one_taken_in_from_the_start() {
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let helper = stored_agent(
             kernel.entity_stores(),
             "helper",

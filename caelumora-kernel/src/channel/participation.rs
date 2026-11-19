@@ -541,7 +541,7 @@ mod tests {
         let kernel = test_kernel();
         let personalities = Arc::clone(&kernel.entity_stores().personalities);
         let agents = Arc::clone(&kernel.entity_stores().agents);
-        let manager = Arc::new(SessionManager::new(kernel));
+        let manager = SessionManager::new(kernel);
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
         let mut personality = make_personality("plain");
         personalities.create(&system, &mut personality).await.unwrap();

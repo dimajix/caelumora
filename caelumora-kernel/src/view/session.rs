@@ -616,7 +616,7 @@ impl SessionView {
         for participant in &self.session.participants {
             let id = participant.actor_id();
             let (name, owner) = self.views.name_and_owner_of(id).await;
-            // Theirs to take out by their own act (`SessionLoop::leave`, issue 590): themselves,
+            // Theirs to take out by their own act (`LetGo::leaving`, issue 590): themselves,
             // or an agent of theirs that exists, as for a channel (`ParticipantView::may_leave`);
             // the policy is not asked - `LeaveSession` is asked as they leave.
             let can_leave = owner == Some(self.views.context().principal_id);

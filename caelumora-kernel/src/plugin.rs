@@ -283,8 +283,8 @@ mod tests {
 
         let notebook = kernel.services().get::<Notebook>().expect("its manager, a service");
         assert_eq!(notebook.greeting, "hello", "its section of the configuration");
-        let views = Arc::new(SessionManager::new(Arc::clone(&kernel)))
-            .views(Viewer::new(SecurityContext::system()));
+        let views =
+            SessionManager::new(Arc::clone(&kernel)).views(Viewer::new(SecurityContext::system()));
         assert!(views.service::<Notebook>().is_some(), "reached by its views");
 
         // Its component kind, given the manager it uses.

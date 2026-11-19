@@ -270,7 +270,7 @@ async fn main() -> Result<()> {
     let controller = kernel.controller_manager().user_controller(owner).await?;
     let security = controller.security_context(Default::default(), Default::default());
 
-    let session_manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+    let session_manager = SessionManager::new(Arc::clone(&kernel));
     let projects = ProjectManager::new(Arc::clone(&session_manager));
     // Where the program was started, its project and workspace, if it works there.
     let place = match config.workspaces.storage.contains_key(HERE) {

@@ -417,7 +417,7 @@ mod tests {
     /// two at once, get the one project, made once.
     #[tokio::test]
     async fn a_project_is_found_by_its_name_or_made_once() {
-        let manager = Arc::new(SessionManager::new(TestKernel::default().build()));
+        let manager = SessionManager::new(TestKernel::default().build());
         let projects = ProjectManager::new(manager);
         let owner = UserId::new();
         let ctx =
@@ -441,7 +441,7 @@ mod tests {
     async fn a_project_whose_restoring_failed_comes_back_whole_when_tried_again() {
         let (kernel, passing) = failing_kernel(Group::KIND);
         let stores = kernel.entity_stores().clone();
-        let manager = Arc::new(SessionManager::new(kernel));
+        let manager = SessionManager::new(kernel);
         let projects = Arc::new(ProjectManager::new(Arc::clone(&manager)));
         let owner = UserId::new();
         let ctx =
@@ -490,7 +490,7 @@ mod tests {
     async fn a_project_whose_purge_failed_is_finished_by_the_next() {
         let (kernel, passing) = failing_kernel(Channel::KIND);
         let stores = kernel.entity_stores().clone();
-        let manager = Arc::new(SessionManager::new(kernel));
+        let manager = SessionManager::new(kernel);
         let projects = Arc::new(ProjectManager::new(Arc::clone(&manager)));
         let owner = UserId::new();
         let ctx =

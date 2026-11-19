@@ -15,6 +15,7 @@ use crate::actor::user::ChannelWatch;
 use crate::actor::Shown;
 use crate::channel::ChannelLoop;
 use crate::kernel::{ChannelRuntime, Kernel, ParticipantRuntime};
+use crate::procedure::participant::{LetGo, TakeIn};
 use crate::procedure::session::{
     record_creation, resume_interrupted, shut_down, Create, Delete, Move, Open, Purge, Restore,
     Stop,
@@ -27,7 +28,7 @@ use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::actor::{ActorEvent, Rejection};
 use caelumora_domain::channel::testing::main_channel;
-use caelumora_domain::channel::Channel;
+use caelumora_domain::channel::{Channel, ChannelId, HistoryAccess};
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::project::ProjectId;
 use caelumora_domain::query::{FieldPath, Filter};
@@ -84,7 +85,7 @@ pub fn owned(kernel: TestKernel<'_>) -> (Arc<Kernel>, Arc<SessionManager>) {
         Arc::new(OwnershipPolicy::with_memberships(Arc::<StoreMemberships>::clone(&memberships)));
     let kernel = TestKernel { access_policy, ..kernel }.build();
     memberships.bind(&kernel.entity_stores().groups);
-    (Arc::clone(&kernel), Arc::new(SessionManager::new(kernel)))
+    (Arc::clone(&kernel), SessionManager::new(kernel))
 }
 
 /// A kernel under no policy: everything is allowed (`TestKernel`).
@@ -146,7 +147,7 @@ impl SessionManager {
 /// What the tests do with sessions as the entry points do (issue 593): each a procedure, carried
 /// out by the kernel's executor (`Kernel::procedures`), under the verb the entry points ask for -
 /// the manager itself offers only the building blocks -, failing as the building blocks fail
-/// (`untyped`), so that a test looks into the error as it did before.
+/// (`SessionError::untyped`), so that a test looks into the error as it did before.
 impl SessionManager {
     /// Creates `session` with its `channels` on behalf of `context`, as a template would
     /// (`Built`).
@@ -161,7 +162,7 @@ impl SessionManager {
     ) -> Result<Arc<SessionLoop>> {
         let creating =
             Built { sessions: Arc::clone(self), context: context.clone(), session, channels };
-        self.kernel().procedures().run(creating).await.map_err(untyped)
+        self.kernel().procedures().run(creating).await.map_err(SessionError::untyped)
     }
 
     /// Creates a session from the template `template_id` as `spec` asks, on behalf of `context`
@@ -176,7 +177,7 @@ impl SessionManager {
         spec: SessionSpec,
     ) -> Result<Arc<SessionLoop>> {
         let creating = Create::from_template(self, context, template_id, spec);
-        self.kernel().procedures().run(creating).await.map_err(untyped)
+        self.kernel().procedures().run(creating).await.map_err(SessionError::untyped)
     }
 
     /// Opens session `id` for `context` (`procedure::session::Open`).
@@ -188,7 +189,11 @@ impl SessionManager {
         context: &SecurityContext,
         id: SessionId,
     ) -> Result<Arc<SessionLoop>> {
-        self.kernel().procedures().run(Open::new(self, context, id)).await.map_err(untyped)
+        self.kernel()
+            .procedures()
+            .run(Open::new(self, context, id))
+            .await
+            .map_err(SessionError::untyped)
     }
 
     /// Stops session `id` on behalf of `context` (`procedure::session::Stop`).
@@ -196,7 +201,11 @@ impl SessionManager {
     /// # Errors
     /// As `Stop`.
     pub async fn stop(self: &Arc<Self>, context: &SecurityContext, id: SessionId) -> Result<bool> {
-        self.kernel().procedures().run(Stop::new(self, context, id)).await.map_err(untyped)
+        self.kernel()
+            .procedures()
+            .run(Stop::new(self, context, id))
+            .await
+            .map_err(SessionError::untyped)
     }
 
     /// Deletes session `id` on behalf of `context` (`procedure::session::Delete`).
@@ -208,7 +217,11 @@ impl SessionManager {
         context: &SecurityContext,
         id: SessionId,
     ) -> Result<bool> {
-        self.kernel().procedures().run(Delete::new(self, context, id)).await.map_err(untyped)
+        self.kernel()
+            .procedures()
+            .run(Delete::new(self, context, id))
+            .await
+            .map_err(SessionError::untyped)
     }
 
     /// Restores session `id` on behalf of `context` (`procedure::session::Restore`).
@@ -220,7 +233,11 @@ impl SessionManager {
         context: &SecurityContext,
         id: SessionId,
     ) -> Result<Session> {
-        self.kernel().procedures().run(Restore::new(self, context, id)).await.map_err(untyped)
+        self.kernel()
+            .procedures()
+            .run(Restore::new(self, context, id))
+            .await
+            .map_err(SessionError::untyped)
     }
 
     /// Purges session `id` on behalf of `context` (`procedure::session::Purge`).
@@ -228,7 +245,11 @@ impl SessionManager {
     /// # Errors
     /// As `SessionManager::purge_held`.
     pub async fn purge(self: &Arc<Self>, context: &SecurityContext, id: SessionId) -> Result<bool> {
-        self.kernel().procedures().run(Purge::new(self, context, id)).await.map_err(untyped)
+        self.kernel()
+            .procedures()
+            .run(Purge::new(self, context, id))
+            .await
+            .map_err(SessionError::untyped)
     }
 
     /// Puts session `id` into `project` on behalf of `context`, or into its own with `None`
@@ -242,7 +263,26 @@ impl SessionManager {
         id: SessionId,
         project: Option<ProjectId>,
     ) -> Result<()> {
-        self.kernel().procedures().run(Move::new(self, context, id, project)).await.map_err(untyped)
+        self.kernel()
+            .procedures()
+            .run(Move::new(self, context, id, project))
+            .await
+            .map_err(SessionError::untyped)
+    }
+
+    /// Takes `participant` into session `id` by their own act, as `TakeIn::joining` does.
+    ///
+    /// # Errors
+    /// As `TakeIn::joining`.
+    pub async fn join(
+        self: &Arc<Self>,
+        context: &SecurityContext,
+        id: SessionId,
+        participant: ActorId,
+        into: Option<ChannelId>,
+    ) -> Result<Arc<SessionLoop>> {
+        let joining = TakeIn::joining(self, context, id, participant, into);
+        self.kernel().procedures().run(joining).await.map_err(SessionError::untyped)
     }
 
     /// Shuts the sessions down as the process ends (`procedure::session::shut_down`).
@@ -285,16 +325,6 @@ impl Procedure for Built {
         let Self { sessions, context, session, channels } = self;
         record_creation(&sessions, session.id, log);
         Ok(sessions.make(admitted, &context, session, channels).await?)
-    }
-}
-
-/// `error`, as a procedure of a session answers it, as its building block failed: what a store
-/// reported and what anything else failed with as they are.
-fn untyped(error: SessionError) -> Error {
-    match error {
-        SessionError::Store(error) => error.into(),
-        SessionError::Failed(error) => error,
-        error => error.into(),
     }
 }
 
@@ -552,5 +582,65 @@ impl DocumentStorage for FailingDocuments {
     }
     async fn remove(&self, id: Uuid, read: Revision) -> StoreResult<bool> {
         self.inner.remove(id, read).await
+    }
+}
+
+/// What the tests do with participants as the entry points do (issue 593): each a procedure of
+/// `procedure::participant`, under the verb the entry points ask for, failing as the building
+/// blocks fail (`SessionError::untyped`).
+impl SessionLoop {
+    /// Takes `participant` in on behalf of `context`, as `TakeIn::added` does.
+    ///
+    /// # Errors
+    /// As `TakeIn::added`.
+    pub async fn add_participant(
+        &self,
+        context: &SecurityContext,
+        participant: ActorId,
+        into: Option<(ChannelId, HistoryAccess)>,
+    ) -> Result<()> {
+        let adding = TakeIn::added(&self.manager()?, context, self.id(), participant, into);
+        self.procedures().run(adding).await.map(drop).map_err(SessionError::untyped)
+    }
+
+    /// Takes `participant` in by their own act, as `TakeIn::joining` does.
+    ///
+    /// # Errors
+    /// As `TakeIn::joining`.
+    pub async fn join(
+        &self,
+        context: &SecurityContext,
+        participant: ActorId,
+        into: Option<ChannelId>,
+    ) -> Result<()> {
+        let joining = TakeIn::joining(&self.manager()?, context, self.id(), participant, into);
+        self.procedures().run(joining).await.map(drop).map_err(SessionError::untyped)
+    }
+
+    /// Lets `participant` go from the session on behalf of `context`, as `LetGo::removed` does.
+    ///
+    /// # Errors
+    /// As `LetGo::removed`.
+    pub async fn remove_participant(
+        &self,
+        context: &SecurityContext,
+        participant: ActorId,
+    ) -> Result<()> {
+        let removing = LetGo::removed(&self.manager()?, context, self.id(), participant, None);
+        self.procedures().run(removing).await.map_err(SessionError::untyped)
+    }
+
+    /// Takes `participant` out of the session by their own act, as `LetGo::leaving` does.
+    ///
+    /// # Errors
+    /// As `LetGo::leaving`.
+    pub async fn leave(&self, context: &SecurityContext, participant: ActorId) -> Result<()> {
+        let leaving = LetGo::leaving(&self.manager()?, context, self.id(), participant, None);
+        self.procedures().run(leaving).await.map_err(SessionError::untyped)
+    }
+
+    /// The session manager of the kernel, which the procedures are made with.
+    fn manager(&self) -> Result<Arc<SessionManager>> {
+        self.sessions().ok_or_else(|| Error::msg("the kernel has no session manager"))
     }
 }

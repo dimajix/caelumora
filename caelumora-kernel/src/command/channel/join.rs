@@ -3,6 +3,7 @@
 use crate::channel::ChannelError;
 use crate::command::{command_error, ChannelCommand, CommandContext};
 use crate::error::is_forbidden;
+use crate::procedure::participant::TakeIn;
 use crate::session::SessionError;
 use async_trait::async_trait;
 use caelumora_api::actor::Actor;
@@ -56,10 +57,10 @@ fn hides_the_channel(error: &anyhow::Error) -> bool {
 impl ChannelCommand for JoinCommand {
     /// Runs `/channel join` with `args`: the issuer joins the running channel of the session of
     /// that whole name (`SessionLoop::channel_named`), through the session, which makes one change
-    /// of a participant at a time (`SessionLoop::join`, issue 590), and asks `JoinChannel` in their
-    /// own context. Who may join a channel reads nothing of it before they did, so it is
-    /// not sought among those they read; and a channel they may not join - by its access list, or
-    /// not cleared for it -, or that does not run, is named as one that does not exist, so that
+    /// of a participant at a time (`TakeIn::joining`, issues 590, 593), and asks `JoinChannel` in
+    /// their own context. Who may join a channel reads nothing of it before they did, so it is not
+    /// sought among those they read; and a channel they may not join - by its access list, or not
+    /// cleared for it -, or that does not run, is named as one that does not exist, so that
     /// channels cannot be probed. Only the issuer is answered: the channel tells everyone that they
     /// joined.
     async fn execute(
@@ -80,9 +81,12 @@ impl ChannelCommand for JoinCommand {
             return Ok(CommandOutput::private(format!("You take part in {name} already.")));
         }
         // Through the session, which makes one change of a participant at a time (issue 590).
-        let context_of_issuer = context.issuer.security_context();
-        match session.join(&context_of_issuer, issuer, Some(channel.id())).await {
-            Ok(()) => Ok(CommandOutput::private(format!("Joined {name}."))),
+        let (context_of_issuer, into) = (context.issuer.security_context(), Some(channel.id()));
+        let joining = context.carry_out(|sessions, session| {
+            TakeIn::joining(sessions, &context_of_issuer, session, issuer, into)
+        });
+        match joining.await {
+            Ok(_) => Ok(CommandOutput::private(format!("Joined {name}."))),
             // Refused - the channel's entry, the session's for one no longer in it, a store's
             // check -, not cleared, out of scope, or gone or stopped meanwhile: named alike, so
             // that channels cannot be probed.

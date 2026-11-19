@@ -140,16 +140,8 @@ impl Procedure for Open {
     type Output = Arc<SessionLoop>;
     type Error = SessionError;
 
-    /// Shared for one that runs - which keeps it running -, exclusively for one it starts.
     async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<(), Deferred> {
-        let key = Key::Session(self.id);
-        if self.sessions.running(self.id).is_some() {
-            locks.shared(key)?;
-            if self.sessions.running(self.id).is_some() {
-                return Ok(());
-            }
-        }
-        locks.exclusive(key)
+        lock_to_open(&self.sessions, locks, self.id)
     }
 
     /// # Errors
@@ -165,6 +157,27 @@ impl Procedure for Open {
         let Self { sessions, context, id } = self;
         Ok(sessions.open_held(admitted, &context, id).await?)
     }
+}
+
+/// Locks session `id` to open it, as every procedure that opens a session does (`Open`, and who
+/// takes someone in or lets them go): shared where it runs - which keeps it running -, exclusively
+/// where it is to be started.
+///
+/// # Errors
+/// `Deferred` if it is held otherwise.
+pub(super) fn lock_to_open(
+    sessions: &SessionManager,
+    locks: &mut Locks<'_>,
+    id: SessionId,
+) -> Result<(), Deferred> {
+    let key = Key::Session(id);
+    if sessions.running(id).is_some() {
+        locks.shared(key)?;
+        if sessions.running(id).is_some() {
+            return Ok(());
+        }
+    }
+    locks.exclusive(key)
 }
 
 /// Stops session `id` on behalf of `context` without deleting it: its channels and actors stop,

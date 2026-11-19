@@ -342,8 +342,9 @@ impl SessionLoop {
             _ => None,
         };
         channel_loop.leave_actors().await;
-        if let Some(task) = task {
-            task.abort();
+        match task {
+            Some(task) => task.abort(),
+            None => channel_loop.never_to_run(),
         }
         if let Err(undo) = self.session_controller.remove_channel(context, id).await {
             warn!("Channel {} of session {} could not take in its founders and not be removed again: {}", id, self.id, undo);
@@ -574,6 +575,9 @@ impl SessionLoop {
                 // task - and with it whoever did not - is aborted (issue
                 // 187): they store their state on their way out, which stays.
                 running.leave_actors().await;
+                if task.is_none() {
+                    running.never_to_run();
+                }
                 task
             }
             _ => None,
@@ -811,7 +815,7 @@ mod tests {
     #[tokio::test]
     async fn a_channel_created_in_a_running_session_is_stored_announced_and_runs() {
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
         let mut rx = kernel.event_bus().subscribe_all();
 
@@ -878,7 +882,7 @@ mod tests {
     async fn a_channel_is_held_in_the_language_asked_for_and_in_none_otherwise() {
         use caelumora_domain::user::UserProfile;
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let (session, ctx, _) = running_session_of_a_user(&manager).await;
         let language = |tag: &str| Some(Language::new(tag).unwrap());
 
@@ -911,7 +915,7 @@ mod tests {
     #[tokio::test]
     async fn a_channel_without_a_language_of_its_own_follows_its_sessions() {
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let (session, ctx, _) = running_session_of_a_user(&manager).await;
         let language = |tag: &str| Some(Language::new(tag).unwrap());
         let following = session.create_channel(&ctx, spec("following", vec![])).await.unwrap();
@@ -964,7 +968,7 @@ mod tests {
     #[tokio::test]
     async fn a_session_is_held_in_the_time_zone_its_owner_chooses_and_in_utc_otherwise() {
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let (session, ctx, _) = running_session_of_a_user(&manager).await;
         let berlin = TimeZone::new("Europe/Berlin").unwrap();
         let shown = async || {
@@ -1002,7 +1006,7 @@ mod tests {
     #[tokio::test]
     async fn a_channel_uses_the_workspace_unless_its_creator_says_otherwise() {
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let (session, ctx, _) = running_session_of_a_user(&manager).await;
 
         let unsaid = session.create_channel(&ctx, spec("unsaid", vec![])).await.unwrap();
@@ -1020,7 +1024,7 @@ mod tests {
     #[tokio::test]
     async fn a_channel_that_cannot_be_is_refused_before_anything_is_stored() {
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let (session, ctx, _) = running_session_of_a_user(&manager).await;
         let stranger = ActorId::User(UserId::new());
 
@@ -1083,7 +1087,7 @@ mod tests {
     async fn a_deleted_channel_is_stopped_announced_and_kept_until_it_is_restored() {
         use caelumora_domain::agent::{AgentChannelState, AgentId};
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let (session, ctx, _) = running_session_of_a_user(&manager).await;
         let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
         let id = channel.id();
@@ -1170,7 +1174,7 @@ mod tests {
     #[tokio::test]
     async fn a_channel_deleted_before_the_session_runs_is_never_started() {
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let ctx = SecurityContext::default();
         let session = make_session("waiting", UserId::new());
         let channel_id = session.channels[0];
@@ -1285,7 +1289,7 @@ mod tests {
     async fn a_channel_whose_restoring_failed_comes_back_whole_when_tried_again() {
         let (kernel, passing) = failing_kernel(Session::KIND);
         let stores = kernel.entity_stores().clone();
-        let manager = Arc::new(SessionManager::new(kernel));
+        let manager = SessionManager::new(kernel);
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
         let session =
             create(&manager, &ctx, make_session("restored", UserId::new())).await.unwrap();

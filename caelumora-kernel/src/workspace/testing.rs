@@ -111,7 +111,7 @@ pub async fn session_with_workspace() -> WithWorkspace {
         channels: vec![channel.id],
         ..session
     };
-    let session = Arc::new(SessionManager::new(Arc::clone(&kernel)))
+    let session = SessionManager::new(Arc::clone(&kernel))
         .create(&as_owner, session, vec![channel])
         .await
         .unwrap();

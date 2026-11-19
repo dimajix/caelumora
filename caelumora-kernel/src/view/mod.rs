@@ -3101,7 +3101,7 @@ mod tests {
             ..Default::default()
         }
         .build();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let system = SecurityContext::system();
 
         let alice = make_user("alice");

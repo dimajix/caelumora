@@ -21,7 +21,7 @@ use crate::event::{EventBus, EventSubscription, Following, SubscriptionTopic};
 use crate::group::{keep_participants, GroupManager};
 use crate::kernel::{ChannelRuntime, Kernel};
 use crate::lock::LocksById;
-use crate::procedure::ProcedureError;
+use crate::procedure::{ProcedureError, ProcedureExecutor};
 use crate::scoped::{purge_for_good, ScopeNotEmpty, ScopedEntities};
 use crate::view::{Viewer, Views};
 use crate::workspace::WorkspaceManager;
@@ -137,6 +137,20 @@ pub enum SessionError {
     /// deleted, restored or purged here meanwhile.
     #[error("The session {0} runs in another process")]
     RunsElsewhere(SessionId),
+}
+
+impl SessionError {
+    /// The error as the building block a procedure carried out failed, for whoever looks into it
+    /// as it did before the procedure answered it (issue 593): what a store reported and what
+    /// anything else failed with as they are - a `ChannelError` among them -, the session's own as
+    /// it is.
+    pub fn untyped(self) -> anyhow::Error {
+        match self {
+            SessionError::Store(error) => error.into(),
+            SessionError::Failed(error) => error,
+            error => error.into(),
+        }
+    }
 }
 
 /// What a building block of a session, which answers `anyhow`, failed with, as a procedure of the
@@ -438,6 +452,19 @@ impl SessionLoop {
         SessionPrivacy::of(&self.session())
     }
 
+    /// The executor of the kernel, for an entry point that reaches the session from within it - a
+    /// command run in one of its channels, a plugin's writer bound to it - to carry out the
+    /// procedures of its participants (issue 593); never for a building block of one.
+    pub fn procedures(&self) -> &Arc<ProcedureExecutor> {
+        self.kernel.procedures()
+    }
+
+    /// The session manager of the kernel (`Kernel::sessions`), for whoever makes a procedure from
+    /// within the session (`procedures`); `None` once it is gone.
+    pub fn sessions(&self) -> Option<Arc<SessionManager>> {
+        self.kernel.sessions()
+    }
+
     pub fn name(&self) -> Name {
         self.session_controller.name()
     }
@@ -611,7 +638,7 @@ mod tests {
     #[tokio::test]
     async fn a_renamed_user_is_renamed_in_every_channel_of_the_session() {
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
         let ActorId::User(owner) = ctx.initiator_id else { unreachable!() };
         let first = session.create_channel(&ctx, spec("first", vec![other])).await.unwrap();
@@ -644,7 +671,7 @@ mod tests {
     #[tokio::test]
     async fn a_renamed_participant_is_mentioned_by_its_new_name_in_every_channel() {
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
         let ActorId::User(other_id) = other else { unreachable!() };
         let stores = kernel.entity_stores();
@@ -679,7 +706,7 @@ mod tests {
     #[tokio::test]
     async fn a_participant_renamed_while_events_were_lost_is_mentioned_by_its_new_name() {
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let (session, ctx, _) = running_session_of_a_user(&manager).await;
         let stores = kernel.entity_stores();
         let helper = stored_agent(stores, "helper", make_personality("plain"), ctx.caller_id).await;

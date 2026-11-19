@@ -46,6 +46,7 @@ use crate::group::GroupManager;
 use crate::procedure::ProcedureExecutor;
 use crate::scoped::ScopedEntities;
 use crate::seed::{self, SeedSection};
+use crate::session::SessionManager;
 use crate::user_provider::UserManager;
 use crate::workspace::reaper::CommandReaper;
 use crate::workspace::WorkspaceManager;
@@ -67,7 +68,7 @@ use caelumora_store::{EntityStores, StateStore};
 use extension::Extensions;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{self, Arc, Weak};
 
 /// The services and managers everything in a process shares, made once by the `KernelBuilder`.
 #[derive(Debug)]
@@ -127,6 +128,8 @@ pub struct Kernel {
     seed_sections: BTreeMap<String, Arc<dyn SeedSection>>,
     /// What carries out the changes of the lifecycles of sessions and projects (issue 593).
     procedures: Arc<ProcedureExecutor>,
+    /// The session manager made for it, known weakly, since it holds the kernel (issue 601).
+    sessions: sync::RwLock<Weak<SessionManager>>,
 }
 
 impl Kernel {
@@ -269,6 +272,19 @@ impl Kernel {
     /// points, which make the procedures, never for a building block of one.
     pub fn procedures(&self) -> &Arc<ProcedureExecutor> {
         &self.procedures
+    }
+
+    /// The session manager made for it (`SessionManager::new`), for whoever makes the procedures
+    /// of sessions and their participants where nothing hands it to them - a command in a channel,
+    /// a plugin (issue 593); `None` if none was made, or it is gone.
+    pub fn sessions(&self) -> Option<Arc<SessionManager>> {
+        self.sessions.read().unwrap_or_else(sync::PoisonError::into_inner).upgrade()
+    }
+
+    /// Makes `sessions` the session manager the kernel knows (`sessions`), as it is made.
+    pub(crate) fn know_sessions(&self, sessions: &Arc<SessionManager>) {
+        *self.sessions.write().unwrap_or_else(sync::PoisonError::into_inner) =
+            Arc::downgrade(sessions);
     }
 
     /// What ends the commands nobody may run any longer (issues 254, 344).

@@ -981,7 +981,7 @@ impl ParticipantView {
     }
 
     /// Whether the viewer may take the participant out of the channel by their own act
-    /// (`ChannelLoop::leave`, issue 562): taking part, and the viewer themselves or an agent of
+    /// (`LetGo::leaving`, issue 562): taking part, and the viewer themselves or an agent of
     /// theirs that exists - whose owner the viewer acts for. Unlike the other questions here, the
     /// policy is not asked: `LeaveChannel` is asked in the participant's own context, an agent's
     /// limited by its personality, which the view does not hold; it is asked as they leave.

@@ -456,7 +456,7 @@ impl World {
         }
         .build();
         memberships.bind(&kernel.entity_stores().groups);
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let projects = Arc::new(ProjectManager::new(Arc::clone(&manager)));
         let mut world = Self {
             access_policy: recorder,

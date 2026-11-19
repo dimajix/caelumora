@@ -137,10 +137,10 @@ pub enum ChannelError {
     /// (`AgentKinds`, issue 370): its actor cannot be built.
     #[error("{participant} is of a kind of agent that cannot take part in channel {channel} here")]
     UnknownAgentKind { participant: ActorId, channel: ChannelId },
-    /// A participant added again while the actor it had before is still
-    /// ending - one that does not end even when aborted (issue 171).
-    #[error("{participant} is still leaving channel {channel}")]
-    StillLeaving { participant: ActorId, channel: ChannelId },
+    /// The channel stopped before it started the actor of one taken in (issue 593): deleted
+    /// meanwhile, since whoever takes someone in holds the session.
+    #[error("Channel {channel} stopped before it took {participant} in")]
+    Stopped { participant: ActorId, channel: ChannelId },
     /// Questions of an agent's call cannot be answered so (issue 165): they
     /// are not open, not put to the one answering, or not answered as they
     /// ask. The reason never repeats an answer.
@@ -207,10 +207,9 @@ type Actors = HashMap<ActorId, ChannelActor>;
 /// else hangs.
 pub const STOP_GRACE: Duration = Duration::from_secs(5);
 
-/// How long adding a participant again waits for the actor it had before
-/// to end (issue 171): past `STOP_GRACE`, after which that actor's task is
-/// aborted, by as long as the abort takes to reach it. Past it, a procedure that waits at a key
-/// is logged (issue 593).
+/// How long letting a participant go waits for its actor to end (issue 171): past `STOP_GRACE`,
+/// after which that actor's task is aborted, by as long as the abort takes to reach it. Past it, a
+/// procedure that waits at a key is logged (issue 593).
 pub(crate) const LEAVE_GRACE: Duration = Duration::from_secs(STOP_GRACE.as_secs() + 1);
 
 /// Waits until the tasks `tasks` track have ended, at most `STOP_GRACE`,
@@ -237,18 +236,10 @@ struct Request {
 /// open -, or nothing, if `run` ended with the change under way or before it was handed in, or
 /// the channel is gone. A change handed in before `run` starts waits for it.
 #[derive(Debug)]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "read by the procedures of the later steps of issue 593")
-)]
 struct Answer(oneshot::Receiver<()>);
 
 impl Answer {
     /// Waits for the answer: whether `run` carried the change out.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "read by the procedures of the later steps of issue 593")
-    )]
     async fn carried_out(self) -> bool {
         self.0.await.is_ok()
     }
@@ -305,14 +296,6 @@ pub struct ChannelLoop {
     /// when someone joins or leaves (issue 46), so that every reader sees
     /// one set.
     actors: ArcSwap<Actors>,
-    /// The tasks of the actors that were removed, which may still be ending
-    /// (issue 171): a participant added again waits for its predecessor
-    /// (`left`). Kept until the participant is added again; the task of one
-    /// that has ended is waited for at once. Nothing else cleans it up: an
-    /// entry of a participant never added again stays as long as the
-    /// channel runs - a closed `TaskTracker`, a few bytes each, which only
-    /// grows with removals.
-    leaving: sync::Mutex<HashMap<ActorId, TaskTracker>>,
     /// Held per participant while its part in the channel changes - taken in, let go, its actor
     /// started again or stopped as its agent is restored or deleted (issue 564) -, so that two
     /// changes of one participant do not cross: two takings-in would start two actors, and one
@@ -384,7 +367,6 @@ impl ChannelLoop {
             agent_kinds: Arc::clone(runtime.agent_kinds()),
             runtime,
             actors: ArcSwap::from_pointee(HashMap::new()),
-            leaving: sync::Mutex::new(HashMap::new()),
             changing: LocksById::new(),
             threads: ArcSwap::from_pointee(HashMap::new()),
             mentions: ArcSwap::from_pointee(MentionDirectory::default()),
@@ -511,7 +493,7 @@ impl ChannelLoop {
     /// `from` and `joined` as it says): it takes part in `thread` (issue 557), whose moderator
     /// routes to it, it is among the participants' actors, and it can be mentioned. The one way an
     /// actor enters the channel - when the channel is built and when a participant joins (issue
-    /// 91).
+    /// 91). What `run` answers once it started it (issue 593).
     async fn adopt(
         &self,
         actor: Arc<dyn Actor>,
@@ -519,7 +501,7 @@ impl ChannelLoop {
         thread: ThreadId,
         from: Option<Position>,
         joined: Option<SecurityContext>,
-    ) {
+    ) -> Answer {
         match self.thread(thread) {
             Some(taking_part) => taking_part.add_actor(Arc::clone(&actor)),
             None => warn!(
@@ -538,7 +520,18 @@ impl ChannelLoop {
             actors
         });
         self.rebuild_mentions();
-        let _ = self.request(ActorChange::Start(adopted, from, joined));
+        self.request(ActorChange::Start(adopted, from, joined))
+    }
+
+    /// Whether `run` has started - running, or ended -, having taken the requests (issue 593).
+    fn has_run(&self) -> bool {
+        self.requests_rx.lock().unwrap_or_else(sync::PoisonError::into_inner).is_none()
+    }
+
+    /// Drops the requests of a channel that will never run, as it is taken out of its session
+    /// before it started: whoever waits for an answer of it is answered with nothing (issue 593).
+    pub(crate) fn never_to_run(&self) {
+        drop(self.requests_rx.lock().unwrap_or_else(sync::PoisonError::into_inner).take());
     }
 
     /// Hands `change` to `run`, which carries the changes out one after the other, those handed to

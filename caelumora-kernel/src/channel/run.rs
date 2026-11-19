@@ -155,10 +155,9 @@ impl ChannelLoop {
                     .load()
                     .get(&id)
                     .is_some_and(|current| Arc::ptr_eq(&current.actor, &started.actor));
-                // Its old actor has ended - `add_participant` waited for
-                // that (`left`) - but its task's end may not have been seen
-                // yet: the removal is announced before anything of the new
-                // actor (issue 262).
+                // Its old actor has ended - whoever let it go waited for that, holding the
+                // participant (`left`) - but its task's end may not have been seen yet: the
+                // removal is announced before anything of the new actor (issue 262).
                 if running.get(&id).is_some_and(|old| old.leaving.is_some()) {
                     if let Some(RunningActor { leaving: Some(leaving), .. }) = running.remove(&id) {
                         self.finish_leave(id, leaving, running, closing).await;
@@ -3514,7 +3513,7 @@ mod tests {
         use crate::session::SessionManager;
         use caelumora_domain::channel::{Channel, Said, SAID};
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let (session, ctx, _) = running_session_of_a_user(&manager).await;
         let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
         let owner = ctx.initiator_id;

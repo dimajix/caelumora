@@ -12,6 +12,7 @@ use caelumora_domain::approval::ApprovalRule;
 use caelumora_domain::session::SessionId;
 use caelumora_domain::snapshot::Detail;
 use caelumora_domain::value::name::NameMatch;
+use caelumora_kernel::procedure::participant::{LetGo, TakeIn};
 use caelumora_kernel::procedure::session::{Create, Delete, Purge, Restore};
 use caelumora_kernel::session::SessionSpec;
 use caelumora_kernel::view::SessionView;
@@ -291,9 +292,11 @@ pub(super) async fn add_participant(
     user: AuthenticatedUser,
     Json(payload): Json<AddSessionParticipantRequest>,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
-    let session_loop = ensure_session(&state, &user, session_id).await?;
     let into = payload.channel.map(|channel| (channel, payload.history));
-    session_loop.add_participant(&user.security_context(), payload.participant, into).await?;
+    let context = user.security_context();
+    let adding =
+        TakeIn::added(&state.session_manager, &context, session_id, payload.participant, into);
+    state.procedures.run(adding).await?;
     Ok(Json(session_response(&state, &user, session_id).await?))
 }
 
@@ -305,8 +308,9 @@ pub(super) async fn remove_participant(
     Path((session_id, ActorPath(participant))): Path<(SessionId, ActorPath)>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let session_loop = ensure_session(&state, &user, session_id).await?;
-    session_loop.remove_participant(&user.security_context(), participant).await?;
+    let context = user.security_context();
+    let removing = LetGo::removed(&state.session_manager, &context, session_id, participant, None);
+    state.procedures.run(removing).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -317,8 +321,9 @@ pub(super) async fn leave_session(
     Path((session_id, ActorPath(participant))): Path<(SessionId, ActorPath)>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let session_loop = ensure_session(&state, &user, session_id).await?;
-    session_loop.leave(&user.security_context(), participant).await?;
+    let context = user.security_context();
+    let leaving = LetGo::leaving(&state.session_manager, &context, session_id, participant, None);
+    state.procedures.run(leaving).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -334,7 +339,9 @@ pub(super) async fn join_session(
 ) -> Result<Json<SessionSnapshot>, ApiError> {
     let context = user.security_context();
     let participant = payload.participant.unwrap_or(context.principal_id);
-    state.session_manager.join(&context, session_id, participant, payload.channel).await?;
+    let joining =
+        TakeIn::joining(&state.session_manager, &context, session_id, participant, payload.channel);
+    state.procedures.run(joining).await?;
     Ok(Json(session_response(&state, &user, session_id).await?))
 }
 

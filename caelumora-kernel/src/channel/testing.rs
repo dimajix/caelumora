@@ -13,9 +13,13 @@ use crate::channel::ChannelLoop;
 use crate::channel::ResolvedParticipant;
 use crate::controller::SessionController;
 use crate::kernel::{ChannelRuntime, Kernel, ParticipantRuntime};
+use crate::procedure::participant::LetGo;
+use crate::procedure::{Admitted, Compensation, Deferred, Key, Locks, Procedure};
+use crate::session::{SessionError, SessionLoop, SessionManager};
 use crate::testing::shown;
 use crate::view::AgentContextView;
 use anyhow::{Error, Result};
+use async_trait::async_trait;
 use caelumora_api::actor::Actor;
 use caelumora_api::command::CommandError;
 use caelumora_api::transport::{EventReceiver, EventSender};
@@ -46,6 +50,7 @@ use caelumora_security::{AccessPolicy, ActionType, Policies, SecurityContext};
 use caelumora_store::testing::record_users;
 use caelumora_store::testing::stored_agent;
 use caelumora_store::{EntityStores, Persistence};
+use futures::future::BoxFuture;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::mem;
@@ -506,5 +511,102 @@ impl ChannelLoop {
             }
             None => self.runtime.new_participant_runtime(actor),
         }
+    }
+}
+
+/// What the tests do to let a participant go from a channel as the entry points do (issue 593):
+/// in its session by `LetGo`, failing as the building blocks fail (`SessionError::untyped`); a
+/// channel of no session, which no procedure reaches, by its building block under a hold of the
+/// channel (`Holding`).
+impl ChannelLoop {
+    /// Removes `participant` from the channel on behalf of `context`, as `LetGo::removed` does.
+    ///
+    /// # Errors
+    /// As `ChannelLoop::remove_participant_held`.
+    pub async fn remove_participant(
+        self: &Arc<Self>,
+        context: &SecurityContext,
+        participant: ActorId,
+    ) -> Result<()> {
+        if let Some((sessions, session)) = self.of_session() {
+            let removing =
+                LetGo::removed(&sessions, context, session.id(), participant, Some(self.id));
+            return session.procedures().run(removing).await.map_err(SessionError::untyped);
+        }
+        let (channel, context) = (Arc::clone(self), context.clone());
+        self.holding(move |admitted| {
+            Box::pin(async move {
+                channel.remove_participant_held(admitted, &context, participant).await
+            })
+        })
+        .await
+    }
+
+    /// Takes `participant` out of the channel by their own act, as `LetGo::leaving` does.
+    ///
+    /// # Errors
+    /// As `ChannelLoop::leave_held`.
+    pub async fn leave(
+        self: &Arc<Self>,
+        context: &SecurityContext,
+        participant: ActorId,
+    ) -> Result<()> {
+        if let Some((sessions, session)) = self.of_session() {
+            let leaving =
+                LetGo::leaving(&sessions, context, session.id(), participant, Some(self.id));
+            return session.procedures().run(leaving).await.map_err(SessionError::untyped);
+        }
+        let (channel, context) = (Arc::clone(self), context.clone());
+        self.holding(move |admitted| {
+            Box::pin(async move { channel.leave_held(admitted, &context, participant).await })
+        })
+        .await
+    }
+
+    /// The manager and the loop of the channel's session; `None` for a channel of none.
+    fn of_session(&self) -> Option<(Arc<SessionManager>, Arc<SessionLoop>)> {
+        let session = self.session_loop()?;
+        Some((session.sessions()?, session))
+    }
+
+    /// Carries `change` out under a hold of the channel, for a channel of no session.
+    async fn holding(
+        &self,
+        change: impl for<'a> FnOnce(&'a Admitted<'a>) -> BoxFuture<'a, Result<()>>
+            + Send
+            + Sync
+            + 'static,
+    ) -> Result<()> {
+        let key = Key::Channel(self.session_id, self.id);
+        self.runtime.procedures().run(Holding { key, change }).await
+    }
+}
+
+/// A change of a test under the proof of admission, holding `key` exclusively.
+struct Holding<F> {
+    key: Key,
+    change: F,
+}
+
+#[async_trait]
+impl<F> Procedure for Holding<F>
+where
+    F: for<'a> FnOnce(&'a Admitted<'a>) -> BoxFuture<'a, Result<()>> + Send + Sync + 'static,
+{
+    type Plan = ();
+    type Output = ();
+    type Error = Error;
+
+    async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<(), Deferred> {
+        locks.exclusive(self.key)
+    }
+
+    async fn carry_out(
+        self,
+        (): (),
+        admitted: &Admitted<'_>,
+        _: &mut Compensation,
+    ) -> Result<(), Error> {
+        (self.change)(admitted).await
     }
 }

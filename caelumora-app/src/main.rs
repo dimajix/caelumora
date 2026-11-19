@@ -92,7 +92,7 @@ async fn main() -> Result<()> {
         builder.library(library.as_ref())?;
     }
     let kernel = Arc::new(builder.build()?);
-    let session_manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+    let session_manager = SessionManager::new(Arc::clone(&kernel));
     let user_manager = Arc::clone(kernel.user_manager());
     if user_manager.is_empty() {
         tracing::warn!(
