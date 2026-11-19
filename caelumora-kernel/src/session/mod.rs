@@ -460,7 +460,10 @@ impl SessionLoop {
     /// participant renamed, and after it lost events.
     ///
     /// # Errors
-    /// If it runs already, or a channel panicked, which ends it with every channel.
+    /// If it runs already, or a channel panicked, which ends it with every channel - logged by
+    /// whoever spawned it. Nothing else follows: the session stays registered as running, its
+    /// channels listed, none of them running, until it is stopped, which announces them stopped
+    /// only then.
     pub async fn run(&self) -> Result<Infallible> {
         let mut start_rx = self.start_rx.try_lock().map_err(|_| anyhow!("Already running"))?;
         let mut subscription =

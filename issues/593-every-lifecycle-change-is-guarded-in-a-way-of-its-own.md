@@ -449,3 +449,6 @@ case; it is decided there, and may make this unnecessary.
   session, so that `channel::STARTED` and `STOPPED` pair again - taking their tasks, so that a
   channel deleted meanwhile is not announced stopped twice; and `SessionLoop::run` returns
   `Result<Infallible>`, as `ChannelLoop::run` does.
+- **2026-11-19** — Committed. At the maintainer's decision documented rather than handled: a
+  channel that panics ends its session's loop with every channel, while the session stays
+  registered as running until it is stopped (`SessionLoop::run`, CHANNELS.md).

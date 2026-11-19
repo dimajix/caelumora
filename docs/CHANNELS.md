@@ -342,6 +342,10 @@ handed in after, is answered with nothing: the channel stopped, its actors with 
     deleting a channel does.
 *   Deleting a channel aborts that channel's task; its state is kept until it is purged. A channel
     deleted while it waits to be started is never started.
+*   A channel that panics ends its session's loop, and with it every channel of the session, with
+    an error in the log. Nothing else follows: the session stays registered as running, its
+    channels listed but none of them running, until it is stopped - which announces them stopped
+    only then (`SessionLoop::run`). It is rare, and documented rather than handled.
 *   A participant that cannot be run is left out when the channel starts, with a warning, and the
     channel runs with everyone else: a user or agent deleted since it joined, or an agent whose
     personality or components were withdrawn or deleted. A third party - the owner of a personality
