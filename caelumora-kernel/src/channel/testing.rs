@@ -8,13 +8,14 @@
     reason = "test code: what fails here fails the test that runs it"
 )]
 
-use crate::channel::thread::{Phase, Thread};
+use crate::channel::thread::Thread;
 use crate::channel::ChannelLoop;
 use crate::channel::ResolvedParticipant;
 use crate::controller::SessionController;
 use crate::kernel::{ChannelRuntime, Kernel, ParticipantRuntime};
 use crate::procedure::channel::Reclassify;
 use crate::procedure::participant::LetGo;
+use crate::procedure::thread;
 use crate::procedure::{
     Admitted, Compensation, Deferred, Key, Locks, Procedure, ProcedureExecutor,
 };
@@ -63,6 +64,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::Receiver;
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio::time;
 
@@ -266,7 +268,7 @@ impl ChannelLoop {
             ThreadState { opening: Some(opening), closed: false, delegation: Some(delegation) };
         self.state.lock().await.threads.insert(thread, held);
         let moderator = self.moderator().await.expect("a moderator");
-        let opened = Arc::new(Thread::new(moderator, Some(opening), Phase::Open));
+        let opened = Arc::new(Thread::new(moderator, Some(opening)));
         self.threads.rcu(|threads| {
             let mut threads = HashMap::clone(threads);
             threads.insert(thread, Arc::clone(&opened));
@@ -519,9 +521,10 @@ impl ChannelLoop {
 }
 
 /// What the tests do to a channel as the entry points do (issue 593) - let a participant go from
-/// it, reclassify it -: in its session by the procedure (`LetGo`, `channel::Reclassify`), failing
-/// as the building blocks fail (`SessionError::untyped`); a channel of no session, which no
-/// procedure reaches, by its building block under a hold of the channel (`Holding`).
+/// it, reclassify it, open and close its threads -: in its session by the procedure (`LetGo`,
+/// `channel::Reclassify`, `thread::Open`, `thread::Close`), failing as the building blocks fail
+/// (`SessionError::untyped`); a channel of no session, which no procedure reaches, by its building
+/// block under a hold of the channel (`Holding`).
 impl ChannelLoop {
     /// Removes `participant` from the channel on behalf of `context`, as `LetGo::removed` does.
     ///
@@ -588,6 +591,59 @@ impl ChannelLoop {
             )
         })
         .await
+    }
+
+    /// Opens a thread of the channel at `origin` on behalf of `context`, with `founders`, as
+    /// `thread::Open` does.
+    ///
+    /// # Errors
+    /// As `ChannelLoop::open_thread_held`.
+    pub async fn open_thread(
+        self: &Arc<Self>,
+        context: &SecurityContext,
+        origin: ThreadOrigin,
+        founders: &[ActorId],
+    ) -> Result<ThreadId> {
+        let founders = founders.to_vec();
+        if let Some((sessions, session)) = self.of_session() {
+            let opening =
+                thread::Open::new(&sessions, context, session.id(), self.id, origin, founders);
+            return session.procedures().run(opening).await.map_err(SessionError::untyped);
+        }
+        let (channel, context, opened) = (Arc::clone(self), context.clone(), ThreadId::new());
+        self.holding(move |admitted| {
+            Box::pin(async move {
+                channel.open_thread_held(admitted, &context, opened, origin, &founders).await
+            })
+        })
+        .await?;
+        Ok(opened)
+    }
+
+    /// Closes `thread` on behalf of `context`, as `thread::Close` does.
+    ///
+    /// # Errors
+    /// As `ChannelLoop::close_thread_held`.
+    pub async fn close_thread(
+        self: &Arc<Self>,
+        context: &SecurityContext,
+        thread: ThreadId,
+    ) -> Result<bool> {
+        if let Some((sessions, session)) = self.of_session() {
+            let closing = thread::Close::new(&sessions, context, session.id(), self.id, thread);
+            return session.procedures().run(closing).await.map_err(SessionError::untyped);
+        }
+        let (channel, context) = (Arc::clone(self), context.clone());
+        let (closed_tx, closed_rx) = oneshot::channel();
+        self.holding(move |admitted| {
+            Box::pin(async move {
+                let closed = channel.close_thread_held(admitted, &context, thread).await?;
+                let _ = closed_tx.send(closed);
+                Ok(())
+            })
+        })
+        .await?;
+        Ok(closed_rx.await.unwrap_or(false))
     }
 
     /// The manager and the loop of the channel's session; `None` for a channel of none.

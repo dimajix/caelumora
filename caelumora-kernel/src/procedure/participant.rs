@@ -198,13 +198,23 @@ impl Procedure for LetGo {
     async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<(), Deferred> {
         lock_to_open(&self.sessions, locks, self.session)?;
         locks.exclusive(Key::Participant(self.session, self.participant))?;
-        let channels = match (self.from, self.sessions.running(self.session)) {
+        let running = self.sessions.running(self.session);
+        let channels = match (self.from, &running) {
             (Some(channel), _) => vec![channel],
             (None, Some(running)) => running.session().channels.clone(),
             (None, None) => Vec::new(),
         };
         for channel in channels {
             locks.shared(Key::Channel(self.session, channel))?;
+            // The thread they take part in, until they have left it - so that nobody closes it
+            // before (`thread::Close`).
+            let Some(running) = running.as_ref().and_then(|running| running.channel(channel))
+            else {
+                continue;
+            };
+            if let Some(thread) = running.thread_taken_part_in(self.participant).await {
+                locks.shared(Key::Thread(self.session, channel, thread))?;
+            }
         }
         Ok(())
     }
@@ -304,6 +314,14 @@ impl Procedure for Follow {
             }
             for channel in &running.session().channels {
                 locks.shared(Key::Channel(id, *channel))?;
+                // The thread each takes part in: a deleted agent's actor leaves it (`LetGo`).
+                let Some(channel_loop) = running.channel(*channel) else { continue };
+                for agent in &agents {
+                    let participant = ActorId::Agent(*agent);
+                    if let Some(thread) = channel_loop.thread_taken_part_in(participant).await {
+                        locks.shared(Key::Thread(id, *channel, thread))?;
+                    }
+                }
             }
             followed.push((id, agents));
         }

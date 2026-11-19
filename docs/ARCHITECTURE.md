@@ -474,7 +474,8 @@ A **procedure** is one change of a lifecycle across the objects it touches (issu
 [593](../issues/593-every-lifecycle-change-is-guarded-in-a-way-of-its-own.md)): a session created,
 opened, stopped, deleted, restored, purged or put into another project, a shared project deleted,
 restored or purged, someone taken into a session or let go from it, an agent's deletion or restoring
-followed in its channels, a channel created, deleted, restored, built again or reclassified. An
+followed in its channels, a channel created, deleted, restored, built again or reclassified, a
+thread opened or closed. An
 entry point - a REST handler, the terminal, a command run in a channel, a plugin's writer, the
 follower of the agents' deletion and restoring (`procedure::follower::AgentFollower`, which a
 program starts beside its `SessionManager`) - makes it, as what it asks for, and the kernel's
@@ -492,8 +493,8 @@ executor undoes it if a later step fails (`Compensation`). No procedure is carri
 another - it would wait for itself -, and the executor refuses it. A procedure that a channel's
 `run` carries a step out for holds its objects until `run` answers. The REST server, as it opens a
 session for a request, has its channels left out as it started built again by a procedure of its
-own (`procedure::channel::Start`). The lifecycles of threads become procedures in the step the issue
-records.
+own (`procedure::channel::Start`). A plugin writes procedures of its own, of the kernel's building
+blocks, as the sub-agents' start and end are (issue 558).
 
 An attachment is no entity: it is part of its message, read and taken back with it. The lifecycle
 of its content is the `AttachmentManager`'s: kept as it is uploaded for a message - or copied, as an

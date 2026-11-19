@@ -3,8 +3,9 @@
 //! it any more, and built again from the channel's state as the channel starts.
 
 use super::participants::{Entry, Exit};
-use super::thread::{Phase, Thread};
+use super::thread::Thread;
 use super::{ActorChange, ChannelError, ChannelLoop};
+use crate::procedure::Admitted;
 use anyhow::Result;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::channel::{
@@ -28,7 +29,7 @@ impl ChannelLoop {
     ) -> Result<()> {
         let mut built = HashMap::new();
         for (id, state) in threads.iter().filter(|(_, state)| !state.closed) {
-            let thread = Thread::new(self.moderator().await?, state.opening, Phase::Open);
+            let thread = Thread::new(self.moderator().await?, state.opening);
             built.insert(*id, Arc::new(thread));
         }
         self.threads.store(Arc::new(built));
@@ -36,9 +37,27 @@ impl ChannelLoop {
     }
 
     /// Whether `thread` is open in the channel: something may be said in it, and a thread opened at
-    /// it - not closed, nor about to be.
+    /// it. Whoever closes it holds it until `run` closed it (`procedure::thread::Close`).
     pub(super) fn is_open(&self, thread: ThreadId) -> bool {
-        self.thread(thread).is_some_and(|open| open.phase() != Phase::Closing)
+        self.thread(thread).is_some()
+    }
+
+    /// The thread `participant`, as the channel lists it, takes part in: where its actor runs, or
+    /// else where its range of attendance is open, or else - one resting, a deleted agent - where
+    /// it would take part again as it is restored (`rejoining`); `None` for one the channel does
+    /// not list, or whose history cannot be read. For whoever lets them go or has them follow their
+    /// agent, to hold that thread meanwhile, so that nobody closes it (issue 593).
+    pub(crate) async fn thread_taken_part_in(&self, participant: ActorId) -> Option<ThreadId> {
+        if !self.channel().lists(participant) {
+            return None;
+        }
+        if let Some(actor) = self.actors.load().get(&participant) {
+            return Some(actor.thread);
+        }
+        if let Some(&thread) = self.attending().await.get(&participant) {
+            return Some(thread);
+        }
+        self.rejoining(participant).await.ok().map(|(_, thread)| thread)
     }
 
     /// Nothing if `context` may open a thread of the channel at `origin`: asked first, whether they
@@ -46,7 +65,7 @@ impl ChannelLoop {
     /// (issue 557: a person branches once, deeper threads come from agents); then that the thread
     /// `origin` names is open. Whether its message is in that thread is not asked: a tool opens a
     /// thread while the message with its call may still be on its way into the channel, which
-    /// records it before the thread's opening all the same (`open_thread`).
+    /// records it before the thread's opening all the same (`open_thread_held`).
     ///
     /// # Errors
     /// `ChannelError::Forbidden`, `NotAtTheLine` or `ThreadNotOpen`.
@@ -72,30 +91,31 @@ impl ChannelLoop {
         Ok(())
     }
 
-    /// Opens a thread of the channel at `origin` on behalf of `context`, with `founders` - each a
-    /// participant of the session, whom `context` acts for or an agent of their own - taking part
-    /// in it alone, and returns its id. For `SessionLoop::open_thread` alone, which asked
-    /// `require_opening` and holds the session's locks of the founders first (issue 590).
+    /// Opens thread `thread` of the channel at `origin` on behalf of `context`, with `founders` -
+    /// each a participant of the session, whom `context` acts for or an agent of their own -
+    /// taking part in it alone. For `SessionLoop::open_thread_held` alone, which asked
+    /// `require_opening` and holds the session's locks of the founders first (issue 590), for a
+    /// procedure that holds the thread until its founders joined (issue 593).
     ///
     /// The thread is there at once, with a moderator of its own, and `run` announces it
     /// (`ThreadOpened`) in the name of `context`'s caller - after whatever was sent into the
-    /// channel before, which `run` takes first: the message with the call that opened it among
+    /// channel before, which `run` takes first, the message with the call that opened it among
     /// them - and before the founders' joins. They are taken in one after the other, as founders
-    /// are: given what is said in the thread from their join on, stored in the kernel's name; until
-    /// they are, the thread is not closed (`Phase::Founding`). If one cannot be, the opening is
-    /// rolled back (`roll_back_opening`).
+    /// are: given what is said in the thread from their join on, stored in the kernel's name. If
+    /// one cannot be, the opening is rolled back (`roll_back_opening`).
     ///
     /// # Errors
     /// What taking a founder in reports (`take_in`).
-    pub(crate) async fn open_thread(
+    pub(crate) async fn open_thread_held(
         &self,
+        _: &Admitted<'_>,
         context: &SecurityContext,
+        thread: ThreadId,
         origin: ThreadOrigin,
         founders: &[ActorId],
-    ) -> Result<ThreadId> {
-        let thread = ThreadId::new();
+    ) -> Result<()> {
         let opening = Opening { origin, by: context.caller_id };
-        let opened = Arc::new(Thread::new(self.moderator().await?, Some(opening), Phase::Founding));
+        let opened = Arc::new(Thread::new(self.moderator().await?, Some(opening)));
         self.threads.rcu(|threads| {
             let mut threads = HashMap::clone(threads);
             threads.insert(thread, Arc::clone(&opened));
@@ -112,9 +132,8 @@ impl ChannelLoop {
             }
             founded.push(*founder);
         }
-        opened.advance(Phase::Founding, Phase::Open);
         info!("Thread {} opened in channel {} by {}", thread, self.id, context.caller_id);
-        Ok(thread)
+        Ok(())
     }
 
     /// Rolls back opening `thread`, once one of its founders could not be taken in: those that
@@ -136,31 +155,32 @@ impl ChannelLoop {
                 );
             }
         }
-        if let Some(opened) = self.thread(thread) {
-            opened.advance(Phase::Founding, Phase::Closing);
-        }
-        let _ = self.request(ActorChange::Close(thread, context.clone()));
+        let _ = self.request(ActorChange::Close(thread, context.clone())).carried_out().await;
     }
 
-    /// Closes `thread` on behalf of `context` (issue 557): nothing more is said in it. Asked of
-    /// whoever opened it - the same caller - or else whoever may change the channel
-    /// (`UpdateChannel`); refused while anyone takes part in it - an actor running in it, or a
-    /// participant listed without one whose range of attendance is open there - and while its
-    /// founders are still being taken in, so that nobody is left in a thread closed: whoever takes
-    /// part is let go first. `run` closes it once whoever left it has left - what they still sent
-    /// until their task ended entered the thread, and their leave is recorded there -, announces it
-    /// (`ThreadClosed`) in the name of `context`'s caller and keeps it as closed in the channel's
-    /// state; from then on what is sent into it is not let in (`Rejection::ThreadClosed`). `false`
-    /// if it is not open - never opened, closed or being closed already, or the channel's line,
-    /// which is never closed.
+    /// Closes `thread` on behalf of `context` (issue 557), for a procedure that holds it
+    /// (`procedure::thread::Close`): nothing more is said in it. Asked of whoever opened it - the
+    /// same caller - or else whoever may change the channel (`UpdateChannel`); refused while anyone
+    /// takes part in it - an actor running in it, or a participant listed without one whose range
+    /// of attendance is open there -, so that nobody is left in a thread closed: whoever takes part
+    /// is let go first, and letting them go holds the thread until they have left (issue 593).
+    /// `run` closes it, announces it (`ThreadClosed`) in the name of `context`'s caller and keeps
+    /// it as closed in the channel's state, and answers then; from then on what is sent into it is
+    /// not let in (`Rejection::ThreadClosed`). `false` if it is not open - never opened, closed
+    /// already, or the channel's line, which is never closed. An actor that does not end even when
+    /// aborted has letting it go give up after `LEAVE_GRACE` (`left`): its leave, announced late,
+    /// may then follow the closing - logged, as such an actor is a bug.
     ///
     /// # Errors
     /// `ChannelError::Forbidden` if `context` may not close it, `ThreadNotEmpty` if anyone takes
     /// part in it.
-    pub async fn close_thread(&self, context: &SecurityContext, thread: ThreadId) -> Result<bool> {
-        let Some(open) = self.thread(thread).filter(|open| open.phase() != Phase::Closing) else {
-            return Ok(false);
-        };
+    pub async fn close_thread_held(
+        &self,
+        _: &Admitted<'_>,
+        context: &SecurityContext,
+        thread: ThreadId,
+    ) -> Result<bool> {
+        let Some(open) = self.thread(thread) else { return Ok(false) };
         let Some(opening) = open.opening() else { return Ok(false) };
         if opening.by != context.caller_id {
             self.require(
@@ -180,13 +200,10 @@ impl ChannelLoop {
             .participants
             .iter()
             .any(|participant| attending.get(&participant.actor_id()) == Some(&thread));
-        if running || resting || open.phase() == Phase::Founding {
+        if running || resting {
             return Err(ChannelError::ThreadNotEmpty { thread, channel: self.id }.into());
         }
-        if !open.advance(Phase::Open, Phase::Closing) {
-            return Ok(false);
-        }
-        let _ = self.request(ActorChange::Close(thread, context.clone()));
+        let _ = self.request(ActorChange::Close(thread, context.clone())).carried_out().await;
         info!("Thread {} of channel {} is closed by {}", thread, self.id, context.caller_id);
         Ok(true)
     }

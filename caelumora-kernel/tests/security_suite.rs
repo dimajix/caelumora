@@ -853,7 +853,8 @@ async fn a_thread_is_opened_by_a_reader_with_their_own_and_closed_by_its_opener_
     let (opened, asked) =
         world.asked(session.open_thread(&bob, main.id(), line, vec![bobs_helper])).await;
     let bobs = opened.expect("bob reads the channel and founds it with his own");
-    assert_eq!(asked.first().map(String::as_str), Some("bob: GetChannel(alice's) yes"));
+    // The session opened first, as every procedure of a thread does (issue 593).
+    assert_eq!(asked.first().map(String::as_str), Some("bob: GetSession(alice's) yes"));
     assert!(
         !asked.iter().any(|line| line.starts_with("bob: Update")),
         "neither the session nor the channel is changed in his name: {asked:?}"
@@ -866,25 +867,49 @@ async fn a_thread_is_opened_by_a_reader_with_their_own_and_closed_by_its_opener_
         matches!(refused.downcast_ref::<ChannelError>(), Some(ChannelError::ThreadNotEmpty { .. })),
         "{refused}"
     );
-    assert_eq!(asked, checks(&["alice: UpdateChannel(alice's) yes"]), "the channel's owner may");
+    assert_eq!(
+        asked,
+        // The session opened and the channel reached, as closing does (issue 593).
+        checks(&[
+            "alice: GetSession(alice's) yes",
+            "alice: GetChannel(alice's) yes",
+            "alice: Cleared(alice) yes",
+            "alice: UpdateChannel(alice's) yes",
+        ]),
+        "the channel's owner may"
+    );
     session.leave(&bob, bobs_helper).await.expect("bob takes his agent out");
     let (closed, asked) = world.asked(main.close_thread(&bob, bobs)).await;
     assert!(closed.expect("his to close"), "closed");
-    assert_eq!(asked, checks(&[]), "whoever opened it is asked nothing");
+    assert_eq!(
+        asked,
+        checks(&[
+            "bob: GetSession(alice's) yes",
+            "bob: GetChannel(alice's) yes",
+            "bob: Cleared(bob) yes"
+        ]),
+        "whoever opened it is asked nothing beyond reaching it"
+    );
     let hers = session.open_thread(&alice, main.id(), line, vec![]).await.expect("alice's own");
     let (refused, asked) = world.asked(main.close_thread(&bob, hers)).await;
     assert!(denied(&refused.expect_err("neither his nor his channel to change")));
-    assert_eq!(asked, checks(&["bob: UpdateChannel(alice's) no"]), "asked as changing the channel");
+    assert_eq!(
+        asked,
+        checks(&[
+            "bob: GetSession(alice's) yes",
+            "bob: GetChannel(alice's) yes",
+            "bob: Cleared(bob) yes",
+            "bob: UpdateChannel(alice's) no",
+        ]),
+        "asked as changing the channel"
+    );
 
     let carol = World::as_user(world.carol);
     let (refused, asked) = world.asked(session.open_thread(&carol, main.id(), line, vec![])).await;
     let refused = refused.expect_err("carol does not read it");
     assert!(
-        matches!(
-            refused.downcast_ref::<SessionError>(),
-            Some(SessionError::ChannelNotFound { .. })
-        ),
-        "answered as not there: {refused}"
+        matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::NotFound(_))),
+        "answered as not there, not even the session, as opening a thread opens it: {refused}"
     );
     assert!(!asked.iter().any(|line| line.contains("OpenThread")), "{asked:?}");
     world.manager.stop(&alice, session.id()).await.unwrap();

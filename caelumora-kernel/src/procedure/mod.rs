@@ -1,7 +1,8 @@
 //! Procedures (issue 593): every change of a lifecycle - a session or a project made, started,
 //! stopped, deleted, restored, purged, someone taken into a session or let go from it, a channel
-//! created, deleted, restored, built again or reclassified - as one procedure, which the
-//! `ProcedureExecutor` carries out while the procedure holds the objects it changes.
+//! created, deleted, restored, built again or reclassified, a thread opened or closed - as one
+//! procedure, which the `ProcedureExecutor` carries out while the procedure holds the objects it
+//! changes.
 //!
 //! A procedure is first only asked for. Carried out in a task of the executor's, it enumerates
 //! what it would change from the top down and locks it as it finds it (`Procedure::enumerate`):
@@ -34,6 +35,7 @@ pub mod project;
 pub mod session;
 #[cfg(test)]
 pub(crate) mod testing;
+pub mod thread;
 
 pub use compensation::Compensation;
 pub use executor::ProcedureExecutor;

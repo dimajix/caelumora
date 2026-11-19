@@ -15,12 +15,12 @@ use crate::actor::user::ChannelWatch;
 use crate::actor::Shown;
 use crate::channel::ChannelLoop;
 use crate::kernel::{ChannelRuntime, Kernel, ParticipantRuntime};
-use crate::procedure::channel;
 use crate::procedure::participant::{LetGo, TakeIn};
 use crate::procedure::session::{
     record_creation, resume_interrupted, shut_down, Create, Delete, Move, Open, Purge, Restore,
     Stop,
 };
+use crate::procedure::{channel, thread};
 use crate::procedure::{Admitted, Compensation, Deferred, Key, Locks, Procedure};
 use crate::session::{ChannelSpec, SessionError, SessionLoop, SessionManager, SessionSpec};
 use crate::testing::TestKernel;
@@ -29,7 +29,7 @@ use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::actor::{ActorEvent, Rejection};
 use caelumora_domain::channel::testing::main_channel;
-use caelumora_domain::channel::{Channel, ChannelId, HistoryAccess};
+use caelumora_domain::channel::{Channel, ChannelId, HistoryAccess, ThreadId, ThreadOrigin};
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::project::ProjectId;
 use caelumora_domain::query::{FieldPath, Filter};
@@ -589,9 +589,9 @@ impl DocumentStorage for FailingDocuments {
     }
 }
 
-/// What the tests do with a session's participants and channels as the entry points do (issue
-/// 593): each a procedure of `procedure::participant` or `procedure::channel`, under the verb the
-/// entry points ask for, failing as the building blocks fail (`SessionError::untyped`).
+/// What the tests do with a session's participants, channels and threads as the entry points do
+/// (issue 593): each a procedure of `procedure::participant`, `channel` or `thread`, under the verb
+/// the entry points ask for, failing as the building blocks fail (`SessionError::untyped`).
 impl SessionLoop {
     /// Takes `participant` in on behalf of `context`, as `TakeIn::added` does.
     ///
@@ -676,6 +676,23 @@ impl SessionLoop {
     ) -> Result<Arc<ChannelLoop>> {
         let restoring = channel::Restore::new(&self.manager()?, context, self.id(), id);
         self.procedures().run(restoring).await.map_err(SessionError::untyped)
+    }
+
+    /// Opens a thread of `channel` at `origin` on behalf of `context`, with `founders`, as
+    /// `thread::Open` does.
+    ///
+    /// # Errors
+    /// As `thread::Open`.
+    pub async fn open_thread(
+        &self,
+        context: &SecurityContext,
+        channel: ChannelId,
+        origin: ThreadOrigin,
+        founders: Vec<ActorId>,
+    ) -> Result<ThreadId> {
+        let opening =
+            thread::Open::new(&self.manager()?, context, self.id(), channel, origin, founders);
+        self.procedures().run(opening).await.map_err(SessionError::untyped)
     }
 
     /// The session manager of the kernel, which the procedures are made with.

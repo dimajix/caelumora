@@ -4,7 +4,6 @@
 
 use super::participation::ResolvedParticipant;
 use super::run::RunningActor;
-use super::thread::Phase;
 use super::{ActorChange, ChannelError, ChannelLoop};
 use crate::actor::delegate::DelegateActor;
 use anyhow::{anyhow, Result};
@@ -45,11 +44,8 @@ impl ChannelLoop {
         )
         .await?;
         let not_open = || ChannelError::ThreadNotOpen { thread, channel: self.id };
-        let opening = self
-            .thread(thread)
-            .filter(|opened| opened.phase() == Phase::Open)
-            .and_then(|opened| opened.opening())
-            .ok_or_else(not_open)?;
+        let opening =
+            self.thread(thread).and_then(|opened| opened.opening()).ok_or_else(not_open)?;
         let giver = context.caller_id;
         let origin = opening.origin.thread;
         let runs_in = |participant: ActorId, thread: ThreadId| {

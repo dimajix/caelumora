@@ -231,10 +231,10 @@ struct Request {
 
 /// What `run` answers a change it was handed (`ChannelLoop::request`, issue 593): that it carried
 /// it out - the actor started and its join announced, or found removed again; the actor's leave
-/// announced once its task has ended; the thread's opening announced; the thread closed once
-/// whoever left it has left; the brief handed to the delegate, or dropped for a thread no longer
-/// open -, or nothing, if `run` ended with the change under way or before it was handed in, or
-/// the channel is gone. A change handed in before `run` starts waits for it.
+/// announced once its task has ended; the thread's opening announced; the thread closed and
+/// announced; the brief handed to the delegate, or dropped for a thread no longer open -, or
+/// nothing, if `run` ended with the change under way or before it was handed in, or the channel is
+/// gone. A change handed in before `run` starts waits for it.
 #[derive(Debug)]
 struct Answer(oneshot::Receiver<()>);
 
@@ -266,8 +266,9 @@ enum ActorChange {
     /// (`ThreadOpened`, issue 557), before anyone founding it joins it, and records it among the
     /// channel's threads (`ChannelState::threads`).
     Open(ThreadId, Opening, SecurityContext),
-    /// The thread to close, on whose behalf - in whose name `run` announces it (`ThreadClosed`),
-    /// once whoever left it has left, and records it closed.
+    /// The thread to close, on whose behalf - in whose name `run` announces it (`ThreadClosed`) -,
+    /// recorded closed at once: whoever closes it holds it, as whoever lets someone go from it does
+    /// until they have left (issue 593).
     Close(ThreadId, SecurityContext),
     /// What is delegated into the thread (issue 557): `run` records its briefs behind those of the
     /// thread's delegation, starting the delegation with it if the thread has none, and hands them

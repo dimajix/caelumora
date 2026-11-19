@@ -555,3 +555,29 @@ case; it is decided there, and may make this unnecessary.
   blocks of channels, sessions and projects thin, their rollbacks compensations - including those
   step 1 left in the building blocks on purpose -; 5d makes lifting a session's own project a
   procedure; 5e has the actors of a channel stopped and let go through `run`.
+- **2026-11-19** — Decided by the maintainer, from the review of step 4: building again the
+  channels left out waits where `SessionLoop::rebuilding` skipped, and runs also right after an
+  opening that started the session. Requests at the same time build a channel that stays
+  unavailable again one after the other, and a start tries it once more at once - rare and cheap,
+  and who asks after its bundle was shared again finds it built, where a skip could answer
+  `ChannelUnavailable` while another build was about to succeed. Recorded in CHANNELS.md.
+- **2026-11-19** — Step 5 implemented, not committed yet, as the maintainer decided:
+  `procedure::thread::Open` (the new thread's id chosen before it is opened, holding it, the thread
+  it is opened at and its founders) and `Close` (holding the thread until `run` closed it); the
+  loops' verbs become building blocks (`SessionLoop::open_thread_held`,
+  `ChannelLoop::open_thread_held`, `close_thread_held`). `LetGo` and `Follow` hold the thread the
+  one they let go takes part in shared, until they have left, so that a thread is closed only once
+  whoever left it has left: `run` closes a thread at once and answers then, and `Phase` -
+  `Founding`, `Closing` - and the closes `run` kept waiting (`closing`, `close_settled`,
+  `finish_leave`) go. The sub-agents' start and end are procedures of their own, of the kernel's
+  building blocks (`Starting`, `Ending` in `caelumora-subagents`): the agent made and its thread
+  opened are undone by their compensation, the last first, in place of `roll_back_start`, and
+  `apart` goes, the executor carrying each out in a task of its own. The agent `Starting` makes is
+  held by no key, since nobody knows it before it is made. `changing` and the founders' taking in
+  stay until step 5b. From the review: `Follow` holds also the thread a resting agent would rejoin
+  as it is restored (`ChannelLoop::thread_taken_part_in`), since without `Phase::Closing` a restore
+  could start its actor in a thread being closed; the plugin's procedures answer `SubAgentError`,
+  into which it translates what the executor fails with, and read the sub-agent in the kernel's
+  name as they enumerate, asking again under the locks. An actor that does not end even when
+  aborted has letting it go give up after `LEAVE_GRACE`; its late leave may then follow a closing,
+  which is logged rather than handled.

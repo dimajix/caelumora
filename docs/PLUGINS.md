@@ -199,8 +199,12 @@ does with its kind it offers as **extensions**, by one pattern:
     where no storage of content is configured, the workspace's reader where the work may use none,
     the places of the stores where their backend tells none. A face that acts on a running channel
     acts through the running session the work's `SessionView` gives out (`session_loop`),
-    reaching the channel as a frontend does (`channel_for`), by the loops' public operations,
-    each checking itself - the sub-agents' writer (issue 558). No method of a face
+    reaching the channel as a frontend does (`channel_for`). What changes a lifecycle there it
+    carries out as a procedure of its own (issue 593): built of the kernel's building blocks
+    (`…_held`, which ask for the proof `Admitted`), carried out by the kernel's executor, which the
+    running session hands out (`SessionLoop::procedures`), and answering the face's error type, into
+    which it translates what the executor fails with (`From<ProcedureError>`) - the sub-agents'
+    writer (issue 558). No method of a face
     takes a context or an identity, and what it hands out is data, not an object of the kernel - but
     for a handle, named as one, that carries a right beyond the call: the workspace's terminal and
     shell.

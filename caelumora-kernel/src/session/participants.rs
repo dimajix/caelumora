@@ -286,7 +286,7 @@ impl SessionLoop {
     /// # Errors
     /// `SessionError::NotAParticipant`; `StoreError::PermissionDenied` if they may not leave; what
     /// resolving the participant reports (`Participation::resolve`); as `let_go`.
-    pub(crate) async fn leave_held(
+    pub async fn leave_held(
         &self,
         _: &Admitted<'_>,
         context: &SecurityContext,

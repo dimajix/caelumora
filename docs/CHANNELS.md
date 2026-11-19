@@ -208,7 +208,9 @@ channel, and of another thread its approvals and its questions, which its calls 
 mentions the viewer.
 
 A thread is **opened** at a message of another thread of its channel (`ThreadOrigin`), with its
-**founders** taking part in it alone (`SessionLoop::open_thread`). Opening goes through the session,
+**founders** taking part in it alone (`procedure::thread::Open`, issue 593, which holds the new
+thread, the one it is opened at and its founders until they are taken in). Opening goes through the
+session,
 as every way into a channel does (see
 [Taking someone into the session](#taking-someone-into-the-session)): a founder is mostly new to
 the session. Whoever reads the channel may open a thread (`OpenThread`),
@@ -226,10 +228,13 @@ thread its range of attendance names, in the line if that thread was closed. One
 cannot be taken in rolls the opening back: whoever was taken in is let go again, the thread closed.
 
 A thread is **closed** by whoever opened it, or whoever may change the channel
-(`ChannelLoop::close_thread`), once nobody takes part in it - no actor runs in it, no participant
-listed without an actor attends it, and its founders are all taken in -, so that nobody is left in
-a thread closed: whoever takes part is let go first. The channel closes it once whoever left it has
-left: what they still sent until their task ended enters the thread, and their leave is recorded
+(`procedure::thread::Close`, which holds it until the channel closed it), once nobody takes part in
+it - no actor runs in it, no participant listed without an actor attends it -, so that nobody is
+left in a thread closed: whoever takes part is let go first. Letting someone go holds the thread
+they take part in until they have left (`procedure::participant::LetGo`, issue 593), as having an
+agent follow its deletion or restoring does the thread it rejoins, so that the channel closes a
+thread only once whoever left it has left: what they still sent until their task ended enters the
+thread, and their leave is recorded
 there; from then on what is sent into it is not let in. The line is never closed.
 
 ### Building a channel
@@ -328,8 +333,8 @@ an agent is restored. They differ only in what they hand over: from which positi
 given the history, and on whose behalf it joined, if it did - a channel started again records no
 joins. What waits when `run` begins is started before anything is routed. `run` carries out the
 changes handed to it one after the other, and answers each once it carried it out - a leave once
-the actor's task has ended and its leave is announced, a thread's closing once whoever left the
-thread has left (`ChannelLoop::request`, issue 593). `run` runs until its session stops or the
+the actor's task has ended and its leave is announced, a thread's closing once it is closed
+(`ChannelLoop::request`, issue 593). `run` runs until its session stops or the
 channel is deleted - empty too, for whoever comes in: whether a channel runs changes with its
 session or its deletion, never by itself. It runs once; a change still under way as it ends, or
 handed in after, is answered with nothing: the channel stopped, its actors with it.
@@ -360,7 +365,10 @@ handed in after, is answered with nothing: the channel stopped, its actors with 
     (`SessionError::ChannelUnavailable`) - to whoever may read it; to anyone else it is not there.
     Its components are not changed after it was made: it runs again once they can be read, as
     the session is opened again - also while it runs, as the REST server opens it for every
-    request (`procedure::channel::Start`, after the opening, issue 593). A store
+    request (`procedure::channel::Start`, after the opening, issue 593). Requests at the same time
+    build it again one after the other, and one that has just started the session tries it again
+    at once: a channel that stays unavailable costs a try each, which is rare and cheap, and who
+    asks after its bundle was shared again finds it built. A store
     that fails keeps the session from opening, as it does for a participant. Creating or restoring
     a channel, or a session from a template, is its owner's own request, and is refused instead
     (`SessionError::ChannelUnavailable`); a session from a template is rolled back.
@@ -666,7 +674,7 @@ does, or by their own act where an entry of the session's access list grants the
 (`TakeIn::joining`), which opens it in the kernel's name for one who may join or read it
 (`SessionManager::open_to_take_in`): who joins reads nothing of it before they did. Who joins takes
 in themselves or their own agent, never someone else. A third way in is founding a thread
-(`SessionLoop::open_thread`, see [Its threads](#its-threads)): its founders, the opener's own, are
+(`procedure::thread::Open`, see [Its threads](#its-threads)): its founders, the opener's own, are
 taken into the session and the channel in the kernel's name, opening the thread being permitted.
 
 *   **Everything is asked before anything is stored**: changing the session and the channel - or,
@@ -1041,7 +1049,7 @@ After a restart the channel builds its threads, reconciles what changed while it
 starts the delegates of what is still to answer, then its participants: a delegate reads on from
 where its open brief was given (`Actor::heard`), so that an answer recorded while it did not run is
 not lost, and gives a brief already given not again. A thread is closed with its delegate
-(`close_thread` does not count it): it is let go as the thread is to be closed, and what was open
+(`close_thread_held` does not count it): it is let go as the thread is closed, and what was open
 is dropped - a recipient let go right before is given back as gone only if its task ended before
 the close was applied. A brief given whose recipient does not start again after a restart - left
 out, as one that cannot be run - waits until the thread is closed: nothing records that it left,

@@ -4,6 +4,7 @@
 
 use super::SessionLoop;
 use crate::channel::{ChannelError, Entry};
+use crate::procedure::Admitted;
 use anyhow::Result;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::channel::{ChannelId, ThreadId, ThreadOrigin};
@@ -11,29 +12,33 @@ use caelumora_domain::session::Session;
 use caelumora_security::SecurityContext;
 
 impl SessionLoop {
-    /// Opens a thread of `channel` at `origin` on behalf of `context` (issue 557), with its
-    /// founders, `founders` - whom `context` acts for, or agents of their own -, taking part in it
-    /// alone, and returns its id. Asked first whether `context` may open it there
+    /// Opens thread `thread` of `channel` at `origin` on behalf of `context` (issue 557), for a
+    /// procedure that holds the thread, its origin and its founders (`procedure::thread::Open`) -
+    /// or a founder nobody knows yet, an agent just made (the sub-agents' start, issue 558) -,
+    /// with its founders, `founders` - whom `context` acts for, or agents of their own -, taking
+    /// part in it alone. Asked first whether `context` may open it there
     /// (`ChannelLoop::require_opening`), then of each founder - held in one order, as wherever
     /// several are (`changing`) - that it takes no part in the channel yet, since an actor takes
     /// part in one thread of its channel. Each is taken into the session, unless in it already, as
     /// a founder: asked whether it is `context`'s own and can be taken in, and stored in the
     /// kernel's name, opening the thread being permitted; then the channel opens the thread with
-    /// them (`ChannelLoop::open_thread`). One that cannot be taken in, into the session or the
+    /// them (`ChannelLoop::open_thread_held`). One that cannot be taken in, into the session or the
     /// channel, rolls back those this call took into the session (`roll_back_taking_in`).
     ///
     /// # Errors
     /// `SessionError::ChannelNotFound` for a channel `context` may not read; as
     /// `ChannelLoop::require_opening`; `ChannelError::AlreadyParticipant` for a founder taking
     /// part in the channel; `StoreError::PermissionDenied` for one not `context`'s own; as
-    /// `take_in` and `ChannelLoop::open_thread` otherwise.
-    pub async fn open_thread(
+    /// `take_in` and `ChannelLoop::open_thread_held` otherwise.
+    pub async fn open_thread_held(
         &self,
+        admitted: &Admitted<'_>,
         context: &SecurityContext,
         channel: ChannelId,
+        thread: ThreadId,
         origin: ThreadOrigin,
         founders: Vec<ActorId>,
-    ) -> Result<ThreadId> {
+    ) -> Result<()> {
         let channel = self.channel_for(context, channel).await?;
         channel.require_opening(context, origin).await?;
         let mut founders = founders;
@@ -56,8 +61,8 @@ impl SessionLoop {
                 }
             }
         }
-        match channel.open_thread(context, origin, &founders).await {
-            Ok(thread) => Ok(thread),
+        match channel.open_thread_held(admitted, context, thread, origin, &founders).await {
+            Ok(()) => Ok(()),
             Err(error) => {
                 self.roll_back_founding(&taken).await;
                 Err(error)

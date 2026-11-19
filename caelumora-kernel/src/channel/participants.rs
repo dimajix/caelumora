@@ -185,7 +185,8 @@ impl ChannelLoop {
         let before = self.channel.add_participant(&storing, found.clone()).await?;
 
         let started = match self.start_participant(resolved, thread, from, Some(context)).await {
-            // A founder starts with the channel it founds, which is no procedure yet (issue 593).
+            // A founder starts with the channel or the thread it founds: what `run` is handed after
+            // it - a joining, a closing - comes after its start (issue 593, step 5b).
             Ok(_) if entry == Entry::Founding => Ok(()),
             // Started once `run` answers, its join announced - waited for without the lock, which
             // the session's following of its agents takes in the loop that starts the channel.
