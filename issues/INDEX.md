@@ -155,6 +155,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [591](591-an-external-agent-cannot-be-a-sub-agent.md) | open | The sub-agents of issue 558 are agents of internal personalities alone: an external agent's intake does not pass on what it is given to read, and its delegate would take a task that outlives its request for one that ended without an answer. |
 | [596](596-a-user-cannot-start-a-sub-agent-by-command.md) | open | Only an agent starts a sub-agent, by the tools of `caelumora-subagents` (issue 558); a user cannot hand a task to one by a command, though 558 asked for it, since it is not decided to whom its answer is given and in whose name. |
 | [598](598-a-sub-agent-nobody-ends-stays.md) | open | A sub-agent of `caelumora-subagents` (issue 558) is ended only by the agent that started it (`end_subagent`); one it never ends stays - an agent, a participant of the session and an open thread - for as long as the session lasts, and across restarts. |
+| [602](602-an-actor-takes-part-in-one-thread-of-its-channel-alone.md) | open | Every actor of a channel - an agent's, a user's - takes part in exactly one of its threads (issue 557), so an agent of the line cannot take part in a thread a person opens at a message of the line, a user writes only in the thread they take part in, and a nudge of someone in another thread asks nobody - though 557 decided one actor per agent and channel, with a head of its transcript per thread. |
 
 ## Identity and access management
 
