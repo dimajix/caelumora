@@ -34,6 +34,16 @@ impl Participant {
             Participant::Agent(id) => ActorId::Agent(*id),
         }
     }
+
+    /// The participant `actor` is, the inverse of `actor_id`; `None` for an actor no document
+    /// lists as a participant - an internal actor of a channel, a delegate, the system.
+    pub fn of(actor: ActorId) -> Option<Self> {
+        match actor {
+            ActorId::User(id) => Some(Participant::User(id)),
+            ActorId::Agent(id) => Some(Participant::Agent(id)),
+            _ => None,
+        }
+    }
 }
 
 /// An actor that belongs to a channel itself, as its moderator does (issue

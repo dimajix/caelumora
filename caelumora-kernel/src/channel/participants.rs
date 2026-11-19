@@ -5,6 +5,7 @@ use super::{
     ActorChange, Actors, Answer, ChannelActor, ChannelError, ChannelLoop, ChannelParticipant,
     ResolvedParticipant, LEAVE_GRACE,
 };
+use crate::procedure::participant::Entry;
 use crate::procedure::Admitted;
 use anyhow::{Error, Result};
 use caelumora_api::actor::Actor;
@@ -20,7 +21,7 @@ use caelumora_domain::question::{QuestionError, Questions};
 use caelumora_domain::security::SecurityAttributes;
 use caelumora_domain::store::{StoreError, Stored};
 use caelumora_domain::value::name::{named, Name};
-use caelumora_security::{ActionType, Enforcement, SecurityContext};
+use caelumora_security::{ActionType, Enforcement, SecurityContext, JOIN};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::time;
@@ -40,24 +41,25 @@ pub(super) enum Exit {
 }
 
 impl ChannelLoop {
-    /// Lists `participant` - a participant of the session - in the channel, stored in the name of
-    /// `storing`, for a procedure that takes them in (`procedure::participant::take_in`), which
-    /// asked what taking them in asks: refused for one whose actor runs in the channel - one listed
-    /// whose actor does not, left out as the channel started, is taken in again (issue 568) -, one
-    /// the session does not list, or one that no longer exists. Answers them resolved, to start
-    /// their actor with (`start_participant_held`), and the channel as it was before, which taking
+    /// Lists `resolved` - a participant of the session - in the channel, stored in the name of
+    /// `storing`, for a procedure that takes them in (`procedure::participant::take_into_channel`),
+    /// which asked what taking them in asks: refused for one whose actor runs in the channel, or
+    /// one the session does not list; one listed whose actor does not run, left out as the channel
+    /// started, is taken in again (issue 568). Answers the channel as it was before, which taking
     /// the listing back returns to (`undo_listing_held`). The join is announced by the
-    /// `ChannelController` on the event bus, and in the channel by `run` as the actor starts.
+    /// `ChannelController` on the event bus, and in the channel by `run` as the actor starts
+    /// (`start_participant_held`).
     ///
     /// # Errors
-    /// `ChannelError::AlreadyParticipant`, `NotInSession` or `ParticipantGone`; what storing the
-    /// channel reports - a `StoreError` if `storing` may not change it.
+    /// `ChannelError::AlreadyParticipant` or `NotInSession`; what storing the channel reports - a
+    /// `StoreError` if `storing` may not change it.
     pub(crate) async fn list_participant_held(
         &self,
         _: &Admitted<'_>,
         storing: &SecurityContext,
-        participant: ActorId,
-    ) -> Result<(ResolvedParticipant, Channel)> {
+        resolved: &ResolvedParticipant,
+    ) -> Result<Channel> {
+        let participant = resolved.actor_id();
         if self.actors.load().contains_key(&participant) {
             return Err(ChannelError::AlreadyParticipant { participant, channel: self.id }.into());
         }
@@ -67,12 +69,55 @@ impl ChannelLoop {
                 s.session().participants.iter().find(|p| p.actor_id() == participant).cloned()
             })
             .ok_or(ChannelError::NotInSession { participant, channel: self.id })?;
-        let resolved = self
-            .resolve(&found)
-            .await?
-            .ok_or(ChannelError::ParticipantGone { participant, channel: self.id })?;
-        let before = self.channel.add_participant(storing, found).await?;
-        Ok((resolved, before))
+        Ok(self.channel.add_participant(storing, found).await?)
+    }
+
+    /// Nothing if the one to take in, `resolved`, comes in by the way `entry` says as the channel
+    /// lets them, asked in `context`, whoever takes them in: by their own act, where joining,
+    /// whether the channel's access list lets them join (`JOIN`); where founding a thread of it,
+    /// whether they are whom `context` acts for or an agent of their own (issue 557), opening the
+    /// thread being permitted. Nothing for one added or founding the channel: changing the channel
+    /// was asked before (`require_changing`), or creating it. Whose participant it is, asked after
+    /// the session asked its own (`SessionLoop::newcomer`) and before anything in their name (issue
+    /// 562) - refused as the session refuses joining it, since taking in goes through the session.
+    ///
+    /// # Errors
+    /// `StoreError::PermissionDenied` if they may not.
+    pub(crate) async fn require_entry(
+        &self,
+        context: &SecurityContext,
+        resolved: &ResolvedParticipant,
+        entry: Entry,
+    ) -> Result<()> {
+        let attributes = self.security_attributes();
+        match entry {
+            Entry::Joining => {
+                let joining = ActionType::custom(Channel::KIND, &JOIN, &attributes);
+                let refusal = StoreError::PermissionDenied;
+                self.participation.require_own_act(resolved, context, joining, refusal).await?;
+            }
+            Entry::FoundingThread => {
+                let founding = ActionType::OpenThread(&attributes);
+                let refusal = StoreError::PermissionDenied;
+                self.participation.require_own(resolved, context, founding, refusal)?;
+            }
+            Entry::Added | Entry::Founding => {}
+        }
+        Ok(())
+    }
+
+    /// Nothing if `resolved` may take part in the channel: it lies where it may and is cleared for
+    /// the channel's classification, asked in `context`, whoever takes them in
+    /// (`Participation::require_admissible`).
+    ///
+    /// # Errors
+    /// `ChannelError::OutOfScope` or `NotCleared`.
+    pub(crate) fn require_admissible(
+        &self,
+        context: &SecurityContext,
+        resolved: &ResolvedParticipant,
+    ) -> Result<()> {
+        self.participation.require_admissible(resolved, context, &self.classification())
     }
 
     /// Takes back listing `participant`, for the compensation of taking them in: its actor, if it
@@ -133,11 +178,11 @@ impl ChannelLoop {
     /// Takes `participant` - whom `context` acts for: themselves, or their own agent - out of the
     /// channel by their own act (issue 562), for `procedure::participant::LetGo`, without the right
     /// to change it: leaving (`LeaveChannel`) is asked in the participant's own context, an agent's
-    /// by its owner, as joining is (`SessionLoop::take_in_held`). Stored in the kernel's name once
-    /// leaving was permitted, kept as removed by `context`'s caller; then as [`Self::let_go`] says.
-    /// Whether it could run is not asked: an agent whose personality was withdrawn is taken out by
-    /// its owner. One that cannot be resolved, a deleted agent resting in the channel, cannot
-    /// leave: whoever may change the channel removes it.
+    /// by its owner, as joining is (`require_entry`). Stored in the kernel's name once leaving was
+    /// permitted, kept as removed by `context`'s caller; then as [`Self::let_go`] says. Whether it
+    /// could run is not asked: an agent whose personality was withdrawn is taken out by its owner.
+    /// One that cannot be resolved, a deleted agent resting in the channel, cannot leave: whoever
+    /// may change the channel removes it.
     ///
     /// # Errors
     /// `ChannelError::NotAParticipant`; `ChannelError::Forbidden` if they may not leave; what

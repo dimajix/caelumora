@@ -11,7 +11,7 @@ use crate::procedure::participant::Entry;
 use crate::procedure::Admitted;
 use anyhow::{anyhow, Result};
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::channel::{Channel, Participant};
+use caelumora_domain::channel::Participant;
 use caelumora_domain::session::Session;
 use caelumora_domain::store::{StoreError, Stored};
 use caelumora_security::{ActionType, Enforcement, SecurityContext, JOIN};
@@ -38,40 +38,36 @@ impl SessionLoop {
         Ok(())
     }
 
-    /// Takes `actor` into the session on behalf of `context`, for a procedure that takes them in
-    /// (`procedure::participant::take_in`), by the way `entry` says - by their own act if joining,
-    /// once it is asked whether they may join it, and `channel` if one is named, by themselves; as
-    /// a founder of a thread of `channel` if founding, once it is asked whether they are whom
-    /// `context` acts for or an agent of their own (issue 557), opening the thread being permitted;
-    /// and then whether they can be taken in and take part in `channel` as well
-    /// (`require_to_take_in`): whose participant it is first, then anything in its name (issue
-    /// 562). Whoever takes them in reads them first, a user to find out that they exist (issue
-    /// 120). The session announces it, and follows the one taken in from here on (`following`).
-    /// Answers the session as it was before, where it took them in, which taking the listing back
-    /// returns to (`undo_listing_held`); `None` for one in it already.
+    /// `actor`, to be taken into the session - and into `channel` if one is named - on behalf of
+    /// `context` by the way `entry` says, read and resolved, once the session asked what it asks
+    /// of them: that they are not in it already, unless a channel is named; by their own act,
+    /// where joining, whether its access list lets them join (`JOIN`), unless they are in it. For
+    /// a procedure that takes them in (`procedure::participant::take_into_session`), which asks
+    /// the channel next (`ChannelLoop::require_entry`) and then anything in their name
+    /// (`require_to_take_in`): whose participant it is first (issue 562). Whoever takes them in
+    /// reads them first, a user to find out that they exist (issue 120) - but a founder of a
+    /// channel just created, whom the session lists -, and follows one not in it from then on
+    /// (`following`). Stores nothing.
     ///
     /// # Errors
     /// `SessionError::AlreadyParticipant`, `CannotTakeIn`; `ChannelError::NotInSession` for a
     /// founder of a channel the session does not list; `StoreError::PermissionDenied` if they may
-    /// not join;
-    /// `ChannelError::OutOfScope` or `NotCleared`; whatever reading them or storing the session
-    /// reports.
-    pub(crate) async fn take_in_held(
+    /// not join; whatever reading them reports.
+    pub(crate) async fn newcomer(
         &self,
-        _: &Admitted<'_>,
         context: &SecurityContext,
         actor: ActorId,
         channel: Option<&Arc<ChannelLoop>>,
         entry: Entry,
-    ) -> Result<Option<Session>> {
+    ) -> Result<ResolvedParticipant> {
         let session = self.session();
-        let in_session = session.participants.iter().any(|p| p.actor_id() == actor);
-        if in_session && channel.is_none() {
+        let listed = session.participants.iter().find(|p| p.actor_id() == actor).cloned();
+        if listed.is_some() && channel.is_none() {
             return Err(
                 SessionError::AlreadyParticipant { session: self.id, participant: actor }.into()
             );
         }
-        let listed = session.participants.iter().find(|p| p.actor_id() == actor).cloned();
+        let in_session = listed.is_some();
         let participant = match (entry, listed) {
             // A founder of a channel just created is one of the session's, named by its creator:
             // creating the channel with them was what was asked (issue 420).
@@ -82,34 +78,26 @@ impl SessionLoop {
                     ChannelError::NotInSession { participant: actor, channel: channel.id() };
                 return Err(outside.into());
             }
-            _ => match actor {
-                ActorId::User(id) => {
-                    self.stores.users.get(context, id).await?;
-                    Participant::User(id)
+            _ => {
+                let participant =
+                    Participant::of(actor).ok_or(SessionError::CannotTakeIn(actor))?;
+                match participant {
+                    Participant::User(id) => drop(self.stores.users.get(context, id).await?),
+                    Participant::Agent(id) => drop(self.stores.agents.get(context, id).await?),
                 }
-                ActorId::Agent(id) => {
-                    self.stores.agents.get(context, id).await?;
-                    Participant::Agent(id)
-                }
-                other => return Err(SessionError::CannotTakeIn(other).into()),
-            },
+                participant
+            }
         };
-        let resolved = self.resolve_to_take_in(&participant, channel).await?;
-        // A founder of a thread of `channel` is whom the opener acts for, or their own agent
-        // (issue 557), in the session already or not; without a channel there is no thread, and
-        // nobody is taken in as its founder.
-        if entry == Entry::FoundingThread {
-            let channel =
-                channel.ok_or_else(|| anyhow!("{actor} founds a thread of no channel"))?;
-            let attributes = channel.security_attributes();
-            let founding = ActionType::OpenThread(&attributes);
-            self.participation.require_own(
-                &resolved,
-                context,
-                founding,
-                StoreError::PermissionDenied,
-            )?;
+        if !in_session {
+            // Followed before it is resolved, so that nothing of it is missed until it is listed -
+            // its deletion above all, which its actor follows once it is taken in
+            // (`participant::Follow`). One refused, or taken out of the session again by
+            // the compensation of taking it in (`undo_listing_held`), is followed for nothing,
+            // which is harmless: its channels look only at whom they list, and a topic followed
+            // already is not followed twice.
+            self.events.follow(&self.following, SubscriptionTopic::of_participant(&participant));
         }
+        let resolved = self.resolve_to_take_in(&participant, channel).await?;
         if !in_session && entry == Entry::Joining {
             self.participation
                 .require_own_act(
@@ -120,28 +108,30 @@ impl SessionLoop {
                 )
                 .await?;
         }
-        if let (Some(channel), Entry::Joining) = (channel, entry) {
-            let attributes = channel.security_attributes();
-            self.participation
-                .require_own_act(
-                    &resolved,
-                    context,
-                    ActionType::custom(Channel::KIND, &JOIN, &attributes),
-                    StoreError::PermissionDenied,
-                )
-                .await?;
-        }
-        // Whose participant it is first, then anything in its name (issue 562).
-        self.require_to_take_in(context, &resolved, channel).await?;
-        if in_session {
+        Ok(resolved)
+    }
+
+    /// Lists `resolved` in the session - unless it lists them already - stored in the name the way
+    /// `entry` says (`Entry::storing`), for a procedure that asked what taking them in asks
+    /// (`procedure::participant::take_into_session`), which had the session follow them as it read
+    /// them (`newcomer`). The session announces it. Answers the session as it was before, where it
+    /// listed them, which taking the listing back returns to (`undo_listing_held`); `None` for one
+    /// in it already.
+    ///
+    /// # Errors
+    /// `SessionError::CannotTakeIn` for an internal actor; what storing the session reports.
+    pub(crate) async fn list_participant_held(
+        &self,
+        _: &Admitted<'_>,
+        context: &SecurityContext,
+        resolved: &ResolvedParticipant,
+        entry: Entry,
+    ) -> Result<Option<Session>> {
+        let actor = resolved.actor_id();
+        if self.session().takes_part(actor) {
             return Ok(None);
         }
-        // Followed before it is stored, so that nothing of it is missed meanwhile - its deletion
-        // above all. One whose storing fails, or who is taken out of the session again by the
-        // compensation of taking them in (`undo_listing_held`), is followed for nothing, which is
-        // harmless: its channels look only at whom they list, and a topic followed already is not
-        // followed twice.
-        self.events.follow(&self.following, SubscriptionTopic::of_participant(&participant));
+        let participant = Participant::of(actor).ok_or(SessionError::CannotTakeIn(actor))?;
         let storing = entry.storing(context);
         let before = self.session_controller.add_participant(&storing, participant).await?;
         info!(session = %self.id, participant = %actor, by = %context.caller_id, "Taken into the session");
@@ -292,8 +282,8 @@ impl SessionLoop {
     }
 
     /// Nothing if `resolved` can be taken in: it can run (`Participation::require_runnable`), and
-    /// may take part in `channel` too, where one is named - it lies where it may and is cleared
-    /// for it, asked in `context`, whoever takes them in. What is asked before anyone is taken in,
+    /// may take part in `channel` too, where one is named, as the channel answers it
+    /// (`ChannelLoop::require_admissible`). What is asked before anyone is taken in,
     /// and what says whom one cannot take in (`SessionView::candidates`).
     ///
     /// # Errors
@@ -307,7 +297,7 @@ impl SessionLoop {
     ) -> Result<()> {
         self.participation.require_runnable(resolved).await?;
         if let Some(channel) = channel {
-            self.participation.require_admissible(resolved, context, &channel.classification())?;
+            channel.require_admissible(context, resolved)?;
         }
         Ok(())
     }

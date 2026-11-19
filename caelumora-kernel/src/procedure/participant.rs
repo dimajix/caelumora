@@ -14,7 +14,7 @@
 
 use super::session::lock_to_open;
 use super::{Admitted, Compensation, Deferred, Key, Locks, Procedure};
-use crate::channel::{ChannelError, ChannelLoop};
+use crate::channel::{ChannelError, ChannelLoop, ResolvedParticipant};
 use crate::session::{SessionError, SessionLoop, SessionManager};
 use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
@@ -308,19 +308,24 @@ pub(crate) async fn take_in(
     into: Option<(&Arc<ChannelLoop>, HistoryAccess, ThreadId)>,
 ) -> Result<(), SessionError> {
     let channel = into.map(|(channel, ..)| channel);
-    take_into_session(admitted, log, session, context, participant, entry, channel).await?;
+    let resolved =
+        take_into_session(admitted, log, session, context, participant, entry, channel).await?;
     let Some(line) = into else { return Ok(()) };
-    take_into_channel(admitted, log, context, participant, entry, line).await
+    take_into_channel(admitted, log, context, resolved, entry, line).await
 }
 
-/// The first part of taking `participant` in (`take_in`): everything asked of them is asked once,
-/// here - whether they exist, are whom `context` acts for where that is asked, can run and may
-/// take part in `channel` (`SessionLoop::take_in_held`) -, and they are listed in `session` unless
-/// in it already, the listing taken back by `log` if a later step fails. For `thread::open` on its
-/// own as well, which asks every founder before the thread is there.
+/// The first part of taking `participant` in (`take_in`): everything is asked of them once, each
+/// object asking its own - whose participant they are, the session first
+/// (`SessionLoop::newcomer`), then `channel` (`ChannelLoop::require_entry`), then anything in their
+/// name: whether they can run and may take part in `channel` (`SessionLoop::require_to_take_in`,
+/// issue 562) -, and they are listed in `session` unless in it already
+/// (`SessionLoop::list_participant_held`), the listing taken back by `log` if a later step fails.
+/// Answers them resolved, to be taken into `channel` with (`take_into_channel`). For
+/// `thread::open` on its own as well, which asks every founder before the thread is there.
 ///
 /// # Errors
-/// As `SessionLoop::take_in_held`.
+/// As `SessionLoop::newcomer`, `ChannelLoop::require_entry`, `SessionLoop::require_to_take_in`
+/// and `SessionLoop::list_participant_held`.
 pub(crate) async fn take_into_session(
     admitted: &Admitted<'_>,
     log: &mut Compensation,
@@ -329,22 +334,32 @@ pub(crate) async fn take_into_session(
     participant: ActorId,
     entry: Entry,
     channel: Option<&Arc<ChannelLoop>>,
-) -> Result<(), SessionError> {
-    let taken = session.take_in_held(admitted, context, participant, channel, entry).await?;
-    if let Some(before) = taken {
+) -> Result<ResolvedParticipant, SessionError> {
+    let resolved = session.newcomer(context, participant, channel, entry).await?;
+    match channel {
+        Some(channel) => channel.require_entry(context, &resolved, entry).await?,
+        // Without a channel there is no thread, and nobody is taken in as its founder.
+        None if entry == Entry::FoundingThread => {
+            return Err(anyhow::anyhow!("{participant} founds a thread of no channel").into());
+        }
+        None => {}
+    }
+    session.require_to_take_in(context, &resolved, channel).await?;
+    let listed = session.list_participant_held(admitted, context, &resolved, entry).await?;
+    if let Some(before) = listed {
         let session = Arc::clone(session);
         log.record("taking someone into a session", move |admitted| {
             Box::pin(async move { session.undo_listing_held(admitted, participant, &before).await })
         });
     }
-    Ok(())
+    Ok(resolved)
 }
 
-/// The second part of taking `participant` in (`take_in`), once they were asked and are in the
-/// session: listed in the channel of `line`, seeing as much of its history as granted, the listing
-/// taken back by `log` if a later step fails; then their actor is started to take part in its
-/// thread, and waited for - but a founder's, which starts with the channel or the thread it founds:
-/// what `run` is handed after it comes after its start.
+/// The second part of taking someone in (`take_in`), once they were asked and are in the session,
+/// as `resolved`: listed in the channel of `line`, seeing as much of its history as granted, the
+/// listing taken back by `log` if a later step fails; then their actor is started to take part in
+/// its thread, and waited for - but a founder's, which starts with the channel or the thread it
+/// founds: what `run` is handed after it comes after its start.
 ///
 /// # Errors
 /// As `ChannelLoop::history_start`, `list_participant_held` and `start_participant_held`;
@@ -353,13 +368,14 @@ pub(crate) async fn take_into_channel(
     admitted: &Admitted<'_>,
     log: &mut Compensation,
     context: &SecurityContext,
-    participant: ActorId,
+    resolved: ResolvedParticipant,
     entry: Entry,
     (channel, history, thread): (&Arc<ChannelLoop>, HistoryAccess, ThreadId),
 ) -> Result<(), SessionError> {
+    let participant = resolved.actor_id();
     let from = if entry.founds() { None } else { channel.history_start(history).await? };
     let storing = entry.storing(context);
-    let (resolved, before) = channel.list_participant_held(admitted, &storing, participant).await?;
+    let before = channel.list_participant_held(admitted, &storing, &resolved).await?;
     {
         let channel = Arc::clone(channel);
         log.record("taking someone into a channel", move |admitted| {

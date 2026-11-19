@@ -110,10 +110,6 @@ pub enum ChannelError {
     /// A user nudging themselves (issue 278): nobody would be asked.
     #[error("{participant} cannot nudge themselves in channel {channel}")]
     NudgesItself { participant: ActorId, channel: ChannelId },
-    /// A participant of the session whose user or agent was deleted
-    /// (issue 120).
-    #[error("{participant} of the session of channel {channel} no longer exists")]
-    ParticipantGone { participant: ActorId, channel: ChannelId },
     /// A message classified so that it may not enter the channel - above
     /// it, for an audience the channel's would not be covered by, or with a
     /// compartment that is not configured or may not be given (issue 133).

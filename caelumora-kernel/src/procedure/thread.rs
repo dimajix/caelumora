@@ -125,9 +125,12 @@ pub async fn open(
         return Err(anyhow::Error::from(taking_part).into());
     }
     let founding = Entry::FoundingThread;
-    for &founder in &founders {
-        take_into_session(admitted, log, session, context, founder, founding, Some(&channel))
-            .await?;
+    let into = Some(&channel);
+    let mut asked = Vec::with_capacity(founders.len());
+    for founder in founders {
+        asked.push(
+            take_into_session(admitted, log, session, context, founder, founding, into).await?,
+        );
     }
     channel.open_thread_held(admitted, context, thread, origin).await?;
     {
@@ -140,7 +143,7 @@ pub async fn open(
         });
     }
     let line = (&channel, HistoryAccess::None, thread);
-    for founder in founders {
+    for founder in asked {
         take_into_channel(admitted, log, context, founder, founding, line).await?;
     }
     Ok(())

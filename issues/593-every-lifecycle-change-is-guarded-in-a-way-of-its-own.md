@@ -347,8 +347,9 @@ The procedures, by step, each step reviewed and committed on its own:
    procedure, `ChannelLoop::take_in` and `SessionLoop::take_in`, `add_participant_held` and
    `join_held` are taken apart, and so are `remove_participant_held`, `leave_held` and the session's
    `let_go`, which goes through every channel and writes the documents of those that do not run
-   (`let_go_where_unavailable`). The checks of state and permission move into the procedures, asked
-   once under the locks; one function of the module `procedure` takes someone in, shared by
+   (`let_go_where_unavailable`). The checks of state and permission are asked once under the locks,
+   each by the object it concerns, in the order the procedures call them; one function of the module
+   `procedure` takes someone in, shared by
    `participant::TakeIn`, `channel::Create`, `session::Create` and `thread::Open`; the loops keep
    the building blocks - resolving, storing and its undo, starting and ending the actor - and the
    invariants of the single object. `changing` of both loops goes, and with it `LocksById`, and the
@@ -605,3 +606,19 @@ case; it is decided there, and may make this unnecessary.
   actor by a building block with the proof as well (`ChannelLoop::start_participant_held`); the
   starts within the channel - as it is built, as it follows its agents - stay without it until
   step 5e.
+- **2026-11-19** — Step 5b-1 committed. Then, at the maintainer's request and as a step of its own
+  before 5b-2, without a change of behaviour: each object asks its own of the one taken in, as the
+  building blocks of the other lifecycles check themselves. `SessionLoop::take_in_held` is taken
+  apart into `newcomer` - whose participant they are, as the session asks it, read and resolved,
+  storing nothing - and `list_participant_held`; the channel asks its own entry
+  (`ChannelLoop::require_entry`: `JOIN`, or a thread's founder the opener's own) and the clearance
+  for it (`ChannelLoop::require_admissible`, which `SessionLoop::require_to_take_in` asks it). The
+  procedure calls them in the order the security suites hold - whose participant first, the
+  session's then the channel's, then anything in their name (issue 562) -, and lists them in the
+  channel as resolved once (`ChannelLoop::list_participant_held`), so that
+  `ChannelError::ParticipantGone`, which nothing raises any more, goes. `UpdateSession` and
+  `UpdateChannel` stay asked by `TakeIn` before anything of the one taken in, as `require_changing`
+  of each object. The session follows the one taken in as it reads them, before resolving
+  (`newcomer`), so that its actor follows a deletion meanwhile once it is taken in
+  (`participant::Follow`), where the channel's second resolving refused it before. Step 5b's text
+  is aligned with it.

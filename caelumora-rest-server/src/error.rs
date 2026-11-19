@@ -542,7 +542,7 @@ impl From<ChannelError> for ApiError {
             }
             ChannelError::Stopped { .. } => Self::conflict("channel_stopped", detail),
             ChannelError::NudgesItself { .. } => Self::bad_request("nudges_itself", detail),
-            ChannelError::NotAParticipant { .. } | ChannelError::ParticipantGone { .. } => {
+            ChannelError::NotAParticipant { .. } => {
                 Self::not_found("participant_not_found", detail)
             }
             ChannelError::NotInSession { .. }
@@ -960,10 +960,6 @@ mod tests {
         assert_eq!(
             channel_error(ChannelError::Stopped { participant: someone, channel }),
             "channel_stopped"
-        );
-        assert_eq!(
-            channel_error(ChannelError::ParticipantGone { participant: someone, channel }),
-            "participant_not_found"
         );
         assert_eq!(
             channel_error(ChannelError::OutOfScope { participant: someone, channel }),

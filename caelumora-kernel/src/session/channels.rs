@@ -187,7 +187,7 @@ impl SessionLoop {
     }
 
     /// The channel `channel_id` if it runs, for whoever joins it: not asked
-    /// whether they may read it - joining it decides (`take_in_held`).
+    /// whether they may read it - joining it decides (`ChannelLoop::require_entry`).
     ///
     /// # Errors
     /// `SessionError::ChannelNotFound` if the session lists no such channel,

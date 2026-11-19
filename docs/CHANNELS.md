@@ -636,8 +636,10 @@ from the session with every channel of it, or from one channel. Each holds the p
 out - the newcomer's actor started and its join announced, the leaver's actor ended and its leave
 announced -, and opens a stopped session as it starts. Taking in is one function of the procedures,
 `procedure::participant::take_in`, for anyone who comes in - added, joining, founding a channel or a
-thread -: it asks everything of the one taken in once (`SessionLoop::take_in_held`), lists them in
-the session unless they are in it, then in the channel, and has the procedure's compensation take
+thread -: it asks everything of the one taken in once, each object its own, whose participant they
+are first (`SessionLoop::newcomer`, `ChannelLoop::require_entry`,
+`SessionLoop::require_to_take_in`), lists them in the session unless they are in it, then in the
+channel, and has the procedure's compensation take
 each listing back if a later step fails (`SessionLoop::undo_listing_held`,
 `ChannelLoop::undo_listing_held`); whoever takes someone into a channel goes through the session's
 part, also for one in the session already. Letting go is carried out by the session's building

@@ -5873,7 +5873,7 @@ async fn joining_a_channel_by_command_asks_what_joining_one_asks() {
             // The session opened for one who may read it, as joining does (issue 593).
             "bob: JoinSession(alice's) no",
             "bob: GetSession(alice's) yes",
-            // Whoever takes someone in reads them first (`SessionLoop::take_in_held`); not sought
+            // Whoever takes someone in reads them first (`SessionLoop::newcomer`); not sought
             // among what he reads: he reads nothing of the channel before he joined.
             "bob: GetUser(system's) yes",
             "bob: JoinChannel(alice's) yes",
@@ -5913,7 +5913,7 @@ async fn an_invitation_to_a_channel_is_used_up_as_it_is_taken() {
         .join(&World::as_user(world.bob), bob_id, Some(open.id()))
         .await
         .expect_err("no longer his to join");
-    // Asked by the session before the channel is (`SessionLoop::take_in_held`).
+    // Asked by the session before the channel is (`SessionLoop::newcomer`).
     assert!(matches!(refused.downcast_ref(), Some(StoreError::PermissionDenied(_))), "{refused}");
     assert!(!open.participants().iter().any(|p| p.id == bob_id), "he stays out");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
@@ -5972,7 +5972,7 @@ async fn one_the_channel_cannot_take_in_is_rolled_back_out_of_the_session() {
         checks(&[
             // Whether he may reach the session to join it (`SessionManager::open_to_take_in`).
             "bob: JoinSession(alice's) yes",
-            // Whoever takes them in reads them first (`SessionLoop::take_in_held`).
+            // Whoever takes them in reads them first (`SessionLoop::newcomer`).
             "bob: GetAgent(bob's) yes",
             // Out of the session again: its entry in its name, as the first time, then the
             // channel's, whether it may run and be cleared, before anything is stored.
