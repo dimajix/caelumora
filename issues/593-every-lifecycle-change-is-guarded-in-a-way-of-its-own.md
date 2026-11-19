@@ -323,7 +323,10 @@ The procedures, by step, each step reviewed and committed on its own:
    `Stop`, `Delete`, `Restore`, `Purge`, `ShutDown`, `Move`; `project::Delete`, `Restore`,
    `Purge` (the deletion of a project's sessions code it shares with `session::Delete`, in place
    of `SessionManager::delete_with`).
-2. `run` answers its requests, without a change of behaviour.
+2. `run` answers its requests, without a change of behaviour; then, as a step between it and the
+   next, `run` takes the receiver of its requests, so that what it did not carry out goes with it,
+   and a leave it finishes as an actor starts under the same id closes the threads that waited for
+   it.
 3. Participants: `participant::TakeIn` (added or joining, into the session and a channel of it),
    `LetGo` (removed or leaving, from the session with every channel of it, or from one channel),
    `Follow` (agents deleted or restored), with the follower of the events; `changing` of both loops,
@@ -406,3 +409,11 @@ neither guards a lifecycle.
   `dead_code`. A leave asked for again while the actor is leaving - one let go while it rests -
   is announced once and answered to both; a brief dropped for a thread no longer open counts as
   carried out.
+- **2026-11-19** — Step 2 committed. The step between it and step 3, from the review of step 2,
+  at the maintainer's request, implemented, not committed yet: `run` takes the receiver of its
+  requests as it starts, in place of `ChannelLoop::run_lock` - it runs once, and the requests
+  still queued as it ends, or handed in after, are answered with nothing, so that a reader can rely
+  on a missing answer meaning that the channel stopped; and the leave of an actor `run` finishes
+  as another starts under its id now closes the threads that waited for it, as the end of its task
+  does (`finish_leave`) - before, such a thread stayed open, and its closing unanswered, until
+  another left it.

@@ -21,7 +21,7 @@ use caelumora_security::confidentiality::ConfidentialityQuestions;
 use caelumora_security::{ActionType, Enforcement, Reclassified, SecurityContext};
 use std::collections::HashMap;
 use std::iter;
-use std::sync::{Arc, Weak};
+use std::sync::{self, Arc, Weak};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
@@ -69,10 +69,9 @@ struct Closing {
 
 impl ChannelLoop {
     pub async fn run(&self) -> Result<()> {
-        let _guard = self.run_lock.try_lock().map_err(|_| anyhow!("Already running"))?;
-
+        let taken = self.requests_rx.lock().unwrap_or_else(sync::PoisonError::into_inner).take();
+        let mut requests_rx = taken.ok_or_else(|| anyhow!("Channel {} ran already", self.id))?;
         info!("Channel {}/{} is starting", self.channel.name(), self.id);
-        let mut requests_rx = self.requests_rx.lock().await;
         let (event_tx, mut event_rx) = mpsc::channel(10);
         let mut join_set = JoinSet::new();
         let mut running = HashMap::new();
@@ -113,8 +112,7 @@ impl ChannelLoop {
                     };
                     let ended = running.iter().find(|(_, actor)| actor.abort_handle.id() == task).map(|(id, _)| *id);
                     if let Some(RunningActor { id, leaving: Some(leaving), .. }) = ended.and_then(|id| running.remove(&id)) {
-                        self.announce_removal(id, leaving, &running).await;
-                        self.close_settled(&mut closing, &running).await;
+                        self.finish_leave(id, leaving, &running, &mut closing).await;
                     }
                     if join_set.is_empty() {
                         break;
@@ -157,7 +155,7 @@ impl ChannelLoop {
                 // actor (issue 262).
                 if running.get(&id).is_some_and(|old| old.leaving.is_some()) {
                     if let Some(RunningActor { leaving: Some(leaving), .. }) = running.remove(&id) {
-                        self.announce_removal(id, leaving, running).await;
+                        self.finish_leave(id, leaving, running, closing).await;
                     }
                 }
                 // Who joined is announced before the newcomer runs, so that
@@ -284,6 +282,21 @@ impl ChannelLoop {
             self.announce(closed, by, ThreadId::line(self.id), running).await;
             let _ = carried_out.send(());
         }
+    }
+
+    /// Finishes the leave of `participant`, whose task has ended: announced as `leaving` says
+    /// (`announce_removal`), and each thread of `closing` that waited for nobody but it closed
+    /// (`close_settled`) - wherever `run` learns that the task ended: as it ends, or as an actor
+    /// starts under its id.
+    async fn finish_leave(
+        &self,
+        participant: ActorId,
+        leaving: Leaving,
+        running: &HashMap<ActorId, RunningActor>,
+        closing: &mut HashMap<ThreadId, Closing>,
+    ) {
+        self.announce_removal(participant, leaving, running).await;
+        self.close_settled(closing, running).await;
     }
 
     /// Announces that `participant` left as `leaving` says - called its name, in the name of its
@@ -2459,7 +2472,8 @@ mod tests {
         }
     }
 
-    /// Carries out what `channel` was handed so far, as `run` does with what it receives.
+    /// Carries out what `channel` was handed so far, as `run` does with what it receives, and
+    /// gives the receiver back.
     async fn carry_out_requests(
         channel: &ChannelLoop,
         running: &mut HashMap<ActorId, RunningActor>,
@@ -2467,9 +2481,12 @@ mod tests {
         event_tx: &Sender<Envelope>,
         join_set: &mut JoinSet<ActorId>,
     ) {
-        while let Ok(request) = channel.requests_rx.lock().await.try_recv() {
+        let taken = channel.requests_rx.lock().unwrap().take();
+        let mut requests = taken.expect("not taken by `run`");
+        while let Ok(request) = requests.try_recv() {
             channel.apply_change(request, running, closing, event_tx, join_set).await;
         }
+        *channel.requests_rx.lock().unwrap() = Some(requests);
     }
 
     /// Issue 593: `run` answers a leave of one without an actor, an opening and a brief at once -
@@ -2510,6 +2527,68 @@ mod tests {
         assert!(!close.carried_out().await, "dropped with `run`, which held it under way");
     }
 
+    /// Issue 593: `run` runs once, and a request handed in after it ended is answered with nothing,
+    /// at once.
+    #[tokio::test]
+    async fn run_runs_once_and_what_is_handed_in_after_it_is_answered_with_nothing() {
+        let alice = make_user("alice");
+        let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
+        let running = tokio::spawn({
+            let channel = Arc::clone(&channel);
+            async move { channel.run().await }
+        });
+        channel.stop_actors().await;
+        let ran = time::timeout(Duration::from_secs(5), running).await.expect("it ends");
+        ran.unwrap().expect("it ran");
+
+        let line = ThreadId::line(channel.id);
+        let gone = ActorId::Agent(AgentId::new());
+        let late = channel.request(ActorChange::Leave(
+            gone,
+            "gone".to_string(),
+            SecurityContext::system(),
+            line,
+        ));
+        let answered = time::timeout(Duration::from_secs(1), late.carried_out()).await;
+        assert!(!answered.expect("answered at once"), "with nothing");
+        assert!(channel.run().await.is_err(), "it runs once");
+    }
+
+    /// Issue 593: an old actor's leave that `run` finishes as an actor starts under its id closes
+    /// the thread that waited for it, as the end of its task would.
+    #[tokio::test]
+    async fn a_leave_finished_as_an_actor_starts_closes_the_thread_that_waited_for_it() {
+        let (channel, context, agent, _) = scripted_channel(Script::Hangs).await;
+        let participant = ActorId::Agent(agent);
+        let joined =
+            channel.actors.load().get(&participant).cloned().expect("the agent takes part");
+        let origin = ThreadOrigin { thread: ThreadId::line(channel.id), message: MessageId::new() };
+        let thread = channel.open_thread(&context, origin, &[]).await.expect("opened");
+        let (event_tx, _event_rx) = mpsc::channel(10);
+        let mut join_set = JoinSet::new();
+        let mut closing = HashMap::new();
+        let mut running = HashMap::new();
+        carry_out_requests(&channel, &mut running, &mut closing, &event_tx, &mut join_set).await;
+        running.insert(participant, leaving_actor(participant, context.clone(), thread));
+        let (carried_out, closed) = oneshot::channel();
+        closing.insert(thread, Closing { by: context.clone(), carried_out });
+
+        let change = ActorChange::Start(joined, None, None);
+        let (carried_out, _started) = oneshot::channel();
+        channel
+            .apply_change(
+                Request { change, carried_out },
+                &mut running,
+                &mut closing,
+                &event_tx,
+                &mut join_set,
+            )
+            .await;
+        let answered = time::timeout(Duration::from_secs(1), closed).await;
+        assert!(answered.expect("answered").is_ok(), "the closing carried out");
+        assert!(channel.thread(thread).is_none(), "the thread closed");
+    }
+
     /// Issue 557: a thread is closed once whoever left it has left - what a leaving actor still
     /// sends enters it, and its leave is recorded there before the thread's closing.
     #[tokio::test]
@@ -2540,8 +2619,7 @@ mod tests {
         let Some(RunningActor { leaving: Some(leaving), .. }) = running.remove(&helper) else {
             panic!("leaving");
         };
-        channel.announce_removal(helper, leaving, &running).await;
-        channel.close_settled(&mut closing, &running).await;
+        channel.finish_leave(helper, leaving, &running, &mut closing).await;
         assert!(channel.thread(thread).is_none(), "once it has left");
         assert!(left.await.unwrap(), "its leave answered once announced");
         assert!(close.await.unwrap(), "and the closing once closed");

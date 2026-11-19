@@ -234,8 +234,8 @@ struct Request {
 /// it out - the actor started and its join announced, or found removed again; the actor's leave
 /// announced once its task has ended; the thread's opening announced; the thread closed once
 /// whoever left it has left; the brief handed to the delegate, or dropped for a thread no longer
-/// open -, or nothing, if `run` ended with the change under way or the channel is gone. A change
-/// handed in while `run` does not run waits until it runs again.
+/// open -, or nothing, if `run` ended with the change under way or before it was handed in, or
+/// the channel is gone. A change handed in before `run` starts waits for it.
 #[derive(Debug)]
 #[cfg_attr(
     not(test),
@@ -328,10 +328,11 @@ pub struct ChannelLoop {
     /// a rename at once - does not replace a newer one (issue 585).
     building_mentions: sync::Mutex<()>,
     /// The changes handed to `run` (`request`) - actors to start or let go, threads to open or
-    /// close, briefs to hand to a delegate -, each with its answer; `run` locks the receiver while
-    /// it runs.
+    /// close, briefs to hand to a delegate -, each with its answer. `run` takes the receiver as it
+    /// starts, so that it runs once, and it goes with `run`: the requests still queued then, and
+    /// every one handed in after, are answered with nothing (issue 593).
     requests_tx: mpsc::UnboundedSender<Request>,
-    requests_rx: Mutex<mpsc::UnboundedReceiver<Request>>,
+    requests_rx: sync::Mutex<Option<mpsc::UnboundedReceiver<Request>>>,
     state: Mutex<ChannelState>,
     state_store: Arc<dyn StateStore>,
     /// The read side of the histories (issue 379): the channel's own, as it
@@ -342,7 +343,6 @@ pub struct ChannelLoop {
     /// otherwise - a user follows their actor (issue 220).
     #[cfg(any(test, feature = "test-support"))]
     observed: broadcast::Sender<Envelope>,
-    run_lock: Mutex<()>,
 }
 
 impl ChannelLoop {
@@ -390,13 +390,12 @@ impl ChannelLoop {
             mentions: ArcSwap::from_pointee(MentionDirectory::default()),
             building_mentions: sync::Mutex::new(()),
             requests_tx,
-            requests_rx: Mutex::new(requests_rx),
+            requests_rx: sync::Mutex::new(Some(requests_rx)),
             state,
             state_store,
             history_store,
             #[cfg(any(test, feature = "test-support"))]
             observed: broadcast::channel(128).0,
-            run_lock: Mutex::new(()),
         });
         channel_loop.runtime.attach(&channel_loop);
         // Its threads first, which everything after takes part in (issue 557); then what changed

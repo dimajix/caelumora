@@ -329,8 +329,8 @@ given the history, and on whose behalf it joined, if it did - a channel started 
 joins. What waits when `run` begins is started before anything is routed. `run` carries out the
 changes handed to it one after the other, and answers each once it carried it out - a leave once
 the actor's task has ended and its leave is announced, a thread's closing once whoever left the
-thread has left (`ChannelLoop::request`, issue 593). A change still under way as `run` ends is
-answered with nothing: the channel stopped, its actors with it.
+thread has left (`ChannelLoop::request`, issue 593). `run` runs once; a change still under way as
+it ends, or handed in after, is answered with nothing: the channel stopped, its actors with it.
 
 *   Stopping the session stops the actors of every channel (`SessionLoop::stop_actors`), all at
     once, waits for them up to `STOP_GRACE` and then aborts every channel; the commands started in
