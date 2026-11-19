@@ -192,31 +192,12 @@ impl Procedure for LetGo {
     type Output = ();
     type Error = SessionError;
 
-    /// The channel it is let go from, or every channel of the session - also one that does not
-    /// run, whose document letting go changes, and one that lists it only once it was founded
-    /// into it meanwhile; a session it starts is locked exclusively, its channels with it.
+    /// A session it starts is locked exclusively, its channels with it; one that runs as letting
+    /// go needs it (`lock_letting_go`).
     async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<(), Deferred> {
         lock_to_open(&self.sessions, locks, self.session)?;
-        locks.exclusive(Key::Participant(self.session, self.participant))?;
         let running = self.sessions.running(self.session);
-        let channels = match (self.from, &running) {
-            (Some(channel), _) => vec![channel],
-            (None, Some(running)) => running.session().channels.clone(),
-            (None, None) => Vec::new(),
-        };
-        for channel in channels {
-            locks.shared(Key::Channel(self.session, channel))?;
-            // The thread they take part in, until they have left it - so that nobody closes it
-            // before (`thread::Close`).
-            let Some(running) = running.as_ref().and_then(|running| running.channel(channel))
-            else {
-                continue;
-            };
-            if let Some(thread) = running.thread_taken_part_in(self.participant).await {
-                locks.shared(Key::Thread(self.session, channel, thread))?;
-            }
-        }
-        Ok(())
+        lock_letting_go(locks, running.as_deref(), self.session, self.participant, self.from).await
     }
 
     /// # Errors
@@ -251,6 +232,41 @@ impl Procedure for LetGo {
         }
         Ok(())
     }
+}
+
+/// Locks what letting `participant` go from `session` needs, `running` where it runs: the
+/// participant exclusively; the channel `from`, or every channel of the session - also one that
+/// does not run, whose document letting go changes, and one that lists them only once they were
+/// founded into it meanwhile - shared; and in each the thread they take part in shared, until they
+/// have left it, so that nobody closes it before (`thread::Close`). What `LetGo` locks, and a
+/// plugin's procedure that lets someone go within a change of its own (issue 558's sub-agents).
+/// Asks nothing; of a session that does not run, the participant and the channel named alone.
+///
+/// # Errors
+/// `Deferred` if anything of it is held otherwise.
+pub async fn lock_letting_go(
+    locks: &mut Locks<'_>,
+    running: Option<&SessionLoop>,
+    session: SessionId,
+    participant: ActorId,
+    from: Option<ChannelId>,
+) -> Result<(), Deferred> {
+    locks.exclusive(Key::Participant(session, participant))?;
+    let channels = match (from, running) {
+        (Some(channel), _) => vec![channel],
+        (None, Some(running)) => running.session().channels.clone(),
+        (None, None) => Vec::new(),
+    };
+    for channel in channels {
+        locks.shared(Key::Channel(session, channel))?;
+        let Some(running) = running.and_then(|running| running.channel(channel)) else {
+            continue;
+        };
+        if let Some(thread) = running.thread_taken_part_in(participant).await {
+            locks.shared(Key::Thread(session, channel, thread))?;
+        }
+    }
+    Ok(())
 }
 
 /// Has the running channels follow whether an agent exists (issue 314): a deleted agent rests in

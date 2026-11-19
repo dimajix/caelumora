@@ -581,3 +581,7 @@ case; it is decided there, and may make this unnecessary.
   name as they enumerate, asking again under the locks. An actor that does not end even when
   aborted has letting it go give up after `LEAVE_GRACE`; its late leave may then follow a closing,
   which is logged rather than handled.
+- **2026-11-19** — Step 5 committed. At the maintainer's request, what letting a participant go
+  locks is one public function, `procedure::participant::lock_letting_go`, which `LetGo` and the
+  sub-agents' `Ending` share: the latter rebuilt it by hand, and without the threads the one let go
+  takes part in in other channels.

@@ -21,6 +21,7 @@ use caelumora_domain::value::name::Name;
 use caelumora_kernel::agent::{AgentError, AgentManager, AgentSpec};
 use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::error::{refusal, user_message};
+use caelumora_kernel::procedure::participant::lock_letting_go;
 use caelumora_kernel::procedure::{
     Admitted, Compensation, Deferred, Key, Locks, Procedure, ProcedureError, ProcedureExecutor,
 };
@@ -267,8 +268,9 @@ impl Procedure for Starting {
 
 /// Ending a sub-agent (issue 558) as one procedure (issue 593): let go from the session, its
 /// thread closed, the agent deleted - in this order, each only once the one before it is done,
-/// since the session lets no deleted agent go and closing waits for nobody to take part. Holds the
-/// agent in the session and its channels, as letting it go does, and the thread exclusively.
+/// since the session lets no deleted agent go and closing waits for nobody to take part. Holds
+/// what letting the agent go needs (`procedure::participant::lock_letting_go`), and the thread
+/// exclusively.
 struct Ending {
     work: SubAgents,
     session: SessionId,
@@ -294,10 +296,9 @@ impl Procedure for Ending {
             Ok(agent) => agent,
             Err(error) => return Ok(Err(error)),
         };
-        locks.exclusive(Key::Participant(self.session, ActorId::Agent(agent)))?;
-        for channel in &session.session().channels {
-            locks.shared(Key::Channel(self.session, *channel))?;
-        }
+        // As letting the agent go needs it, and its thread to close exclusively.
+        let participant = ActorId::Agent(agent);
+        lock_letting_go(locks, Some(session), self.session, participant, None).await?;
         locks.exclusive(Key::Thread(self.session, self.channel, self.thread))?;
         Ok(Ok(agent))
     }
