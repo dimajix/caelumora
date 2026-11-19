@@ -295,7 +295,7 @@ impl SessionManager {
         let session_loop = self.establish(admitted, context, session, own, channels).await?;
         // A channel whose components the owner cannot read is left out as a
         // session opens (issue 463), but making it is the owner's own request,
-        // refused as `create_channel_held` refuses it.
+        // refused as creating a channel refuses it (`run_channel_held`).
         session_loop.require_running()?;
         let session = &session_loop;
         let participants = (users, agents);

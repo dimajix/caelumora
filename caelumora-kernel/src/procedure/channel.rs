@@ -2,13 +2,15 @@
 //! deleting and restoring it, building again the channels left out as their session started, and
 //! reclassifying one.
 //!
-//! Each locks the channels it changes exclusively (`Key::Channel`) and the participants it takes
-//! in or lets go; each but building again, which opens no session, locks its session as opening it
+//! Each locks the channels it changes exclusively (`Key::Channel`) and the participants it takes in
+//! or lets go; each but building again, which opens no session, locks its session as opening it
 //! does - shared where it runs, exclusively where it starts it. Each carries the change out by the
 //! building blocks of the `SessionLoop` and the `ChannelLoop`, which ask for the proof that it
-//! holds them (`Admitted`). Whoever takes someone into a channel or lets them go holds it shared
-//! (`participant`), so that neither crosses a channel being made, deleted, restored, built again or
-//! reclassified.
+//! holds them (`Admitted`): asked first by the objects' own questions, which store nothing, then
+//! one step after the other, each that can be set back undone by its compensation if a later one
+//! fails - not what deleting a channel deleted of its scope, nor whom restoring it let go. Whoever
+//! takes someone into a channel or lets them go holds it shared (`participant`), so that neither
+//! crosses a channel being made, deleted, restored, built again or reclassified.
 
 use super::participant::{take_in, Entry};
 use super::session::lock_to_open;
@@ -16,18 +18,21 @@ use super::{Admitted, Compensation, Deferred, Key, Locks, Procedure};
 use crate::channel::ChannelLoop;
 use crate::session::{ChannelRun, ChannelSpec, SessionError, SessionManager};
 use async_trait::async_trait;
+use caelumora_domain::actor::ActorId;
 use caelumora_domain::channel::{ChannelId, HistoryAccess, ThreadId};
 use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::removal::Removal;
 use caelumora_domain::session::SessionId;
 use caelumora_security::SecurityContext;
+use caelumora_store::Deleted;
 use std::iter;
 use std::sync::Arc;
 
 /// Creates a channel in a session on behalf of `context`, starting the session where it does not
 /// run, with its founders - its participants, the creator first if in the session -, who join it by
-/// the one way in once it is started (`SessionLoop::create_channel_held`, `found`); taken back if
-/// one cannot (`SessionLoop::abandon_channel_held`). Holds the channel, its id chosen before it is
-/// built, until it is complete, so that nobody takes someone into it before its founders.
+/// the one way in once it is started (`participant::take_in`); taken back if one cannot. Holds the
+/// channel, its id chosen before it is built, until it is complete, so that nobody takes someone
+/// into it before its founders.
 pub struct Create {
     sessions: Arc<SessionManager>,
     context: SecurityContext,
@@ -68,10 +73,17 @@ impl Procedure for Create {
         Ok(())
     }
 
+    /// Asked before anything is stored (`SessionLoop::channel_asked_for`); then stored, its group
+    /// made, listed in the session last - which asks whether `context` may change it - and
+    /// started, each step taken back by `log`, the last first, if a later one fails: stopped, taken
+    /// off the session's list and purged with its group, as if it had never been made. Its
+    /// founders join it by the one way in once it is started (`participant::take_in`, issue 420),
+    /// so that its history records them as anyone who joins later; it is announced as created once
+    /// they joined.
+    ///
     /// # Errors
-    /// As `SessionManager::open_held`, `SessionLoop::create_channel_held` and taking a founder in
-    /// (`participant::take_in`); the channel is taken back then, each founder taken in before
-    /// first.
+    /// As `SessionManager::open_held`, `SessionLoop::channel_asked_for`, the building blocks that
+    /// store, list and start it, and taking a founder in (`participant::take_in`).
     async fn carry_out(
         self,
         (): (),
@@ -80,13 +92,31 @@ impl Procedure for Create {
     ) -> Result<Arc<ChannelLoop>, SessionError> {
         let Self { sessions, context, session, id, spec } = self;
         let session = sessions.open_held(admitted, &context, session).await?;
-        let (channel, founders) = session.create_channel_held(admitted, &context, id, spec).await?;
+        let (mut document, founders) = session.channel_asked_for(&context, id, spec).await?;
+        session.store_channel_held(admitted, &context, &mut document).await?;
         {
             let session = Arc::clone(&session);
-            let channel = Arc::clone(&channel);
-            log.record("creating a channel", move |admitted| {
+            log.record("storing a channel", move |admitted| {
+                Box::pin(async move { session.purge_channel_held(admitted, id).await })
+            });
+        }
+        session.keep_channel_group_held(admitted, &document).await?;
+        session.list_channel_held(admitted, &context, id).await?;
+        {
+            // Its creation was permitted: taken back in the kernel's name.
+            let session = Arc::clone(&session);
+            log.record("listing a channel", move |admitted| {
                 Box::pin(async move {
-                    session.abandon_channel_held(admitted, &channel).await;
+                    session.unlist_channel_held(admitted, &SecurityContext::system(), id).await
+                })
+            });
+        }
+        let channel = session.run_channel_held(admitted, &document).await?;
+        {
+            let session = Arc::clone(&session);
+            log.record("starting a channel", move |admitted| {
+                Box::pin(async move {
+                    session.stop_channel_held(admitted, id).await;
                     Ok(())
                 })
             });
@@ -101,7 +131,7 @@ impl Procedure for Create {
 }
 
 /// Deletes a channel of a session on behalf of `context`, starting the session where it does not
-/// run (`SessionLoop::delete_channel_held`): its actors leave, its task ends, it is marked.
+/// run: it is marked, its actors leave, its task ends.
 pub struct Delete {
     sessions: Arc<SessionManager>,
     context: SecurityContext,
@@ -132,26 +162,62 @@ impl Procedure for Delete {
         locks.exclusive(Key::Channel(self.session, self.channel))
     }
 
-    /// `false` if there is no channel the caller reaches.
+    /// Asked first (`SessionLoop::channel_to_delete`); then taken off the session's list - which
+    /// asks whether `context` may change it, so that a refused deletion leaves the channel running
+    /// and listed -, marked, what lies in its scope deleted as far as `context` may (issue 320),
+    /// and the group of its participants, in the kernel's name (issue 348); all of it carries the
+    /// channel's mark and comes back with it (issues 178, 469). If any of it fails, the channel is
+    /// marked no more and listed again, in the kernel's name - without what was
+    /// deleted of its scope, but with its group -, and runs on. Then it is stopped and its
+    /// deletion announced. `false` if there is no channel the caller reaches.
     ///
     /// # Errors
-    /// As `SessionManager::open_held` and `SessionLoop::delete_channel_held`.
+    /// As `SessionManager::open_held`, `SessionLoop::channel_to_delete` and the building blocks
+    /// that unlist and mark it and delete its scope and group - `SessionError::ScopeNotEmpty` if
+    /// something of its scope is left that `context` may not delete.
     async fn carry_out(
         self,
         (): (),
         admitted: &Admitted<'_>,
-        _: &mut Compensation,
+        log: &mut Compensation,
     ) -> Result<bool, SessionError> {
-        let Self { sessions, context, session, channel } = self;
+        let Self { sessions, context, session, channel: id } = self;
         let session = sessions.open_held(admitted, &context, session).await?;
-        Ok(session.delete_channel_held(admitted, &context, channel).await?)
+        let Some(channel) = session.channel_to_delete(&context, id).await? else {
+            return Ok(false);
+        };
+        session.unlist_channel_held(admitted, &context, id).await?;
+        {
+            // Its deletion was permitted: put back in the kernel's name.
+            let session = Arc::clone(&session);
+            log.record("taking a channel off its session's list", move |admitted| {
+                Box::pin(async move {
+                    session.list_channel_held(admitted, &SecurityContext::system(), id).await
+                })
+            });
+        }
+        let removal = Removal::now(context.caller_id);
+        session.mark_channel_deleted_held(admitted, &context, id, &removal).await?;
+        {
+            let session = Arc::clone(&session);
+            log.record("marking a channel deleted", move |admitted| {
+                Box::pin(async move {
+                    let system = SecurityContext::system();
+                    session.unmark_channel_held(admitted, &system, id).await.map(drop)
+                })
+            });
+        }
+        session.delete_scope_held(admitted, &context, id, &removal).await?;
+        session.delete_channel_group_held(admitted, id, &removal).await?;
+        session.stop_channel_held(admitted, id).await;
+        session.announce_deleted(&channel, &context);
+        Ok(true)
     }
 }
 
 /// Restores a deleted channel of a session on behalf of `context`, starting the session where it
-/// does not run, and starts the channel, letting go whom the session let go meanwhile
-/// (`SessionLoop::restore_channel_held`). Holds its participants, so that nobody takes one in or
-/// lets one go while it is listed again.
+/// does not run, and starts the channel, letting go whom the session let go meanwhile. Holds its
+/// participants, so that nobody takes one in or lets one go while it is listed again.
 pub struct Restore {
     sessions: Arc<SessionManager>,
     context: SecurityContext,
@@ -194,18 +260,66 @@ impl Procedure for Restore {
         Ok(Ok(()))
     }
 
+    /// Asked first (`SessionLoop::channel_to_restore`); then its mark taken away, the group of its
+    /// participants restored with it in the kernel's name (issue 348) - once it runs, its
+    /// participants reach it, whatever of its scope comes back -, who was let go from the session
+    /// while it was deleted (issue 590) let go from it, in the kernel's name and removed by it,
+    /// before it is built, listed in the session again - which asks whether `context` may change
+    /// it - and started from its stored state. If any of that fails, it is deleted again with its
+    /// group, marked as it was, so that it is neither half back nor lost, and a restoring tried
+    /// again finds what went with it. What was deleted with it comes back last (issue 178); it is
+    /// announced as restored.
+    ///
     /// # Errors
-    /// As `SessionManager::open_held` and `SessionLoop::restore_channel_held`.
+    /// As `SessionManager::open_held`, `SessionLoop::channel_to_restore` and the building blocks
+    /// that unmark, list and start it - `StoreError::NameTaken` if its name was taken since (issue
+    /// 250).
     async fn carry_out(
         self,
         read: Result<(), SessionError>,
         admitted: &Admitted<'_>,
-        _: &mut Compensation,
+        log: &mut Compensation,
     ) -> Result<Arc<ChannelLoop>, SessionError> {
         read?;
-        let Self { sessions, context, session, channel } = self;
+        let Self { sessions, context, session, channel: id } = self;
         let session = sessions.open_held(admitted, &context, session).await?;
-        Ok(session.restore_channel_held(admitted, &context, channel).await?)
+        let (Deleted { removal, .. }, gone) = session.channel_to_restore(&context, id).await?;
+        let document = session.unmark_channel_held(admitted, &context, id).await?;
+        {
+            // Its restoring was permitted: deleted again in the kernel's name.
+            let (session, removal) = (Arc::clone(&session), removal.clone());
+            log.record("taking a channel's mark away", move |admitted| {
+                Box::pin(async move {
+                    let system = SecurityContext::system();
+                    session.mark_channel_deleted_held(admitted, &system, id, &removal).await
+                })
+            });
+        }
+        session.restore_channel_group_held(admitted, id, &removal).await?;
+        {
+            let (session, removal) = (Arc::clone(&session), removal.clone());
+            log.record("restoring a channel's group", move |admitted| {
+                Box::pin(
+                    async move { session.delete_channel_group_held(admitted, id, &removal).await },
+                )
+            });
+        }
+        let document = session
+            .let_go_where_not_running_held(admitted, document, &gone, ActorId::System)
+            .await?;
+        session.list_channel_held(admitted, &context, id).await?;
+        {
+            let session = Arc::clone(&session);
+            log.record("listing a channel", move |admitted| {
+                Box::pin(async move {
+                    session.unlist_channel_held(admitted, &SecurityContext::system(), id).await
+                })
+            });
+        }
+        let channel = session.run_channel_held(admitted, &document).await?;
+        session.restore_scope_held(admitted, &context, id, &removal).await;
+        session.announce_restored(&document, &context);
+        Ok(channel)
     }
 }
 

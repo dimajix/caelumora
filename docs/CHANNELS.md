@@ -92,8 +92,12 @@ place, and one zone in a session keeps the times read from another of its channe
 ### Creating and deleting channels
 
 Channels can be created in, deleted from and restored to a session, which is started where it does
-not run (`procedure::channel::Create`, `Delete`, `Restore`). Each is stored first, and only
-then is the running session changed and the change announced:
+not run (`procedure::channel::Create`, `Delete`, `Restore`). Each asks first, by the session's own
+questions that store nothing (`SessionLoop::channel_asked_for`, `channel_to_delete`,
+`channel_to_restore`), then carries the change out one building block after the other, each that can
+be set back undone by its compensation if a later one fails - not what deleting a channel deleted of
+its scope, nor whom restoring it let go. Each is stored first, and only then is the running session
+changed and the change announced:
 
 *   **Creating** stores the channel (`CreateChannel`) and adds it to the session, which asks
     `UpdateSession`, so that only the owner may. A channel's name is unique in its session: the

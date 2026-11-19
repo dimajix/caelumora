@@ -262,7 +262,10 @@ The verbs on one entity, found by its id, answer what is not there - or not the 
 alike: `delete` and `purge` answer `false`, since for whoever wants it gone it is gone (how a REST
 handler answers that is in [REST-SERVER.md](REST-SERVER.md#errors)); `restore` fails with the
 `NotFound` of its kind, since it needs what it restores. This holds for whoever offers a kind's
-lifecycle, the running session for its channels too (`procedure::channel::Delete`).
+lifecycle, the running session for its channels too (`procedure::channel::Delete`) - but for a
+channel the caller reached whose mark the store no longer finds, which fails with
+`SessionError::ChannelNotFound` so that the compensation of taking it off the session's list runs
+(issue 593).
 
 What a caller chooses of a new entity is a `…Spec`, which the operation making the entity takes -
 `create`, `procedure::session::Create::from_template`, `procedure::channel::Create` -, in the
@@ -512,7 +515,7 @@ set back to how it was before - in the kernel's name, since the operation was pe
 caller gets the error. A procedure records how to undo each step in its `Compensation`, which the
 executor undoes, the last first, once a later step fails (`procedure::session::Create`, issue
 593). Elsewhere, a step that does so is named `roll_back_…` after what it rolls back
-(`SessionLoop::roll_back_channel_deletion`). It is no
+(`SessionManager::roll_back_deletion`). It is no
 transaction: what cannot be set back is logged and stays (issue 354). One exception: who is let go
 from a session stays let go when one of its channels fails to let them go, since taking them out of
 the others ended their turns - asking again finishes it (see

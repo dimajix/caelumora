@@ -523,7 +523,7 @@ impl SessionLoop {
 
     /// Starts the channel `id` in `join_set` - unless it was deleted while
     /// it waited to be started. The entry stays locked while its task is
-    /// set, so that `delete_channel_held` either finds the task or no channel.
+    /// set, so that `stop_channel_held` either finds the task or no channel.
     fn start_channel(&self, id: ChannelId, join_set: &mut JoinSet<()>) {
         let Some(mut entry) = self.channels.get_mut(&id) else { return };
         let ChannelEntry::Running { channel, task } = &mut *entry else { return };

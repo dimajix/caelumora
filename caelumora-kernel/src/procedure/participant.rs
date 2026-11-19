@@ -404,9 +404,9 @@ pub(crate) async fn take_into_channel(
 /// kept as removed by `context`'s caller - the running ones all at once, each until its actor ended
 /// (`ChannelLoop::let_go_held`), one that does not run (issue 463) in its stored document
 /// (`SessionLoop::let_go_where_unavailable_held`). A deleted channel lets them go as it is restored
-/// (`SessionLoop::restore_channel_held`). Nothing is rolled back - taking them out of a channel
-/// ended their turn -: a channel that fails leaves the error to the caller, and asking again, for
-/// one out of the session and not yet out of each of its channels, finishes it.
+/// (`procedure::channel::Restore`). Nothing is rolled back - taking them out of a channel ended
+/// their turn -: a channel that fails leaves the error to the caller, and asking again, for one out
+/// of the session and not yet out of each of its channels, finishes it.
 ///
 /// # Errors
 /// As `SessionLoop::require_changing` and `require_exit`; whatever storing the session or a

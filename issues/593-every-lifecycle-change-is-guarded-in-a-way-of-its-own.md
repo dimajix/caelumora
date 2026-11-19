@@ -635,3 +635,15 @@ case; it is decided there, and may make this unnecessary.
   every change of a participant is a procedure's that holds them - and with it `LocksById`. As the
   maintainer decided, `ChannelLoop::follow_agents`, whose exclusion now rests on its callers alone,
   takes the proof of admission in step 5e.
+- **2026-11-19** — Step 5b-2 committed. Step 5c, its part of channels, implemented, not committed
+  yet: `procedure::channel::Create`, `Delete` and `Restore` orchestrate what the building blocks
+  `create_channel_held`, `delete_channel_held` and `restore_channel_held` did, the rollbacks
+  becoming compensations. The session asks first by questions of its own that store nothing
+  (`channel_asked_for`, `channel_to_delete`, `channel_to_restore`), and offers one step each, with
+  its counterpart: storing a channel and purging it, its group kept, listing and unlisting it,
+  running and stopping it (`stop_channel_held`, shared by deleting it and the compensation of
+  creating it), marking it deleted and unmarking it, deleting and restoring its group,
+  deleting and restoring its scope. `roll_back_channel_creation`, `roll_back_channel_deletion` and
+  `abandon_channel_held` go. As the maintainer decided, a deletion whose mark the store no longer
+  finds - only by another process, under the channel's lock - answers `ChannelNotFound` rather
+  than `false`, so that its compensation runs.
