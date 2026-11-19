@@ -343,13 +343,33 @@ The procedures, by step, each step reviewed and committed on its own:
    `caelumora-subagents`, starting a sub-agent - an agent made, a thread opened, a brief delegated -
    and ending it - let go, its thread closed, the agent deleted -, in place of its `apart` and its
    rollback; `Phase` and the threads `run` keeps closing go.
-5b. Taking in, as the procedures orchestrate it: once no way in is left that is no procedure,
-   `ChannelLoop::take_in` and `SessionLoop::take_in`, `add_participant_held` and `join_held` are
-   taken apart. The checks of state and permission move into the procedures, asked once under the
-   locks; one function of the module `procedure` takes someone in, shared by `participant::TakeIn`,
-   `channel::Create`, `session::Create` and `thread::Open`; the loops keep the building blocks -
-   resolving, storing and its undo, starting the actor - and the invariants of the single object.
-   `changing` of both loops goes, and the rollbacks of taking in become compensations.
+5b. Taking in and letting go, as the procedures orchestrate them: once no way in is left that is no
+   procedure, `ChannelLoop::take_in` and `SessionLoop::take_in`, `add_participant_held` and
+   `join_held` are taken apart, and so are `remove_participant_held`, `leave_held` and the session's
+   `let_go`, which goes through every channel and writes the documents of those that do not run
+   (`let_go_where_unavailable`). The checks of state and permission move into the procedures, asked
+   once under the locks; one function of the module `procedure` takes someone in, shared by
+   `participant::TakeIn`, `channel::Create`, `session::Create` and `thread::Open`; the loops keep
+   the building blocks - resolving, storing and its undo, starting and ending the actor - and the
+   invariants of the single object. `changing` of both loops goes, and with it `LocksById`, and the
+   rollbacks of taking in become compensations.
+5c. Thin building blocks: what the building blocks of channels, sessions and projects still
+   orchestrate across objects, check across objects and roll back moves into their procedures, the
+   rollbacks becoming compensations - in three steps, one per object:
+   - channels: `create_channel_held` (`roll_back_channel_creation`), `delete_channel_held`
+     (`roll_back_channel_deletion`), `restore_channel_held` (its rollback within it);
+   - sessions: `make_from_template` with `complete`, `establish` and `persist` (the purge named
+     above), `delete_held` (`roll_back_deletion`), `restore_held` (`restore_kept`, marking again),
+     `SessionLoop::update_project` (`roll_back_project_change`);
+   - projects: the deletion, restoring and purge of a shared project's sessions, which the
+     `ProjectManager`'s building blocks orchestrate, move into `procedure::project`.
+5d. Lifting a session's own project into a shared one (`ProjectController::lift`) is a procedure,
+   `project::Lift`: it changes whether the project goes with its session's deletion, restoring and
+   purge, and whether a project's deletion reaches it - as moving a session does (`session::Move`).
+5e. Actors end through `run`: stopping and letting go every actor of a channel
+   (`ChannelLoop::stop_actors`, `leave_actors`, as a session stops, a channel or a session is
+   deleted, a channel is taken back) become requests to `run` that answer, as a single leave is,
+   in place of calling the actors and waiting for their tasks beside `run`.
 6. The documents: ARCHITECTURE.md, CHANNELS.md, CODING-GUIDELINES.md, PERMISSION-CHECKS.md.
 
 No procedure: the attributes their controllers write - of a session and a channel their name,
@@ -381,7 +401,9 @@ case; it is decided there, and may make this unnecessary.
 
 - The changes of a lifecycle follow one named pattern, decided with the maintainer and described in
   ARCHITECTURE.md and the documents of the objects it covers, and the guards named above are built
-  on it, or the reason is named why one stays as it is.
+  on it, or the reason is named why one stays as it is - among them the check after writing of
+  `ScopeHolders` (issue 458), by which the managers of a kind find a session, channel or project
+  deleted meanwhile, and the holds across processes (`SessionManager::holds`, issue 554).
 
 ## History
 
@@ -528,3 +550,8 @@ case; it is decided there, and may make this unnecessary.
 - **2026-11-19** — Step 5b added to the steps at the maintainer's request: `ChannelLoop::take_in`
   and the session's taking in still check, lock and roll back within the building blocks, which
   the steps so far left as they were while `open_thread` takes founders in without a procedure.
+- **2026-11-19** — Step 4 committed. From a survey of what is left outside the procedures, at the
+  maintainer's request, the steps extended: 5b covers letting go as well; 5c makes the building
+  blocks of channels, sessions and projects thin, their rollbacks compensations - including those
+  step 1 left in the building blocks on purpose -; 5d makes lifting a session's own project a
+  procedure; 5e has the actors of a channel stopped and let go through `run`.
