@@ -689,6 +689,7 @@ impl World {
             .collect();
         let session = make_session("shared", self.alice);
         let mut channel = Channel::build(
+            ChannelId::new(),
             session.id,
             alice,
             Name::new("main").unwrap(),

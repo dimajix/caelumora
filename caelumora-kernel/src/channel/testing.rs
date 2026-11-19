@@ -13,8 +13,11 @@ use crate::channel::ChannelLoop;
 use crate::channel::ResolvedParticipant;
 use crate::controller::SessionController;
 use crate::kernel::{ChannelRuntime, Kernel, ParticipantRuntime};
+use crate::procedure::channel::Reclassify;
 use crate::procedure::participant::LetGo;
-use crate::procedure::{Admitted, Compensation, Deferred, Key, Locks, Procedure};
+use crate::procedure::{
+    Admitted, Compensation, Deferred, Key, Locks, Procedure, ProcedureExecutor,
+};
 use crate::session::{SessionError, SessionLoop, SessionManager};
 use crate::testing::shown;
 use crate::view::AgentContextView;
@@ -33,6 +36,7 @@ use caelumora_domain::channel::ChannelId;
 use caelumora_domain::channel::{
     Channel, Delegation, InternalActor, Opening, Participant, ThreadId, ThreadOrigin, ThreadState,
 };
+use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::content::ContentId;
 use caelumora_domain::history::testing::{items_of, messages_of};
 use caelumora_domain::history::{Attended, Audience, History, HistoryEntry, Reader, Recorded};
@@ -514,10 +518,10 @@ impl ChannelLoop {
     }
 }
 
-/// What the tests do to let a participant go from a channel as the entry points do (issue 593):
-/// in its session by `LetGo`, failing as the building blocks fail (`SessionError::untyped`); a
-/// channel of no session, which no procedure reaches, by its building block under a hold of the
-/// channel (`Holding`).
+/// What the tests do to a channel as the entry points do (issue 593) - let a participant go from
+/// it, reclassify it -: in its session by the procedure (`LetGo`, `channel::Reclassify`), failing
+/// as the building blocks fail (`SessionError::untyped`); a channel of no session, which no
+/// procedure reaches, by its building block under a hold of the channel (`Holding`).
 impl ChannelLoop {
     /// Removes `participant` from the channel on behalf of `context`, as `LetGo::removed` does.
     ///
@@ -563,6 +567,29 @@ impl ChannelLoop {
         .await
     }
 
+    /// Gives the channel `classification` on behalf of `context`, as `channel::Reclassify` does.
+    ///
+    /// # Errors
+    /// As `ChannelLoop::reclassify_held`.
+    pub async fn reclassify(
+        self: &Arc<Self>,
+        context: &SecurityContext,
+        classification: Classification,
+    ) -> Result<()> {
+        if let Some((sessions, session)) = self.of_session() {
+            let reclassifying =
+                Reclassify::new(&sessions, context, session.id(), self.id, classification);
+            return session.procedures().run(reclassifying).await.map_err(SessionError::untyped);
+        }
+        let (channel, context) = (Arc::clone(self), context.clone());
+        self.holding(move |admitted| {
+            Box::pin(
+                async move { channel.reclassify_held(admitted, &context, classification).await },
+            )
+        })
+        .await
+    }
+
     /// The manager and the loop of the channel's session; `None` for a channel of none.
     fn of_session(&self) -> Option<(Arc<SessionManager>, Arc<SessionLoop>)> {
         let session = self.session_loop()?;
@@ -577,9 +604,22 @@ impl ChannelLoop {
             + Sync
             + 'static,
     ) -> Result<()> {
-        let key = Key::Channel(self.session_id, self.id);
-        self.runtime.procedures().run(Holding { key, change }).await
+        under_hold(self.runtime.procedures(), Key::Channel(self.session_id, self.id), change).await
     }
+}
+
+/// Carries `change` out through `procedures`, holding `key` exclusively: for a test that changes an
+/// object no procedure of the entry points reaches - a channel of no session, a session loop that
+/// runs in no manager (issue 593).
+///
+/// # Errors
+/// What `change` fails with.
+pub(crate) async fn under_hold(
+    procedures: &ProcedureExecutor,
+    key: Key,
+    change: impl for<'a> FnOnce(&'a Admitted<'a>) -> BoxFuture<'a, Result<()>> + Send + Sync + 'static,
+) -> Result<()> {
+    procedures.run(Holding { key, change }).await
 }
 
 /// A change of a test under the proof of admission, holding `key` exclusively.

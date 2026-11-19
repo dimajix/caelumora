@@ -146,6 +146,7 @@ mod tests {
     use caelumora_domain::agent::testing::make_personality;
     use caelumora_domain::agent::{Agent, AgentChannelState, AgentId, Personality, PersonalityId};
     use caelumora_domain::approval::{ApprovalStrategy, Approver};
+    use caelumora_domain::channel::ChannelId;
     use caelumora_domain::channel::{Channel, InternalActor, Participant};
     use caelumora_domain::scope::Scope;
     use caelumora_domain::session::testing::make_session;
@@ -294,6 +295,7 @@ mod tests {
         ];
         let session = make_session("s", kaya.id);
         let mut channel = Channel::build(
+            ChannelId::new(),
             session.id,
             ActorId::User(kaya.id),
             Name::new("main").unwrap(),

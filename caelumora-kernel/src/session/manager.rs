@@ -292,7 +292,7 @@ impl SessionManager {
         let session_loop = self.establish(admitted, context, session, own, channels).await?;
         // A channel whose components the owner cannot read is left out as a
         // session opens (issue 463), but making it is the owner's own request,
-        // refused as `create_channel` refuses it.
+        // refused as `create_channel_held` refuses it.
         session_loop.require_running()?;
         let session = &session_loop;
         self.complete(admitted, context, owner, &template, session, &spec, (users, agents)).await?;
@@ -501,9 +501,9 @@ impl SessionManager {
     }
 
     /// Session `id` for `context`, for a procedure that holds it - exclusively where it does not
-    /// run: the running one, whose channels left out as it started are built again
-    /// (`SessionLoop::retry_unavailable`, issue 463), or loaded from the store and started - which
-    /// announces it as `session::STARTED`, not as created, as the session exists already.
+    /// run: the running one - whose channels left out as it started whoever opens it has built
+    /// again (`procedure::channel::Start`, issue 463) -, or loaded from the store and started -
+    /// which announces it as `session::STARTED`, not as created, as the session exists already.
     ///
     /// # Errors
     /// `SessionError::NotFound` if there is no such session or `context` may not read it,
@@ -516,10 +516,7 @@ impl SessionManager {
         id: SessionId,
     ) -> Result<Arc<SessionLoop>> {
         match self.find(context, id).await? {
-            Found::Running(running) => {
-                running.retry_unavailable().await;
-                Ok(running)
-            }
+            Found::Running(running) => Ok(running),
             Found::Stored(session) => {
                 let hold = self.hold(id)?;
                 let channels = self.load_channels(&session).await?;
@@ -1058,7 +1055,7 @@ impl SessionManager {
                 .channel(channel)
                 .ok_or(SessionError::ChannelNotFound { session: session_loop.id(), channel })?;
             for participant in participants {
-                session_loop.found(context, &channel, participant.actor_id()).await?;
+                session_loop.found(admitted, context, &channel, participant.actor_id()).await?;
             }
         }
         Ok(session_loop)

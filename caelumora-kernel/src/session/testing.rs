@@ -15,6 +15,7 @@ use crate::actor::user::ChannelWatch;
 use crate::actor::Shown;
 use crate::channel::ChannelLoop;
 use crate::kernel::{ChannelRuntime, Kernel, ParticipantRuntime};
+use crate::procedure::channel;
 use crate::procedure::participant::{LetGo, TakeIn};
 use crate::procedure::session::{
     record_creation, resume_interrupted, shut_down, Create, Delete, Move, Open, Purge, Restore,
@@ -180,7 +181,8 @@ impl SessionManager {
         self.kernel().procedures().run(creating).await.map_err(SessionError::untyped)
     }
 
-    /// Opens session `id` for `context` (`procedure::session::Open`).
+    /// Opens session `id` for `context` (`procedure::session::Open`), and builds again the
+    /// channels left out as it started (`procedure::channel::Start`), as the REST server does.
     ///
     /// # Errors
     /// As `Open`.
@@ -189,11 +191,13 @@ impl SessionManager {
         context: &SecurityContext,
         id: SessionId,
     ) -> Result<Arc<SessionLoop>> {
-        self.kernel()
-            .procedures()
-            .run(Open::new(self, context, id))
-            .await
-            .map_err(SessionError::untyped)
+        let procedures = self.kernel().procedures();
+        let opened = procedures.run(Open::new(self, context, id)).await;
+        let opened = opened.map_err(SessionError::untyped)?;
+        // Its channels left out as it started built again, as the REST server has them (issue 463).
+        let starting = channel::Start::left_out(self, id);
+        procedures.run(starting).await.map_err(SessionError::untyped)?;
+        Ok(opened)
     }
 
     /// Stops session `id` on behalf of `context` (`procedure::session::Stop`).
@@ -585,9 +589,9 @@ impl DocumentStorage for FailingDocuments {
     }
 }
 
-/// What the tests do with participants as the entry points do (issue 593): each a procedure of
-/// `procedure::participant`, under the verb the entry points ask for, failing as the building
-/// blocks fail (`SessionError::untyped`).
+/// What the tests do with a session's participants and channels as the entry points do (issue
+/// 593): each a procedure of `procedure::participant` or `procedure::channel`, under the verb the
+/// entry points ask for, failing as the building blocks fail (`SessionError::untyped`).
 impl SessionLoop {
     /// Takes `participant` in on behalf of `context`, as `TakeIn::added` does.
     ///
@@ -637,6 +641,41 @@ impl SessionLoop {
     pub async fn leave(&self, context: &SecurityContext, participant: ActorId) -> Result<()> {
         let leaving = LetGo::leaving(&self.manager()?, context, self.id(), participant, None);
         self.procedures().run(leaving).await.map_err(SessionError::untyped)
+    }
+
+    /// Creates the channel `spec` asks for on behalf of `context`, as `channel::Create` does.
+    ///
+    /// # Errors
+    /// As `channel::Create`.
+    pub async fn create_channel(
+        &self,
+        context: &SecurityContext,
+        spec: ChannelSpec,
+    ) -> Result<Arc<ChannelLoop>> {
+        let creating = channel::Create::new(&self.manager()?, context, self.id(), spec);
+        self.procedures().run(creating).await.map_err(SessionError::untyped)
+    }
+
+    /// Deletes channel `id` on behalf of `context`, as `channel::Delete` does.
+    ///
+    /// # Errors
+    /// As `channel::Delete`.
+    pub async fn delete_channel(&self, context: &SecurityContext, id: ChannelId) -> Result<bool> {
+        let deleting = channel::Delete::new(&self.manager()?, context, self.id(), id);
+        self.procedures().run(deleting).await.map_err(SessionError::untyped)
+    }
+
+    /// Restores the deleted channel `id` on behalf of `context`, as `channel::Restore` does.
+    ///
+    /// # Errors
+    /// As `channel::Restore`.
+    pub async fn restore_channel(
+        &self,
+        context: &SecurityContext,
+        id: ChannelId,
+    ) -> Result<Arc<ChannelLoop>> {
+        let restoring = channel::Restore::new(&self.manager()?, context, self.id(), id);
+        self.procedures().run(restoring).await.map_err(SessionError::untyped)
     }
 
     /// The session manager of the kernel, which the procedures are made with.

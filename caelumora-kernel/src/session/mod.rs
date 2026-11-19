@@ -271,10 +271,6 @@ pub struct SessionLoop {
     /// What the participants it takes in are followed by on `subscription` (issue 590), from
     /// wherever it takes them in.
     following: Following,
-    /// Held while the channels that do not run are built again (`retry_unavailable`), and while
-    /// someone is let go from one of them (issue 590), so that none is built from a copy that
-    /// still lists one let go.
-    rebuilding: Mutex<()>,
     /// Held while a participant is taken in - into the session and a channel of it, rolled back if
     /// the channel cannot take them in, or as a founder of a channel (`found`) - or let go from the
     /// session (issue 590), one change of a participant at a time, as a channel makes them
@@ -421,7 +417,6 @@ impl SessionLoop {
             start_rx: Mutex::new(start_rx),
             subscription: Mutex::new(subscription),
             following,
-            rebuilding: Mutex::new(()),
             changing: LocksById::new(),
         });
         for channel in channels {
@@ -537,7 +532,7 @@ impl SessionLoop {
 
     /// Starts the channel `id` in `join_set` - unless it was deleted while
     /// it waited to be started. The entry stays locked while its task is
-    /// set, so that `delete_channel` either finds the task or no channel.
+    /// set, so that `delete_channel_held` either finds the task or no channel.
     fn start_channel(&self, id: ChannelId, join_set: &mut JoinSet<()>) {
         let Some(mut entry) = self.channels.get_mut(&id) else { return };
         let ChannelEntry::Running { channel, task } = &mut *entry else { return };

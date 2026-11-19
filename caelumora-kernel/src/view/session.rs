@@ -574,7 +574,7 @@ impl SessionView {
     }
 
     /// The channels of the session the viewer deleted and may read as such (issue 164). One may be
-    /// restored by whoever may restore it and change the session (`SessionLoop::restore_channel`);
+    /// restored by whoever may restore it and change the session (`procedure::channel::Restore`);
     /// none is purged but with the session.
     ///
     /// # Errors

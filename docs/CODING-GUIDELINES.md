@@ -262,10 +262,10 @@ The verbs on one entity, found by its id, answer what is not there - or not the 
 alike: `delete` and `purge` answer `false`, since for whoever wants it gone it is gone (how a REST
 handler answers that is in [REST-SERVER.md](REST-SERVER.md#errors)); `restore` fails with the
 `NotFound` of its kind, since it needs what it restores. This holds for whoever offers a kind's
-lifecycle, the running session for its channels too (`SessionLoop::delete_channel`).
+lifecycle, the running session for its channels too (`procedure::channel::Delete`).
 
 What a caller chooses of a new entity is a `…Spec`, which the operation making the entity takes -
-`create`, `procedure::session::Create::from_template`, `SessionLoop::create_channel` -, in the
+`create`, `procedure::session::Create::from_template`, `procedure::channel::Create` -, in the
 `spec.rs` of its module and exported from it: `WorkspaceSpec`, `ProjectSpec`, `AgentSpec`,
 `GroupSpec`, `SessionSpec` and `ChannelSpec`. It holds only what the caller may choose, never what
 the manager sets (its id, owner, access list, times); free text as a `String`, validated as the

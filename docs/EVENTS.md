@@ -19,11 +19,11 @@ entity's id as text, `within` the id of the entity it lies in, and `change` an `
     since what it holds is its owner's to fetch;
 *   `Custom { name, data }` - something particular to the kind, under a name its module defines:
     `session::STARTED` and `STOPPED`, a channel's `STARTED`, `STOPPED` - as its session stops,
-    before the session's, or as it is deleted, since a channel does not stop by itself (issue
-    593) -, `JOINED` and `LEFT` - with the `ActorId` of who joined or left -, `AGENT_STATE_CHANGED`,
-    with the agent's id, and `SAID`, with a message others hear as it was said and its thread
-    (`Said`: of the line, or of another where it mentions a user, issue 557; see
-    [CHANNELS.md](CHANNELS.md#what-is-new-to-a-user)).
+    before the session's, or as it is deleted or taken back as its founders cannot join, since a
+    channel does not stop by itself (issue 593) -, `JOINED` and `LEFT` - with the `ActorId` of who
+    joined or left -, `AGENT_STATE_CHANGED`, with the agent's id, and `SAID`, with a message others
+    hear as it was said and its thread (`Said`: of the line, or of another where it mentions a
+    user, issue 557; see [CHANNELS.md](CHANNELS.md#what-is-new-to-a-user)).
 
 What happens to a channel's participants is a change of the channel: its readers are the ones who
 hear of it, and it carries the participant in its data.

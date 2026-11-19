@@ -160,9 +160,9 @@ reading the channel asks, as `/participant list` does - nothing of the agents th
 reading the session's channels asks - the notes nothing of the agents that wrote them
 (`ChannelView::notes`) -, and `/channel rename`, `summary` and `briefing` what changing the channel
 they are issued in asks (`UpdateChannel`).
-`/channel create` asks what making a channel asks (`SessionLoop::create_channel`: `CreateChannel`,
+`/channel create` asks what making a channel asks (`procedure::channel::Create`: `CreateChannel`,
 `UpdateSession`), with the issuer alone in it, `/channel delete` what reading the channel named and
-deleting it ask (`SessionLoop::delete_channel`: `DeleteChannel`, `UpdateSession`), and
+deleting it ask (`procedure::channel::Delete`: `DeleteChannel`, `UpdateSession`), and
 `/channel join` what joining it asks, through the session (`TakeIn::joining`: `JoinChannel`).
 `/channel leave` asks what leaving asks (`LetGo::leaving`: `LeaveChannel`), and with an agent
 named what reading the channel asks besides. `/workspace run` asks what an agent's command asks in

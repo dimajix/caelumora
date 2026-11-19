@@ -2764,6 +2764,8 @@ async fn creating_a_channel_needs_owning_its_session() {
     assert_eq!(
         asked,
         checks(&[
+            // The session opened first, as every procedure of a channel does (issue 593).
+            "alice: GetSession(alice's) yes",
             "alice: CreateChannel(alice's) yes",
             "alice: Cleared(alice) yes",
             "alice: Cleared(bob) yes",
@@ -2809,6 +2811,8 @@ async fn a_founder_who_is_not_cleared_leaves_no_channel() {
     assert_eq!(
         asked,
         checks(&[
+            // The session opened first, as every procedure of a channel does (issue 593).
+            "alice: GetSession(alice's) yes",
             "alice: CreateChannel(alice's) yes",
             "alice: Cleared(alice) yes",
             "alice: Cleared(dave) no"
@@ -2834,7 +2838,8 @@ async fn who_may_not_create_a_channel_is_refused_before_the_others_are_looked_at
     let (refused, asked) =
         world.asked(session.create_channel(&World::as_user(world.bob), spec)).await;
     assert!(refused.is_err());
-    assert_eq!(asked, checks(&["bob: CreateChannel(alice's) no"]));
+    // The session opened first, as every procedure of a channel does (issue 593).
+    assert_eq!(asked, checks(&["bob: GetSession(alice's) yes", "bob: CreateChannel(alice's) no"]));
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
@@ -2875,6 +2880,8 @@ async fn the_components_a_new_channel_names_are_read_in_its_creators_name() {
         world.asked(session.create_channel(&World::as_user(world.alice), spec("side"))).await;
     assert!(created.is_ok(), "shared with her");
     assert_eq!(asked, checks(&[
+        // The session opened first, as every procedure of a channel does (issue 593).
+        "alice: GetSession(alice's) yes",
         "alice: List(component_bundle) yes",
         "alice: GetComponentBundle(bob's) yes",
         "alice: CreateChannel(alice's) yes",
@@ -2904,7 +2911,11 @@ async fn the_components_a_new_channel_names_are_read_in_its_creators_name() {
     ));
     assert_eq!(
         asked,
-        checks(&["alice: List(component_bundle) yes", "alice: GetComponentBundle(bob's) no"])
+        checks(&[
+            "alice: GetSession(alice's) yes",
+            "alice: List(component_bundle) yes",
+            "alice: GetComponentBundle(bob's) no",
+        ])
     );
     assert!(session.channel_named("other").is_none(), "nothing is created");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
@@ -3056,7 +3067,12 @@ async fn a_channel_is_refused_a_tool_before_anything_is_built() {
     );
     assert_eq!(
         asked,
-        checks(&["alice: List(component_bundle) yes", "alice: GetComponentBundle(bob's) yes"]),
+        // The session opened first, as every procedure of a channel does (issue 593).
+        checks(&[
+            "alice: GetSession(alice's) yes",
+            "alice: List(component_bundle) yes",
+            "alice: GetComponentBundle(bob's) yes",
+        ]),
         "only the bundle read as she names it"
     );
     assert!(session.channel_named("tooled").is_none(), "nothing is created");
@@ -3079,6 +3095,8 @@ async fn deleting_a_channel_needs_owning_its_session() {
     assert_eq!(
         asked,
         checks(&[
+            // The session opened first, as every procedure of a channel does (issue 593).
+            "bob: GetSession(alice's) yes",
             "bob: GetChannel(alice's) yes",
             "bob: Cleared(bob) yes",
             "bob: DeleteChannel(alice's) no"
@@ -3092,6 +3110,8 @@ async fn deleting_a_channel_needs_owning_its_session() {
     assert_eq!(
         asked,
         checks(&[
+            // The session opened first, as every procedure of a channel does (issue 593).
+            "alice: GetSession(alice's) yes",
             "alice: GetChannel(alice's) yes",
             "alice: Cleared(alice) yes",
             "alice: DeleteChannel(alice's) yes",
@@ -3101,6 +3121,56 @@ async fn deleting_a_channel_needs_owning_its_session() {
             "alice: Cleared(alice) yes",
             "alice: DeleteChannel(alice's) yes",
         ])
+    );
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// Reclassifying a channel (issue 133): the session opened and the channel reached as
+/// `channel_for` reaches it, then `Reclassify` of it - its owner's alone (issue 593).
+#[tokio::test]
+async fn reclassifying_a_channel_needs_owning_it() {
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let internal = Classification::general(Confidentiality::Internal);
+    let (refused, asked) =
+        world.asked(main.reclassify(&World::as_user(world.bob), internal.clone())).await;
+    refused.expect_err("not his");
+    assert_eq!(
+        asked,
+        checks(&[
+            "bob: GetSession(alice's) yes",
+            "bob: GetChannel(alice's) yes",
+            "bob: Cleared(bob) yes",
+            "bob: Reclassify no",
+        ]),
+        "refused before anything of its participants is asked"
+    );
+    let (reclassified, asked) =
+        world.asked(main.reclassify(&World::as_user(world.alice), internal)).await;
+    reclassified.expect("hers to reclassify");
+    let mut cleared = asked[4..6].to_vec();
+    cleared.sort();
+    assert_eq!(
+        (&asked[..4], &cleared[..], &asked[6..]),
+        (
+            &checks(&[
+                "alice: GetSession(alice's) yes",
+                "alice: GetChannel(alice's) yes",
+                "alice: Cleared(alice) yes",
+                "alice: Reclassify yes",
+            ])[..],
+            // Whether everyone in it is cleared for it, in no order of theirs ...
+            &checks(&["alice: Cleared(alice) yes", "alice: Cleared(bob) yes"])[..],
+            // ... then stored as the store asks it, and whether it was lowered.
+            &checks(&[
+                "alice: GetChannel(alice's) yes",
+                "alice: Cleared(alice) yes",
+                "alice: UpdateChannel(alice's) yes",
+                "alice: Publish yes",
+            ])[..],
+        ),
+        "{asked:#?}"
     );
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
@@ -3311,11 +3381,11 @@ async fn restoring_a_channel_needs_owning_its_session() {
     assert!(
         matches!(
             refused.unwrap_err().downcast_ref::<SessionError>(),
-            Some(SessionError::ChannelNotFound { .. })
+            Some(SessionError::NotFound(_))
         ),
-        "a stranger finds nothing"
+        "a stranger finds nothing, not even the session, as restoring opens it (issue 593)"
     );
-    assert_eq!(asked, checks(&["carol: ReadDeletedChannel(alice's) no"]));
+    assert_eq!(asked, checks(&["carol: GetSession(alice's) no"]));
     let (refused, asked) =
         world.asked(session.restore_channel(&World::as_user(world.bob), main)).await;
     assert!(
@@ -3325,13 +3395,17 @@ async fn restoring_a_channel_needs_owning_its_session() {
         ),
         "a participant does not see what was deleted"
     );
-    assert_eq!(asked, checks(&["bob: ReadDeletedChannel(alice's) no"]));
+    assert_eq!(
+        asked,
+        checks(&["bob: GetSession(alice's) yes", "bob: ReadDeletedChannel(alice's) no"])
+    );
     let (restored, asked) =
         world.asked(session.restore_channel(&World::as_user(world.alice), main)).await;
     assert!(restored.is_ok());
     assert_eq!(
         asked,
         checks(&[
+            "alice: GetSession(alice's) yes",
             "alice: ReadDeletedChannel(alice's) yes",
             "alice: Cleared(alice) yes",
             "alice: RestoreChannel(alice's) yes",
@@ -5596,6 +5670,8 @@ async fn making_a_channel_by_command_asks_what_making_one_asks() {
         checks(&[
             "bob: ShowCommand(alice's) yes",
             "bob: ExecuteCommand(alice's) yes",
+            // The session opened first, as every procedure of a channel does (issue 593).
+            "bob: GetSession(alice's) yes",
             "bob: CreateChannel(alice's) no",
         ]),
         "{asked:#?}"
@@ -5611,7 +5687,8 @@ async fn making_a_channel_by_command_asks_what_making_one_asks() {
         checks(&[
             "alice: ShowCommand(alice's) yes",
             "alice: ExecuteCommand(alice's) yes",
-            // As `SessionLoop::create_channel` asks it, with her alone.
+            // As `channel::Create` asks it, the session opened first, with her alone.
+            "alice: GetSession(alice's) yes",
             "alice: CreateChannel(alice's) yes",
             "alice: Cleared(alice) yes",
             "alice: CreateChannel(alice's) yes",
@@ -5655,7 +5732,8 @@ async fn deleting_a_channel_by_command_asks_what_deleting_one_asks() {
             "bob: GetSession(alice's) yes",
             "bob: GetChannel(alice's) yes",
             "bob: Cleared(bob) yes",
-            // ... then deleting it, as `SessionLoop::delete_channel` asks it.
+            // ... then deleting it, the session opened first, as `channel::Delete` asks it.
+            "bob: GetSession(alice's) yes",
             "bob: GetChannel(alice's) yes",
             "bob: Cleared(bob) yes",
             "bob: DeleteChannel(alice's) no",
@@ -5677,7 +5755,8 @@ async fn deleting_a_channel_by_command_asks_what_deleting_one_asks() {
             "alice: GetSession(alice's) yes",
             "alice: GetChannel(alice's) yes",
             "alice: Cleared(alice) yes",
-            // ... then deleting it, as `SessionLoop::delete_channel` asks it.
+            // ... then deleting it, the session opened first, as `channel::Delete` asks it.
+            "alice: GetSession(alice's) yes",
             "alice: GetChannel(alice's) yes",
             "alice: Cleared(alice) yes",
             "alice: DeleteChannel(alice's) yes",
@@ -5706,6 +5785,7 @@ async fn with_a_channel_to_join() -> (World, Arc<SessionLoop>, Arc<ChannelLoop>)
     let channel = |name: &str, participants: Vec<Participant>| Channel {
         participants,
         ..Channel::build(
+            ChannelId::new(),
             session.id,
             ActorId::User(world.alice),
             Name::new(name).expect("a name"),
@@ -5821,6 +5901,7 @@ async fn one_the_channel_cannot_take_in_is_rolled_back_out_of_the_session() {
     let mut session = make_session("shared", world.alice);
     session.security_attributes.acl.push(invitation);
     let mut main = Channel::build(
+        ChannelId::new(),
         session.id,
         ActorId::User(world.alice),
         Name::new("main").unwrap(),

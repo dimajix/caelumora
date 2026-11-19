@@ -1198,7 +1198,7 @@ async fn an_external_agent_removed_while_it_answers_cancels_its_task_and_gives_i
 }
 
 /// What a deleted channel does with its actors before it aborts its
-/// task (`SessionLoop::delete_channel`, issue 187): an external agent
+/// task (`SessionLoop::delete_channel_held`, issue 187): an external agent
 /// has cancelled the remote task it followed by the time `leave_actors`
 /// returns, and every actor - the approver too - ended by itself.
 #[tokio::test]

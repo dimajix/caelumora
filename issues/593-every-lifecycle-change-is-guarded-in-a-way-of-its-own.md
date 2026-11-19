@@ -343,6 +343,13 @@ The procedures, by step, each step reviewed and committed on its own:
    `caelumora-subagents`, starting a sub-agent - an agent made, a thread opened, a brief delegated -
    and ending it - let go, its thread closed, the agent deleted -, in place of its `apart` and its
    rollback; `Phase` and the threads `run` keeps closing go.
+5b. Taking in, as the procedures orchestrate it: once no way in is left that is no procedure,
+   `ChannelLoop::take_in` and `SessionLoop::take_in`, `add_participant_held` and `join_held` are
+   taken apart. The checks of state and permission move into the procedures, asked once under the
+   locks; one function of the module `procedure` takes someone in, shared by `participant::TakeIn`,
+   `channel::Create`, `session::Create` and `thread::Open`; the loops keep the building blocks -
+   resolving, storing and its undo, starting the actor - and the invariants of the single object.
+   `changing` of both loops goes, and the rollbacks of taking in become compensations.
 6. The documents: ARCHITECTURE.md, CHANNELS.md, CODING-GUIDELINES.md, PERMISSION-CHECKS.md.
 
 No procedure: the attributes their controllers write - of a session and a channel their name,
@@ -502,3 +509,22 @@ case; it is decided there, and may make this unnecessary.
   not only where it is listed, so that one taken in meanwhile is followed after the taking in, and
   following a session follows the agents it holds there alone; a restored agent's actor is waited
   for until `run` started it, as taking in waits.
+- **2026-11-19** — Step 3b committed. Step 4 implemented, not committed yet, as the maintainer
+  decided on its interface: `procedure::channel::Create` (its id chosen before it is built - so
+  `Channel::build` takes it -, holding it and its founders until they joined; taken back by its
+  compensation, `SessionLoop::abandon_channel_held`, which now announces a channel it started as
+  stopped), `Delete`, `Restore` (holding the deleted channel's participants), `Start::left_out`
+  (holding the channels left out, opening no session) and `Reclassify`, each holding the channel
+  exclusively, all but `Start` opening the session as opening does;
+  taking in and letting go hold it shared, so that neither crosses them. The loops' verbs become
+  building blocks (`create_channel_held`, `delete_channel_held`, `restore_channel_held`,
+  `retry_unavailable_held`, `ChannelLoop::reclassify_held`). Building again the channels left out
+  is a procedure of its own, which whoever opens a running session carries out after `Open` - the
+  REST server's `ensure_session` -, so that `Open` no longer holds the session meanwhile; the lock
+  `SessionLoop::rebuilding` goes, since `LetGo` and `Start` hold the channels. The REST server and
+  the commands `/channel create` and `/channel delete` make the procedures; reclassifying reaches
+  the channel as the REST server did (`channel_for`). `changing` and its `lock_all` in restoring
+  stay until step 5.
+- **2026-11-19** — Step 5b added to the steps at the maintainer's request: `ChannelLoop::take_in`
+  and the session's taking in still check, lock and roll back within the building blocks, which
+  the steps so far left as they were while `open_thread` takes founders in without a procedure.

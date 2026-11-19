@@ -108,6 +108,7 @@ impl ChannelLoop {
     /// As [`Self::take_in`].
     pub(crate) async fn found(
         &self,
+        _: &Admitted<'_>,
         context: &SecurityContext,
         participant: ActorId,
     ) -> Result<()> {
@@ -824,7 +825,10 @@ mod tests {
         };
         let (alice, bob) = (user("alice", &["staff", "hr"]), user("bob", &["staff"]));
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));
-        let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
+        // Her roles in her context, as her login gives them: she reaches the channels she is
+        // cleared for (issue 593, reclassifying reaches the channel as `channel_for` does).
+        let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default())
+            .with_roles(alice.roles.clone(), None);
         let mut session = make_session("hers", alice.id);
         session.security_attributes =
             session.security_attributes.clone().granting(Subject::Actor(bob_id), Grant::Read);

@@ -471,6 +471,7 @@ mod tests {
                 // cleared for anything.
                 let ActorId::Agent(id) = participant else { unreachable!("agents only") };
                 let channel = Channel::build(
+                    ChannelId::new(),
                     SessionId::new(),
                     alice_id,
                     Name::new("probe").unwrap(),

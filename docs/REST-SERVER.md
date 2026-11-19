@@ -67,7 +67,8 @@ A handler translates; it does not decide. Every handler derives its `SecurityCon
 *   **It reaches a session through the kernel.** `ensure_session` opens the session for the user -
     the running one, or loaded and started - and only if the user may read it. It tells a session
     that does not exist (`404`) from one that cannot be started (`500`, naming e.g. the broken
-    component).
+    component). A handler that changes a lifecycle - a session's, a participant's, a channel's -
+    makes the procedure instead, which opens the session itself (issue 593).
 *   **It acts on a channel through `open_channel`**, the one way a handler that writes, approves or
     runs a command gets the running channel. A handler that only reads - the history, the notes,
     what an agent saw, the channel's stream - reaches the channel through the views

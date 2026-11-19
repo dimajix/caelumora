@@ -389,6 +389,7 @@ mod tests {
         let alice = UserId::new();
         let session = SessionId::new();
         let mut channel = Channel::build(
+            ChannelId::new(),
             session,
             ActorId::User(alice),
             Name::new("main").unwrap(),
@@ -501,6 +502,7 @@ mod tests {
     fn the_participants_of_a_channel_have_its_id_and_hold_its_users_and_agents() {
         let (alice, agent) = (UserId::new(), AgentId::new());
         let mut channel = Channel::build(
+            ChannelId::new(),
             SessionId::new(),
             ActorId::User(alice),
             Name::new("main").unwrap(),

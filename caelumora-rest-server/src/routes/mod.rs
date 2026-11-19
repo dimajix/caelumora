@@ -35,6 +35,7 @@ use caelumora_domain::session::SessionId;
 use caelumora_domain::snapshot::Detail;
 use caelumora_domain::store::StoreError;
 use caelumora_kernel::channel::ChannelLoop;
+use caelumora_kernel::procedure::channel::Start;
 use caelumora_kernel::procedure::session::Open;
 use caelumora_kernel::session::SessionLoop;
 use caelumora_kernel::view::{ChannelView, Viewer, Views};
@@ -42,6 +43,11 @@ use caelumora_rest_api::channel::ChannelResponse;
 use caelumora_rest_api::session::SessionSnapshot;
 use std::sync::Arc;
 
+/// Session `session_id` as `user` may read it, opened (`procedure::session::Open`) - the running
+/// one, or loaded from the store and started -, and its channels left out as it started built
+/// again where they can be now (`procedure::channel::Start`, issue 463): how a handler reaches a
+/// session it reads or acts in. A handler that changes a lifecycle makes the procedure instead,
+/// which opens the session itself (issue 593).
 pub async fn ensure_session(
     state: &Arc<AppState>,
     user: &AuthenticatedUser,
@@ -50,7 +56,10 @@ pub async fn ensure_session(
     // The running session, or loaded from the store and started - either way
     // only if this user may read it (issue 11).
     let opening = Open::new(&state.session_manager, &user.security_context(), session_id);
-    Ok(state.procedures.run(opening).await?)
+    let session = state.procedures.run(opening).await?;
+    // Its channels left out as it started built again, where they can be now (issue 463).
+    state.procedures.run(Start::left_out(&state.session_manager, session_id)).await?;
+    Ok(session)
 }
 
 /// Session `session_id` and its channel `channel_id`, as `user` may read them - the one way a

@@ -14,6 +14,7 @@ use caelumora_api::runtime::ActorRuntime;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::{AgentChannelState, AgentId, Personality};
 use caelumora_domain::channel::Channel;
+use caelumora_domain::channel::ChannelId;
 use caelumora_domain::component::{
     ComponentBundle, ComponentConfig, ComponentDescriptor, ComponentFailPolicy,
 };
@@ -164,6 +165,7 @@ async fn executed(
 fn detached_actor_runtime(agent: AgentId) -> Arc<dyn ActorRuntime> {
     let session = bare_session(SessionId::new());
     let channel = Channel::build(
+        ChannelId::new(),
         session.id,
         ActorId::None,
         Name::new("detached").unwrap(),

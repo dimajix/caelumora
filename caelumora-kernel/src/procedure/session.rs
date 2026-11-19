@@ -120,7 +120,7 @@ async fn roll_back_creation(
 /// once, however many ask at the same time (issue 62): who comes second waits for the first and
 /// gets the session it started - if they may read it. A channel whose components cannot be read is
 /// left out as the session starts, and built again whenever the running session is opened
-/// (`SessionLoop::retry_unavailable`, issue 463).
+/// (`channel::Start`, issue 463).
 pub struct Open {
     sessions: Arc<SessionManager>,
     context: SecurityContext,

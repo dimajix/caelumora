@@ -2,6 +2,7 @@
 //! classification.
 
 use super::{ChannelActor, ChannelError, ChannelLoop};
+use crate::procedure::Admitted;
 use anyhow::Result;
 use caelumora_domain::actor::{ActorId, EventContext};
 use caelumora_domain::approval::ApprovalRule;
@@ -112,8 +113,9 @@ impl ChannelLoop {
     /// channel, `ClassificationRefused` if `classification` names
     /// compartments that are not configured, `NotCleared` if it is raised
     /// above a participant; whatever storing it reports.
-    pub async fn reclassify(
+    pub(crate) async fn reclassify_held(
         &self,
+        _: &Admitted<'_>,
         context: &SecurityContext,
         classification: Classification,
     ) -> Result<()> {

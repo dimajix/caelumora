@@ -91,8 +91,8 @@ place, and one zone in a session keeps the times read from another of its channe
 
 ### Creating and deleting channels
 
-Channels can be created in, deleted from and restored to a running session
-(`SessionLoop::create_channel`, `delete_channel`, `restore_channel`). Each is stored first, and only
+Channels can be created in, deleted from and restored to a session, which is started where it does
+not run (`procedure::channel::Create`, `Delete`, `Restore`). Each is stored first, and only
 then is the running session changed and the change announced:
 
 *   **Creating** stores the channel (`CreateChannel`) and adds it to the session, which asks
@@ -264,7 +264,7 @@ history is shared with a founder, which is given what is said from its join on.
 So every participant of a channel has its join in the history, and the history alone says who
 took part when. Founding asks nothing beyond what anyone taken in is asked: naming the founders was
 creating the channel (`CreateChannel`), so changing it is not asked, and it is reachable from
-creating a channel alone - a requested one (`SessionLoop::create_channel`) and those of a template,
+creating a channel alone - a requested one (`procedure::channel::Create`) and those of a template,
 whose users and agents join the channels that name them once the session is made. Each founder's
 clearance is asked before anything is stored, and again as they join; if one cannot join, the
 channel is taken back. A channel's `run` applies the joins that wait as it begins, before it routes
@@ -341,7 +341,8 @@ handed in after, is answered with nothing: the channel stopped, its actors with 
     store its state. Deleting the session has the actors leave instead (`leave_actors`), as
     deleting a channel does.
 *   Deleting a channel aborts that channel's task; its state is kept until it is purged. A channel
-    deleted while it waits to be started is never started.
+    deleted while it waits to be started is never started. A channel just created and taken back,
+    as a founder cannot join, is announced stopped as well, if it started.
 *   A channel that panics ends its session's loop, and with it every channel of the session, with
     an error in the log. Nothing else follows: the session stays registered as running, its
     channels listed but none of them running, until it is stopped - which announces them stopped
@@ -358,8 +359,8 @@ handed in after, is answered with nothing: the channel stopped, its actors with 
     deleted as any other, and whatever is to be done in it is refused with why
     (`SessionError::ChannelUnavailable`) - to whoever may read it; to anyone else it is not there.
     Its components are not changed after it was made: it runs again once they can be read, as
-    the session is opened again - also while it runs, as every request in it does
-    (`SessionLoop::retry_unavailable`, outside the lock that starts the session). A store
+    the session is opened again - also while it runs, as the REST server opens it for every
+    request (`procedure::channel::Start`, after the opening, issue 593). A store
     that fails keeps the session from opening, as it does for a participant. Creating or restoring
     a channel, or a session from a template, is its owner's own request, and is refused instead
     (`SessionError::ChannelUnavailable`); a session from a template is rolled back.
@@ -627,21 +628,21 @@ out - the newcomer's actor started and its join announced, the leaver's actor en
 announced -, and opens a stopped session as it starts. The building blocks are the session's
 (`SessionLoop::add_participant_held`, `join_held`, `remove_participant_held`, `leave_held`) and the
 channel's (`ChannelLoop::remove_participant_held`, `leave_held`); whoever takes someone into a
-channel goes through the session's, also for one in the session already. Until founding a channel or
-a thread is a procedure too, the session and the channel make the changes of one participant one at
-a time besides (`changing`, issue 590), so that a rollback of the session's part never takes out one
-another took into a channel meanwhile, nor taking in and letting go cross; founding a channel holds
-it for each founder. Like renaming, the change is made by the channel's one writer, the
-`ChannelController`, by the rules of the channel's document: who comes in is no longer a former
-participant and has their invitation used up (`Channel::take_in`), who is removed is kept as a
-former participant (`Channel::let_go`, issue 164). It stores the channel - asked as `UpdateChannel`
-of whoever changes it, by default its owner, and in the kernel's name for one who joined, founded or
-left it -, lets the group of its participants follow and announces who joined or left. One whose
-actor then cannot start has the addition rolled back as the channel had them before
-(`Channel::undo_take_in`), announced as a leave. The changes of one participant - taken in, let go,
-its actor following its agent's deletion and restoring - are made one at a time, so that two who add
-the same participant at once take them in once, and a rollback never takes out one whose actor
-another started. Events only announce; nothing changes a channel because an event arrived.
+channel goes through the session's, also for one in the session already. Until founding a thread is
+a procedure too, the session and the channel make the changes of one participant one at a time
+besides (`changing`, issue 590), so that a rollback of the session's part never takes out one
+another took into a channel meanwhile, nor taking in and letting go cross; creating a channel holds
+the channel and its founders (`procedure::channel::Create`). Like renaming, the change is made by
+the channel's one writer, the `ChannelController`, by the rules of the channel's document: who comes
+in is no longer a former participant and has their invitation used up (`Channel::take_in`), who is
+removed is kept as a former participant (`Channel::let_go`, issue 164). It stores the channel -
+asked as `UpdateChannel` of whoever changes it, by default its owner, and in the kernel's name for
+one who joined, founded or left it -, lets the group of its participants follow and announces who
+joined or left. One whose actor then cannot start has the addition rolled back as the channel had
+them before (`Channel::undo_take_in`), announced as a leave. The changes of one participant - taken
+in, let go, its actor following its agent's deletion and restoring - are made one at a time, so that
+two who add the same participant at once take them in once, and a rollback never takes out one whose
+actor another started. Events only announce; nothing changes a channel because an event arrived.
 
 Adding is asked first as `UpdateChannel`, before anything of the newcomer is looked at, and then as
 `cleared` with the channel's classification, where a policy can hold the channel's level against the

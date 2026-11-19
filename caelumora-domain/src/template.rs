@@ -140,6 +140,7 @@ impl ChannelTemplate {
             return Err(TemplateError::ParticipantNotFound(stray.clone()));
         }
         let channel = Channel::build(
+            ChannelId::new(),
             session_id,
             ActorId::User(owner),
             self.name.clone(),

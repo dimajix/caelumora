@@ -104,7 +104,7 @@ pub(crate) async fn take_in_participants(
             let channel = session
                 .channel(channel)
                 .ok_or(SessionError::ChannelNotFound { session: session.id(), channel })?;
-            session.found(context, &channel, participant).await?;
+            session.found(admitted, context, &channel, participant).await?;
         }
     }
     Ok(())

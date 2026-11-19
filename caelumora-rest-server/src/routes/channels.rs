@@ -5,9 +5,7 @@
 use crate::auth::AuthenticatedUser;
 use crate::error::ApiError;
 use crate::error::{Json, Path, Query};
-use crate::routes::{
-    change_error, channel_response, channel_view, ensure_session, open_channel, views,
-};
+use crate::routes::{change_error, channel_response, channel_view, open_channel, views};
 use crate::sse::{bounded_by_token, data_event, named_event};
 use crate::state::AppState;
 use axum::response::sse::Event;
@@ -29,6 +27,7 @@ use caelumora_domain::value::name::Name;
 use caelumora_kernel::actor::user::{ChannelWatch, Lagged, UserActor};
 use caelumora_kernel::actor::Shown;
 use caelumora_kernel::channel::ChannelLoop;
+use caelumora_kernel::procedure::channel::{Create, Delete, Reclassify, Restore};
 use caelumora_kernel::procedure::participant::{LetGo, TakeIn};
 use caelumora_kernel::session::ChannelSpec;
 use caelumora_kernel::view::{Reached, SessionView, Views};
@@ -84,8 +83,9 @@ pub(super) async fn restore_channel(
     Path((session_id, channel_id)): Path<(SessionId, ChannelId)>,
     user: AuthenticatedUser,
 ) -> Result<Json<ChannelResponse>, ApiError> {
-    let session = ensure_session(&state, &user, session_id).await?;
-    session.restore_channel(&user.security_context(), channel_id).await?;
+    let context = user.security_context();
+    let restoring = Restore::new(&state.session_manager, &context, session_id, channel_id);
+    state.procedures.run(restoring).await?;
     Ok(Json(channel_response(&state, &user, session_id, channel_id).await?))
 }
 
@@ -97,9 +97,7 @@ pub(super) async fn create_channel(
     user: AuthenticatedUser,
     Json(payload): Json<CreateChannelRequest>,
 ) -> Result<Json<ChannelResponse>, ApiError> {
-    let session = ensure_session(&state, &user, session_id).await?;
     let context = user.security_context();
-
     let mut spec = ChannelSpec {
         components: moderation_components(
             payload.moderator.as_deref(),
@@ -116,7 +114,8 @@ pub(super) async fn create_channel(
     if let Some(uses) = payload.uses_workspace {
         spec.uses_workspace = uses;
     }
-    let channel = session.create_channel(&context, spec).await?;
+    let creating = Create::new(&state.session_manager, &context, session_id, spec);
+    let channel = state.procedures.run(creating).await?;
     Ok(Json(channel_response(&state, &user, session_id, channel.id()).await?))
 }
 
@@ -126,9 +125,9 @@ pub(super) async fn delete_channel(
     Path((session_id, channel_id)): Path<(SessionId, ChannelId)>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let session = ensure_session(&state, &user, session_id).await?;
-
-    match session.delete_channel(&user.security_context(), channel_id).await? {
+    let context = user.security_context();
+    let deleting = Delete::new(&state.session_manager, &context, session_id, channel_id);
+    match state.procedures.run(deleting).await? {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found(
             "channel_not_found",
@@ -596,8 +595,10 @@ pub(super) async fn reclassify_channel(
     user: AuthenticatedUser,
     Json(classification): Json<Classification>,
 ) -> Result<Json<ChannelResponse>, ApiError> {
-    let (_, channel) = open_channel(&state, &user, session_id, channel_id).await?;
-    channel.reclassify(&user.security_context(), classification).await?;
+    let context = user.security_context();
+    let reclassifying =
+        Reclassify::new(&state.session_manager, &context, session_id, channel_id, classification);
+    state.procedures.run(reclassifying).await?;
     Ok(Json(channel_response(&state, &user, session_id, channel_id).await?))
 }
 

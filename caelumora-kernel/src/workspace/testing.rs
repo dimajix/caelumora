@@ -96,6 +96,7 @@ pub async fn session_with_workspace() -> WithWorkspace {
     .await;
     let session = make_session("s", owner);
     let mut channel = Channel::build(
+        ChannelId::new(),
         session.id,
         ActorId::User(owner),
         Name::new("main").unwrap(),

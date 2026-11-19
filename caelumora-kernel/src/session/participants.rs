@@ -233,19 +233,20 @@ impl SessionLoop {
     /// Takes `participant` into `channel` of the session as one of its founders, on behalf of
     /// `context`, who created it (`ChannelLoop::found`), one change of a participant at a time
     /// (`changing`, issue 590), as taking in makes it: for the creation of a channel alone -
-    /// `create_channel`, a template's (`SessionManager::make_from_template`), and
+    /// `procedure::channel::Create`, a template's (`SessionManager::make_from_template`), and
     /// `SessionManager::make`.
     ///
     /// # Errors
     /// As `ChannelLoop::found`.
     pub(crate) async fn found(
         &self,
+        admitted: &Admitted<'_>,
         context: &SecurityContext,
         channel: &ChannelLoop,
         participant: ActorId,
     ) -> Result<()> {
         let _changing = self.changing.lock(participant).await;
-        channel.found(context, participant).await
+        channel.found(admitted, context, participant).await
     }
 
     /// Lets `participant` go from the session on behalf of `context`, for
@@ -315,7 +316,7 @@ impl SessionLoop {
     /// kept as removed by `context`'s caller, each as it is when it is reached: a running one as
     /// `ChannelLoop::let_go_with_the_session` says, one that does not run (issue 463) as
     /// `let_go_where_unavailable` does. A deleted channel lets them go as it is restored
-    /// (`restore_channel`). Nothing is rolled back - taking them out of a channel ended their
+    /// (`restore_channel_held`). Nothing is rolled back - taking them out of a channel ended their
     /// turn -: a channel that fails leaves the error to the caller, and asking again, for one out
     /// of the session and not yet out of each of its channels, finishes it.
     ///
@@ -411,7 +412,10 @@ mod tests {
     use crate::component::BUNDLE_REF_KIND;
     use crate::event::SubscriptionTopic;
     use crate::kernel::Kernel;
+    use crate::procedure::channel::Start;
     use crate::procedure::follower::AgentFollower;
+    use crate::procedure::testing::{waits_for, Held};
+    use crate::procedure::Key;
     use crate::session::testing::*;
     use crate::session::ChannelSpec;
     use crate::session::{SessionError, SessionLoop, SessionManager};
@@ -536,6 +540,19 @@ mod tests {
         deleted: ChannelId,
         /// Bob's policy, as withdrawn.
         withdrawn: ComponentBundle,
+    }
+
+    /// Issue 593: building again the channels left out holds each of them exclusively, so that
+    /// nobody lets someone go from one meanwhile - letting go holds them shared.
+    #[tokio::test]
+    async fn building_again_the_channels_left_out_holds_them() {
+        let world = World::new().await;
+        let OutOfService { session, unavailable, .. } = out_of_service(&world).await;
+        let executor = Arc::clone(world.kernel.procedures());
+        let held = Held::key(&executor, Key::Channel(session.id(), unavailable), false).await;
+        let starting = Start::left_out(&world.manager, session.id());
+        waits_for(held, &executor, starting).await.expect("built again once it is let go");
+        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 
     async fn out_of_service(world: &World) -> OutOfService {
