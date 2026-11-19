@@ -161,9 +161,8 @@ impl SessionManager {
 
         let loop_for_task = Arc::clone(&session_loop);
         let handle = tokio::spawn(async move {
-            if let Err(e) = loop_for_task.run().await {
-                tracing::error!("Session loop for {} failed: {}", id, e);
-            }
+            let Err(e) = loop_for_task.run().await;
+            tracing::error!("Session loop for {} failed: {}", id, e);
         });
         self.handles.insert(id, handle);
 
@@ -629,8 +628,9 @@ impl SessionManager {
     /// Stops session `id` if it runs, for a procedure that holds it exclusively. Its actors are
     /// ended first by `end_actors`, told to stop (`SessionLoop::stop_actors`) or to leave
     /// (`SessionLoop::leave_actors`), and given `STOP_GRACE` to end by themselves before the
-    /// session's task, and with it whoever did not, is aborted (issue 377). Nobody finds it running
-    /// meanwhile.
+    /// session's task, and with it whoever did not, is aborted (issue 377); once it has ended, and
+    /// every channel's task is aborted with it, every channel it started is announced stopped, then
+    /// the session (issue 593). Nobody finds it running meanwhile.
     pub(crate) async fn stop_running(
         &self,
         _: &Admitted<'_>,
@@ -644,9 +644,12 @@ impl SessionManager {
         }
         if let Some(handle) = handle {
             handle.abort();
+            // Ended, so that no channel starts after it is announced stopped.
+            let _ = handle.await;
         }
         self.holds.remove(&id);
         if let Some(session_loop) = &removed {
+            session_loop.announce_channels_stopped();
             let session = session_loop.session();
             self.events
                 .announce(GlobalEvent::custom::<Session>(&id, session::STOPPED, &()), &*session);
@@ -1116,7 +1119,7 @@ mod tests {
     };
     use caelumora_domain::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
     use caelumora_domain::confidentiality::Classification;
-    use caelumora_domain::event::EntityChange;
+    use caelumora_domain::event::{EntityChange, GlobalEvent};
     use caelumora_domain::group::GroupId;
     use caelumora_domain::project::Project;
     use caelumora_domain::query::Query;
@@ -1220,6 +1223,38 @@ mod tests {
 
         assert!(kernel.entity_stores().sessions.get(&ctx, session_id).await.is_err());
         assert!(!manager.running(session_id).is_some());
+    }
+
+    /// Issue 593: a session's stop announces every channel it started stopped, as it announced it
+    /// started, and then the session - its channels no longer stop by themselves.
+    #[tokio::test]
+    async fn stopping_a_session_announces_its_channels_stopped_then_itself() {
+        let kernel = test_kernel();
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let session = make_session("s3", UserId::new());
+        let session_id = session.id;
+        let channel_id = session.channels[0];
+        let mut rx = kernel.event_bus().subscribe_all();
+        let is_channel = |event: &GlobalEvent, wanted: &str| {
+            matches!(event.about::<Channel>(), Some(((s, c), EntityChange::Custom { name, .. }))
+                if s == session_id && c == channel_id && *name == wanted)
+        };
+        create(&manager, &SecurityContext::default(), session).await.unwrap();
+        let started = time::timeout(Duration::from_secs(5), async {
+            while !rx.recv().await.is_some_and(|event| is_channel(&event, channel::STARTED)) {}
+        });
+        started.await.expect("its channel is started");
+
+        manager.stop(&SecurityContext::system(), session_id).await.unwrap();
+
+        let events = rx.drain().await;
+        let ch_stopped = events.iter().position(|e| is_channel(e, channel::STOPPED));
+        let stopped = events.iter().position(|e| {
+            matches!(e.about::<Session>(), Some((id, EntityChange::Custom { name, .. }))
+                if id == session_id && *name == session::STOPPED)
+        });
+        assert!(ch_stopped.is_some(), "expected the channel stopped, got {events:?}");
+        assert!(ch_stopped < stopped, "the channel, then the session: {events:?}");
     }
 
     #[tokio::test]

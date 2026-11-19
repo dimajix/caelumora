@@ -335,8 +335,9 @@ session or its deletion, never by itself. It runs once; a change still under way
 handed in after, is answered with nothing: the channel stopped, its actors with it.
 
 *   Stopping the session stops the actors of every channel (`SessionLoop::stop_actors`), all at
-    once, waits for them up to `STOP_GRACE` and then aborts every channel; the commands started in
-    its workspace shell are ended. A stop therefore takes as long as its slowest actor needs to
+    once, waits for them up to `STOP_GRACE` and then aborts every channel, announcing each it
+    started stopped (`channel::STOPPED`) before the session; the commands started in its workspace
+    shell are ended. A stop therefore takes as long as its slowest actor needs to
     store its state. Deleting the session has the actors leave instead (`leave_actors`), as
     deleting a channel does.
 *   Deleting a channel aborts that channel's task; its state is kept until it is purged. A channel

@@ -59,8 +59,8 @@ define_id!(ChannelId);
 /// 335).
 pub const STARTED: &str = "started";
 
-/// A running channel was stopped as it is deleted: its actors ended. A session's stop announces
-/// `session::STOPPED` alone, since a channel no longer stops by itself (issue 593).
+/// A running channel was stopped - its session stopped, or it was deleted -: its actors ended
+/// (issue 593).
 pub const STOPPED: &str = "stopped";
 
 /// Someone joined the channel - an agent or a user, as the `ActorId` in

@@ -443,3 +443,9 @@ case; it is decided there, and may make this unnecessary.
   is deleted, no longer as its last actor ended, which a session's stop raced. Resting empty
   channels, as the maintainer asked, are recorded as *Later: a channel that rests*, to be decided
   with issue [381](381-inactive-channels-held-in-memory.md).
+- **2026-11-19** — The second step between committed. From its review, at the maintainer's
+  decision, not committed yet: a session's stop announces every channel it started stopped
+  (`SessionLoop::announce_channels_stopped`), once the session's task has ended and before the
+  session, so that `channel::STARTED` and `STOPPED` pair again - taking their tasks, so that a
+  channel deleted meanwhile is not announced stopped twice; and `SessionLoop::run` returns
+  `Result<Infallible>`, as `ChannelLoop::run` does.

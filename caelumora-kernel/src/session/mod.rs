@@ -50,6 +50,7 @@ use caelumora_security::confidentiality::{ConfidentialityPolicy, Confidentiality
 use caelumora_security::{Policies, SecurityContext};
 use caelumora_store::EntityStores;
 use dashmap::DashMap;
+use std::convert::Infallible;
 use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{mpsc, Mutex};
@@ -451,13 +452,16 @@ impl SessionLoop {
     }
 
     /// Runs the session's channels, those it has and those created while it runs, until the session
-    /// is stopped - which aborts this, and with it every channel.
+    /// is stopped - which aborts this, and with it every channel (issue 593).
     ///
     /// Its channels follow whether its agents exist (issue 314): told of an agent deleted or
     /// restored, and of every agent as it starts and after it lost events - so that nothing that
     /// happened meanwhile is missed. They follow the names of its participants alike: told of a
     /// participant renamed, and after it lost events.
-    pub async fn run(&self) -> Result<()> {
+    ///
+    /// # Errors
+    /// If it runs already, or a channel panicked, which ends it with every channel.
+    pub async fn run(&self) -> Result<Infallible> {
         let mut start_rx = self.start_rx.try_lock().map_err(|_| anyhow!("Already running"))?;
         let mut subscription =
             self.subscription.try_lock().map_err(|_| anyhow!("Already running"))?;
@@ -526,6 +530,23 @@ impl SessionLoop {
             let Err(error) = channel.run().await;
             tracing::warn!("Channel {id} of session {session} could not run: {error:#}");
         }));
+    }
+
+    /// Announces every channel it started stopped (`channel::STOPPED`), as `channel::STARTED`
+    /// announced it, for a session whose task has ended - and with it every channel's aborted -,
+    /// and takes their tasks: a channel deleted meanwhile is not announced stopped again.
+    fn announce_channels_stopped(&self) {
+        for mut entry in self.channels.iter_mut() {
+            let id = *entry.key();
+            if let ChannelEntry::Running { channel, task } = entry.value_mut() {
+                if task.take().is_some() {
+                    self.events.announce(
+                        GlobalEvent::custom::<Channel>(&(self.id, id), channel::STOPPED, &()),
+                        &*channel.channel(),
+                    );
+                }
+            }
+        }
     }
 }
 
