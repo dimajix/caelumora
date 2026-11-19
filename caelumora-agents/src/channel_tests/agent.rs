@@ -3034,10 +3034,8 @@ async fn an_agent_whose_channel_is_deleted_while_a_tool_runs_gives_its_turn_up()
         given_up_turns(&stored).iter().map(|(_, reason, _)| reason.clone()).collect::<Vec<_>>(),
         [GivenUpReason::Left]
     );
-    time::timeout(Duration::from_secs(1), running)
-        .await
-        .expect("and the channel ended with them")
-        .ok();
+    // Then its task is aborted, as deleting the channel does (issue 593).
+    running.abort();
 }
 
 #[tokio::test]

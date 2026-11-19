@@ -1258,7 +1258,7 @@ mod tests {
     /// Who takes part leaves by their own act, without the right to change the channel (issue
     /// 562): kept as removed by themselves, and announced in their name. Nobody else is taken out
     /// so; the owner leaves as anyone does, also the last one leaves, and the owner keeps the
-    /// channel, to come back to.
+    /// channel, to come back to - running, empty, as it was (issue 593).
     #[tokio::test]
     async fn who_takes_part_leaves_by_their_own_act_and_takes_nobody_else_out() {
         let (kernel, manager) = owned_kernel(Default::default());
@@ -1314,6 +1314,19 @@ mod tests {
             .add_participant(&as_user(alice_id), alice_id, HistoryAccess::All)
             .await
             .expect("she keeps the channel, and comes back");
+        let back = channel.user_actor(alice.id).expect("her actor");
+        back.send_message(Some("back".to_string()), None, Vec::new()).await.expect("said");
+        let heard = time::timeout(Duration::from_secs(5), async {
+            loop {
+                let entries = channel.history_entries().await;
+                let mut said = entries.iter().filter_map(HistoryEntry::said);
+                if said.any(|m| m.sender_id == alice_id && m.content.as_deref() == Some("back")) {
+                    break;
+                }
+                time::sleep(Duration::from_millis(10)).await;
+            }
+        });
+        heard.await.expect("the empty channel ran on, and her actor in it (issue 593)");
         manager.stop(&SecurityContext::system(), running.id()).await.unwrap();
     }
 

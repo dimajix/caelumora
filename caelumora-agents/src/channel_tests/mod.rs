@@ -58,6 +58,7 @@ use futures::stream;
 use futures::stream::BoxStream;
 use serde::Deserialize;
 use serde_json::Value;
+use std::convert::Infallible;
 use std::future;
 use std::sync::Arc;
 use std::time::Duration;
@@ -98,25 +99,23 @@ async fn shown_by(events: &mut Receiver<Envelope>, agent: AgentId, wanted: &str)
     .unwrap_or_else(|_| panic!("the agent sends {wanted}"))
 }
 
-/// Stops the actors of `channel` (issue 377) and waits: they end their
-/// tasks by themselves, within the grace, and the channel with them - not
-/// aborted.
-async fn stop_and_wait(channel: &ChannelLoop, running: JoinHandle<Result<()>>) {
+/// Stops the actors of `channel` (issue 377) and then the channel, as its session's stop does: they
+/// end their tasks by themselves, within the grace, and its task, which runs until then, is aborted
+/// (issue 593).
+async fn stop_and_wait(channel: &ChannelLoop, running: JoinHandle<Result<Infallible>>) {
     let stopping = Instant::now();
     channel.stop_all_actors().await;
     assert!(stopping.elapsed() < STOP_GRACE, "the actors ended by themselves");
-    time::timeout(Duration::from_secs(1), running)
-        .await
-        .expect("and with them the channel")
-        .expect("the channel's task was not aborted")
-        .expect("the channel ended without an error");
+    assert!(!running.is_finished(), "the channel ran on, without an error");
+    running.abort();
+    assert!(running.await.is_err_and(|e| e.is_cancelled()), "until it was aborted");
 }
 
 /// The channel of `stopped` built again from the stores and running, with
 /// what it takes in from then on: as when its session runs again.
 async fn run_again(
     stopped: &ChannelLoop,
-) -> (Arc<ChannelLoop>, Receiver<Envelope>, JoinHandle<Result<()>>) {
+) -> (Arc<ChannelLoop>, Receiver<Envelope>, JoinHandle<Result<Infallible>>) {
     let restarted = ChannelLoop::new(stopped.restarted_runtime()).await.unwrap();
     let events = restarted.observe();
     let running = tokio::spawn({

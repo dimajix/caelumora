@@ -47,6 +47,7 @@ use caelumora_store::testing::record_users;
 use caelumora_store::testing::stored_agent;
 use caelumora_store::{EntityStores, Persistence};
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::mem;
 use std::sync;
 use std::sync::Arc;
@@ -125,7 +126,7 @@ pub struct Stuck {
     pub agent: AgentId,
     pub helper: Arc<dyn Actor>,
     pub events: broadcast::Receiver<Envelope>,
-    pub running: JoinHandle<Result<()>>,
+    pub running: JoinHandle<Result<Infallible>>,
 }
 
 /// Alice and her agent `name` of `personality`, stored in `store`: her context, the agent and her.

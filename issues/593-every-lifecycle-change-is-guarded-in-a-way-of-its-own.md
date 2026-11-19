@@ -326,7 +326,8 @@ The procedures, by step, each step reviewed and committed on its own:
 2. `run` answers its requests, without a change of behaviour; then, as a step between it and the
    next, `run` takes the receiver of its requests, so that what it did not carry out goes with it,
    and a leave it finishes as an actor starts under the same id closes the threads that waited for
-   it.
+   it; then, as a second step between, a channel no longer stops by itself once its last actor
+   ended, but runs on, empty, until its session stops or it is deleted.
 3. Participants: `participant::TakeIn` (added or joining, into the session and a channel of it),
    `LetGo` (removed or leaving, from the session with every channel of it, or from one channel),
    `Follow` (agents deleted or restored), with the follower of the events; `changing` of both loops,
@@ -350,6 +351,21 @@ refuses what is delegated into a thread closed), an actor that ends by itself, t
 channels a procedure follows (`participant::Follow`); and `ChannelLoop::building_mentions` and
 writing a document under one lock (issue [492](492-a-document-is-written-under-two-locks.md)):
 neither guards a lifecycle.
+
+## Later: a channel that rests
+
+Not built, recorded at the maintainer's request. A channel runs on, empty, since whether it stops
+has to be decided under the locks of a procedure: one that stopped by itself as its last actor
+ended stopped outside of any, and `participant::TakeIn`, holding the channel, could find it running
+and hand a start to a loop that ends just after - read as stopped, while the session still holds
+the channel as running. Built on that, an empty channel could rest: the session holds it as stopped,
+without its loop - also one empty as the session opens -, `participant::LetGo` stops it as it lets
+the last one go, and `TakeIn` starts it again as it takes someone into it, each undone by its
+compensation. It saves a waiting task for every empty channel, at the cost of a state of the
+session's, and of starting and stopping in two procedures. Issue
+[381](381-inactive-channels-held-in-memory.md) unloads an idle channel and starts it again when it
+is needed - the session keeping its entry without its loop -, of which an empty channel is one
+case; it is decided there, and may make this unnecessary.
 
 ## Done when
 
@@ -417,3 +433,13 @@ neither guards a lifecycle.
   as another starts under its id now closes the threads that waited for it, as the end of its task
   does (`finish_leave`) - before, such a thread stayed open, and its closing unanswered, until
   another left it.
+- **2026-11-19** — The step between committed. A second step between 2 and 3, at the maintainer's
+  decision, implemented, not committed yet: a channel no longer stops by itself once the task of
+  its last actor ended - `TakeIn` could not rely on what it finds under its locks if a channel
+  stopped outside of any. `run` runs until its task is aborted, as its session stops or the channel
+  is deleted (`run` returns `Result<Infallible>`, and logs its stop as its task ends), and an
+  empty channel runs on, for whoever comes in; before, someone added to a channel that had become
+  empty was stored, but their actor never started. So `channel::STOPPED` is announced as a channel
+  is deleted, no longer as its last actor ended, which a session's stop raced. Resting empty
+  channels, as the maintainer asked, are recorded as *Later: a channel that rests*, to be decided
+  with issue [381](381-inactive-channels-held-in-memory.md).

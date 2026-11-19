@@ -20,6 +20,7 @@ use caelumora_domain::store::StoreResult;
 use caelumora_security::confidentiality::ConfidentialityQuestions;
 use caelumora_security::{ActionType, Enforcement, Reclassified, SecurityContext};
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::iter;
 use std::sync::{self, Arc, Weak};
 use tokio::sync::mpsc;
@@ -67,11 +68,27 @@ struct Closing {
     carried_out: oneshot::Sender<()>,
 }
 
+/// Logs that `run` stopped, however its task ends - aborted, as it is (issue 593).
+struct EndOfRun<'a>(&'a ChannelLoop);
+
+impl Drop for EndOfRun<'_> {
+    fn drop(&mut self) {
+        info!("Channel {}/{} stopped", self.0.channel.name(), self.0.id);
+    }
+}
+
 impl ChannelLoop {
-    pub async fn run(&self) -> Result<()> {
+    /// Runs the channel - starts and ends its actors, routes what they say - until its task is
+    /// aborted, as its session stops or it is deleted. Empty, it runs on, for whoever comes in
+    /// (issue 593).
+    ///
+    /// # Errors
+    /// If it ran already: it runs once.
+    pub async fn run(&self) -> Result<Infallible> {
         let taken = self.requests_rx.lock().unwrap_or_else(sync::PoisonError::into_inner).take();
         let mut requests_rx = taken.ok_or_else(|| anyhow!("Channel {} ran already", self.id))?;
         info!("Channel {}/{} is starting", self.channel.name(), self.id);
+        let _end = EndOfRun(self);
         let (event_tx, mut event_rx) = mpsc::channel(10);
         let mut join_set = JoinSet::new();
         let mut running = HashMap::new();
@@ -92,19 +109,14 @@ impl ChannelLoop {
                 // its removal is announced, and before an actor that joins
                 // under its id starts.
                 biased;
-                maybe_event = event_rx.recv() => {
-                    if self.handle_actor_event(maybe_event, &running).await {
-                        break;
-                    }
-                }
+                // Never closed: `run` keeps a sender for the actors joining later.
+                Some(event) = event_rx.recv() => self.handle_actor_event(event, &running).await,
                 Some(request) = requests_rx.recv() => {
                     self.apply_change(request, &mut running, &mut closing, &event_tx, &mut join_set)
                         .await;
                 }
-                // Finished tasks are dropped as they end - a removed actor's
-                // with its removal announced (issue 262); once the last one
-                // is gone, the channel stops - the sender kept for actors
-                // joining later keeps the event queue from closing by itself.
+                // Finished tasks are dropped as they end - a removed actor's with its removal
+                // announced (issue 262). The last one gone, the channel runs on, empty (issue 593).
                 Some(ended) = join_set.join_next_with_id(), if !join_set.is_empty() => {
                     let task = match &ended {
                         Ok((task, _)) => *task,
@@ -114,15 +126,9 @@ impl ChannelLoop {
                     if let Some(RunningActor { id, leaving: Some(leaving), .. }) = ended.and_then(|id| running.remove(&id)) {
                         self.finish_leave(id, leaving, &running, &mut closing).await;
                     }
-                    if join_set.is_empty() {
-                        break;
-                    }
                 }
             }
         }
-
-        info!("Channel {}/{} stopped", self.channel.name(), self.id);
-        Ok(())
     }
 
     /// Starts an actor taken in, as the channel was built or as someone
@@ -347,28 +353,17 @@ impl ChannelLoop {
         self.enter(envelope, &by, running).await;
     }
 
-    async fn handle_actor_event(
-        &self,
-        maybe_event: Option<Envelope>,
-        running: &HashMap<ActorId, RunningActor>,
-    ) -> bool {
-        if let Some(event) = maybe_event {
-            // An actor that was removed still finishes the step it was in
-            // and ends its turn: what it sends until its task has ended
-            // enters the channel as its own (issue 262); what arrives after
-            // that - its task aborted - does not (issue 162). Its sender is
-            // the actor's own: its `OriginEventSender` passes on nothing
-            // else (issue 228).
-            if !running.contains_key(&event.context.sender_id) {
-                debug!("Dropped {}: its sender left channel {}", event.describe(), self.id);
-                return false;
-            }
-            let span = envelope_span(&event.context, event.event.kind());
-            self.process_envelope(event, running).instrument(span).await;
-            false
-        } else {
-            true
+    async fn handle_actor_event(&self, event: Envelope, running: &HashMap<ActorId, RunningActor>) {
+        // An actor that was removed still finishes the step it was in and ends its turn: what it
+        // sends until its task has ended enters the channel as its own (issue 262); what arrives
+        // after that - its task aborted - does not (issue 162). Its sender is the actor's own: its
+        // `OriginEventSender` passes on nothing else (issue 228).
+        if !running.contains_key(&event.context.sender_id) {
+            debug!("Dropped {}: its sender left channel {}", event.describe(), self.id);
+            return;
         }
+        let span = envelope_span(&event.context, event.event.kind());
+        self.process_envelope(event, running).instrument(span).await;
     }
 
     async fn process_envelope(&self, event: Envelope, running: &HashMap<ActorId, RunningActor>) {
@@ -2448,7 +2443,7 @@ mod tests {
         );
 
         // Its actor no longer runs, nor is it leaving: it was aborted.
-        channel.handle_actor_event(Some(late), &HashMap::new()).await;
+        channel.handle_actor_event(late, &HashMap::new()).await;
 
         assert!(events.try_recv().is_err(), "what a removed participant sends is dropped");
     }
@@ -2527,10 +2522,10 @@ mod tests {
         assert!(!close.carried_out().await, "dropped with `run`, which held it under way");
     }
 
-    /// Issue 593: `run` runs once, and a request handed in after it ended is answered with nothing,
-    /// at once.
+    /// Issue 593: `run` runs on, empty, until it is aborted; then it has run once, and a request
+    /// handed in after is answered with nothing, at once.
     #[tokio::test]
-    async fn run_runs_once_and_what_is_handed_in_after_it_is_answered_with_nothing() {
+    async fn run_runs_once_until_aborted_and_what_is_handed_in_after_is_answered_with_nothing() {
         let alice = make_user("alice");
         let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
         let running = tokio::spawn({
@@ -2538,8 +2533,10 @@ mod tests {
             async move { channel.run().await }
         });
         channel.stop_actors().await;
-        let ran = time::timeout(Duration::from_secs(5), running).await.expect("it ends");
-        ran.unwrap().expect("it ran");
+        time::sleep(Duration::from_millis(50)).await;
+        assert!(!running.is_finished(), "empty, it runs on");
+        running.abort();
+        assert!(running.await.is_err_and(|e| e.is_cancelled()), "until it is aborted");
 
         let line = ThreadId::line(channel.id);
         let gone = ActorId::Agent(AgentId::new());
@@ -2645,7 +2642,7 @@ mod tests {
         let line = ThreadId::line(channel.id);
         let running =
             HashMap::from([(going, leaving_actor(going, SecurityContext::default(), line))]);
-        channel.handle_actor_event(Some(farewell), &running).await;
+        channel.handle_actor_event(farewell, &running).await;
 
         let heard = events.try_recv().expect("the farewell enters the channel");
         assert!(

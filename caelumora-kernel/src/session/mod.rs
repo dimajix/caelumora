@@ -471,26 +471,13 @@ impl SessionLoop {
                 Some(channel_id) = start_rx.recv() => {
                     self.start_channel(channel_id, &mut join_set);
                 }
-                Some(res) = join_set.join_next(), if !join_set.is_empty() => {
-                    match res {
-                        Ok(channel_id) => {
-                            let stopped = self.channels.get_mut(&channel_id)
-                                .and_then(|mut entry| match &mut *entry {
-                                    ChannelEntry::Running { channel, task } => {
-                                        *task = None;
-                                        Some(channel.channel())
-                                    }
-                                    ChannelEntry::Unavailable { .. } => None,
-                                });
-                            // Gone: a deleted channel, whose actors all
-                            // stopped in time; `delete_channel` announces it.
-                            if let Some(stopped) = stopped {
-                                self.events.announce(GlobalEvent::custom::<Channel>(&(self.id, channel_id), channel::STOPPED, &()), &*stopped);
-                            }
-                        }
-                        // A deleted channel; `delete_channel` announces it.
-                        Err(e) if e.is_cancelled() => {}
-                        Err(e) => return Err(e.into()),
+                // A channel's task ends as it is aborted - deleted, or abandoned as its founders
+                // could not join -, which is let be; a `run` that failed was logged by
+                // `start_channel` and ends its task without an error; a channel that panicked
+                // ends the session, and with it every channel.
+                Some(Err(e)) = join_set.join_next(), if !join_set.is_empty() => {
+                    if !e.is_cancelled() {
+                        return Err(e.into());
                     }
                 }
                 received = subscription.receiver().recv(), if following => {
@@ -526,7 +513,7 @@ impl SessionLoop {
     /// Starts the channel `id` in `join_set` - unless it was deleted while
     /// it waited to be started. The entry stays locked while its task is
     /// set, so that `delete_channel` either finds the task or no channel.
-    fn start_channel(&self, id: ChannelId, join_set: &mut JoinSet<ChannelId>) {
+    fn start_channel(&self, id: ChannelId, join_set: &mut JoinSet<()>) {
         let Some(mut entry) = self.channels.get_mut(&id) else { return };
         let ChannelEntry::Running { channel, task } = &mut *entry else { return };
         let channel = Arc::clone(channel);
@@ -534,9 +521,10 @@ impl SessionLoop {
             GlobalEvent::custom::<Channel>(&(self.id, id), channel::STARTED, &()),
             &*channel.channel(),
         );
+        let session = self.id;
         *task = Some(join_set.spawn(async move {
-            let _ = channel.run().await;
-            channel.id()
+            let Err(error) = channel.run().await;
+            tracing::warn!("Channel {id} of session {session} could not run: {error:#}");
         }));
     }
 }

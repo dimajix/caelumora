@@ -67,3 +67,8 @@ idle, and nothing gives it back.
 - **2026-11-16** — [557](557-a-conversation-cannot-go-on-two-ways-at-once.md) proposes unloading
   a channel's idle threads the way this issue unloads a channel; with the channel's line a thread,
   a channel whose threads are all unloaded is idle. Best designed together.
+- **2026-11-19** — [593](593-every-lifecycle-change-is-guarded-in-a-way-of-its-own.md) has a
+  channel run on, empty, rather than stop by itself as its last actor ends, and records an empty
+  channel that rests - stopped by the procedure that lets the last one go, started again by the one
+  that takes someone in - as *Later: a channel that rests*: one case of unloading, to be decided
+  here.

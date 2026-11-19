@@ -329,8 +329,10 @@ given the history, and on whose behalf it joined, if it did - a channel started 
 joins. What waits when `run` begins is started before anything is routed. `run` carries out the
 changes handed to it one after the other, and answers each once it carried it out - a leave once
 the actor's task has ended and its leave is announced, a thread's closing once whoever left the
-thread has left (`ChannelLoop::request`, issue 593). `run` runs once; a change still under way as
-it ends, or handed in after, is answered with nothing: the channel stopped, its actors with it.
+thread has left (`ChannelLoop::request`, issue 593). `run` runs until its session stops or the
+channel is deleted - empty too, for whoever comes in: whether a channel runs changes with its
+session or its deletion, never by itself. It runs once; a change still under way as it ends, or
+handed in after, is answered with nothing: the channel stopped, its actors with it.
 
 *   Stopping the session stops the actors of every channel (`SessionLoop::stop_actors`), all at
     once, waits for them up to `STOP_GRACE` and then aborts every channel; the commands started in
@@ -736,7 +738,7 @@ joining and founding come in by one.
 *   **Stored in the kernel's name**, as a join is, kept as removed by whoever left or took their
     agent out, and announced in their name. They stay in the session.
 *   **No rule for the owner or the last one**: the owner leaves as anyone does and keeps the
-    channel, to add themselves back; the last one leaves, and the channel stays, empty.
+    channel, to add themselves back; the last one leaves, and the channel stays, empty and running.
 *   **Coming back** takes an entry granting `Join` that is not used up - for a role, a group or
     everyone - or whoever may change the channel: a personal invitation was used up as they came in.
 *   **Whether it could run is not asked**: its owner takes out an agent whose personality was

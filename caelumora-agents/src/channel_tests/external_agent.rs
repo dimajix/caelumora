@@ -1213,7 +1213,9 @@ async fn a_deleted_channel_waits_for_its_external_agent_to_cancel_its_open_task(
         with_an_external_agent(Arc::clone(&remote)).await;
     answered(&mut events, agent).await;
 
+    let leaving = Instant::now();
     channel.leave_all_actors().await;
+    assert!(leaving.elapsed() < STOP_GRACE, "every actor ended by itself");
     assert_eq!(
         *remote.cancelled.lock().unwrap(),
         vec![task("t-1")],
@@ -1221,11 +1223,8 @@ async fn a_deleted_channel_waits_for_its_external_agent_to_cancel_its_open_task(
     );
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(state.remote.open_tasks.is_empty(), "and that is stored");
-    time::timeout(Duration::from_secs(1), running)
-        .await
-        .expect("every actor ended by itself, and with them the channel")
-        .expect("the channel's task was not aborted")
-        .expect("the channel ended without an error");
+    // Then its task is aborted, as deleting the channel does (issue 593).
+    running.abort();
 }
 
 /// A channel that merely stops keeps its external agent's open task
