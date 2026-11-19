@@ -642,11 +642,13 @@ are first (`SessionLoop::newcomer`, `ChannelLoop::require_entry`,
 channel, and has the procedure's compensation take
 each listing back if a later step fails (`SessionLoop::undo_listing_held`,
 `ChannelLoop::undo_listing_held`); whoever takes someone into a channel goes through the session's
-part, also for one in the session already. Letting go is carried out by the session's building
-blocks (`SessionLoop::remove_participant_held`, `leave_held`) and the channel's
-(`ChannelLoop::remove_participant_held`, `leave_held`), which - until letting go, too, is the
-procedures' alone (issue 593) - make it and an agent's actor following its agent one change of a
-participant at a time besides (`changing`, issue 590); creating a channel holds the channel and its
+part, also for one in the session already. Letting go is one function as well,
+`procedure::participant::let_go_from_session` - or `let_go_from_channel` from one channel alone -:
+each object asks its own (`SessionLoop::require_exit`,
+`ChannelLoop::require_exit`), then the session takes them off its list
+(`SessionLoop::unlist_participant_held`) and every channel of it lets them go - a running one until
+its actor ended (`ChannelLoop::let_go_held`), one that does not run in its stored document
+(`SessionLoop::let_go_where_unavailable_held`); creating a channel holds the channel and its
 founders (`procedure::channel::Create`). Like renaming, the change is made by the channel's one
 writer, the `ChannelController`, by the rules of the channel's document: who comes in is no longer a
 former participant and has their invitation used up (`Channel::take_in`), who is removed is kept as
@@ -655,9 +657,11 @@ a former participant (`Channel::let_go`, issue 164). It stores the channel - ask
 joined, founded or left it -, lets the group of its participants follow and announces who joined or
 left. One whose actor then cannot start has the addition rolled back as the channel had them before
 (`Channel::undo_take_in`), announced as a leave. The changes of one participant - taken in, let go,
-its actor following its agent's deletion and restoring - are made one at a time, so that two who add
-the same participant at once take them in once, and a rollback never takes out one whose actor
-another started. Events only announce; nothing changes a channel because an event arrived.
+its actor following its agent's deletion and restoring - are made one at a time, by procedures that
+hold the participant (`Key::Participant`), or the session as it starts, or - for an agent just made,
+whom nobody knows yet - the thread it founds; so that two who add the same participant at once take
+them in once, and a rollback never takes out one whose actor another started. Events only announce;
+nothing changes a channel because an event arrived.
 
 Adding is asked first as `UpdateChannel`, before anything of the newcomer is looked at, and then as
 `cleared` with the channel's classification, where a policy can hold the channel's level against the

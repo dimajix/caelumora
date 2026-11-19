@@ -56,11 +56,11 @@ fn hides_the_channel(error: &anyhow::Error) -> bool {
 #[async_trait]
 impl ChannelCommand for JoinCommand {
     /// Runs `/channel join` with `args`: the issuer joins the running channel of the session of
-    /// that whole name (`SessionLoop::channel_named`), through the session, which makes one change
-    /// of a participant at a time (`TakeIn::joining`, issues 590, 593), and asks `JoinChannel` in
-    /// their own context. Who may join a channel reads nothing of it before they did, so it is not
-    /// sought among those they read; and a channel they may not join - by its access list, or not
-    /// cleared for it -, or that does not run, is named as one that does not exist, so that
+    /// that whole name (`SessionLoop::channel_named`), through the session, by a procedure that
+    /// holds the participant meanwhile (`TakeIn::joining`, issues 590, 593), and asks `JoinChannel`
+    /// in their own context. Who may join a channel reads nothing of it before they did, so it is
+    /// not sought among those they read; and a channel they may not join - by its access list, or
+    /// not cleared for it -, or that does not run, is named as one that does not exist, so that
     /// channels cannot be probed. Only the issuer is answered: the channel tells everyone that they
     /// joined.
     async fn execute(
@@ -80,7 +80,7 @@ impl ChannelCommand for JoinCommand {
         if channel.channel().lists(issuer) {
             return Ok(CommandOutput::private(format!("You take part in {name} already.")));
         }
-        // Through the session, which makes one change of a participant at a time (issue 590).
+        // Through the session, by a procedure that holds the participant (issues 590, 593).
         let (context_of_issuer, into) = (context.issuer.security_context(), Some(channel.id()));
         let joining = context.carry_out(|sessions, session| {
             TakeIn::joining(sessions, &context_of_issuer, session, issuer, into)

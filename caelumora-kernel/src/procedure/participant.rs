@@ -22,6 +22,7 @@ use caelumora_domain::agent::AgentId;
 use caelumora_domain::channel::{ChannelId, HistoryAccess, Participant, ThreadId};
 use caelumora_domain::session::SessionId;
 use caelumora_security::SecurityContext;
+use futures::future;
 use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::info;
@@ -158,21 +159,35 @@ pub struct LetGo {
     session: SessionId,
     participant: ActorId,
     from: Option<ChannelId>,
-    going_out: GoingOut,
+    exit: Exit,
 }
 
-/// How a participant is let go.
-enum GoingOut {
-    /// Removed by whoever may change the session, or the channel.
+/// How someone goes out of a session or a channel: the one way out, asked for in two ways.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Exit {
+    /// Removed by whoever may change the session, or the channel (`UpdateSession`,
+    /// `UpdateChannel`).
     Removed,
-    /// Leaving by their own act, or their own agent taken out.
+    /// By their own act, themselves or their own agent (`LeaveSession`, `LeaveChannel`, issues
+    /// 562, 590).
     Leaving,
+}
+
+impl Exit {
+    /// In whose name the one who goes out is stored, on behalf of `context`: whoever removes them;
+    /// the kernel's for one who leaves, once that was permitted.
+    pub(crate) fn storing(self, context: &SecurityContext) -> SecurityContext {
+        match self {
+            Exit::Removed => context.clone(),
+            Exit::Leaving => SecurityContext::system(),
+        }
+    }
 }
 
 impl LetGo {
     /// Lets `participant` go on behalf of `context`, who may change the session - from it and every
-    /// channel of it (`SessionLoop::remove_participant_held`) -, or with `from` the channel - from
-    /// it alone (`ChannelLoop::remove_participant_held`).
+    /// channel of it (`let_go_from_session`) -, or with `from` the channel - from it alone
+    /// (`let_go_from_channel`).
     pub fn removed(
         sessions: &Arc<SessionManager>,
         context: &SecurityContext,
@@ -180,12 +195,12 @@ impl LetGo {
         participant: ActorId,
         from: Option<ChannelId>,
     ) -> Self {
-        Self::new(sessions, context, session, participant, from, GoingOut::Removed)
+        Self::new(sessions, context, session, participant, from, Exit::Removed)
     }
 
     /// Takes `participant` - whom `context` acts for, or their own agent - out by their own act:
-    /// out of the session and every channel of it (`SessionLoop::leave_held`), or with `from` out
-    /// of that channel alone (`ChannelLoop::leave_held`).
+    /// out of the session and every channel of it (`let_go_from_session`), or with `from` out of
+    /// that channel alone (`let_go_from_channel`).
     pub fn leaving(
         sessions: &Arc<SessionManager>,
         context: &SecurityContext,
@@ -193,7 +208,7 @@ impl LetGo {
         participant: ActorId,
         from: Option<ChannelId>,
     ) -> Self {
-        Self::new(sessions, context, session, participant, from, GoingOut::Leaving)
+        Self::new(sessions, context, session, participant, from, Exit::Leaving)
     }
 
     fn new(
@@ -202,10 +217,10 @@ impl LetGo {
         session: SessionId,
         participant: ActorId,
         from: Option<ChannelId>,
-        going_out: GoingOut,
+        exit: Exit,
     ) -> Self {
         let sessions = Arc::clone(sessions);
-        Self { sessions, context: context.clone(), session, participant, from, going_out }
+        Self { sessions, context: context.clone(), session, participant, from, exit }
     }
 }
 
@@ -225,35 +240,22 @@ impl Procedure for LetGo {
 
     /// # Errors
     /// As `SessionManager::open_held`, `SessionLoop::channel_for` for the channel named, and as
-    /// the building block that lets them go.
+    /// `let_go_from_channel` or `let_go_from_session`.
     async fn carry_out(
         self,
         (): (),
         admitted: &Admitted<'_>,
         _: &mut Compensation,
     ) -> Result<(), SessionError> {
-        let Self { sessions, context, session, participant, from, going_out } = self;
+        let Self { sessions, context, session, participant, from, exit } = self;
         let session = sessions.open_held(admitted, &context, session).await?;
-        match (from, going_out) {
-            (None, GoingOut::Removed) => {
-                session.remove_participant_held(admitted, &context, participant).await?
-            }
-            (None, GoingOut::Leaving) => {
-                session.leave_held(admitted, &context, participant).await?
-            }
-            (Some(channel), going_out) => {
+        match from {
+            Some(channel) => {
                 let channel = session.channel_for(&context, channel).await?;
-                match going_out {
-                    GoingOut::Removed => {
-                        channel.remove_participant_held(admitted, &context, participant).await?
-                    }
-                    GoingOut::Leaving => {
-                        channel.leave_held(admitted, &context, participant).await?
-                    }
-                }
+                let_go_from_channel(admitted, &channel, &context, participant, exit).await
             }
+            None => let_go_from_session(admitted, &session, &context, participant, exit).await,
         }
-        Ok(())
     }
 }
 
@@ -388,6 +390,80 @@ pub(crate) async fn take_into_channel(
         return Err(anyhow::Error::from(stopped).into());
     }
     info!("{} joined channel {}", participant, channel.id());
+    Ok(())
+}
+
+/// Lets `participant` go from `session` and every channel of it on behalf of `context`, by the way
+/// `exit` says (issue 590), for a procedure that holds what letting them go needs
+/// (`lock_letting_go`) - `LetGo`, or the sub-agents' end (issue 558). Everything is asked first,
+/// each object asking its own: of whoever removes them whether they may change the session
+/// (`SessionLoop::require_changing`), before anything of the one let go; then that they take part,
+/// and whether they may leave by their own act (`SessionLoop::require_exit`). Out of the session
+/// first, so that nobody takes them into one of its channels from then on
+/// (`SessionLoop::unlist_participant_held`); then out of every channel of it in the kernel's name,
+/// kept as removed by `context`'s caller - the running ones all at once, each until its actor ended
+/// (`ChannelLoop::let_go_held`), one that does not run (issue 463) in its stored document
+/// (`SessionLoop::let_go_where_unavailable_held`). A deleted channel lets them go as it is restored
+/// (`SessionLoop::restore_channel_held`). Nothing is rolled back - taking them out of a channel
+/// ended their turn -: a channel that fails leaves the error to the caller, and asking again, for
+/// one out of the session and not yet out of each of its channels, finishes it.
+///
+/// # Errors
+/// As `SessionLoop::require_changing` and `require_exit`; whatever storing the session or a
+/// channel reports.
+pub async fn let_go_from_session(
+    admitted: &Admitted<'_>,
+    session: &SessionLoop,
+    context: &SecurityContext,
+    participant: ActorId,
+    exit: Exit,
+) -> Result<(), SessionError> {
+    if exit == Exit::Removed {
+        session.require_changing(context).await?;
+    }
+    session.require_exit(context, participant, exit).await?;
+    session.unlist_participant_held(admitted, &exit.storing(context), participant).await?;
+    // Letting them go from the session was permitted; storing in its channels is the kernel's.
+    let system = SecurityContext::system();
+    let mut running = Vec::new();
+    for channel in session.session().channels.clone() {
+        match session.channel(channel) {
+            Some(channel_loop) => running.push(channel_loop),
+            None => {
+                let unavailable =
+                    session.let_go_where_unavailable_held(admitted, context, channel, participant);
+                unavailable.await?;
+            }
+        }
+    }
+    let letting_go = running.iter().map(|c| c.let_go_held(admitted, context, &system, participant));
+    future::join_all(letting_go).await.into_iter().collect::<anyhow::Result<Vec<()>>>()?;
+    info!(
+        session = %session.id(),
+        participant = %participant,
+        by = %context.caller_id,
+        "Let go from the session"
+    );
+    Ok(())
+}
+
+/// Lets `participant` go from `channel` alone on behalf of `context`, by the way `exit` says
+/// (issues 46, 562), for a procedure that holds what letting them go needs (`lock_letting_go`):
+/// asked as the channel asks it (`ChannelLoop::require_exit`), then taken out until its actor ended
+/// (`ChannelLoop::let_go_held`), stored in the name the way says (`Exit::storing`) - whoever
+/// removes them asked as `UpdateChannel` as it is stored.
+///
+/// # Errors
+/// As `ChannelLoop::require_exit`; whatever storing the channel reports.
+pub async fn let_go_from_channel(
+    admitted: &Admitted<'_>,
+    channel: &ChannelLoop,
+    context: &SecurityContext,
+    participant: ActorId,
+    exit: Exit,
+) -> Result<(), SessionError> {
+    channel.require_exit(context, participant, exit).await?;
+    channel.let_go_held(admitted, context, &exit.storing(context), participant).await?;
     Ok(())
 }
 

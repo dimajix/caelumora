@@ -12,7 +12,6 @@ pub mod event;
 pub mod group;
 pub mod kernel;
 mod library;
-mod lock;
 pub mod moderator;
 pub mod plugin;
 pub mod procedure;

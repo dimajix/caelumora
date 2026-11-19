@@ -14,7 +14,7 @@ use crate::channel::ResolvedParticipant;
 use crate::controller::SessionController;
 use crate::kernel::{ChannelRuntime, Kernel, ParticipantRuntime};
 use crate::procedure::channel::Reclassify;
-use crate::procedure::participant::{LetGo, TakeIn};
+use crate::procedure::participant::{let_go_from_channel, Exit, LetGo, TakeIn};
 use crate::procedure::thread;
 use crate::procedure::{
     Admitted, Compensation, Deferred, Key, Locks, Procedure, ProcedureExecutor,
@@ -530,43 +530,51 @@ impl ChannelLoop {
     /// Removes `participant` from the channel on behalf of `context`, as `LetGo::removed` does.
     ///
     /// # Errors
-    /// As `ChannelLoop::remove_participant_held`.
+    /// As `procedure::participant::let_go_from_channel`.
     pub async fn remove_participant(
         self: &Arc<Self>,
         context: &SecurityContext,
         participant: ActorId,
     ) -> Result<()> {
-        if let Some((sessions, session)) = self.of_session() {
-            let removing =
-                LetGo::removed(&sessions, context, session.id(), participant, Some(self.id));
-            return session.procedures().run(removing).await.map_err(SessionError::untyped);
-        }
-        let (channel, context) = (Arc::clone(self), context.clone());
-        self.holding(move |admitted| {
-            Box::pin(async move {
-                channel.remove_participant_held(admitted, &context, participant).await
-            })
-        })
-        .await
+        self.let_go_by(context, participant, Exit::Removed).await
     }
 
     /// Takes `participant` out of the channel by their own act, as `LetGo::leaving` does.
     ///
     /// # Errors
-    /// As `ChannelLoop::leave_held`.
+    /// As `procedure::participant::let_go_from_channel`.
     pub async fn leave(
         self: &Arc<Self>,
         context: &SecurityContext,
         participant: ActorId,
     ) -> Result<()> {
+        self.let_go_by(context, participant, Exit::Leaving).await
+    }
+
+    /// Lets `participant` go from the channel on behalf of `context` by the way `exit` says: in its
+    /// session by `LetGo`; in a channel of no session under a hold of the channel, as
+    /// `procedure::participant::let_go_from_channel` lets one go.
+    async fn let_go_by(
+        self: &Arc<Self>,
+        context: &SecurityContext,
+        participant: ActorId,
+        exit: Exit,
+    ) -> Result<()> {
         if let Some((sessions, session)) = self.of_session() {
-            let leaving =
-                LetGo::leaving(&sessions, context, session.id(), participant, Some(self.id));
-            return session.procedures().run(leaving).await.map_err(SessionError::untyped);
+            let (id, from) = (session.id(), Some(self.id));
+            let letting_go = match exit {
+                Exit::Removed => LetGo::removed(&sessions, context, id, participant, from),
+                Exit::Leaving => LetGo::leaving(&sessions, context, id, participant, from),
+            };
+            return session.procedures().run(letting_go).await.map_err(SessionError::untyped);
         }
         let (channel, context) = (Arc::clone(self), context.clone());
         self.holding(move |admitted| {
-            Box::pin(async move { channel.leave_held(admitted, &context, participant).await })
+            Box::pin(async move {
+                let letting_go =
+                    let_go_from_channel(admitted, &channel, &context, participant, exit);
+                letting_go.await.map_err(SessionError::untyped)
+            })
         })
         .await
     }

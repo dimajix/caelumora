@@ -1,13 +1,12 @@
-//! Who takes part in a running session after it was built: taken in (issue 221) by whoever may
-//! change it, by their own act where its access list lets them join - into the session and, if one
-//! is named, into one of its channels at once -, or as a founder of a thread (issue 557,
-//! `procedure::thread::open`), and let go (issue 590) by whoever may change it, or by their own
-//! act: out of the session and every channel of it.
+//! What the session asks and stores of who takes part in it after it was built, for the procedures
+//! that take them in (issue 221, `procedure::participant::take_in`) and let them go (issue 590,
+//! `procedure::participant::let_go_from_session`): whose participant one to take in is, whether
+//! they can be taken in, whether one may go out, and its list of participants.
 
-use super::{ChannelRun, SessionError, SessionLoop};
+use super::{SessionError, SessionLoop};
 use crate::channel::{ChannelError, ChannelLoop, ResolvedParticipant};
 use crate::event::SubscriptionTopic;
-use crate::procedure::participant::Entry;
+use crate::procedure::participant::{Entry, Exit};
 use crate::procedure::Admitted;
 use anyhow::{anyhow, Result};
 use caelumora_domain::actor::ActorId;
@@ -15,7 +14,6 @@ use caelumora_domain::channel::Participant;
 use caelumora_domain::session::Session;
 use caelumora_domain::store::{StoreError, Stored};
 use caelumora_security::{ActionType, Enforcement, SecurityContext, JOIN};
-use futures::future;
 use std::sync::Arc;
 use tracing::info;
 
@@ -134,7 +132,12 @@ impl SessionLoop {
         let participant = Participant::of(actor).ok_or(SessionError::CannotTakeIn(actor))?;
         let storing = entry.storing(context);
         let before = self.session_controller.add_participant(&storing, participant).await?;
-        info!(session = %self.id, participant = %actor, by = %context.caller_id, "Taken into the session");
+        info!(
+            session = %self.id,
+            participant = %actor,
+            by = %context.caller_id,
+            "Taken into the session"
+        );
         Ok(Some(before))
     }
 
@@ -154,107 +157,62 @@ impl SessionLoop {
         Ok(())
     }
 
-    /// Lets `participant` go from the session on behalf of `context`, for
-    /// `procedure::participant::LetGo`, who may change it (`UpdateSession`, asked before anything
-    /// else), and from every channel of it (issue 590): then as [`Self::let_go`] says.
-    ///
-    /// # Errors
-    /// `StoreError::PermissionDenied` if `context` may not change the session; as `let_go`.
-    pub(crate) async fn remove_participant_held(
-        &self,
-        _: &Admitted<'_>,
-        context: &SecurityContext,
-        participant: ActorId,
-    ) -> Result<()> {
-        self.require_changing(context).await?;
-        if self.listed_anywhere(participant).is_none() {
-            return Err(SessionError::NotAParticipant { session: self.id, participant }.into());
-        }
-        self.let_go(context, context, participant).await
-    }
-
-    /// Takes `participant` - whom `context` acts for: themselves, or their own agent - out of the
-    /// session by their own act (issue 590), for `procedure::participant::LetGo`, without the right
-    /// to change it: leaving (`LeaveSession`) is asked in the participant's own context, an agent's
-    /// by its owner, as leaving a channel is (`ChannelLoop::leave_held`). Stored in the kernel's
-    /// name once leaving was permitted; then as [`Self::let_go`] says. One that cannot be resolved,
-    /// a deleted agent, cannot leave: whoever may change the session lets it go.
+    /// Nothing if `participant` may go out of the session on behalf of `context` by the way `exit`
+    /// says, for a procedure that lets them go (`procedure::participant::let_go_from_session`),
+    /// which asked whoever removes them whether they may change the session before
+    /// (`require_changing`): they take part in it, or in a channel of it - one let go from the
+    /// session whom a channel failed to let go -; by their own act, whether leaving
+    /// (`LeaveSession`) is permitted in the participant's own context, an agent's by its owner, as
+    /// leaving a channel is (`ChannelLoop::require_exit`). One that cannot be resolved, a deleted
+    /// agent, cannot leave: whoever may change the session lets it go.
     ///
     /// # Errors
     /// `SessionError::NotAParticipant`; `StoreError::PermissionDenied` if they may not leave; what
-    /// resolving the participant reports (`Participation::resolve`); as `let_go`.
-    pub async fn leave_held(
+    /// resolving the participant reports (`Participation::resolve`).
+    pub(crate) async fn require_exit(
         &self,
-        _: &Admitted<'_>,
         context: &SecurityContext,
         participant: ActorId,
+        exit: Exit,
     ) -> Result<()> {
         let Some(leaver) = self.listed_anywhere(participant) else {
             return Err(SessionError::NotAParticipant { session: self.id, participant }.into());
         };
-        let attributes = self.session().security_attributes.clone();
-        let leaving = ActionType::LeaveSession(&attributes);
-        let Some(resolved) = self.participation.resolve(&leaver, self.id, None).await? else {
-            return Err(StoreError::PermissionDenied(leaving.refused()).into());
-        };
-        self.participation
-            .require_own_act(&resolved, context, leaving, StoreError::PermissionDenied)
-            .await?;
-        // Leaving was permitted; storing is the kernel's.
-        self.let_go(context, &SecurityContext::system(), participant).await
-    }
-
-    /// Lets `participant` go on behalf of `context`, stored in the name of `storing` (issue 590),
-    /// asking nothing: its callers asked what letting go is asked for in their way, and say in
-    /// whose name it is stored. One change of a participant at a time (`changing`), as an agent's
-    /// actor following its agent makes it, until letting go is the procedures' alone (issue 593);
-    /// what is asked is asked before. Out of the session first, so that nobody takes them into one
-    /// of its channels from then on (`ChannelLoop::list_participant_held`); then out of every
-    /// channel of it in the kernel's name, kept as removed by `context`'s caller, each as it is
-    /// when it is reached: a running one as `ChannelLoop::let_go_with_the_session` says, one that
-    /// does not run (issue 463) as `let_go_where_unavailable` does. A deleted channel lets them go
-    /// as it is restored (`restore_channel_held`). Nothing is rolled back - taking them out of a
-    /// channel ended their turn -: a channel that fails leaves the error to the caller, and asking
-    /// again, for one out of the session and not yet out of each of its channels, finishes it.
-    ///
-    /// # Errors
-    /// Whatever storing the session or a channel reports.
-    async fn let_go(
-        &self,
-        context: &SecurityContext,
-        storing: &SecurityContext,
-        participant: ActorId,
-    ) -> Result<()> {
-        let _changing = self.changing.lock(participant).await;
-        match self.session_controller.remove_participant(storing, participant).await {
-            // Out of the session already, as a let go that failed in a channel left them.
-            Ok(_) | Err(StoreError::NotFound { .. }) => {}
-            Err(error) => return Err(error.into()),
+        if exit == Exit::Leaving {
+            let attributes = self.session().security_attributes.clone();
+            let leaving = ActionType::LeaveSession(&attributes);
+            let Some(resolved) = self.participation.resolve(&leaver, self.id, None).await? else {
+                return Err(StoreError::PermissionDenied(leaving.refused()).into());
+            };
+            self.participation
+                .require_own_act(&resolved, context, leaving, StoreError::PermissionDenied)
+                .await?;
         }
-        // The running channels all at once, each waiting until its actor ended (issue 593).
-        let mut running = Vec::new();
-        for channel in self.session().channels.clone() {
-            match self.listed_channel(channel) {
-                Some((_, ChannelRun::Running(channel_loop))) => running.push(channel_loop),
-                Some((_, ChannelRun::Unavailable(_))) => {
-                    self.let_go_where_unavailable(context, channel, participant).await?;
-                }
-                None => {}
-            }
-        }
-        let letting_go = running.iter().map(|c| c.let_go_with_the_session(context, participant));
-        future::join_all(letting_go).await.into_iter().collect::<Result<Vec<()>>>()?;
-        info!(
-            session = %self.id,
-            participant = %participant,
-            by = %context.caller_id,
-            "Let go from the session"
-        );
         Ok(())
     }
 
-    /// `participant` as the session lists it, or else a channel of it - one let go from the
-    /// session whom a channel failed to let go (`let_go`); `None` if neither does.
+    /// Takes `participant` off the session's list, stored in the name of `storing`, for a procedure
+    /// that lets them go (`procedure::participant::let_go_from_session`), which asked what letting
+    /// them go asks; nothing for one off it already, as a letting go that failed in a channel left
+    /// them. The session's controller announces it (`SessionController::remove_participant`).
+    ///
+    /// # Errors
+    /// Whatever storing the session reports.
+    pub(crate) async fn unlist_participant_held(
+        &self,
+        _: &Admitted<'_>,
+        storing: &SecurityContext,
+        participant: ActorId,
+    ) -> Result<()> {
+        match self.session_controller.remove_participant(storing, participant).await {
+            Ok(_) | Err(StoreError::NotFound { .. }) => Ok(()),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// `participant` as the session lists it, or else a channel of it - one let go from the session
+    /// whom a channel failed to let go (`procedure::participant::let_go_from_session`); `None` if
+    /// neither does.
     fn listed_anywhere(&self, participant: ActorId) -> Option<Participant> {
         let listed = |participants: &[Participant]| {
             participants.iter().find(|p| p.actor_id() == participant).cloned()

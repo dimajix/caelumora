@@ -25,7 +25,6 @@ use crate::attachment::AttachmentManager;
 use crate::component::BuildContext;
 use crate::controller::{ChannelController, ControllerManager};
 use crate::kernel::ChannelRuntime;
-use crate::lock::LocksById;
 use crate::moderator::Moderator;
 use crate::session::SessionError;
 use crate::session::SessionLoop;
@@ -292,11 +291,6 @@ pub struct ChannelLoop {
     /// when someone joins or leaves (issue 46), so that every reader sees
     /// one set.
     actors: ArcSwap<Actors>,
-    /// Held per participant while its part in the channel changes - taken in, let go, its actor
-    /// started again or stopped as its agent is restored or deleted (issue 564) -, so that two
-    /// changes of one participant do not cross: two takings-in would start two actors, and one
-    /// that fails would roll back the listing of an actor the other started.
-    changing: LocksById<ActorId>,
     /// Its open threads (issue 557), each with a moderator of its own: what an event's thread
     /// decides of it is what the channel delivers. Its line, in which every actor takes part but
     /// those that founded another, and the threads opened since (`threads`); replaced as a whole
@@ -363,7 +357,6 @@ impl ChannelLoop {
             agent_kinds: Arc::clone(runtime.agent_kinds()),
             runtime,
             actors: ArcSwap::from_pointee(HashMap::new()),
-            changing: LocksById::new(),
             threads: ArcSwap::from_pointee(HashMap::new()),
             mentions: ArcSwap::from_pointee(MentionDirectory::default()),
             building_mentions: sync::Mutex::new(()),

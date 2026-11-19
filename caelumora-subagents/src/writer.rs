@@ -1,10 +1,10 @@
 //! The writer of sub-agents (issue 558), bound to the session of an agent's work: starting and
 //! ending a sub-agent are procedures of its own (issue 593) - an agent made (`AgentManager`), a
 //! thread founded with it (`procedure::thread::open`), a brief delegated into it
-//! (`ChannelLoop::delegate`); the agent let go (`SessionLoop::leave_held`), its thread closed
-//! (`ChannelLoop::close_thread_held`) and the agent deleted as its work ends (issue 557) -, made of
-//! the kernel's building blocks. It acts in the work's context, each operation of the kernel
-//! checking itself: the agent of the work gives, its owner owns what it starts.
+//! (`ChannelLoop::delegate`); the agent let go (`procedure::participant::let_go_from_session`), its
+//! thread closed (`ChannelLoop::close_thread_held`) and the agent deleted as its work ends (issue
+//! 557) -, made of the kernel's building blocks. It acts in the work's context, each operation of
+//! the kernel checking itself: the agent of the work gives, its owner owns what it starts.
 
 use crate::extension::{SubAgentError, SubAgentResult, SubAgentWriter};
 use crate::names;
@@ -21,7 +21,7 @@ use caelumora_domain::value::name::Name;
 use caelumora_kernel::agent::{AgentError, AgentManager, AgentSpec};
 use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::error::{refusal, user_message};
-use caelumora_kernel::procedure::participant::lock_letting_go;
+use caelumora_kernel::procedure::participant::{self, lock_letting_go, Exit};
 use caelumora_kernel::procedure::thread;
 use caelumora_kernel::procedure::{
     Admitted, Compensation, Deferred, Key, Locks, Procedure, ProcedureError, ProcedureExecutor,
@@ -149,10 +149,17 @@ impl SubAgents {
         agent: AgentId,
     ) -> SubAgentResult<()> {
         let context = self.context();
-        match session.leave_held(admitted, context, ActorId::Agent(agent)).await {
-            Ok(()) => {}
-            Err(error) if let_go_already(&error) => {}
-            Err(error) => return Err(told(error)),
+        let leaving = participant::let_go_from_session(
+            admitted,
+            session,
+            context,
+            ActorId::Agent(agent),
+            Exit::Leaving,
+        );
+        match leaving.await {
+            // Let go already, as its owner may take it out.
+            Ok(()) | Err(SessionError::NotAParticipant { .. }) => {}
+            Err(error) => return Err(told(error.untyped())),
         }
         channel.close_thread_held(admitted, context, thread).await.map_err(told)?;
         Ok(())
@@ -319,11 +326,6 @@ impl From<ProcedureError> for SubAgentError {
     fn from(error: ProcedureError) -> Self {
         told(SessionError::from(error))
     }
-}
-
-/// Whether `error` says that the agent takes no part in the session any more.
-fn let_go_already(error: &Error) -> bool {
-    matches!(error.downcast_ref::<SessionError>(), Some(SessionError::NotAParticipant { .. }))
 }
 
 /// What the kernel refused the work or failed with, `error`, as a sub-agents' error: a refusal of

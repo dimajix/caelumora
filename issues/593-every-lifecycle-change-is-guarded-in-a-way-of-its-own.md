@@ -622,3 +622,16 @@ case; it is decided there, and may make this unnecessary.
   (`newcomer`), so that its actor follows a deletion meanwhile once it is taken in
   (`participant::Follow`), where the channel's second resolving refused it before. Step 5b's text
   is aligned with it.
+- **2026-11-19** — The step in which each object asks its own of the one taken in committed. Step
+  5b-2 implemented, not committed yet: one function lets someone go from the session,
+  `procedure::participant::let_go_from_session`, shared by `LetGo` and the sub-agents' `Ending`,
+  another from one channel, `let_go_from_channel` - split at the maintainer's request -, with
+  the way out as `Exit` (`Removed`, `Leaving`) in place of `GoingOut` and the channel's `Exit`. Each
+  object asks its own (`SessionLoop::require_exit`, `ChannelLoop::require_exit`); the session takes
+  them off its list (`unlist_participant_held`), and the procedure goes through its channels, the
+  running ones at once (`ChannelLoop::let_go_held`), one that does not run in its stored document
+  (`SessionLoop::let_go_where_unavailable_held`). The loops' `remove_participant_held`,
+  `leave_held`, `let_go` and `let_go_with_the_session` go, and so do `changing` of both loops -
+  every change of a participant is a procedure's that holds them - and with it `LocksById`. As the
+  maintainer decided, `ChannelLoop::follow_agents`, whose exclusion now rests on its callers alone,
+  takes the proof of admission in step 5e.

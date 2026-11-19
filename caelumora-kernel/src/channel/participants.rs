@@ -5,7 +5,7 @@ use super::{
     ActorChange, Actors, Answer, ChannelActor, ChannelError, ChannelLoop, ChannelParticipant,
     ResolvedParticipant, LEAVE_GRACE,
 };
-use crate::procedure::participant::Entry;
+use crate::procedure::participant::{Entry, Exit};
 use crate::procedure::Admitted;
 use anyhow::{Error, Result};
 use caelumora_api::actor::Actor;
@@ -26,19 +26,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::time;
 use tracing::{info, warn};
-
-/// How someone goes out of a channel (`ChannelLoop::let_go`): the one way out, asked for in three
-/// ways.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Exit {
-    /// Removed by whoever may change the channel (`UpdateChannel`).
-    Removed,
-    /// By their own act, themselves or their own agent (`LeaveChannel`, issue 562).
-    Leaving,
-    /// Let go from the session (issue 590), by whoever let them go from it: that was what was
-    /// asked.
-    WithTheSession,
-}
 
 impl ChannelLoop {
     /// Lists `resolved` - a participant of the session - in the channel, stored in the name of
@@ -160,64 +147,49 @@ impl ChannelLoop {
         Ok(())
     }
 
-    /// Removes `participant` from the channel on behalf of `context` (issue 46), for
-    /// `procedure::participant::LetGo`, who may change it (`UpdateChannel`, asked as it is
-    /// stored); then as [`Self::let_go`] says.
-    ///
-    /// # Errors
-    /// `ChannelError::NotAParticipant`; a `StoreError` if `context` may not change the channel.
-    pub(crate) async fn remove_participant_held(
-        &self,
-        _: &Admitted<'_>,
-        context: &SecurityContext,
-        participant: ActorId,
-    ) -> Result<()> {
-        self.let_go(context, participant, Exit::Removed).await
-    }
-
-    /// Takes `participant` - whom `context` acts for: themselves, or their own agent - out of the
-    /// channel by their own act (issue 562), for `procedure::participant::LetGo`, without the right
-    /// to change it: leaving (`LeaveChannel`) is asked in the participant's own context, an agent's
-    /// by its owner, as joining is (`require_entry`). Stored in the kernel's name once leaving was
-    /// permitted, kept as removed by `context`'s caller; then as [`Self::let_go`] says. Whether it
-    /// could run is not asked: an agent whose personality was withdrawn is taken out by its owner.
-    /// One that cannot be resolved, a deleted agent resting in the channel, cannot leave: whoever
-    /// may change the channel removes it.
+    /// Nothing if `participant` may go out of the channel on behalf of `context` by the way `exit`
+    /// says, for a procedure that lets them go (`procedure::participant::let_go_from_channel`): the
+    /// channel lists them; by their own act, whether leaving (`LeaveChannel`) is permitted in the
+    /// participant's own context, an agent's by its owner, as joining is (`require_entry`). Whether
+    /// it could run is not asked: an agent whose personality was withdrawn is taken out by its
+    /// owner. One that cannot be resolved, a deleted agent resting in the channel, cannot leave:
+    /// whoever may change the channel removes it - asked as the channel is stored (`let_go_held`).
     ///
     /// # Errors
     /// `ChannelError::NotAParticipant`; `ChannelError::Forbidden` if they may not leave; what
     /// resolving the participant reports (`Participation::resolve`).
-    pub(crate) async fn leave_held(
-        &self,
-        _: &Admitted<'_>,
-        context: &SecurityContext,
-        participant: ActorId,
-    ) -> Result<()> {
-        self.let_go(context, participant, Exit::Leaving).await
-    }
-
-    /// Takes `participant` out of the channel as it is let go from the session (issue 590), on
-    /// behalf of `context`, who let them go from it: asked nothing - letting them go from the
-    /// session was permitted - and stored in the kernel's name, kept as removed by `context`'s
-    /// caller; then as [`Self::let_go`] says. For `SessionLoop::remove_participant_held` and
-    /// `leave_held` alone. Nothing for one the channel does not list (any more).
-    ///
-    /// # Errors
-    /// What storing the channel reports.
-    pub(crate) async fn let_go_with_the_session(
+    pub(crate) async fn require_exit(
         &self,
         context: &SecurityContext,
         participant: ActorId,
+        exit: Exit,
     ) -> Result<()> {
-        self.let_go(context, participant, Exit::WithTheSession).await
+        let listed =
+            self.channel().participants.iter().find(|p| p.actor_id() == participant).cloned();
+        let Some(found) = listed else {
+            return Err(ChannelError::NotAParticipant { participant, channel: self.id }.into());
+        };
+        if exit == Exit::Leaving {
+            let channel = self.id;
+            let attributes = self.security_attributes();
+            let leaving = ActionType::LeaveChannel(&attributes);
+            let refusal = |refused| ChannelError::Forbidden { action: "leaving", channel, refused };
+            let Some(resolved) = self.resolve(&found).await? else {
+                return Err(refusal(leaving.refused()).into());
+            };
+            self.participation.require_own_act(&resolved, context, leaving, refusal).await?;
+        }
+        Ok(())
     }
 
-    /// Takes `participant` out of the channel on behalf of `context`, by the way `exit` says:
-    /// leaving is asked once the participant is resolved. Stored first, kept as a former
-    /// participant removed by `context`'s caller, then its actor stopped - an agent at once,
-    /// without finishing a turn; the approver discards its pending approvals. Its task's end is
-    /// waited for, so that nobody takes the participant in again before (`left`, issue 171), not
-    /// holding `changing`. The leave is announced by
+    /// Takes `participant` out of the channel on behalf of `context`, stored in the name of
+    /// `storing`, for a procedure that lets them go (`procedure::participant::let_go_from_channel`,
+    /// or `let_go_from_session` for every channel of the session), which asked what letting them go
+    /// asks; nothing for one it does not list (any more). Stored first, kept as a former
+    /// participant removed by `context`'s caller - asked as `UpdateChannel` of `storing` -, then
+    /// its actor stopped - an agent at once, without finishing a turn; the approver discards its
+    /// pending approvals. Its task's end is waited for (`left`, issue 171): the procedure holds the
+    /// participant meanwhile, so that nobody takes them in again before. The leave is announced by
     /// the `ChannelController` on the event bus (issue 73), and in the channel by `run` with a
     /// `ParticipantLeft` in the name of `context`'s caller, which its history records (issue 408),
     /// once the actor's task has ended: what it still sends until then - the step it was in, the
@@ -227,51 +199,23 @@ impl ChannelLoop {
     /// A participant without an actor - a deleted agent resting in the channel, one that cannot
     /// run - is removed from the document (issue 314), and restored it does not come back here;
     /// where its attendance in the history is still open - it was left out as the channel started
-    /// rather than stopped while it ran -, its leave is recorded at once (issue 590).
-    /// An internal actor of the channel - its approver - is none (issue 420). One change of a
-    /// participant at a time (`changing`, issue 564), as `follow_agents` makes it.
+    /// rather than stopped while it ran -, its leave is recorded at once (issue 590). An internal
+    /// actor of the channel - its approver - is none (issue 420).
     ///
     /// # Errors
-    /// `ChannelError::NotAParticipant` - but for one let go with the session, which the channel
-    /// need not list -, `Forbidden`; what resolving the one who leaves reports
-    /// (`Participation::resolve`); a `StoreError` if `context` may not change the channel, where
-    /// that is what is asked.
-    pub(super) async fn let_go(
+    /// What storing the channel reports - a `StoreError` if `storing` may not change it.
+    pub(crate) async fn let_go_held(
         &self,
+        _: &Admitted<'_>,
         context: &SecurityContext,
+        storing: &SecurityContext,
         participant: ActorId,
-        exit: Exit,
     ) -> Result<()> {
-        let _changing = self.changing.lock(participant).await;
-        let listed =
-            self.channel().participants.iter().find(|p| p.actor_id() == participant).cloned();
-        let Some(found) = listed else {
-            return match exit {
-                Exit::WithTheSession => Ok(()),
-                Exit::Removed | Exit::Leaving => {
-                    Err(ChannelError::NotAParticipant { participant, channel: self.id }.into())
-                }
-            };
-        };
-        // Leaving, or letting go from the session, was permitted; storing is the kernel's.
-        let storing = match exit {
-            Exit::Removed => context.clone(),
-            Exit::WithTheSession => SecurityContext::system(),
-            Exit::Leaving => {
-                let channel = self.id;
-                let attributes = self.security_attributes();
-                let leaving = ActionType::LeaveChannel(&attributes);
-                let refusal =
-                    |refused| ChannelError::Forbidden { action: "leaving", channel, refused };
-                let Some(resolved) = self.resolve(&found).await? else {
-                    return Err(refusal(leaving.refused()).into());
-                };
-                self.participation.require_own_act(&resolved, context, leaving, refusal).await?;
-                SecurityContext::system()
-            }
-        };
+        if !self.channel().lists(participant) {
+            return Ok(());
+        }
         let running = self.actors.load().get(&participant).cloned();
-        self.channel.remove_participant(&storing, participant, context.caller_id).await?;
+        self.channel.remove_participant(storing, participant, context.caller_id).await?;
         let left = match running {
             Some(running) => Some(self.leave_actor(participant, running, context)),
             // Without an actor - left out as the channel started - but taking part in its history
@@ -285,7 +229,6 @@ impl ChannelLoop {
                 None => None,
             },
         };
-        // Holding the participant, so that nobody takes them in before its old actor ended.
         if let Some(left) = left {
             self.left(participant, left).await;
         }
@@ -306,9 +249,9 @@ impl ChannelLoop {
     /// given back while the session runs, then one of the occasions that have the agents followed;
     /// telling it apart would need the channel to keep why it left out whom (issue 564). One that
     /// cannot be read or run is logged and left as it is. Of a running one only whether it exists
-    /// is asked, not again whether it may run. One change of a participant at a time (`changing`,
-    /// issue 564), as letting go makes it: an agent being let go meanwhile is looked at
-    /// once that is done, and not at all once it is no longer listed.
+    /// is asked, not again whether it may run. For a procedure that holds the agents
+    /// (`participant::Follow`), or a session it starts (`SessionManager::open_held`): nobody takes
+    /// them in or lets them go meanwhile (issue 593).
     pub(crate) async fn follow_agents(&self, only: Option<&HashSet<AgentId>>) {
         let agents: Vec<Participant> = self
             .channel()
@@ -320,11 +263,6 @@ impl ChannelLoop {
         for participant in agents {
             let Participant::Agent(id) = participant else { continue };
             let actor = participant.actor_id();
-            let changing = self.changing.lock(actor).await;
-            // Removed meanwhile, by whoever held the lock before: nothing to follow.
-            if !self.channel().lists(actor) {
-                continue;
-            }
             match self.actors.load().get(&actor).cloned() {
                 // Running: only whether it still exists matters.
                 Some(running) => match self.participation.agent_exists(id).await {
@@ -360,7 +298,6 @@ impl ChannelLoop {
                     match rejoined {
                         Ok(Some(started)) => {
                             // Started once `run` answers, as taking in waits for it.
-                            drop(changing);
                             started.carried_out().await;
                             self.channel.announce_resting(id, false);
                             info!(

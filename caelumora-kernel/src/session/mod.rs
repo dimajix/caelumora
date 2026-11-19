@@ -19,7 +19,6 @@ use crate::controller::{ControllerManager, SessionController, WorkspaceControlle
 use crate::event::{EventBus, EventSubscription, Following, SubscriptionTopic};
 use crate::group::{keep_participants, GroupManager};
 use crate::kernel::{ChannelRuntime, Kernel};
-use crate::lock::LocksById;
 use crate::procedure::{ProcedureError, ProcedureExecutor};
 use crate::scoped::{purge_for_good, ScopeNotEmpty, ScopedEntities};
 use crate::view::{Viewer, Views};
@@ -187,7 +186,8 @@ enum ChannelEntry {
     Running { channel: Arc<ChannelLoop>, task: Option<AbortHandle> },
     /// Left out as the session opened (issue 463): its components cannot be read. Held with its
     /// document as it was then; a channel that does not run is changed only as someone is let go
-    /// from the session (issue 590), and its copy renewed with it (`let_go_where_unavailable`).
+    /// from the session (issue 590), and its copy renewed with it
+    /// (`let_go_where_unavailable_held`).
     Unavailable { channel: Arc<Channel>, cause: Arc<ComponentError> },
 }
 
@@ -270,13 +270,6 @@ pub struct SessionLoop {
     /// What the participants it takes in are followed by on `subscription` (issue 590), from
     /// wherever it takes them in.
     following: Following,
-    /// Held while a participant is taken in - into the session and a channel of it, rolled back if
-    /// the channel cannot take them in, or as a founder of a channel (`found`) - or let go from the
-    /// session (issue 590), one change of a participant at a time, as a channel makes them
-    /// (`ChannelLoop::changing`): before the channel's lock, every way into a channel coming
-    /// through the session. Restoring a channel holds those of all its participants, in the
-    /// order of their ids, the one place several are held.
-    changing: LocksById<ActorId>,
 }
 
 /// Removes the document of channel `channel_id` for good, in the kernel's name, with the group of
@@ -416,7 +409,6 @@ impl SessionLoop {
             start_rx: Mutex::new(start_rx),
             subscription: Mutex::new(subscription),
             following,
-            changing: LocksById::new(),
         });
         for channel in channels {
             session_loop.add_listed_channel(channel).await?;

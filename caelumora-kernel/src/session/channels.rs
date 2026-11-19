@@ -460,38 +460,40 @@ impl SessionLoop {
         }
     }
 
-    /// Lets `participant` go from the channel `channel_id`, which did not run as it was reached
-    /// (issue 463), on behalf of `context`, who let them go from the session (issue 590): in its
-    /// stored document, as its controller lets one go, and in the copy the session holds, so that
-    /// it is built without them. Not while it is built again: `procedure::participant::LetGo`
-    /// holds the channel, which building it again holds too (`retry_unavailable_held`), so that it
-    /// is neither built meanwhile nor from a copy that still lists them.
+    /// Lets `participant` go from the channel `channel_id`, which does not run (issue 463), on
+    /// behalf of `context`, who let them go from the session (issue 590), for a procedure that lets
+    /// them go (`procedure::participant::let_go_from_session`): in its stored document, as its
+    /// controller lets one go, and in the copy the session holds, so that it is built without them.
+    /// Nothing for a channel that does not list them, one that runs or one the session does not
+    /// list: the procedure asks it of every channel of the session that does not run. Not while it
+    /// is built again: the procedure holds the channel, which building it again holds too
+    /// (`retry_unavailable_held`), so that it is neither built meanwhile nor from a copy that still
+    /// lists them.
     ///
     /// # Errors
     /// Whatever storing the channel reports.
-    pub(super) async fn let_go_where_unavailable(
+    pub(crate) async fn let_go_where_unavailable_held(
         &self,
+        _: &Admitted<'_>,
         context: &SecurityContext,
         channel_id: ChannelId,
         participant: ActorId,
     ) -> Result<()> {
-        match self.listed_channel(channel_id) {
-            Some((_, ChannelRun::Running(running))) => {
-                running.let_go_with_the_session(context, participant).await
-            }
-            Some((held, ChannelRun::Unavailable(_))) if held.lists(participant) => {
-                let held = Channel::clone(&held);
-                let by = context.caller_id;
-                let channel = self.let_go_where_not_running(held, &[participant], by).await?;
-                if let Some(mut entry) = self.channels.get_mut(&channel_id) {
-                    if let ChannelEntry::Unavailable { channel: held, .. } = &mut *entry {
-                        *held = Arc::new(channel);
-                    }
-                }
-                Ok(())
-            }
-            Some((_, ChannelRun::Unavailable(_))) | None => Ok(()),
+        let Some((held, ChannelRun::Unavailable(_))) = self.listed_channel(channel_id) else {
+            return Ok(());
+        };
+        if !held.lists(participant) {
+            return Ok(());
         }
+        let held = Channel::clone(&held);
+        let by = context.caller_id;
+        let channel = self.let_go_where_not_running(held, &[participant], by).await?;
+        if let Some(mut entry) = self.channels.get_mut(&channel_id) {
+            if let ChannelEntry::Unavailable { channel: held, .. } = &mut *entry {
+                *held = Arc::new(channel);
+            }
+        }
+        Ok(())
     }
 
     /// `channel`, which does not run, with `participants` let go by `by` (issue 590): stored in the
@@ -634,9 +636,9 @@ impl SessionLoop {
     /// deleted (issue 590) is let go from it now, in the kernel's name and removed by it, before
     /// it is built - the document of a deleted channel cannot be changed -, and their clearance is
     /// not asked: who was taken into the session again meanwhile comes back with it. While it is
-    /// restored, none of its participants is taken in or let go (`changing`, issue 590): it holds
-    /// the locks of all of them, in the order of their ids, until it is listed again, so that one
-    /// let go meanwhile is let go after it, from it too.
+    /// restored, none of its participants is taken in or let go: the procedure that restores it
+    /// holds all of them until it is listed again (`procedure::channel::Restore`, issue 593), so
+    /// that one let go meanwhile is let go after it, from it too.
     ///
     /// # Errors
     /// - `SessionError::ChannelNotFound` if the session has no such deleted
@@ -674,9 +676,6 @@ impl SessionLoop {
                 StoreError::PermissionDenied,
             )
             .await?;
-        // All of its participants held, in one order wherever several are, until it is listed.
-        let held = channel.participants.iter().map(Participant::actor_id);
-        let _changing = self.changing.lock_all(held, ActorId::id).await;
         let session = self.session();
         let (staying, gone): (Vec<Participant>, Vec<Participant>) =
             channel.participants.iter().cloned().partition(|p| session.takes_part(p.actor_id()));
