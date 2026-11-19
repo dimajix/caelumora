@@ -16,7 +16,6 @@ mod tests;
 mod thread;
 mod threads;
 
-pub(crate) use participants::Entry;
 pub(crate) use participation::{Participation, ResolvedKind, ResolvedParticipant};
 
 use crate::actor::approval::ApproverActor;
@@ -236,11 +235,11 @@ struct Request {
 /// nothing, if `run` ended with the change under way or before it was handed in, or the channel is
 /// gone. A change handed in before `run` starts waits for it.
 #[derive(Debug)]
-struct Answer(oneshot::Receiver<()>);
+pub(crate) struct Answer(oneshot::Receiver<()>);
 
 impl Answer {
     /// Waits for the answer: whether `run` carried the change out.
-    async fn carried_out(self) -> bool {
+    pub(crate) async fn carried_out(self) -> bool {
         self.0.await.is_ok()
     }
 }
@@ -446,7 +445,8 @@ impl ChannelLoop {
     /// One for each thread (issue 557), built as it is opened.
     ///
     /// # Errors
-    /// `SessionError::InvalidComponents` if the components make no moderator.
+    /// `SessionError::InvalidComponents` if the components make no moderator; what reading the
+    /// owner's context reports.
     async fn moderator(&self) -> Result<ComponentImpl<dyn Moderator>> {
         let runtime = &self.runtime;
         let channel = self.channel.load();

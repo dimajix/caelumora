@@ -506,8 +506,8 @@ can answer a question differently from the action.
 ### Operations that check themselves
 
 An operation that checks its permission as part of what it does - `ChannelLoop::cancel`,
-`add_participant`, a store's `update_channel` - keeps that check itself. Only pure questions go into
-`AccessQuestions`, and none onto the entities.
+`close_thread_held`, a store's `update_channel` - keeps that check itself. Only pure questions go
+into `AccessQuestions`, and none onto the entities.
 
 Such an operation checks with `Enforcement::require(context, action, refusal)`, another extension
 trait on every `AccessPolicy`. It answers a refusal with the operation's own error and logs every

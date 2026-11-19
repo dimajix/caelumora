@@ -2,20 +2,17 @@
 //! message of another, with its founders taking part in it alone, closed once nobody takes part in
 //! it any more, and built again from the channel's state as the channel starts.
 
-use super::participants::{Entry, Exit};
 use super::thread::Thread;
 use super::{ActorChange, ChannelError, ChannelLoop};
 use crate::procedure::Admitted;
 use anyhow::Result;
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::channel::{
-    Channel, HistoryAccess, Opening, ThreadId, ThreadOrigin, ThreadState,
-};
+use caelumora_domain::channel::{Channel, Opening, ThreadId, ThreadOrigin, ThreadState};
 use caelumora_domain::store::Stored;
 use caelumora_security::{ActionType, SecurityContext};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::info;
 
 impl ChannelLoop {
     /// Builds the channel's open threads as it starts (`ChannelState::threads`), its line among
@@ -91,28 +88,22 @@ impl ChannelLoop {
         Ok(())
     }
 
-    /// Opens thread `thread` of the channel at `origin` on behalf of `context`, with `founders` -
-    /// each a participant of the session, whom `context` acts for or an agent of their own -
-    /// taking part in it alone. For `SessionLoop::open_thread_held` alone, which asked
-    /// `require_opening` and holds the session's locks of the founders first (issue 590), for a
-    /// procedure that holds the thread until its founders joined (issue 593).
-    ///
-    /// The thread is there at once, with a moderator of its own, and `run` announces it
-    /// (`ThreadOpened`) in the name of `context`'s caller - after whatever was sent into the
-    /// channel before, which `run` takes first, the message with the call that opened it among
-    /// them - and before the founders' joins. They are taken in one after the other, as founders
-    /// are: given what is said in the thread from their join on, stored in the kernel's name. If
-    /// one cannot be, the opening is rolled back (`roll_back_opening`).
+    /// Opens thread `thread` of the channel at `origin` on behalf of `context`, for a procedure
+    /// that holds it (`procedure::thread::open`), which asked `require_opening` and takes its
+    /// founders in after: the thread is there at once, with a moderator of its own, and `run`
+    /// announces it (`ThreadOpened`) in the name of `context`'s caller - after whatever was sent
+    /// into the channel before, which `run` takes first, the message with the call that opened it
+    /// among them - and before the founders' joins, which are handed to it after.
     ///
     /// # Errors
-    /// What taking a founder in reports (`take_in`).
+    /// As building its moderator: `SessionError::InvalidComponents` if the channel's components
+    /// make none.
     pub(crate) async fn open_thread_held(
         &self,
         _: &Admitted<'_>,
         context: &SecurityContext,
         thread: ThreadId,
         origin: ThreadOrigin,
-        founders: &[ActorId],
     ) -> Result<()> {
         let opening = Opening { origin, by: context.caller_id };
         let opened = Arc::new(Thread::new(self.moderator().await?, Some(opening)));
@@ -122,40 +113,19 @@ impl ChannelLoop {
             threads
         });
         let _ = self.request(ActorChange::Open(thread, opening, context.clone()));
-        let mut founded = Vec::with_capacity(founders.len());
-        for founder in founders {
-            let founding =
-                self.take_in(context, *founder, HistoryAccess::None, Entry::Founding, thread).await;
-            if let Err(error) = founding {
-                self.roll_back_opening(context, thread, &founded).await;
-                return Err(error);
-            }
-            founded.push(*founder);
-        }
         info!("Thread {} opened in channel {} by {}", thread, self.id, context.caller_id);
         Ok(())
     }
 
-    /// Rolls back opening `thread`, once one of its founders could not be taken in: those that
-    /// were, `founded`, are let go as they are let go with the session - in the kernel's name, kept
-    /// as removed by `context`'s caller -, and the thread is closed. What cannot be rolled back is
-    /// logged and stays.
-    async fn roll_back_opening(
+    /// Takes back opening `thread`, for the compensation of opening it, once its founders are
+    /// taken back: closed in the name of `by`, as `run` closes a thread, and waited for.
+    pub(crate) async fn undo_opening_held(
         &self,
-        context: &SecurityContext,
+        _: &Admitted<'_>,
+        by: &SecurityContext,
         thread: ThreadId,
-        founded: &[ActorId],
     ) {
-        for founder in founded {
-            if let Err(undo) = self.let_go(context, *founder, Exit::WithTheSession).await {
-                warn!(
-                    "{} founded thread {} of channel {}, which could not be opened, and was not \
-                     let go again: {}",
-                    founder, thread, self.id, undo
-                );
-            }
-        }
-        let _ = self.request(ActorChange::Close(thread, context.clone())).carried_out().await;
+        let _ = self.request(ActorChange::Close(thread, by.clone())).carried_out().await;
     }
 
     /// Closes `thread` on behalf of `context` (issue 557), for a procedure that holds it

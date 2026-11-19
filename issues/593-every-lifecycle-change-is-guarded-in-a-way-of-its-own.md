@@ -585,3 +585,23 @@ case; it is decided there, and may make this unnecessary.
   locks is one public function, `procedure::participant::lock_letting_go`, which `LetGo` and the
   sub-agents' `Ending` share: the latter rebuilt it by hand, and without the threads the one let go
   takes part in in other channels.
+- **2026-11-19** — Step 5b split at the maintainer's request: first taking in, then letting go with
+  `changing` and `LocksById`. The first part implemented, not committed yet: one function takes
+  someone in, `procedure::participant::take_in`, shared by `TakeIn`, `channel::Create`, a template's
+  founders and `SessionManager::make`, with the way in as `Entry` (`Added`, `Joining`, `Founding`,
+  `FoundingThread`). It has two parts: into the session (`take_into_session`), where everything
+  asked of the one taken in is asked once (`SessionLoop::take_in_held`), and into the channel
+  (`take_into_channel`); `procedure::thread::open`, which `thread::Open` and the sub-agents'
+  `Starting` share, asks every founder into the session before the thread is there, then opens it
+  and takes each into the channel, in the order named. The channel's second asking of joining,
+  whether one may run and is cleared goes. The building blocks list and take back a listing
+  (`SessionLoop::undo_listing_held`; `ChannelLoop::list_participant_held`, `undo_listing_held`)
+  and open a thread without founders (`ChannelLoop::open_thread_held`, `undo_opening_held`); the
+  rollbacks - `roll_back_taking_in`, the channel's of a failed start, `roll_back_opening` - become
+  compensations. A founder of a thread taken back is now taken out as if never taken in, rather
+  than let go as a former participant. `ChannelLoop::add_participant`, `join`, `found`, `take_in`
+  and the session's `add_participant_held`, `join_held`, `found` go; the tests of threads move from
+  `session::threads` to `procedure::thread`. At the maintainer's request, the procedure starts the
+  actor by a building block with the proof as well (`ChannelLoop::start_participant_held`); the
+  starts within the channel - as it is built, as it follows its agents - stay without it until
+  step 5e.

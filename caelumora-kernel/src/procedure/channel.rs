@@ -10,12 +10,13 @@
 //! (`participant`), so that neither crosses a channel being made, deleted, restored, built again or
 //! reclassified.
 
+use super::participant::{take_in, Entry};
 use super::session::lock_to_open;
 use super::{Admitted, Compensation, Deferred, Key, Locks, Procedure};
 use crate::channel::ChannelLoop;
 use crate::session::{ChannelRun, ChannelSpec, SessionError, SessionManager};
 use async_trait::async_trait;
-use caelumora_domain::channel::ChannelId;
+use caelumora_domain::channel::{ChannelId, HistoryAccess, ThreadId};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::session::SessionId;
 use caelumora_security::SecurityContext;
@@ -69,7 +70,8 @@ impl Procedure for Create {
 
     /// # Errors
     /// As `SessionManager::open_held`, `SessionLoop::create_channel_held` and taking a founder in
-    /// (`ChannelLoop::found`); the channel is taken back then.
+    /// (`participant::take_in`); the channel is taken back then, each founder taken in before
+    /// first.
     async fn carry_out(
         self,
         (): (),
@@ -89,8 +91,9 @@ impl Procedure for Create {
                 })
             });
         }
+        let into = Some((&channel, HistoryAccess::None, ThreadId::line(channel.id())));
         for founder in founders {
-            session.found(admitted, &context, &channel, founder).await?;
+            take_in(admitted, log, &session, &context, founder, Entry::Founding, into).await?;
         }
         session.announce_created(&channel);
         Ok(channel)

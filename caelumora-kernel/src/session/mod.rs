@@ -7,7 +7,6 @@ mod settings;
 mod spec;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
-mod threads;
 
 pub(crate) use manager::Found;
 pub use manager::SessionManager;

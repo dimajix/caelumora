@@ -1,139 +1,64 @@
 //! Who takes part in a running session after it was built: taken in (issue 221) by whoever may
 //! change it, by their own act where its access list lets them join - into the session and, if one
 //! is named, into one of its channels at once -, or as a founder of a thread (issue 557,
-//! `threads`), and let go (issue 590) by whoever may change it, or by their own act - out of the
-//! session and every channel of it.
+//! `procedure::thread::open`), and let go (issue 590) by whoever may change it, or by their own
+//! act: out of the session and every channel of it.
 
 use super::{ChannelRun, SessionError, SessionLoop};
-use crate::channel::{ChannelLoop, Entry, ResolvedParticipant};
+use crate::channel::{ChannelError, ChannelLoop, ResolvedParticipant};
 use crate::event::SubscriptionTopic;
+use crate::procedure::participant::Entry;
 use crate::procedure::Admitted;
 use anyhow::{anyhow, Result};
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::channel::{Channel, ChannelId, HistoryAccess, Participant};
+use caelumora_domain::channel::{Channel, Participant};
 use caelumora_domain::session::Session;
 use caelumora_domain::store::{StoreError, Stored};
 use caelumora_security::{ActionType, Enforcement, SecurityContext, JOIN};
 use futures::future;
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::info;
 
 impl SessionLoop {
-    /// Takes `participant` - a user, or an agent `context` may read (issue 14: nobody brings in
-    /// an agent whose tools they may not use) - into the session on behalf of `context`, for
-    /// `procedure::participant::TakeIn`, who may change it (`UpdateSession`, asked before anything
-    /// else), and with `into` into that channel at once, seeing as much of its history as granted
-    /// there - as whoever may change the channel (`UpdateChannel`). One in the session already is
-    /// only added to the channel, which needs no right to change the session (issue 46).
-    /// Everything is asked before anything is stored - their clearance for the channel too; the
-    /// session is stored first, then the channel: one the channel cannot take in after all -
-    /// refused, or failed as their actor starts - is rolled back out of the session as it had them
-    /// before (`roll_back_taking_in`, issue 590). One change of a participant at a time
-    /// (`changing`), until founding a channel or a thread is a procedure too (issue 593): who
-    /// takes the same person in, or lets them go, meanwhile waits, so that a rollback never takes
-    /// out one whom another took into a channel.
+    /// Nothing if `context` may change the session (`UpdateSession`): what taking someone into it
+    /// asks, before anything else (issue 221).
     ///
     /// # Errors
-    /// `StoreError::PermissionDenied` if `context` may not change the session or the channel;
-    /// `SessionError::ChannelNotFound` for a channel they may not read;
-    /// `SessionError::AlreadyParticipant` for one in the session already and no channel named;
-    /// as `take_in` otherwise, and as `ChannelLoop::add_participant`.
-    pub(crate) async fn add_participant_held(
-        &self,
-        _: &Admitted<'_>,
-        context: &SecurityContext,
-        participant: ActorId,
-        into: Option<(ChannelId, HistoryAccess)>,
-    ) -> Result<()> {
-        let _changing = self.changing.lock(participant).await;
+    /// `StoreError::PermissionDenied` if they may not.
+    pub(crate) async fn require_changing(&self, context: &SecurityContext) -> Result<()> {
         let session = self.session();
-        if into.is_none() || !session.participants.iter().any(|p| p.actor_id() == participant) {
-            self.policies
-                .access_policy()
-                .require(
-                    context,
-                    ActionType::update(Session::KIND, &session.security_attributes),
-                    StoreError::PermissionDenied,
-                )
-                .await?;
-        }
-        let channel = match into {
-            Some((id, history)) => {
-                let channel = self.channel_for(context, id).await?;
-                self.policies
-                    .access_policy()
-                    .require(
-                        context,
-                        ActionType::update(Channel::KIND, &channel.security_attributes()),
-                        StoreError::PermissionDenied,
-                    )
-                    .await?;
-                Some((channel, history))
-            }
-            None => None,
-        };
-        let taken = channel.as_ref().map(|(channel, _)| channel);
-        let before = self.take_in(context, participant, taken, Entry::Added).await?;
-        if let Some((channel, history)) = channel {
-            if let Err(error) = channel.add_participant(context, participant, history).await {
-                self.roll_back_taking_in(participant, before.as_ref()).await;
-                return Err(error);
-            }
-        }
+        self.policies
+            .access_policy()
+            .require(
+                context,
+                ActionType::update(Session::KIND, &session.security_attributes),
+                StoreError::PermissionDenied,
+            )
+            .await?;
         Ok(())
     }
 
-    /// Takes `participant` - whom `context` acts for: themselves, or their own agent - into the
-    /// session by their own act, for `procedure::participant::TakeIn`, where an entry of its access
-    /// list lets them join (`JOIN`), and with `into` into that channel at once, where the channel's
-    /// list lets them join as well (`ChannelLoop::join`). Asked and stored as
-    /// `add_participant_held`, but stored in the kernel's name once joining was permitted; one the
-    /// channel cannot take in is rolled back out of the session, their invitation to it given back
-    /// (`roll_back_taking_in`, issue 590).
-    ///
-    /// # Errors
-    /// `StoreError::PermissionDenied` if they may not join the session or the channel;
-    /// `SessionError::ChannelNotFound` if there is no such channel, `ChannelUnavailable` if it does
-    /// not run (issue 463); as `add_participant_held` otherwise.
-    pub(crate) async fn join_held(
-        &self,
-        _: &Admitted<'_>,
-        context: &SecurityContext,
-        participant: ActorId,
-        into: Option<ChannelId>,
-    ) -> Result<()> {
-        let _changing = self.changing.lock(participant).await;
-        let channel = match into {
-            Some(id) => Some(self.channel_to_join(id)?),
-            None => None,
-        };
-        let before = self.take_in(context, participant, channel.as_ref(), Entry::Joining).await?;
-        if let Some(channel) = channel {
-            if let Err(error) = channel.join(context, participant).await {
-                self.roll_back_taking_in(participant, before.as_ref()).await;
-                return Err(error);
-            }
-        }
-        Ok(())
-    }
-
-    /// Takes `actor` into the session on behalf of `context`, by the way `entry` says - by their
-    /// own act if joining, once it is asked whether they may join it, and `channel` if one is
-    /// named, by themselves; as a founder of a thread of `channel` if founding, once it is asked
-    /// whether they are whom `context` acts for or an agent of their own (issue 557), opening the
-    /// thread being permitted - and then whether they can be taken in and take part in `channel`
-    /// as well
+    /// Takes `actor` into the session on behalf of `context`, for a procedure that takes them in
+    /// (`procedure::participant::take_in`), by the way `entry` says - by their own act if joining,
+    /// once it is asked whether they may join it, and `channel` if one is named, by themselves; as
+    /// a founder of a thread of `channel` if founding, once it is asked whether they are whom
+    /// `context` acts for or an agent of their own (issue 557), opening the thread being permitted;
+    /// and then whether they can be taken in and take part in `channel` as well
     /// (`require_to_take_in`): whose participant it is first, then anything in its name (issue
     /// 562). Whoever takes them in reads them first, a user to find out that they exist (issue
     /// 120). The session announces it, and follows the one taken in from here on (`following`).
-    /// Answers the session as it was before, where it took them in; `None` for one in it already.
+    /// Answers the session as it was before, where it took them in, which taking the listing back
+    /// returns to (`undo_listing_held`); `None` for one in it already.
     ///
     /// # Errors
-    /// `SessionError::AlreadyParticipant`, `CannotTakeIn`; `StoreError::PermissionDenied` if they
-    /// may not join; `ChannelError::OutOfScope` or `NotCleared`; whatever reading them or
-    /// storing the session reports.
-    pub(super) async fn take_in(
+    /// `SessionError::AlreadyParticipant`, `CannotTakeIn`; `ChannelError::NotInSession` for a
+    /// founder of a channel the session does not list; `StoreError::PermissionDenied` if they may
+    /// not join;
+    /// `ChannelError::OutOfScope` or `NotCleared`; whatever reading them or storing the session
+    /// reports.
+    pub(crate) async fn take_in_held(
         &self,
+        _: &Admitted<'_>,
         context: &SecurityContext,
         actor: ActorId,
         channel: Option<&Arc<ChannelLoop>>,
@@ -146,22 +71,34 @@ impl SessionLoop {
                 SessionError::AlreadyParticipant { session: self.id, participant: actor }.into()
             );
         }
-        let participant = match actor {
-            ActorId::User(id) => {
-                self.stores.users.get(context, id).await?;
-                Participant::User(id)
+        let listed = session.participants.iter().find(|p| p.actor_id() == actor).cloned();
+        let participant = match (entry, listed) {
+            // A founder of a channel just created is one of the session's, named by its creator:
+            // creating the channel with them was what was asked (issue 420).
+            (Entry::Founding, Some(listed)) => listed,
+            (Entry::Founding, None) => {
+                let channel = channel.ok_or_else(|| anyhow!("{actor} founds no channel"))?;
+                let outside =
+                    ChannelError::NotInSession { participant: actor, channel: channel.id() };
+                return Err(outside.into());
             }
-            ActorId::Agent(id) => {
-                self.stores.agents.get(context, id).await?;
-                Participant::Agent(id)
-            }
-            other => return Err(SessionError::CannotTakeIn(other).into()),
+            _ => match actor {
+                ActorId::User(id) => {
+                    self.stores.users.get(context, id).await?;
+                    Participant::User(id)
+                }
+                ActorId::Agent(id) => {
+                    self.stores.agents.get(context, id).await?;
+                    Participant::Agent(id)
+                }
+                other => return Err(SessionError::CannotTakeIn(other).into()),
+            },
         };
         let resolved = self.resolve_to_take_in(&participant, channel).await?;
         // A founder of a thread of `channel` is whom the opener acts for, or their own agent
         // (issue 557), in the session already or not; without a channel there is no thread, and
         // nobody is taken in as its founder.
-        if entry == Entry::Founding {
+        if entry == Entry::FoundingThread {
             let channel =
                 channel.ok_or_else(|| anyhow!("{actor} founds a thread of no channel"))?;
             let attributes = channel.security_attributes();
@@ -173,23 +110,16 @@ impl SessionLoop {
                 StoreError::PermissionDenied,
             )?;
         }
-        // Joining or founding was permitted; storing is the kernel's.
-        let storing = match (in_session, entry) {
-            (true, _) => None,
-            (false, Entry::Joining) => {
-                self.participation
-                    .require_own_act(
-                        &resolved,
-                        context,
-                        ActionType::custom(Session::KIND, &JOIN, &session.security_attributes),
-                        StoreError::PermissionDenied,
-                    )
-                    .await?;
-                Some(SecurityContext::system())
-            }
-            (false, Entry::Founding) => Some(SecurityContext::system()),
-            (false, Entry::Added) => Some(context.clone()),
-        };
+        if !in_session && entry == Entry::Joining {
+            self.participation
+                .require_own_act(
+                    &resolved,
+                    context,
+                    ActionType::custom(Session::KIND, &JOIN, &session.security_attributes),
+                    StoreError::PermissionDenied,
+                )
+                .await?;
+        }
         if let (Some(channel), Entry::Joining) = (channel, entry) {
             let attributes = channel.security_attributes();
             self.participation
@@ -203,50 +133,35 @@ impl SessionLoop {
         }
         // Whose participant it is first, then anything in its name (issue 562).
         self.require_to_take_in(context, &resolved, channel).await?;
-        let Some(storing) = storing else { return Ok(None) };
+        if in_session {
+            return Ok(None);
+        }
         // Followed before it is stored, so that nothing of it is missed meanwhile - its deletion
-        // above all. One whose storing fails, or who is rolled back out of the session again
-        // (`roll_back_taking_in`), is followed for nothing, which is harmless: its channels look
-        // only at whom they list, and a topic followed already is not followed twice.
+        // above all. One whose storing fails, or who is taken out of the session again by the
+        // compensation of taking them in (`undo_listing_held`), is followed for nothing, which is
+        // harmless: its channels look only at whom they list, and a topic followed already is not
+        // followed twice.
         self.events.follow(&self.following, SubscriptionTopic::of_participant(&participant));
+        let storing = entry.storing(context);
         let before = self.session_controller.add_participant(&storing, participant).await?;
         info!(session = %self.id, participant = %actor, by = %context.caller_id, "Taken into the session");
         Ok(Some(before))
     }
 
-    /// Rolls back taking `participant` into the session, as `before` - the session as it was
-    /// before - had them, once its channel could not take them in (issue 590): out of it again,
-    /// their invitation given back (`SessionController::roll_back_participant_addition`). Nothing
-    /// for one who was in it before (`None`). What cannot be rolled back is logged and stays.
-    pub(super) async fn roll_back_taking_in(&self, participant: ActorId, before: Option<&Session>) {
-        let Some(before) = before else { return };
-        let rolled_back =
-            self.session_controller.roll_back_participant_addition(participant, before);
-        if let Err(undo) = rolled_back.await {
-            warn!(
-                "{} was taken into session {} but not its channel, and not rolled back: {}",
-                participant, self.id, undo
-            );
-        }
-    }
-
-    /// Takes `participant` into `channel` of the session as one of its founders, on behalf of
-    /// `context`, who created it (`ChannelLoop::found`), one change of a participant at a time
-    /// (`changing`, issue 590), as taking in makes it: for the creation of a channel alone -
-    /// `procedure::channel::Create`, a template's (`SessionManager::make_from_template`), and
-    /// `SessionManager::make`.
+    /// Takes back listing `participant` in the session, for the compensation of taking them in:
+    /// the session is again as it was `before`, their invitation given back
+    /// (`SessionController::roll_back_participant_addition`, issue 590).
     ///
     /// # Errors
-    /// As `ChannelLoop::found`.
-    pub(crate) async fn found(
+    /// What storing the session reports.
+    pub(crate) async fn undo_listing_held(
         &self,
-        admitted: &Admitted<'_>,
-        context: &SecurityContext,
-        channel: &ChannelLoop,
+        _: &Admitted<'_>,
         participant: ActorId,
+        before: &Session,
     ) -> Result<()> {
-        let _changing = self.changing.lock(participant).await;
-        channel.found(admitted, context, participant).await
+        self.session_controller.roll_back_participant_addition(participant, before).await?;
+        Ok(())
     }
 
     /// Lets `participant` go from the session on behalf of `context`, for
@@ -261,15 +176,7 @@ impl SessionLoop {
         context: &SecurityContext,
         participant: ActorId,
     ) -> Result<()> {
-        let session = self.session();
-        self.policies
-            .access_policy()
-            .require(
-                context,
-                ActionType::update(Session::KIND, &session.security_attributes),
-                StoreError::PermissionDenied,
-            )
-            .await?;
+        self.require_changing(context).await?;
         if self.listed_anywhere(participant).is_none() {
             return Err(SessionError::NotAParticipant { session: self.id, participant }.into());
         }
@@ -309,16 +216,16 @@ impl SessionLoop {
 
     /// Lets `participant` go on behalf of `context`, stored in the name of `storing` (issue 590),
     /// asking nothing: its callers asked what letting go is asked for in their way, and say in
-    /// whose name it is stored. One change of a participant at a time (`changing`), as taking in
-    /// makes it, so that taking one person in and letting them go do not cross; what is asked is
-    /// asked before. Out of the session first, so that nobody takes them into one of its channels
-    /// from then on (`ChannelLoop::take_in`); then out of every channel of it in the kernel's name,
-    /// kept as removed by `context`'s caller, each as it is when it is reached: a running one as
-    /// `ChannelLoop::let_go_with_the_session` says, one that does not run (issue 463) as
-    /// `let_go_where_unavailable` does. A deleted channel lets them go as it is restored
-    /// (`restore_channel_held`). Nothing is rolled back - taking them out of a channel ended their
-    /// turn -: a channel that fails leaves the error to the caller, and asking again, for one out
-    /// of the session and not yet out of each of its channels, finishes it.
+    /// whose name it is stored. One change of a participant at a time (`changing`), as an agent's
+    /// actor following its agent makes it, until letting go is the procedures' alone (issue 593);
+    /// what is asked is asked before. Out of the session first, so that nobody takes them into one
+    /// of its channels from then on (`ChannelLoop::list_participant_held`); then out of every
+    /// channel of it in the kernel's name, kept as removed by `context`'s caller, each as it is
+    /// when it is reached: a running one as `ChannelLoop::let_go_with_the_session` says, one that
+    /// does not run (issue 463) as `let_go_where_unavailable` does. A deleted channel lets them go
+    /// as it is restored (`restore_channel_held`). Nothing is rolled back - taking them out of a
+    /// channel ended their turn -: a channel that fails leaves the error to the caller, and asking
+    /// again, for one out of the session and not yet out of each of its channels, finishes it.
     ///
     /// # Errors
     /// Whatever storing the session or a channel reports.
@@ -408,7 +315,7 @@ impl SessionLoop {
 
 #[cfg(test)]
 mod tests {
-    use crate::channel::{ChannelError, ChannelLoop};
+    use crate::channel::ChannelLoop;
     use crate::component::BUNDLE_REF_KIND;
     use crate::event::SubscriptionTopic;
     use crate::kernel::Kernel;
@@ -649,14 +556,6 @@ mod tests {
         let former = restored.former.iter().find(|f| f.participant.actor_id() == carol);
         let former = former.expect("kept as a former participant there");
         assert_eq!(former.left.by, ActorId::System, "removed by the kernel, as it is restored");
-        let refused = main
-            .add_participant(&alice, carol, HistoryAccess::All)
-            .await
-            .expect_err("not in the session");
-        assert!(
-            matches!(refused.downcast_ref(), Some(ChannelError::NotInSession { .. })),
-            "{refused}"
-        );
         let again = session.remove_participant(&alice, carol).await.expect_err("let go already");
         assert!(
             matches!(again.downcast_ref(), Some(SessionError::NotAParticipant { .. })),

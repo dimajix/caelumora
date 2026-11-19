@@ -433,7 +433,9 @@ mod tests {
         };
         let (alice, bob) = (user("alice", &["staff", "hr"]), user("bob", &["staff"]));
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));
-        let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
+        // With her roles, as her login gives them: she reads the channel she adds to.
+        let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default())
+            .with_roles(alice.roles.clone(), None);
         // An agent of `owner` whose personality is of `kind` and names `roles`.
         let agent = |name: &'static str,
                      owner: ActorId,

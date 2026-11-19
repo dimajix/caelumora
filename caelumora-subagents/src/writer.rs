@@ -1,6 +1,6 @@
 //! The writer of sub-agents (issue 558), bound to the session of an agent's work: starting and
 //! ending a sub-agent are procedures of its own (issue 593) - an agent made (`AgentManager`), a
-//! thread founded with it (`SessionLoop::open_thread_held`), a brief delegated into it
+//! thread founded with it (`procedure::thread::open`), a brief delegated into it
 //! (`ChannelLoop::delegate`); the agent let go (`SessionLoop::leave_held`), its thread closed
 //! (`ChannelLoop::close_thread_held`) and the agent deleted as its work ends (issue 557) -, made of
 //! the kernel's building blocks. It acts in the work's context, each operation of the kernel
@@ -22,6 +22,7 @@ use caelumora_kernel::agent::{AgentError, AgentManager, AgentSpec};
 use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::error::{refusal, user_message};
 use caelumora_kernel::procedure::participant::lock_letting_go;
+use caelumora_kernel::procedure::thread;
 use caelumora_kernel::procedure::{
     Admitted, Compensation, Deferred, Key, Locks, Procedure, ProcedureError, ProcedureExecutor,
 };
@@ -198,11 +199,12 @@ impl SubAgentWriter for SubAgents {
     }
 }
 
-/// Starting a sub-agent (issue 558) as one procedure (issue 593): an agent of `personality` made,
-/// a thread opened at `origin` with it as its founder, `brief` delegated into it - undone by its
-/// compensation, the last first, if a step fails: the agent let go and its thread closed, the
-/// agent deleted. Holds the new thread, its id chosen before, and the thread it is opened at; the
-/// agent it makes nobody knows before it is made, so that it holds none of it.
+/// Starting a sub-agent (issue 558) as one procedure (issue 593): an agent of `personality` made, a
+/// thread opened at `origin` with it as its founder (`procedure::thread::open`), `brief` delegated
+/// into it - undone by its compensation, the last first, if a step fails: the agent taken out of
+/// the channel and the session, its thread closed, the agent deleted. Holds the new thread, its id
+/// chosen before, and the thread it is opened at; the agent it makes nobody knows before it is
+/// made, so that it holds none of it.
 struct Starting {
     work: SubAgents,
     personality: Name,
@@ -245,21 +247,11 @@ impl Procedure for Starting {
             });
         }
         let context = work.context().clone();
+        // Its founder's taking in and the opening, each taken back by `log` (`thread::open`).
         let founders = vec![founder];
         let opening =
-            session.open_thread_held(admitted, &context, channel, thread, origin, founders);
+            thread::open(admitted, log, &session, &context, channel, thread, origin, founders);
         opening.await.map_err(told)?;
-        {
-            let work = work.clone();
-            let session = Arc::clone(&session);
-            let channel_loop = Arc::clone(&channel_loop);
-            log.record("opening its thread", move |admitted| {
-                Box::pin(async move {
-                    work.wind_up_held(admitted, &session, &channel_loop, thread, agent).await?;
-                    Ok(())
-                })
-            });
-        }
         channel_loop.delegate(&context, thread, founder, brief).await.map_err(told)?;
         info!("Sub-agent {} started in thread {} by {}", agent, thread, context.caller_id);
         Ok(thread)

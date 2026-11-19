@@ -224,8 +224,9 @@ sent first and so records it before the opening. The opening and the closing of 
 announced in the line (`ThreadOpened`, `ThreadClosed`), of the whole channel and told to its users;
 every thread is kept in the channel's state (`ChannelState::threads`), the closed ones as closed,
 from which the channel builds the open ones again as it starts; every actor starts again in the
-thread its range of attendance names, in the line if that thread was closed. One founder that
-cannot be taken in rolls the opening back: whoever was taken in is let go again, the thread closed.
+thread its range of attendance names, in the line if that thread was closed. Every founder is asked
+before the thread is there; one that cannot be taken in after all - whose actor cannot start - rolls
+the opening back: whoever was taken in is taken out again as if never taken in, the thread closed.
 
 A thread is **closed** by whoever opened it, or whoever may change the channel
 (`procedure::thread::Close`, which holds it until the channel closed it), once nobody takes part in
@@ -263,7 +264,7 @@ among them. Its moderator and classification default as in a template (see
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md) and [Moderators](#moderators)).
 
 A channel is built and stored empty, and its founders join it by the one way in, as anyone added
-later does (`ChannelLoop::found`, issue 420): each taken in, its actor started, and its joining
+later does (`participant::take_in`, issue 420): each taken in, its actor started, and its joining
 recorded in the channel's history - its `ParticipantJoined`, in the creator's name; nothing of the
 history is shared with a founder, which is given what is said from its join on.
 So every participant of a channel has its join in the history, and the history alone says who
@@ -633,24 +634,28 @@ channel named into that channel at once, and `procedure::participant::LetGo` (re
 from the session with every channel of it, or from one channel. Each holds the participant
 (`Key::Participant`) and the channels it changes until the channel's `run` has carried the change
 out - the newcomer's actor started and its join announced, the leaver's actor ended and its leave
-announced -, and opens a stopped session as it starts. The building blocks are the session's
-(`SessionLoop::add_participant_held`, `join_held`, `remove_participant_held`, `leave_held`) and the
-channel's (`ChannelLoop::remove_participant_held`, `leave_held`); whoever takes someone into a
-channel goes through the session's, also for one in the session already. Until founding a thread is
-a procedure too, the session and the channel make the changes of one participant one at a time
-besides (`changing`, issue 590), so that a rollback of the session's part never takes out one
-another took into a channel meanwhile, nor taking in and letting go cross; creating a channel holds
-the channel and its founders (`procedure::channel::Create`). Like renaming, the change is made by
-the channel's one writer, the `ChannelController`, by the rules of the channel's document: who comes
-in is no longer a former participant and has their invitation used up (`Channel::take_in`), who is
-removed is kept as a former participant (`Channel::let_go`, issue 164). It stores the channel -
-asked as `UpdateChannel` of whoever changes it, by default its owner, and in the kernel's name for
-one who joined, founded or left it -, lets the group of its participants follow and announces who
-joined or left. One whose actor then cannot start has the addition rolled back as the channel had
-them before (`Channel::undo_take_in`), announced as a leave. The changes of one participant - taken
-in, let go, its actor following its agent's deletion and restoring - are made one at a time, so that
-two who add the same participant at once take them in once, and a rollback never takes out one whose
-actor another started. Events only announce; nothing changes a channel because an event arrived.
+announced -, and opens a stopped session as it starts. Taking in is one function of the procedures,
+`procedure::participant::take_in`, for anyone who comes in - added, joining, founding a channel or a
+thread -: it asks everything of the one taken in once (`SessionLoop::take_in_held`), lists them in
+the session unless they are in it, then in the channel, and has the procedure's compensation take
+each listing back if a later step fails (`SessionLoop::undo_listing_held`,
+`ChannelLoop::undo_listing_held`); whoever takes someone into a channel goes through the session's
+part, also for one in the session already. Letting go is carried out by the session's building
+blocks (`SessionLoop::remove_participant_held`, `leave_held`) and the channel's
+(`ChannelLoop::remove_participant_held`, `leave_held`), which - until letting go, too, is the
+procedures' alone (issue 593) - make it and an agent's actor following its agent one change of a
+participant at a time besides (`changing`, issue 590); creating a channel holds the channel and its
+founders (`procedure::channel::Create`). Like renaming, the change is made by the channel's one
+writer, the `ChannelController`, by the rules of the channel's document: who comes in is no longer a
+former participant and has their invitation used up (`Channel::take_in`), who is removed is kept as
+a former participant (`Channel::let_go`, issue 164). It stores the channel - asked as
+`UpdateChannel` of whoever changes it, by default its owner, and in the kernel's name for one who
+joined, founded or left it -, lets the group of its participants follow and announces who joined or
+left. One whose actor then cannot start has the addition rolled back as the channel had them before
+(`Channel::undo_take_in`), announced as a leave. The changes of one participant - taken in, let go,
+its actor following its agent's deletion and restoring - are made one at a time, so that two who add
+the same participant at once take them in once, and a rollback never takes out one whose actor
+another started. Events only announce; nothing changes a channel because an event arrived.
 
 Adding is asked first as `UpdateChannel`, before anything of the newcomer is looked at, and then as
 `cleared` with the channel's classification, where a policy can hold the channel's level against the

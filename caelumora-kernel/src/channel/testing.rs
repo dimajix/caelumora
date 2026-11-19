@@ -14,7 +14,7 @@ use crate::channel::ResolvedParticipant;
 use crate::controller::SessionController;
 use crate::kernel::{ChannelRuntime, Kernel, ParticipantRuntime};
 use crate::procedure::channel::Reclassify;
-use crate::procedure::participant::LetGo;
+use crate::procedure::participant::{LetGo, TakeIn};
 use crate::procedure::thread;
 use crate::procedure::{
     Admitted, Compensation, Deferred, Key, Locks, Procedure, ProcedureExecutor,
@@ -35,7 +35,8 @@ use caelumora_domain::channel::testing::{founded, make_channel};
 #[cfg(test)]
 use caelumora_domain::channel::ChannelId;
 use caelumora_domain::channel::{
-    Channel, Delegation, InternalActor, Opening, Participant, ThreadId, ThreadOrigin, ThreadState,
+    Channel, Delegation, HistoryAccess, InternalActor, Opening, Participant, ThreadId,
+    ThreadOrigin, ThreadState,
 };
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::content::ContentId;
@@ -520,11 +521,11 @@ impl ChannelLoop {
     }
 }
 
-/// What the tests do to a channel as the entry points do (issue 593) - let a participant go from
-/// it, reclassify it, open and close its threads -: in its session by the procedure (`LetGo`,
-/// `channel::Reclassify`, `thread::Open`, `thread::Close`), failing as the building blocks fail
-/// (`SessionError::untyped`); a channel of no session, which no procedure reaches, by its building
-/// block under a hold of the channel (`Holding`).
+/// What the tests do to a channel as the entry points do (issue 593) - add a participant to it or
+/// let one go from it, reclassify it, open and close its threads -: in its session by the procedure
+/// (`TakeIn`, `LetGo`, `channel::Reclassify`, `thread::Open`, `thread::Close`), failing as the
+/// building blocks fail (`SessionError::untyped`); a channel of no session, which no procedure
+/// reaches, by its building block under a hold of the channel (`Holding`).
 impl ChannelLoop {
     /// Removes `participant` from the channel on behalf of `context`, as `LetGo::removed` does.
     ///
@@ -593,11 +594,31 @@ impl ChannelLoop {
         .await
     }
 
-    /// Opens a thread of the channel at `origin` on behalf of `context`, with `founders`, as
-    /// `thread::Open` does.
+    /// Adds `participant` to the channel on behalf of `context`, seeing as much of its history as
+    /// `history` grants, as `TakeIn::added` does with the channel named.
     ///
     /// # Errors
-    /// As `ChannelLoop::open_thread_held`.
+    /// As `TakeIn::added`; if the channel belongs to no session.
+    pub async fn add_participant(
+        self: &Arc<Self>,
+        context: &SecurityContext,
+        participant: ActorId,
+        history: HistoryAccess,
+    ) -> Result<()> {
+        let (sessions, session) = self
+            .of_session()
+            .ok_or_else(|| Error::msg("a channel of no session takes nobody in"))?;
+        let into = Some((self.id, history));
+        let adding = TakeIn::added(&sessions, context, session.id(), participant, into);
+        session.procedures().run(adding).await.map(drop).map_err(SessionError::untyped)
+    }
+
+    /// Opens a thread of the channel at `origin` on behalf of `context`, with `founders`, as
+    /// `thread::Open` does; in a channel of no session without founders.
+    ///
+    /// # Errors
+    /// As `thread::Open`; if a channel of no session is to take founders in, else as
+    /// `ChannelLoop::open_thread_held`.
     pub async fn open_thread(
         self: &Arc<Self>,
         context: &SecurityContext,
@@ -610,11 +631,13 @@ impl ChannelLoop {
                 thread::Open::new(&sessions, context, session.id(), self.id, origin, founders);
             return session.procedures().run(opening).await.map_err(SessionError::untyped);
         }
+        // A channel of no session takes nobody in: its threads are opened without founders.
+        anyhow::ensure!(founders.is_empty(), "a channel of no session takes no founders in");
         let (channel, context, opened) = (Arc::clone(self), context.clone(), ThreadId::new());
         self.holding(move |admitted| {
-            Box::pin(async move {
-                channel.open_thread_held(admitted, &context, opened, origin, &founders).await
-            })
+            Box::pin(
+                async move { channel.open_thread_held(admitted, &context, opened, origin).await },
+            )
         })
         .await?;
         Ok(opened)

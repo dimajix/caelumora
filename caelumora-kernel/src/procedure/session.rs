@@ -79,7 +79,8 @@ impl Procedure for Create {
     ) -> Result<Arc<SessionLoop>, SessionError> {
         let Self { sessions, context, id, template_id, spec } = self;
         record_creation(&sessions, id, log);
-        let made = sessions.make_from_template(admitted, &context, id, template_id, spec).await;
+        let made =
+            sessions.make_from_template(admitted, log, &context, id, template_id, spec).await;
         Ok(made?)
     }
 }

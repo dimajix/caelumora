@@ -328,7 +328,7 @@ impl Procedure for Built {
     ) -> Result<Arc<SessionLoop>, SessionError> {
         let Self { sessions, context, session, channels } = self;
         record_creation(&sessions, session.id, log);
-        Ok(sessions.make(admitted, &context, session, channels).await?)
+        Ok(sessions.make(admitted, log, &context, session, channels).await?)
     }
 }
 

@@ -14,15 +14,17 @@
 
 use super::session::lock_to_open;
 use super::{Admitted, Compensation, Deferred, Key, Locks, Procedure};
+use crate::channel::{ChannelError, ChannelLoop};
 use crate::session::{SessionError, SessionLoop, SessionManager};
 use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::AgentId;
-use caelumora_domain::channel::{ChannelId, HistoryAccess, Participant};
+use caelumora_domain::channel::{ChannelId, HistoryAccess, Participant, ThreadId};
 use caelumora_domain::session::SessionId;
 use caelumora_security::SecurityContext;
 use std::collections::HashSet;
 use std::sync::Arc;
+use tracing::info;
 
 /// Takes a participant into a session, and into a channel of it at once if one is named - added
 /// by whoever may change them, or joining by their own act -, starting the session where it does
@@ -46,8 +48,7 @@ enum ComingIn {
 
 impl TakeIn {
     /// Takes `participant` into `session` on behalf of `context`, who may change it, and into the
-    /// channel `into`, seeing as much of its history as granted
-    /// (`SessionLoop::add_participant_held`).
+    /// channel `into`, seeing as much of its history as granted (`take_in`).
     pub fn added(
         sessions: &Arc<SessionManager>,
         context: &SecurityContext,
@@ -59,7 +60,7 @@ impl TakeIn {
     }
 
     /// Takes `participant` - whom `context` acts for, or their own agent - into `session` by their
-    /// own act, and into the channel `into` (`SessionLoop::join_held`).
+    /// own act, and into the channel `into` (`take_in`).
     pub fn joining(
         sessions: &Arc<SessionManager>,
         context: &SecurityContext,
@@ -101,28 +102,50 @@ impl Procedure for TakeIn {
         Ok(())
     }
 
+    /// Who adds is asked first whether they may change the session - unless the one taken in is
+    /// in it already and a channel is named - and then the channel (issues 46, 221); who joins is
+    /// asked by `take_in`, as their own act, the channel reached as joining reaches it
+    /// (`SessionLoop::channel_to_join`).
+    ///
     /// # Errors
-    /// As `SessionManager::open_held` or `open_to_take_in`, and as
-    /// `SessionLoop::add_participant_held` or `join_held`.
+    /// As `SessionManager::open_held` or `open_to_take_in`; `StoreError::PermissionDenied` if
+    /// whoever adds may not change the session or the channel; as `SessionLoop::channel_for` or
+    /// `channel_to_join`, and as `take_in`.
     async fn carry_out(
         self,
         (): (),
         admitted: &Admitted<'_>,
-        _: &mut Compensation,
+        log: &mut Compensation,
     ) -> Result<Arc<SessionLoop>, SessionError> {
         let Self { sessions, context, session, participant, coming_in } = self;
-        match coming_in {
+        let (session, entry, into) = match coming_in {
             ComingIn::Added(into) => {
                 let session = sessions.open_held(admitted, &context, session).await?;
-                session.add_participant_held(admitted, &context, participant, into).await?;
-                Ok(session)
+                if into.is_none() || !session.session().takes_part(participant) {
+                    session.require_changing(&context).await?;
+                }
+                let channel = match into {
+                    Some((id, history)) => {
+                        let channel = session.channel_for(&context, id).await?;
+                        channel.require_changing(&context).await?;
+                        Some((channel, history))
+                    }
+                    None => None,
+                };
+                (session, Entry::Added, channel)
             }
             ComingIn::Joining(into) => {
                 let session = sessions.open_to_take_in(admitted, &context, session).await?;
-                session.join_held(admitted, &context, participant, into).await?;
-                Ok(session)
+                let channel = match into {
+                    Some(id) => Some((session.channel_to_join(id)?, HistoryAccess::All)),
+                    None => None,
+                };
+                (session, Entry::Joining, channel)
             }
-        }
+        };
+        let line = into.as_ref().map(|(c, history)| (c, *history, ThreadId::line(c.id())));
+        take_in(admitted, log, &session, &context, participant, entry, line).await?;
+        Ok(session)
     }
 }
 
@@ -232,6 +255,124 @@ impl Procedure for LetGo {
         }
         Ok(())
     }
+}
+
+/// How someone comes into a session and its channels: the one way in, asked for in four ways.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Entry {
+    /// Added by whoever may change the session, or the channel (`UpdateSession`, `UpdateChannel`).
+    Added,
+    /// By their own act, where the session or the channel lets them join (`JOIN`).
+    Joining,
+    /// As a founder of a channel just created (issue 420), named by whoever created it: creating
+    /// it (`CreateChannel`) was what was asked.
+    Founding,
+    /// As a founder of a thread just opened (issue 557), named by whoever opened it: opening it
+    /// (`OpenThread`) was what was asked, and the founder is whom they act for, or an agent of
+    /// their own.
+    FoundingThread,
+}
+
+impl Entry {
+    /// Whether it founds a channel or a thread: given what is said from its join on, and started
+    /// with what it founds rather than waited for.
+    fn founds(self) -> bool {
+        matches!(self, Entry::Founding | Entry::FoundingThread)
+    }
+
+    /// In whose name the one who comes in is stored, on behalf of `context`: whoever adds them;
+    /// the kernel's for one who joins or founds, once that was permitted.
+    pub(crate) fn storing(self, context: &SecurityContext) -> SecurityContext {
+        match self {
+            Entry::Added => context.clone(),
+            Entry::Joining | Entry::Founding | Entry::FoundingThread => SecurityContext::system(),
+        }
+    }
+}
+
+/// Takes `participant` into `session` on behalf of `context` - unless in it already - and, with
+/// `into`, into that channel, seeing as much of its history as granted, taking part in that thread,
+/// by the way `entry` says; what that way asks of whoever takes them in is asked before (issue
+/// 593): first into the session (`take_into_session`), then into the channel
+/// (`take_into_channel`).
+///
+/// # Errors
+/// As `take_into_session` and `take_into_channel`.
+pub(crate) async fn take_in(
+    admitted: &Admitted<'_>,
+    log: &mut Compensation,
+    session: &Arc<SessionLoop>,
+    context: &SecurityContext,
+    participant: ActorId,
+    entry: Entry,
+    into: Option<(&Arc<ChannelLoop>, HistoryAccess, ThreadId)>,
+) -> Result<(), SessionError> {
+    let channel = into.map(|(channel, ..)| channel);
+    take_into_session(admitted, log, session, context, participant, entry, channel).await?;
+    let Some(line) = into else { return Ok(()) };
+    take_into_channel(admitted, log, context, participant, entry, line).await
+}
+
+/// The first part of taking `participant` in (`take_in`): everything asked of them is asked once,
+/// here - whether they exist, are whom `context` acts for where that is asked, can run and may
+/// take part in `channel` (`SessionLoop::take_in_held`) -, and they are listed in `session` unless
+/// in it already, the listing taken back by `log` if a later step fails. For `thread::open` on its
+/// own as well, which asks every founder before the thread is there.
+///
+/// # Errors
+/// As `SessionLoop::take_in_held`.
+pub(crate) async fn take_into_session(
+    admitted: &Admitted<'_>,
+    log: &mut Compensation,
+    session: &Arc<SessionLoop>,
+    context: &SecurityContext,
+    participant: ActorId,
+    entry: Entry,
+    channel: Option<&Arc<ChannelLoop>>,
+) -> Result<(), SessionError> {
+    let taken = session.take_in_held(admitted, context, participant, channel, entry).await?;
+    if let Some(before) = taken {
+        let session = Arc::clone(session);
+        log.record("taking someone into a session", move |admitted| {
+            Box::pin(async move { session.undo_listing_held(admitted, participant, &before).await })
+        });
+    }
+    Ok(())
+}
+
+/// The second part of taking `participant` in (`take_in`), once they were asked and are in the
+/// session: listed in the channel of `line`, seeing as much of its history as granted, the listing
+/// taken back by `log` if a later step fails; then their actor is started to take part in its
+/// thread, and waited for - but a founder's, which starts with the channel or the thread it founds:
+/// what `run` is handed after it comes after its start.
+///
+/// # Errors
+/// As `ChannelLoop::history_start`, `list_participant_held` and `start_participant_held`;
+/// `ChannelError::Stopped` if the channel stopped before it started the actor.
+pub(crate) async fn take_into_channel(
+    admitted: &Admitted<'_>,
+    log: &mut Compensation,
+    context: &SecurityContext,
+    participant: ActorId,
+    entry: Entry,
+    (channel, history, thread): (&Arc<ChannelLoop>, HistoryAccess, ThreadId),
+) -> Result<(), SessionError> {
+    let from = if entry.founds() { None } else { channel.history_start(history).await? };
+    let storing = entry.storing(context);
+    let (resolved, before) = channel.list_participant_held(admitted, &storing, participant).await?;
+    {
+        let channel = Arc::clone(channel);
+        log.record("taking someone into a channel", move |admitted| {
+            Box::pin(async move { channel.undo_listing_held(admitted, participant, &before).await })
+        });
+    }
+    let started = channel.start_participant_held(admitted, resolved, thread, from, context).await?;
+    if !entry.founds() && !started.carried_out().await {
+        let stopped = ChannelError::Stopped { participant, channel: channel.id() };
+        return Err(anyhow::Error::from(stopped).into());
+    }
+    info!("{} joined channel {}", participant, channel.id());
+    Ok(())
 }
 
 /// Locks what letting `participant` go from `session` needs, `running` where it runs: the

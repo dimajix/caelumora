@@ -617,8 +617,6 @@ async fn joining_needs_an_entry_that_lets_one_join() {
         "bob: JoinSession(alice's) yes",
         "bob: JoinChannel(alice's) yes",
         "bob: Cleared(bob) yes",
-        "bob: JoinChannel(alice's) yes",
-        "bob: Cleared(bob) yes",
     ]), "joining the session and the channel by the entries in his own name, and his clearance - stored in the kernel's");
     assert!(
         world.participants(world.bob, session.id(), main).await.contains(&ActorId::User(world.bob)),
@@ -3593,10 +3591,7 @@ async fn adding_an_agent_needs_owning_the_channel_and_the_agent_its_personality(
             "alice: GetAgent(alice's) yes",
             "alice as helper: GetPersonality(bob's) yes",
             "alice: Cleared(helper) yes",
-            // The channel's, as it takes it in.
-            "alice: UpdateChannel(alice's) yes",
-            "alice as helper: GetPersonality(bob's) yes",
-            "alice: Cleared(helper) yes",
+            // The store's, as it stores the channel.
             "alice: GetChannel(alice's) yes",
             "alice: Cleared(alice) yes",
             "alice: UpdateChannel(alice's) yes",

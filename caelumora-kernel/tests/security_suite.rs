@@ -811,12 +811,10 @@ async fn taking_someone_in_is_for_whoever_may_change_the_session_and_the_channel
         "alice: Cleared(carol) yes",
         "alice: GetSession(alice's) yes",
         "alice: UpdateSession(alice's) yes",
-        "alice: UpdateChannel(alice's) yes",
-        "alice: Cleared(carol) yes",
         "alice: GetChannel(alice's) yes",
         "alice: Cleared(alice) yes",
         "alice: UpdateChannel(alice's) yes",
-    ]), "changing the session and the channel, reading carol and whether she is cleared - then the store and the channel ask again as they store");
+    ]), "changing the session and the channel, reading carol and whether she is cleared - then the stores ask again as they store");
     assert!(
         world.manager.open(&World::as_user(world.carol), session.id()).await.is_ok(),
         "carol reads the session now"
@@ -834,6 +832,7 @@ async fn taking_someone_in_is_for_whoever_may_change_the_session_and_the_channel
 /// thread is closed by whoever opened it, or whoever may change the channel.
 #[tokio::test]
 async fn a_thread_is_opened_by_a_reader_with_their_own_and_closed_by_its_opener_or_owner() {
+    use caelumora_domain::history::HistoryEntry;
     let answering = ScriptedAgents(Script::Answers("ok".to_string()));
     let world = World::with(&[], &[&answering], |_| {}).await;
     let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
@@ -849,15 +848,28 @@ async fn a_thread_is_opened_by_a_reader_with_their_own_and_closed_by_its_opener_
     assert!(denied(&refused.expect_err("carol is not bob's own")));
     assert!(asked.contains(&"bob: OpenThread(alice's) yes".to_string()), "{asked:?}");
     assert!(!session.session().takes_part(carol_id), "nothing was stored");
+    let opened = |e: &HistoryEntry| matches!(e, HistoryEntry::ThreadOpened { .. });
+    assert!(!main.history_entries().await.iter().any(opened), "asked before the thread is there");
 
     let (opened, asked) =
         world.asked(session.open_thread(&bob, main.id(), line, vec![bobs_helper])).await;
     let bobs = opened.expect("bob reads the channel and founds it with his own");
-    // The session opened first, as every procedure of a thread does (issue 593).
-    assert_eq!(asked.first().map(String::as_str), Some("bob: GetSession(alice's) yes"));
-    assert!(
-        !asked.iter().any(|line| line.starts_with("bob: Update")),
-        "neither the session nor the channel is changed in his name: {asked:?}"
+    assert_eq!(
+        asked,
+        checks(&[
+            // The session opened and the channel reached, as every procedure of a thread does
+            // (issue 593), then opening it asked.
+            "bob: GetSession(alice's) yes",
+            "bob: GetChannel(alice's) yes",
+            "bob: Cleared(bob) yes",
+            "bob: OpenThread(alice's) yes",
+            // His agent read, as his own, may it run and is it cleared - once, before the thread
+            // is there; neither the session nor the channel is changed in his name.
+            "bob: GetAgent(bob's) yes",
+            "bob as bobs-helper: GetPersonality(bob's) yes",
+            "bob: Cleared(bobs-helper) yes",
+        ]),
+        "{asked:#?}"
     );
     assert!(session.session().takes_part(bobs_helper), "his agent is in the session");
 
@@ -5011,10 +5023,9 @@ async fn adding_by_command_asks_what_taking_in_asks() {
             "alice: UpdateChannel(alice's) yes",
             "alice: GetUser(system's) yes",
             "alice: Cleared(carol) yes",
+            // ... the stores asking again as they store.
             "alice: GetSession(alice's) yes",
             "alice: UpdateSession(alice's) yes",
-            "alice: UpdateChannel(alice's) yes",
-            "alice: Cleared(carol) yes",
             "alice: GetChannel(alice's) yes",
             "alice: Cleared(alice) yes",
             "alice: UpdateChannel(alice's) yes",
@@ -5862,12 +5873,9 @@ async fn joining_a_channel_by_command_asks_what_joining_one_asks() {
             // The session opened for one who may read it, as joining does (issue 593).
             "bob: JoinSession(alice's) no",
             "bob: GetSession(alice's) yes",
-            // Whoever takes someone in reads them first (`SessionLoop::take_in`); not sought among
-            // what he reads: he reads nothing of the channel before he joined.
+            // Whoever takes someone in reads them first (`SessionLoop::take_in_held`); not sought
+            // among what he reads: he reads nothing of the channel before he joined.
             "bob: GetUser(system's) yes",
-            "bob: JoinChannel(alice's) yes",
-            "bob: Cleared(bob) yes",
-            // Asked again by the channel as it takes him in (`ChannelLoop::join`).
             "bob: JoinChannel(alice's) yes",
             "bob: Cleared(bob) yes",
         ]),
@@ -5905,7 +5913,7 @@ async fn an_invitation_to_a_channel_is_used_up_as_it_is_taken() {
         .join(&World::as_user(world.bob), bob_id, Some(open.id()))
         .await
         .expect_err("no longer his to join");
-    // Asked by the session before the channel is (`SessionLoop::join_held`).
+    // Asked by the session before the channel is (`SessionLoop::take_in_held`).
     assert!(matches!(refused.downcast_ref(), Some(StoreError::PermissionDenied(_))), "{refused}");
     assert!(!open.participants().iter().any(|p| p.id == bob_id), "he stays out");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
@@ -5964,15 +5972,11 @@ async fn one_the_channel_cannot_take_in_is_rolled_back_out_of_the_session() {
         checks(&[
             // Whether he may reach the session to join it (`SessionManager::open_to_take_in`).
             "bob: JoinSession(alice's) yes",
-            // Whoever takes them in reads them first (`SessionLoop::take_in`).
+            // Whoever takes them in reads them first (`SessionLoop::take_in_held`).
             "bob: GetAgent(bob's) yes",
             // Out of the session again: its entry in its name, as the first time, then the
             // channel's, whether it may run and be cleared, before anything is stored.
             "bob as scout: JoinSession(alice's) yes",
-            "bob as scout: JoinChannel(alice's) yes",
-            "bob as scout: GetPersonality(bob's) yes",
-            "bob: Cleared(scout) yes",
-            // Asked again by the channel as it takes them in (`ChannelLoop::join`).
             "bob as scout: JoinChannel(alice's) yes",
             "bob as scout: GetPersonality(bob's) yes",
             "bob: Cleared(scout) yes",

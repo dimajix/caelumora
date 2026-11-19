@@ -187,12 +187,12 @@ impl SessionLoop {
     }
 
     /// The channel `channel_id` if it runs, for whoever joins it: not asked
-    /// whether they may read it - joining it decides (`join`).
+    /// whether they may read it - joining it decides (`take_in_held`).
     ///
     /// # Errors
     /// `SessionError::ChannelNotFound` if the session lists no such channel,
     /// `SessionError::ChannelUnavailable` if it does not run (issue 463).
-    pub(super) fn channel_to_join(&self, channel_id: ChannelId) -> Result<Arc<ChannelLoop>> {
+    pub(crate) fn channel_to_join(&self, channel_id: ChannelId) -> Result<Arc<ChannelLoop>> {
         let (_, run) = self
             .listed_channel(channel_id)
             .ok_or(SessionError::ChannelNotFound { session: self.id, channel: channel_id })?;

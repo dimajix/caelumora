@@ -12,7 +12,9 @@ use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use crate::group::{keep_participants, GroupManager};
 use crate::kernel::Kernel;
-use crate::procedure::Admitted;
+#[cfg(any(test, feature = "test-support"))]
+use crate::procedure::participant::{take_in, Entry};
+use crate::procedure::{Admitted, Compensation};
 use crate::scoped::{purge_for_good, ScopeNotEmpty, ScopedEntities};
 use crate::template::{
     resolve_participants, resolve_workspace, take_in_participants, TemplateParticipants,
@@ -22,10 +24,10 @@ use crate::workspace::reaper::CommandReaper;
 use crate::workspace::WorkspaceManager;
 use anyhow::{Error, Result};
 #[cfg(any(test, feature = "test-support"))]
-use caelumora_domain::channel::ChannelId;
-#[cfg(any(test, feature = "test-support"))]
 use caelumora_domain::channel::Participant;
 use caelumora_domain::channel::{Channel, ChannelField};
+#[cfg(any(test, feature = "test-support"))]
+use caelumora_domain::channel::{ChannelId, HistoryAccess, ThreadId};
 use caelumora_domain::event::{Announcing, GlobalEvent};
 use caelumora_domain::group::{Group, GroupId};
 use caelumora_domain::project::{Project, ProjectId};
@@ -240,6 +242,7 @@ impl SessionManager {
     pub(crate) async fn make_from_template(
         &self,
         admitted: &Admitted<'_>,
+        log: &mut Compensation,
         context: &SecurityContext,
         id: SessionId,
         template_id: SessionTemplateId,
@@ -295,7 +298,9 @@ impl SessionManager {
         // refused as `create_channel_held` refuses it.
         session_loop.require_running()?;
         let session = &session_loop;
-        self.complete(admitted, context, owner, &template, session, &spec, (users, agents)).await?;
+        let participants = (users, agents);
+        self.complete(admitted, log, context, owner, &template, session, &spec, participants)
+            .await?;
         Ok(session_loop)
     }
 
@@ -320,10 +325,11 @@ impl SessionManager {
     async fn complete(
         &self,
         admitted: &Admitted<'_>,
+        log: &mut Compensation,
         context: &SecurityContext,
         owner: UserId,
         template: &SessionTemplate,
-        session: &SessionLoop,
+        session: &Arc<SessionLoop>,
         spec: &SessionSpec,
         participants: TemplateParticipants,
     ) -> Result<()> {
@@ -350,8 +356,8 @@ impl SessionManager {
             if let Some((workspace, _)) = resolved {
                 session.attach_workspace(context, Some(workspace)).await?;
             }
-            let (users, agents) = participants;
-            take_in_participants(admitted, &self.agents, context, template, session, users, agents)
+            let agents = &self.agents;
+            take_in_participants(admitted, log, agents, context, template, session, participants)
                 .await?;
             // Shared once the session it is shared with exists (issue 23).
             if let Some(WorkspaceChoice::Existing { id, share: Some(grant) }) = &spec.workspace {
@@ -383,7 +389,7 @@ impl SessionManager {
     /// creation `context` was asked for (`CreateSession`) before anything was found or made for
     /// it: persists them (`persist`), announces their existence, then starts the session. The
     /// channels are empty (issue 420): their founders join once the session runs, each admitted as
-    /// they join (`ChannelLoop::found`).
+    /// they join (`procedure::participant::take_in`).
     ///
     /// # Errors
     /// As `persist`; whatever starting the session reports (`spawn_session`).
@@ -1029,6 +1035,7 @@ impl SessionManager {
     pub(crate) async fn make(
         &self,
         admitted: &Admitted<'_>,
+        log: &mut Compensation,
         context: &SecurityContext,
         mut session: Session,
         mut channels: Vec<Channel>,
@@ -1054,8 +1061,11 @@ impl SessionManager {
             let channel = session_loop
                 .channel(channel)
                 .ok_or(SessionError::ChannelNotFound { session: session_loop.id(), channel })?;
+            let into = Some((&channel, HistoryAccess::None, ThreadId::line(channel.id())));
             for participant in participants {
-                session_loop.found(admitted, context, &channel, participant.actor_id()).await?;
+                let founder = participant.actor_id();
+                take_in(admitted, log, &session_loop, context, founder, Entry::Founding, into)
+                    .await?;
             }
         }
         Ok(session_loop)

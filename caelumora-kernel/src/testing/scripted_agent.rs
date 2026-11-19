@@ -85,7 +85,7 @@ pub struct ScriptedAgent {
 }
 
 impl ScriptedAgent {
-    fn new(runtime: Arc<dyn ActorRuntime>, script: Script) -> Self {
+    pub(crate) fn new(runtime: Arc<dyn ActorRuntime>, script: Script) -> Self {
         Self {
             id: ActorId::Agent(runtime.agent().id),
             runtime,
