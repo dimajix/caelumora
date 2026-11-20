@@ -281,8 +281,8 @@ asked by the one `CheckedStore` over a backend's storage - no backend asks a pol
 What is not a store call asks first and acts afterwards. The `SessionManager` finds a session for a
 caller in one place and checks a running session like a stored one - `GetSession`, answering "not
 found" alike whether it runs or not. Stopping and deleting check before they stop anything, in the
-building blocks the procedures of a session carry them out by (`SessionManager::stop_held`,
-`delete_held`, issue 593);
+building blocks the procedures of a session carry them out by or in what they ask first
+(`SessionManager::stop_held`, `session_to_delete`, issue 593);
 restoring and purging reach only what was deleted and leave `Restore` and `Purge` to the store. A
 rename is stored first - which is where it is checked - and changes the live entity only then.
 

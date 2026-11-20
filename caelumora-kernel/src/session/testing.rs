@@ -215,7 +215,7 @@ impl SessionManager {
     /// Deletes session `id` on behalf of `context` (`procedure::session::Delete`).
     ///
     /// # Errors
-    /// As `SessionManager::delete_held`.
+    /// As `procedure::session::delete`.
     pub async fn delete(
         self: &Arc<Self>,
         context: &SecurityContext,
@@ -231,7 +231,7 @@ impl SessionManager {
     /// Restores session `id` on behalf of `context` (`procedure::session::Restore`).
     ///
     /// # Errors
-    /// As `SessionManager::restore_held`.
+    /// As `procedure::session::restore`.
     pub async fn restore(
         self: &Arc<Self>,
         context: &SecurityContext,

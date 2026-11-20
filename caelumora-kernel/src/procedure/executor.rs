@@ -1,7 +1,7 @@
 //! `ProcedureExecutor`: carries procedures out, each in a task of its own, while it holds the
 //! objects it changes.
 
-use super::compensation::Compensation;
+use super::compensation::{all_or_nothing, Compensation};
 use super::locks::{Holder, Locks, ProcedureId, Table};
 use super::{Procedure, ProcedureError};
 use std::any;
@@ -120,11 +120,10 @@ async fn carry_out<P: Procedure>(
     };
     locks.settle();
     let admitted = locks.admitted();
-    let mut log = Compensation::default();
-    let carried_out = procedure.carry_out(plan, &admitted, &mut log).await;
-    if carried_out.is_err() {
-        log.undo(name, &admitted).await;
-    }
+    let carried_out = all_or_nothing(&admitted, name, async |log: &mut Compensation| {
+        procedure.carry_out(plan, &admitted, log).await
+    })
+    .await;
     drop(locks);
     carried_out
 }
@@ -133,11 +132,13 @@ async fn carry_out<P: Procedure>(
 mod tests {
     use super::ProcedureExecutor;
     use crate::procedure::{
-        Admitted, Compensation, Deferred, Key, Locks, Procedure, ProcedureError,
+        all_or_nothing, Admitted, Compensation, Deferred, Key, Locks, Procedure, ProcedureError,
     };
+    use anyhow::anyhow;
     use async_trait::async_trait;
     use caelumora_domain::channel::ChannelId;
     use caelumora_domain::session::SessionId;
+    use futures::future::BoxFuture;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
@@ -476,6 +477,69 @@ mod tests {
             vec!["failing begins", "failing ends", "second undone", "first undone"]
         );
         assert!(!executor.table.knows(key), "let go");
+    }
+
+    /// A part carried out all or nothing is undone at once if it fails, and only it; one that is
+    /// done is kept, whatever becomes of the procedure.
+    #[tokio::test]
+    async fn a_part_carried_out_all_or_nothing_is_undone_alone_and_kept_once_done() {
+        struct Parted(Arc<Mutex<Vec<String>>>);
+
+        /// An undo that records `entry` in `log`.
+        fn undoing(
+            log: &Arc<Mutex<Vec<String>>>,
+            entry: &'static str,
+        ) -> impl for<'a> FnOnce(&'a Admitted<'a>) -> BoxFuture<'a, anyhow::Result<()>> + Send
+        {
+            let log = Arc::clone(log);
+            move |_| {
+                Box::pin(async move {
+                    log.lock().unwrap().push(entry.to_string());
+                    Ok(())
+                })
+            }
+        }
+
+        #[async_trait]
+        impl Procedure for Parted {
+            type Plan = ();
+            type Output = ();
+            type Error = anyhow::Error;
+
+            async fn enumerate(&self, _: &mut Locks<'_>) -> Result<(), Deferred> {
+                Ok(())
+            }
+
+            async fn carry_out(
+                self,
+                _: (),
+                admitted: &Admitted<'_>,
+                log: &mut Compensation,
+            ) -> anyhow::Result<()> {
+                log.record("the procedure's step", undoing(&self.0, "the procedure's undone"));
+                all_or_nothing(admitted, "a part done", async |part: &mut Compensation| {
+                    part.record("the part's step", undoing(&self.0, "the part done undone"));
+                    Ok::<_, anyhow::Error>(())
+                })
+                .await?;
+                let failed = all_or_nothing(admitted, "a part failing", async |part| {
+                    part.record("the part's step", undoing(&self.0, "the part failing undone"));
+                    Err::<(), _>(anyhow!("the part fails"))
+                })
+                .await;
+                self.0.lock().unwrap().push("after the part".to_string());
+                failed
+            }
+        }
+
+        let executor = ProcedureExecutor::new();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let error = executor.run(Parted(Arc::clone(&log))).await.expect_err("its part fails");
+        assert_eq!(error.to_string(), "the part fails");
+        assert_eq!(
+            *log.lock().unwrap(),
+            vec!["the part failing undone", "after the part", "the procedure's undone"]
+        );
     }
 
     /// Shutting down, the executor admits no procedure any more, waits for those under way and

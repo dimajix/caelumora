@@ -37,6 +37,7 @@ pub mod session;
 pub(crate) mod testing;
 pub mod thread;
 
+pub(crate) use compensation::all_or_nothing;
 pub use compensation::Compensation;
 pub use executor::ProcedureExecutor;
 pub use locks::{Admitted, Deferred, Locks};

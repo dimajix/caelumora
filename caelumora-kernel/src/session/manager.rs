@@ -185,7 +185,7 @@ impl SessionManager {
     ///
     /// # Errors
     /// `SessionError::RunsElsewhere` if another process holds it; whatever asking reports.
-    fn hold(&self, id: SessionId) -> Result<Option<SessionHold>> {
+    pub(crate) fn hold(&self, id: SessionId) -> Result<Option<SessionHold>> {
         let Some(locks) = &self.locks else { return Ok(None) };
         if self.holds.contains_key(&id) {
             return Ok(None);
@@ -662,41 +662,26 @@ impl SessionManager {
         removed
     }
 
-    /// Stops and deletes session `id` on behalf of `context`, marked with `removal` - its own, or
-    /// the mark of a deletion it goes with: of the project it lies in (issue 469) -, for a
-    /// procedure that holds it exclusively until it is gone from the store, so that nothing starts
-    /// it again from there meanwhile (issue 62). Deleting marks (issue 164): the session is kept,
-    /// with its channels and their state, hidden until it is restored (`restore`) or purged
-    /// (`purge`). Its own project is marked with it, in the kernel's name (issues 467, 458); what
-    /// lies in its scope and in its own project's is deleted with it, in `context`'s name (issue
-    /// 320), and then the groups of its participants, its channels' and its project's members, in
-    /// the kernel's (issue 348) - all of it with the session's mark, by `context`'s caller (issue
-    /// 469).
-    ///
-    /// Asked about before anything happens - a refused deletion must not stop the session on the
-    /// way (issue 11).
-    ///
-    /// `false` if there is no such session or `context` may not read it, as every deletion answers
-    /// (issue 510).
+    /// Session `id`, to be deleted on behalf of `context` by a procedure that holds it
+    /// exclusively until it is gone from the store, so that nothing starts it again from there
+    /// meanwhile (issue 62): with the channels it lists and its own project (issue 467), as they
+    /// are before it goes - the events carry the attributes as they were, as once deleted it is
+    /// nowhere to look them up (issue 39). Asked before anything happens: a refused deletion must
+    /// not stop the session on the way (issue 11). `None` if there is no such session or `context`
+    /// may not read it, as every deletion answers (issue 510).
     ///
     /// # Errors
-    /// `StoreError::PermissionDenied` if they may read but not delete it,
-    /// `SessionError::RunsElsewhere` if another process that shares the stores runs it (issue 554),
-    /// `SessionError::ScopeNotEmpty` if something of its scope or its own project's is left that
-    /// they may not delete - what they may is deleted, the session is kept; whatever else the store
-    /// reports, the groups of its participants or its own project failing to go among it, which
-    /// keeps the session too, with its groups and its project.
-    pub(crate) async fn delete_held(
+    /// `StoreError::PermissionDenied` if they may read but not delete it; whatever the store
+    /// reports.
+    pub(crate) async fn session_to_delete(
         &self,
-        admitted: &Admitted<'_>,
         context: &SecurityContext,
         id: SessionId,
-        removal: &Removal,
-    ) -> Result<bool> {
+    ) -> Result<Option<(Session, Vec<Channel>, Option<Project>)>> {
         let session = match self.find(context, id).await {
             Ok(found) => found.session(),
             Err(error) if matches!(error.downcast_ref(), Some(SessionError::NotFound(_))) => {
-                return Ok(false);
+                return Ok(None);
             }
             Err(error) => return Err(error),
         };
@@ -708,92 +693,28 @@ impl SessionManager {
                 StoreError::PermissionDenied,
             )
             .await?;
-        let _held = self.hold(id)?;
-        // Captured before the runtime loop is torn down.
-        // The events carry the attributes as they were: once deleted, the
-        // session is nowhere to look them up (issue 39).
         let channels = self.load_channels(&session).await?;
         let own = load_own(&self.stores, id).await?;
-
-        // Marked, not removed (issue 164): its channels and their state stay as they are, hidden
-        // with it - a channel is reached only through its session - until it is purged. Marked
-        // before what lies in its scope, so that nothing of it goes unless the session's deletion
-        // was granted, and so that nothing is put into its scope afterwards (`ScopeHolders`, issue
-        // 458); all of it carries the session's mark and comes back with it (`restore`, issues
-        // 178, 469).
-        if !self.stores.sessions.delete(context, id, removal).await? {
-            return Ok(false);
-        }
-        // Its own project, which is the session's (issue 467), is marked with it, in the kernel's
-        // name - a holder before its scope, as the session is. Then what lies in its scope and in
-        // its channels' goes as far as `context` may delete it (issue 320), and what lies in its
-        // own project's. Its agents take part in no other session (`Scope::admits`): they leave
-        // nothing. Then the groups of its participants, its channels' and its project's members go,
-        // in the kernel's name (issue 348) - last, since its participants reach it by them while it
-        // is kept: all of them or none. If something is left, or the project or the groups cannot
-        // go, the deletion is rolled back, the marks taken away again - in the kernel's name: the
-        // deletion was permitted - and the session runs on if it ran, without what was deleted, and
-        // `context` is told why.
-        let scope = Scope::SessionScope { session_id: id };
-        let holders = held_by(id, own.as_ref());
-        let deleted = async {
-            if let Some(own) = &own {
-                self.stores.projects.delete(&SecurityContext::system(), own.id, removal).await?;
-            }
-            let left = self.scoped.delete_lying_in(context, &holders, removal).await?;
-            ScopeNotEmpty::require_empty(&scope, left).map_err(SessionError::from)?;
-            self.groups.delete_participants(&holders, removal).await?;
-            Ok::<_, Error>(())
-        }
-        .await;
-        if let Err(error) = deleted {
-            self.roll_back_deletion(id, own.as_ref()).await;
-            return Err(error);
-        }
-        if let Some(own) = &own {
-            self.events.announce(GlobalEvent::deleted::<Project>(&own.id), own);
-        }
-
-        // Its actors leave, as those of a deleted channel do (issue 377),
-        // and the commands of its channels end.
-        if let Some(stopped) = self.stop_running(admitted, id, SessionLoop::leave_actors).await {
-            self.end_commands_of(&stopped).await;
-        }
-
-        let event_bus = &self.events;
-        for channel in &channels {
-            event_bus.announce(GlobalEvent::deleted::<Channel>(&(id, channel.id)), channel);
-        }
-        event_bus.announce(GlobalEvent::deleted::<Session>(&id), &session);
-        Ok(true)
+        Ok(Some((session, channels, own)))
     }
 
-    /// Restores the deleted session `id` on behalf of `context` (issue 164), for a procedure that
-    /// holds it exclusively, as deleting and purging it do: a purge never meets it half restored.
-    /// Its mark is taken away, with the channels it listed when it was deleted, the groups of its
-    /// participants and theirs, and its own project with the group of its members, in the kernel's
-    /// name (issues 348, 467); then what lay in its scope and its own project's, as far as
-    /// `context` may restore it. It is not started; opening it starts it, as any stored session. A
-    /// session that lies in a shared project is not restored while the project is deleted: it comes
-    /// back with the project.
+    /// The deleted session `id`, to be restored on behalf of `context` by a procedure that holds
+    /// it exclusively, as deleting and purging it do: a purge never meets it half restored. Its
+    /// mark - what was deleted with it carries it and comes back with it (issues 178, 469) -, with
+    /// its own project deleted with it. A session that lies in a shared project is not restored
+    /// while the project is deleted: it comes back with the project.
     ///
     /// # Errors
     /// `SessionError::NotFound` if there is no such deleted session, `context` may not see it
     /// (`ReadDeleted`, asked first, issue 304) or its purge is begun (issue 496),
-    /// `SessionError::ProjectDeleted` if the shared
-    /// project it lies in is deleted, `SessionError::RunsElsewhere` if another process that shares
-    /// the stores holds it (issue 554), `StoreError::PermissionDenied` if they may but not restore
-    /// it, or whatever the store reports as the groups of its participants or its own project are
-    /// restored - the session stays deleted then.
-    pub(crate) async fn restore_held(
+    /// `SessionError::ProjectDeleted` if the shared project it lies in is deleted; whatever else
+    /// the store reports.
+    pub(crate) async fn session_to_restore(
         &self,
-        _: &Admitted<'_>,
         context: &SecurityContext,
         id: SessionId,
-    ) -> Result<Session> {
-        // Its mark, read before it goes - as `context`, so that whoever may not see it learns
-        // nothing more: what was deleted with it carries it and comes back with it (issues 178,
-        // 469), its own project among it.
+    ) -> Result<(Removal, Option<Project>)> {
+        // As `context`, so that whoever may not see it learns nothing more.
         let Deleted { entity: deleted, removal } =
             self.stores.sessions.get_deleted(context, id).await.map_err(store_error(id))?;
         // One whose purge is begun is the store's to refuse, as it would; refused before anything
@@ -802,7 +723,6 @@ impl SessionManager {
         if deleted.purging() {
             return Err(SessionError::NotFound(id).into());
         }
-        let _held = self.hold(id)?;
         let own = self
             .stores
             .projects
@@ -810,7 +730,6 @@ impl SessionManager {
             .await?
             .items
             .pop();
-        // A session in a shared project lies where its project is, and comes back with it.
         let lies_in_own = own.as_ref().is_some_and(|own| own.id == deleted.project);
         if !lies_in_own
             && self
@@ -823,78 +742,198 @@ impl SessionManager {
         {
             return Err(SessionError::ProjectDeleted(deleted.project).into());
         }
-        let session = self.stores.sessions.restore(context, id).await.map_err(store_error(id))?;
-        // The groups of its participants and its own project first, with it: whatever fails later,
-        // its participants reach it (issue 348) and its results have their place (issue 467). If
-        // they cannot come back, the restoring is rolled back: the session is marked again as it
-        // was, in the kernel's name, as its restoring was permitted - so that a restoring tried
-        // again finds what went with it (issue 469).
-        let holders = held_by(id, own.as_ref());
-        if let Err(error) = self.restore_kept(&holders, own.as_ref(), &removal).await {
-            if let Err(undo) =
-                self.stores.sessions.delete(&SecurityContext::system(), id, &removal).await
-            {
-                warn!(
-                    "Session {} could not be restored and not be marked deleted again: {}",
-                    id, undo
-                );
-            }
-            return Err(error);
-        }
-        if let Err(e) = self.scoped.restore_lying_in(context, &holders, &removal).await {
+        Ok((removal, own))
+    }
+
+    /// Marks session `id` deleted on behalf of `context`, with `removal` - its own, or the mark of
+    /// a deletion it goes with: of the project it lies in (issue 469) -, for a procedure that holds
+    /// it exclusively; as it is deleted, or its restoring undone in the kernel's name. Marked, not
+    /// removed (issue 164): its channels and their state stay as they are, hidden with it - a
+    /// channel is reached only through its session - until it is restored or purged. Marked before
+    /// what lies in its scope, so that nothing of it goes unless its deletion was granted, and
+    /// nothing is put into its scope afterwards (`ScopeHolders`, issue 458). `false` if the store
+    /// finds nothing of it to mark.
+    ///
+    /// # Errors
+    /// Whatever the store reports, `StoreError::PermissionDenied` among it.
+    pub(crate) async fn mark_session_deleted_held(
+        &self,
+        _: &Admitted<'_>,
+        context: &SecurityContext,
+        id: SessionId,
+        removal: &Removal,
+    ) -> Result<bool> {
+        Ok(self.stores.sessions.delete(context, id, removal).await?)
+    }
+
+    /// Takes the mark of the deleted session `id` away on behalf of `context`, for a procedure that
+    /// holds it exclusively: as it is restored, or its deletion undone in the kernel's name. It is
+    /// not started; opening it starts it, as any stored session.
+    ///
+    /// # Errors
+    /// `SessionError::NotFound` if there is no such deleted session or `context` may not see it,
+    /// `StoreError::PermissionDenied` if they may see but not restore it; whatever else the store
+    /// reports.
+    pub(crate) async fn unmark_session_held(
+        &self,
+        _: &Admitted<'_>,
+        context: &SecurityContext,
+        id: SessionId,
+    ) -> Result<Session> {
+        self.stores.sessions.restore(context, id).await.map_err(store_error(id))
+    }
+
+    /// Marks `own`, the own project of a session, deleted with `removal`, in the kernel's name, for
+    /// a procedure that holds the session exclusively, as the session is deleted: a holder before
+    /// its scope, as the session is (issues 467, 458).
+    ///
+    /// # Errors
+    /// Whatever the store reports.
+    pub(crate) async fn mark_own_deleted_held(
+        &self,
+        _: &Admitted<'_>,
+        own: ProjectId,
+        removal: &Removal,
+    ) -> Result<()> {
+        self.stores.projects.delete(&SecurityContext::system(), own, removal).await?;
+        Ok(())
+    }
+
+    /// Takes the mark of `own`, the own project of a session, away in the kernel's name, for a
+    /// procedure that holds the session exclusively: as the session is restored, or its deletion
+    /// undone.
+    ///
+    /// # Errors
+    /// Whatever the store reports.
+    pub(crate) async fn unmark_own_held(
+        &self,
+        _: &Admitted<'_>,
+        own: ProjectId,
+    ) -> Result<Project> {
+        Ok(self.stores.projects.restore(&SecurityContext::system(), own).await?)
+    }
+
+    /// Deletes what lies in the scope of session `id`, in its channels' and in `own`'s, its own
+    /// project's, as far as `context` may delete it (issue 320), marked with `removal`, for a
+    /// procedure that holds the session exclusively, as it is deleted. Its agents take part in no
+    /// other session (`Scope::admits`): they leave nothing. What is deleted stays deleted, also if
+    /// something is left.
+    ///
+    /// # Errors
+    /// `SessionError::ScopeNotEmpty` if something is left that `context` may not delete; whatever
+    /// else the store reports.
+    pub(crate) async fn delete_scope_held(
+        &self,
+        _: &Admitted<'_>,
+        context: &SecurityContext,
+        id: SessionId,
+        own: Option<&Project>,
+        removal: &Removal,
+    ) -> Result<()> {
+        let scope = Scope::SessionScope { session_id: id };
+        let left = self.scoped.delete_lying_in(context, &held_by(id, own), removal).await?;
+        ScopeNotEmpty::require_empty(&scope, left).map_err(SessionError::from)?;
+        Ok(())
+    }
+
+    /// Restores what lay in the scope of session `id`, in its channels' and in `own`'s, its own
+    /// project's, and carries `removal`, as far as `context` may restore it, for a procedure that
+    /// holds the session exclusively, as it is restored. What cannot be is logged and stays
+    /// deleted: the session comes back all the same.
+    pub(crate) async fn restore_scope_held(
+        &self,
+        _: &Admitted<'_>,
+        context: &SecurityContext,
+        id: SessionId,
+        own: Option<&Project>,
+        removal: &Removal,
+    ) {
+        if let Err(e) = self.scoped.restore_lying_in(context, &held_by(id, own), removal).await {
             warn!(
                 "Session {} was restored, but not what lies in its scope or its project's: {}",
                 id, e
             );
         }
-        self.events.announce(GlobalEvent::restored::<Session>(&id), &session);
-        info!(session = %id, by = %context.caller_id, "Session restored");
-        Ok(session)
     }
 
-    /// Takes the marks of session `id` and of `own`, its own project, away again once deleting the
-    /// session failed part of the way, in the kernel's name: the deletion was permitted. What went
-    /// with it stays deleted; the groups went last, all or none. What cannot be is logged.
-    async fn roll_back_deletion(&self, id: SessionId, own: Option<&Project>) {
-        let system = SecurityContext::system();
-        if let Some(own) = own {
-            if let Err(undo) = self.stores.projects.restore(&system, own.id).await.optional() {
-                warn!(project = %own.id, "The own project of a session that could not be deleted could not be unmarked again: {undo}");
-            }
-        }
-        if let Err(undo) = self.stores.sessions.restore(&system, id).await {
-            warn!("Session {} could not be deleted and not be unmarked again: {}", id, undo);
-        }
-    }
-
-    /// Restores what a session keeps with it, in the kernel's name, as it is restored: the groups
-    /// that lie in `holders` and carry `removal`, its mark, then `own`, its own project, deleted
-    /// with it - all of them or, if one cannot come back, none, those restored marked again with
-    /// `removal` (issues 348, 467, 469). The project's restoring is announced once all are
-    /// restored.
+    /// Deletes the groups of the participants of session `id`, of its channels' and of the members
+    /// of `own`, its own project, marked with `removal`, in the kernel's name (issue 348) - all of
+    /// them or none -, for a procedure that holds the session exclusively: as it is deleted - last,
+    /// since its participants reach it by them while it is kept -, or its restoring undone.
     ///
     /// # Errors
     /// Whatever the store reports.
-    async fn restore_kept(
+    pub(crate) async fn delete_participant_groups_held(
         &self,
-        holders: &[Scope],
+        _: &Admitted<'_>,
+        id: SessionId,
         own: Option<&Project>,
         removal: &Removal,
     ) -> Result<()> {
-        self.groups.restore_participants(holders, removal).await?;
-        let Some(own) = own else { return Ok(()) };
-        match self.stores.projects.restore(&SecurityContext::system(), own.id).await {
-            Ok(restored) => {
-                self.events.announce(GlobalEvent::restored::<Project>(&own.id), &restored)
-            }
-            Err(error) => {
-                if let Err(undo) = self.groups.delete_participants(holders, removal).await {
-                    warn!(project = %own.id, "The groups of a session whose project could not be restored could not be deleted again: {undo}");
-                }
-                return Err(error.into());
-            }
-        }
+        self.groups.delete_participants(&held_by(id, own), removal).await?;
         Ok(())
+    }
+
+    /// Restores the groups of the participants of session `id`, of its channels' and of the
+    /// members of `own`, its own project, that carry `removal`, in the kernel's name (issue 348) -
+    /// all of them or none -, for a procedure that holds the session exclusively: as it is
+    /// restored, first, so that whatever fails later its participants reach it, or its deletion
+    /// undone.
+    ///
+    /// # Errors
+    /// Whatever the store reports.
+    pub(crate) async fn restore_participant_groups_held(
+        &self,
+        _: &Admitted<'_>,
+        id: SessionId,
+        own: Option<&Project>,
+        removal: &Removal,
+    ) -> Result<()> {
+        self.groups.restore_participants(&held_by(id, own), removal).await?;
+        Ok(())
+    }
+
+    /// Stops session `id` if it runs, as it is deleted, for a procedure that holds it exclusively:
+    /// its actors leave, as those of a deleted channel do (issue 377), and the commands of its
+    /// channels end (issue 254).
+    pub(crate) async fn stop_deleted_held(&self, admitted: &Admitted<'_>, id: SessionId) {
+        if let Some(stopped) = self.stop_running(admitted, id, SessionLoop::leave_actors).await {
+            self.end_commands_of(&stopped).await;
+        }
+    }
+
+    /// Announces `session` deleted by `context`'s caller, with what went with it: `own`, its own
+    /// project, then `channels`, those it listed, then the session.
+    pub(crate) fn announce_deleted(
+        &self,
+        session: &Session,
+        channels: &[Channel],
+        own: Option<&Project>,
+        context: &SecurityContext,
+    ) {
+        if let Some(own) = own {
+            self.events.announce(GlobalEvent::deleted::<Project>(&own.id), own);
+        }
+        for channel in channels {
+            self.events
+                .announce(GlobalEvent::deleted::<Channel>(&(session.id, channel.id)), channel);
+        }
+        self.events.announce(GlobalEvent::deleted::<Session>(&session.id), session);
+        info!(session = %session.id, by = %context.caller_id, "Session deleted");
+    }
+
+    /// Announces `session` restored by `context`'s caller, with `own`, its own project, first.
+    pub(crate) fn announce_restored(
+        &self,
+        session: &Session,
+        own: Option<&Project>,
+        context: &SecurityContext,
+    ) {
+        if let Some(own) = own {
+            self.events.announce(GlobalEvent::restored::<Project>(&own.id), own);
+        }
+        self.events.announce(GlobalEvent::restored::<Session>(&session.id), session);
+        info!(session = %session.id, by = %context.caller_id, "Session restored");
     }
 
     /// The projects deleted that lie in the scope of session `id` - its own, deleted with it -,

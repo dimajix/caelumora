@@ -7,7 +7,9 @@
 //! building blocks of the `SessionManager` and the `SessionLoop`, which ask for the proof that it
 //! holds the session (`Admitted`).
 
-use super::{Admitted, Compensation, Deferred, Key, Locks, Procedure, ProcedureExecutor};
+use super::{
+    all_or_nothing, Admitted, Compensation, Deferred, Key, Locks, Procedure, ProcedureExecutor,
+};
 use crate::session::{MoveTarget, SessionError, SessionLoop, SessionManager, SessionSpec};
 use async_trait::async_trait;
 use caelumora_domain::project::ProjectId;
@@ -106,12 +108,16 @@ pub(crate) fn record_creation(
 /// # Errors
 /// What deleting or purging it reports.
 async fn roll_back_creation(
-    sessions: &SessionManager,
+    sessions: &Arc<SessionManager>,
     admitted: &Admitted<'_>,
     id: SessionId,
 ) -> anyhow::Result<()> {
     let system = SecurityContext::system();
-    sessions.delete_held(admitted, &system, id, &Removal::now(system.caller_id)).await?;
+    let removal = Removal::now(system.caller_id);
+    all_or_nothing(admitted, "deleting a session not made", async |log: &mut Compensation| {
+        delete(admitted, log, sessions, &system, id, &removal).await
+    })
+    .await?;
     sessions.purge_held(admitted, &system, id).await?;
     Ok(())
 }
@@ -221,9 +227,9 @@ impl Procedure for Stop {
     }
 }
 
-/// Stops and deletes session `id` on behalf of `context` (`SessionManager::delete_held`): marked,
-/// with what goes with it, until it is restored or purged. Answers `false` if there is no such
-/// session or `context` may not read it, as every deletion answers (issue 510).
+/// Stops and deletes session `id` on behalf of `context` (`delete`): marked, with what goes with
+/// it, until it is restored or purged. Answers `false` if there is no such session or `context` may
+/// not read it, as every deletion answers (issue 510).
 pub struct Delete {
     sessions: Arc<SessionManager>,
     context: SecurityContext,
@@ -248,21 +254,21 @@ impl Procedure for Delete {
     }
 
     /// # Errors
-    /// As `SessionManager::delete_held`.
+    /// As `delete`.
     async fn carry_out(
         self,
         (): (),
         admitted: &Admitted<'_>,
-        _: &mut Compensation,
+        log: &mut Compensation,
     ) -> Result<bool, SessionError> {
         let Self { sessions, context, id } = self;
         let removal = Removal::now(context.caller_id);
-        Ok(sessions.delete_held(admitted, &context, id, &removal).await?)
+        delete(admitted, log, &sessions, &context, id, &removal).await
     }
 }
 
-/// Restores the deleted session `id` on behalf of `context` (`SessionManager::restore_held`, issue
-/// 164); it is not started.
+/// Restores the deleted session `id` on behalf of `context` (`restore`, issue 164); it is not
+/// started.
 pub struct Restore {
     sessions: Arc<SessionManager>,
     context: SecurityContext,
@@ -287,16 +293,137 @@ impl Procedure for Restore {
     }
 
     /// # Errors
-    /// As `SessionManager::restore_held`.
+    /// As `restore`.
     async fn carry_out(
         self,
         (): (),
         admitted: &Admitted<'_>,
-        _: &mut Compensation,
+        log: &mut Compensation,
     ) -> Result<Session, SessionError> {
         let Self { sessions, context, id } = self;
-        Ok(sessions.restore_held(admitted, &context, id).await?)
+        restore(admitted, log, &sessions, &context, id).await
     }
+}
+
+/// Stops and deletes session `id` on behalf of `context`, marked with `removal` - its own, or the
+/// mark of a deletion it goes with: of the project it lies in (issue 469) -, for a procedure that
+/// holds it exclusively (`SessionManager::session_to_delete`). Deleting marks (issue 164): the
+/// session is kept, with its channels and their state, hidden until it is restored or purged. Its
+/// own project is marked with it, in the kernel's name (issues 467, 458); then what lies in its
+/// scope and in its own project's is deleted, as far as `context` may (issue 320), and then the
+/// groups of its participants, its channels' and its project's members, in the kernel's (issue
+/// 348) - all of it with the session's mark, by `context`'s caller (issue 469). If something is
+/// left, or the project or the groups cannot go, `log` takes the marks away again, in the kernel's
+/// name - the deletion was permitted -, and the session runs on if it ran, without what was
+/// deleted. Once all of it went, its actors leave and the commands of its channels end, and the
+/// deletion is announced. `false` if there is no such session or `context` may not read it, as
+/// every deletion answers (issue 510).
+///
+/// # Errors
+/// As `SessionManager::session_to_delete`; `SessionError::RunsElsewhere` if another process that
+/// shares the stores runs it (issue 554), `SessionError::ScopeNotEmpty` if something of its scope
+/// or its own project's is left that `context` may not delete; whatever else the stores report.
+pub(crate) async fn delete(
+    admitted: &Admitted<'_>,
+    log: &mut Compensation,
+    sessions: &Arc<SessionManager>,
+    context: &SecurityContext,
+    id: SessionId,
+    removal: &Removal,
+) -> Result<bool, SessionError> {
+    let Some((session, channels, own)) = sessions.session_to_delete(context, id).await? else {
+        return Ok(false);
+    };
+    hold_until_done(log, sessions, id)?;
+    if !sessions.mark_session_deleted_held(admitted, context, id, removal).await? {
+        return Ok(false);
+    }
+    let unmarked = Arc::clone(sessions);
+    log.record("marking the session deleted", move |admitted| {
+        Box::pin(async move {
+            let system = SecurityContext::system();
+            unmarked.unmark_session_held(admitted, &system, id).await.map(drop)
+        })
+    });
+    if let Some(own) = &own {
+        sessions.mark_own_deleted_held(admitted, own.id, removal).await?;
+        let (unmarked, own) = (Arc::clone(sessions), own.id);
+        log.record("marking the session's own project deleted", move |admitted| {
+            Box::pin(async move { unmarked.unmark_own_held(admitted, own).await.map(drop) })
+        });
+    }
+    sessions.delete_scope_held(admitted, context, id, own.as_ref(), removal).await?;
+    sessions.delete_participant_groups_held(admitted, id, own.as_ref(), removal).await?;
+    sessions.stop_deleted_held(admitted, id).await;
+    sessions.announce_deleted(&session, &channels, own.as_ref(), context);
+    Ok(true)
+}
+
+/// Restores the deleted session `id` on behalf of `context`, for a procedure that holds it
+/// exclusively (`SessionManager::session_to_restore`, issue 164): its mark taken away, then - in
+/// the kernel's name (issues 348, 467) - the groups of its participants and theirs, and its own
+/// project with the group of its members, so that whatever fails later its participants reach it
+/// and its results have their place; if they cannot come back, `log` marks the session again as it
+/// was, in the kernel's name, so that a restoring tried again finds what went with it (issue 469).
+/// Then what lay in its scope and its own project's comes back, as far as `context` may restore
+/// it. It is not started; opening it starts it, as any stored session.
+///
+/// # Errors
+/// As `SessionManager::session_to_restore`; `SessionError::RunsElsewhere` if another process that
+/// shares the stores holds it (issue 554), as `SessionManager::unmark_session_held`, or whatever
+/// the store reports as the groups of its participants or its own project are restored.
+pub(crate) async fn restore(
+    admitted: &Admitted<'_>,
+    log: &mut Compensation,
+    sessions: &Arc<SessionManager>,
+    context: &SecurityContext,
+    id: SessionId,
+) -> Result<Session, SessionError> {
+    let (removal, own) = sessions.session_to_restore(context, id).await?;
+    hold_until_done(log, sessions, id)?;
+    let session = sessions.unmark_session_held(admitted, context, id).await?;
+    let (marked, again) = (Arc::clone(sessions), removal.clone());
+    log.record("taking the session's mark away", move |admitted| {
+        Box::pin(async move {
+            let system = SecurityContext::system();
+            marked.mark_session_deleted_held(admitted, &system, id, &again).await.map(drop)
+        })
+    });
+    sessions.restore_participant_groups_held(admitted, id, own.as_ref(), &removal).await?;
+    let deleted = Arc::clone(sessions);
+    let (of_own, again) = (own.clone(), removal.clone());
+    log.record("restoring the groups of the session's participants", move |admitted| {
+        Box::pin(async move {
+            deleted.delete_participant_groups_held(admitted, id, of_own.as_ref(), &again).await
+        })
+    });
+    // The last step that can fail: nothing after it is undone.
+    let own = match own {
+        Some(own) => Some(sessions.unmark_own_held(admitted, own.id).await?),
+        None => None,
+    };
+    sessions.restore_scope_held(admitted, context, id, own.as_ref(), &removal).await;
+    sessions.announce_restored(&session, own.as_ref(), context);
+    Ok(session)
+}
+
+/// Holds session `id` for this process against the others that share the stores (issue 554,
+/// `SessionManager::hold`) until the procedure of `log` is done - undone too, if it fails: the hold
+/// is let go as its compensation is, after every step it recorded since.
+///
+/// # Errors
+/// `SessionError::RunsElsewhere` if another process holds it; whatever asking reports.
+fn hold_until_done(
+    log: &mut Compensation,
+    sessions: &SessionManager,
+    id: SessionId,
+) -> Result<(), SessionError> {
+    let held = sessions.hold(id)?;
+    log.record("holding the session", move |_| {
+        drop(held);
+        Box::pin(async { Ok(()) })
+    });
+    Ok(())
 }
 
 /// Removes the deleted session `id` for good on behalf of `context` (`SessionManager::purge_held`,

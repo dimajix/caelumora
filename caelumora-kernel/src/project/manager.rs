@@ -8,9 +8,10 @@ use crate::event::EventBus;
 use crate::group::{keep_participants, GroupManager};
 #[cfg(any(test, feature = "test-support"))]
 use crate::procedure::project::{Delete, Purge, Restore};
-use crate::procedure::Admitted;
+use crate::procedure::session::{delete as delete_session, restore as restore_session};
 #[cfg(any(test, feature = "test-support"))]
 use crate::procedure::ProcedureExecutor;
+use crate::procedure::{all_or_nothing, Admitted};
 use crate::scoped::{found_or_made, purge_for_good, ScopeNotEmpty, ScopedEntities};
 use crate::session::{SessionError, SessionManager};
 use caelumora_domain::actor::ActorId;
@@ -118,14 +119,14 @@ impl ProjectManager {
         .await
     }
 
-    /// Deletes project `id` on behalf of `ctx` (`DeleteProject`), for a procedure that holds it
-    /// and the sessions that lie in it exclusively (`procedure::project::Delete`): marked first,
-    /// then the sessions that lie in it - each through the `SessionManager`, in `ctx`'s name, with
-    /// what lies in its scope -, then what lies in its scope (`ScopedEntities`), as far as `ctx`
-    /// may delete it, then the group of its members in the kernel's name - all of it with the
-    /// project's mark, by `ctx`'s caller (issue 469). If a session or something of its scope is
-    /// left that `ctx` may not delete, the project is kept, its mark taken away again, and what
-    /// they could delete stays deleted. `false` if there was none the caller could see.
+    /// Deletes project `id` on behalf of `ctx` (`DeleteProject`), for a procedure that holds it and
+    /// the sessions that lie in it exclusively (`procedure::project::Delete`): marked first, then
+    /// the sessions that lie in it - each deleted whole or not at all, in `ctx`'s name, with what
+    /// lies in its scope (`delete_sessions`) -, then what lies in its scope (`ScopedEntities`), as
+    /// far as `ctx` may delete it, then the group of its members in the kernel's name - all of it
+    /// with the project's mark, by `ctx`'s caller (issue 469). If a session or something of its
+    /// scope is left that `ctx` may not delete, the project is kept, its mark taken away again, and
+    /// what they could delete stays deleted. `false` if there was none the caller could see.
     ///
     /// # Errors
     /// `InvalidScope` for a session's own, which goes with the session; `ScopeNotEmpty` with how
@@ -220,7 +221,10 @@ impl ProjectManager {
             .await?
             .items
         {
-            if let Err(e) = self.sessions.restore_held(admitted, ctx, session.id).await {
+            let restored = all_or_nothing(admitted, "restoring a session", async |log| {
+                restore_session(admitted, log, &self.sessions, ctx, session.id).await
+            });
+            if let Err(e) = restored.await {
                 info!(project = %id, session = %session.id, "A session of a restored project stays deleted: {e}");
             }
         }
@@ -304,9 +308,10 @@ impl ProjectManager {
             .items)
     }
 
-    /// Deletes `sessions` on behalf of `ctx` through the `SessionManager`, as a project they lie
-    /// in is deleted, marked with `removal`, its mark; answers how many are left - not the caller's
-    /// to read or delete, or with something in their scope that is not.
+    /// Deletes `sessions` on behalf of `ctx`, each whole or not at all
+    /// (`procedure::session::delete` as one part, `all_or_nothing`), as a project they lie in is
+    /// deleted, marked with `removal`, its mark; answers how many are left - not the caller's to
+    /// read or delete, or with something in their scope that is not.
     ///
     /// # Errors
     /// `Session` if deleting one failed otherwise; what was deleted before stays deleted.
@@ -319,19 +324,19 @@ impl ProjectManager {
     ) -> ProjectResult<usize> {
         let mut kept = 0;
         for session in sessions {
-            match self.sessions.delete_held(admitted, ctx, session.id, removal).await {
+            let deleted = all_or_nothing(admitted, "deleting a session", async |log| {
+                delete_session(admitted, log, &self.sessions, ctx, session.id, removal).await
+            });
+            match deleted.await {
                 Ok(true) => {}
-                Ok(false) => kept += 1,
-                Err(e)
-                    if is_forbidden(&e)
-                        || matches!(
-                            e.downcast_ref::<SessionError>(),
-                            Some(SessionError::ScopeNotEmpty(_))
-                        ) =>
-                {
-                    kept += 1
+                Ok(false) | Err(SessionError::ScopeNotEmpty(_)) => kept += 1,
+                Err(e) => {
+                    let e = e.untyped();
+                    if !is_forbidden(&e) {
+                        return Err(ProjectError::Session(e));
+                    }
+                    kept += 1;
                 }
-                Err(e) => return Err(ProjectError::Session(e)),
             }
         }
         Ok(kept)

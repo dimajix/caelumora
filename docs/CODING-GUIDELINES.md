@@ -256,7 +256,7 @@ shared project's - is a procedure's (issue 593): each verb a type named so in th
 point makes and the kernel's `ProcedureExecutor` carries out. Its manager then offers the building
 blocks the procedures carry the change out by, each asking for the proof that the procedure holds
 what it changes (`Admitted`), and named `…_held` where it is the verb the procedure carries out
-(`SessionManager::delete_held`).
+(`SessionManager::purge_held`).
 
 The verbs on one entity, found by its id, answer what is not there - or not the caller's to see -
 alike: `delete` and `purge` answer `false`, since for whoever wants it gone it is gone (how a REST
@@ -514,11 +514,12 @@ An operation that stored something and then fails part of the way is rolled back
 set back to how it was before - in the kernel's name, since the operation was permitted -, and its
 caller gets the error. A procedure records how to undo each step in its `Compensation`, which the
 executor undoes, the last first, once a later step fails (`procedure::session::Create`, issue
-593). Elsewhere, a step that does so is named `roll_back_…` after what it rolls back
-(`SessionManager::roll_back_deletion`). It is no
-transaction: what cannot be set back is logged and stays (issue 354). One exception: who is let go
-from a session stays let go when one of its channels fails to let them go, since taking them out of
-the others ended their turns - asking again finishes it (see
+593); a part of a procedure that is kept or undone as a whole, whatever becomes of the rest, is
+carried out with a compensation of its own (`procedure::all_or_nothing`). Elsewhere, a step that
+does so is named `roll_back_…` after what it rolls back (`AttachmentManager::roll_back_content`).
+It is no transaction: what cannot be set back is logged and stays (issue 354). One exception: who
+is let go from a session stays let go when one of its channels fails to let them go, since taking
+them out of the others ended their turns - asking again finishes it (see
 [CHANNELS.md](CHANNELS.md#letting-someone-go-from-the-session)).
 
 ### Errors in a turn end the turn, not the agent

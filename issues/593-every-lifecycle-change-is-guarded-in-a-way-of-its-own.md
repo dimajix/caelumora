@@ -657,3 +657,16 @@ case; it is decided there, and may make this unnecessary.
   (`project_to_move_to`, answering a `MoveTarget`: shared, its own, or a new own, in place of a
   flag), and offers the steps: making its new own and purging it, sharing a project with its
   participants and taking the entry away, storing where it lies. `roll_back_project_change` goes.
+- **2026-11-19** — The first step of the part of sessions committed. The second implemented, not
+  committed yet: `procedure::session::delete` and `restore`, shared by `Delete`, `Restore`, the
+  rollback of a creation and the `ProjectManager`, orchestrate what `SessionManager::delete_held`
+  and `restore_held` did. The `SessionManager` asks first (`session_to_delete`,
+  `session_to_restore`), and offers the steps with their counterparts: marking the session deleted
+  and unmarking it, the same of its own project, deleting and restoring the groups of its
+  participants; deleting and restoring its scope, stopping it as it is deleted, announcing either.
+  `roll_back_deletion` and `restore_kept` go. `procedure::all_or_nothing` undoes the steps of one
+  part at once if it fails, and lets them go once it is done: the `ProjectManager` deletes and
+  restores each session of a project so, as does the executor a whole procedure. What holds a
+  session against the other processes is kept until the procedure is done, undone too. As the
+  maintainer decided, an own project's deletion and restoring is announced with its session's, at
+  the end.
