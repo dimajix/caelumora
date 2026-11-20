@@ -294,8 +294,7 @@ pub(super) async fn add_participant(
 ) -> Result<Json<SessionSnapshot>, ApiError> {
     let into = payload.channel.map(|channel| (channel, payload.history));
     let context = user.security_context();
-    let adding =
-        TakeIn::added(&state.session_manager, &context, session_id, payload.participant, into);
+    let adding = TakeIn::added(&context, session_id, payload.participant, into);
     state.procedures.run(adding).await?;
     Ok(Json(session_response(&state, &user, session_id).await?))
 }
@@ -309,7 +308,7 @@ pub(super) async fn remove_participant(
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
     let context = user.security_context();
-    let removing = LetGo::removed(&state.session_manager, &context, session_id, participant, None);
+    let removing = LetGo::removed(&context, session_id, participant, None);
     state.procedures.run(removing).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -322,7 +321,7 @@ pub(super) async fn leave_session(
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
     let context = user.security_context();
-    let leaving = LetGo::leaving(&state.session_manager, &context, session_id, participant, None);
+    let leaving = LetGo::leaving(&context, session_id, participant, None);
     state.procedures.run(leaving).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -339,8 +338,7 @@ pub(super) async fn join_session(
 ) -> Result<Json<SessionSnapshot>, ApiError> {
     let context = user.security_context();
     let participant = payload.participant.unwrap_or(context.principal_id);
-    let joining =
-        TakeIn::joining(&state.session_manager, &context, session_id, participant, payload.channel);
+    let joining = TakeIn::joining(&context, session_id, participant, payload.channel);
     state.procedures.run(joining).await?;
     Ok(Json(session_response(&state, &user, session_id).await?))
 }

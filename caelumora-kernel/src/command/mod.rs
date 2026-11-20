@@ -27,7 +27,7 @@ use crate::channel::ChannelLoop;
 use crate::component::ComponentRegistry;
 use crate::error::{refusal, user_message};
 use crate::procedure::Procedure;
-use crate::session::{SessionError, SessionLoop, SessionManager};
+use crate::session::{SessionError, SessionLoop};
 use crate::view::{ChannelView, ParticipantView, SessionView, Viewer, Views};
 use anyhow::Error;
 use async_trait::async_trait;
@@ -92,15 +92,15 @@ impl CommandContext<'_> {
             .ok_or_else(|| command_error(command, &Error::msg("the channel belongs to no session")))
     }
 
-    /// Carries out the procedure `make` builds from the session manager and the session the
-    /// channel belongs to (issue 593) - a command is an entry point, which makes the procedures it
-    /// asks for -, failing as its building block failed (`SessionError::untyped`).
+    /// Carries out the procedure `make` builds for the session the channel belongs to (issue 593) -
+    /// a command is an entry point, which makes the procedures it asks for -, failing as its
+    /// building block failed (`SessionError::untyped`).
     ///
     /// # Errors
-    /// If the channel belongs to no session or the session manager is gone; as the procedure.
+    /// If the channel belongs to no session; as the procedure.
     pub(crate) async fn carry_out<P>(
         &self,
-        make: impl FnOnce(&Arc<SessionManager>, SessionId) -> P,
+        make: impl FnOnce(SessionId) -> P,
     ) -> Result<P::Output, Error>
     where
         P: Procedure<Error = SessionError>,
@@ -109,9 +109,7 @@ impl CommandContext<'_> {
             .channel
             .session_loop()
             .ok_or_else(|| Error::msg("the channel belongs to no session"))?;
-        let sessions =
-            session.sessions().ok_or_else(|| Error::msg("the session manager is gone"))?;
-        let procedure = make(&sessions, session.id());
+        let procedure = make(session.id());
         session.procedures().run(procedure).await.map_err(SessionError::untyped)
     }
 

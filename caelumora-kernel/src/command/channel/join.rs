@@ -82,9 +82,8 @@ impl ChannelCommand for JoinCommand {
         }
         // Through the session, by a procedure that holds the participant (issues 590, 593).
         let (context_of_issuer, into) = (context.issuer.security_context(), Some(channel.id()));
-        let joining = context.carry_out(|sessions, session| {
-            TakeIn::joining(sessions, &context_of_issuer, session, issuer, into)
-        });
+        let joining =
+            context.carry_out(|session| TakeIn::joining(&context_of_issuer, session, issuer, into));
         match joining.await {
             Ok(_) => Ok(CommandOutput::private(format!("Joined {name}."))),
             // Refused - the channel's entry, the session's for one no longer in it, a store's

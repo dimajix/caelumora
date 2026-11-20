@@ -5,7 +5,6 @@
 use super::{
     load_own, require_attachable, require_classification, SessionError, SessionLoop, SessionSpec,
 };
-use crate::agent::AgentManager;
 use crate::attachment::AttachmentManager;
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
@@ -83,8 +82,6 @@ pub struct SessionManager {
     workspaces: Arc<WorkspaceManager>,
     /// What ends the commands of a stopped session's channels (issue 254).
     command_reaper: Arc<CommandReaper>,
-    /// What makes the agents a template names.
-    agents: Arc<AgentManager>,
     /// What goes with a session deleted, restored or purged (issue 178).
     scoped: Arc<ScopedEntities>,
     /// What makes, deletes, restores and purges the groups of its participants with it (issue
@@ -145,7 +142,6 @@ impl SessionManager {
             controllers: Arc::clone(kernel.controller_manager()),
             workspaces: Arc::clone(kernel.workspace_manager()),
             command_reaper: Arc::clone(kernel.command_reaper()),
-            agents: Arc::clone(kernel.agent_manager()),
             scoped: Arc::clone(kernel.scoped_entities()),
             groups: Arc::clone(kernel.group_manager()),
             attachments: Arc::clone(kernel.attachment_manager()),
@@ -364,8 +360,8 @@ impl SessionManager {
             if let Some((workspace, _)) = resolved {
                 session.attach_workspace(context, Some(workspace)).await?;
             }
-            let agents = &self.agents;
-            take_in_participants(log, agents, context, template, session, participants).await?;
+            let kernel = &self.kernel;
+            take_in_participants(log, kernel, context, template, session, participants).await?;
             // Shared once the session it is shared with exists (issue 23).
             if let Some(WorkspaceChoice::Existing { id, share: Some(grant) }) = &spec.workspace {
                 let controller = self.controllers.workspace_controller(*id).await?;
@@ -529,7 +525,7 @@ impl SessionManager {
                 let started = self.spawn_session(session, channels, hold).await?;
                 // An agent deleted or restored while its channels were built: the follower missed
                 // it, as the session ran nowhere yet (`procedure::participant::Follow`).
-                started.follow_agents_held(None).await;
+                started.follow_agents(None).await;
                 Ok(started)
             }
         }
@@ -1109,7 +1105,9 @@ impl SessionManager {
             let into = Some((&channel, HistoryAccess::None, ThreadId::line(channel.id())));
             for participant in participants {
                 let founder = participant.actor_id();
-                take_in(log, &session_loop, context, founder, Entry::Founding, into).await?;
+                let kernel = &self.kernel;
+                take_in(log, kernel, &session_loop, context, founder, Entry::Founding, into)
+                    .await?;
             }
         }
         Ok(session_loop)
@@ -1653,14 +1651,14 @@ mod tests {
             .delete(&system, helper.id, &Removal::now(system.caller_id))
             .await
             .unwrap();
-        let following = Follow::session(&manager, session.id());
+        let following = Follow::session(session.id());
         kernel.procedures().run(following).await.unwrap();
         assert!(!talk.participant_ids().contains(&actor), "looking again, it stops the actor");
         let announced = rx.drain().await;
         assert!(announced.iter().any(|e| matches!(e.about::<Channel>(), Some((address, change)) if address == (session.id(), talk.id()) && change.data::<ActorId>(channel::LEFT) == Some(ActorId::Agent(helper.id)))), "as a leave: {announced:?}");
 
         kernel.entity_stores().agents.restore(&system, helper.id).await.unwrap();
-        let following = Follow::session(&manager, session.id());
+        let following = Follow::session(session.id());
         kernel.procedures().run(following).await.unwrap();
         assert!(talk.participant_ids().contains(&actor), "and starts it again");
         let announced = rx.drain().await;

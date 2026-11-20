@@ -63,9 +63,7 @@ impl ChannelCommand for RemoveCommand {
         )?;
         let (issuer, from) = (context.issuer.security_context(), Some(context.channel.id()));
         context
-            .carry_out(|sessions, session| {
-                LetGo::removed(sessions, &issuer, session, participant.id(), from)
-            })
+            .carry_out(|session| LetGo::removed(&issuer, session, participant.id(), from))
             .await
             .map_err(|e| command_error(REMOVE_COMMAND_NAME, &e))?;
         Ok(CommandOutput::private(format!("Removed {name}.")))

@@ -887,12 +887,16 @@ async fn a_thread_is_opened_by_a_reader_with_their_own_and_closed_by_its_opener_
             "bob: GetAgent(bob's) yes",
             "bob as bobs-helper: GetPersonality(bob's) yes",
             "bob: Cleared(bobs-helper) yes",
+            // Asked again by the channel as it opens the thread (`ChannelLoop::open_thread`),
+            // which enforces what it does; the procedure asked it ahead, before anyone was taken
+            // into the session (issue 593).
+            "bob: OpenThread(alice's) yes",
         ]),
         "{asked:#?}"
     );
     assert!(session.session().takes_part(bobs_helper), "his agent is in the session");
 
-    let (closed, asked) = world.asked(main.close_thread(&alice, bobs)).await;
+    let (closed, asked) = world.asked(main.close_thread_by_procedure(&alice, bobs)).await;
     let refused = closed.expect_err("someone takes part in it");
     assert!(
         matches!(refused.downcast_ref::<ChannelError>(), Some(ChannelError::ThreadNotEmpty { .. })),
@@ -910,7 +914,7 @@ async fn a_thread_is_opened_by_a_reader_with_their_own_and_closed_by_its_opener_
         "the channel's owner may"
     );
     session.leave(&bob, bobs_helper).await.expect("bob takes his agent out");
-    let (closed, asked) = world.asked(main.close_thread(&bob, bobs)).await;
+    let (closed, asked) = world.asked(main.close_thread_by_procedure(&bob, bobs)).await;
     assert!(closed.expect("his to close"), "closed");
     assert_eq!(
         asked,
@@ -922,7 +926,7 @@ async fn a_thread_is_opened_by_a_reader_with_their_own_and_closed_by_its_opener_
         "whoever opened it is asked nothing beyond reaching it"
     );
     let hers = session.open_thread(&alice, main.id(), line, vec![]).await.expect("alice's own");
-    let (refused, asked) = world.asked(main.close_thread(&bob, hers)).await;
+    let (refused, asked) = world.asked(main.close_thread_by_procedure(&bob, hers)).await;
     assert!(denied(&refused.expect_err("neither his nor his channel to change")));
     assert_eq!(
         asked,
@@ -5917,7 +5921,7 @@ async fn joining_a_channel_by_command_asks_what_joining_one_asks() {
             // The session opened for one who may read it, as joining does (issue 593).
             "bob: JoinSession(alice's) no",
             "bob: GetSession(alice's) yes",
-            // Whoever takes someone in reads them first (`SessionLoop::newcomer`); not sought
+            // Whoever takes someone in reads them first (`procedure::participant`); not sought
             // among what he reads: he reads nothing of the channel before he joined.
             "bob: GetUser(system's) yes",
             "bob: JoinChannel(alice's) yes",
@@ -5957,7 +5961,7 @@ async fn an_invitation_to_a_channel_is_used_up_as_it_is_taken() {
         .join(&World::as_user(world.bob), bob_id, Some(open.id()))
         .await
         .expect_err("no longer his to join");
-    // Asked by the session before the channel is (`SessionLoop::newcomer`).
+    // Asked by the session before the channel is (`procedure::participant`).
     assert!(matches!(refused.downcast_ref(), Some(StoreError::PermissionDenied(_))), "{refused}");
     assert!(!open.participants().iter().any(|p| p.id == bob_id), "he stays out");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
@@ -6016,7 +6020,7 @@ async fn one_the_channel_cannot_take_in_is_rolled_back_out_of_the_session() {
         checks(&[
             // Whether he may reach the session to join it (`SessionManager::open_to_take_in`).
             "bob: JoinSession(alice's) yes",
-            // Whoever takes them in reads them first (`SessionLoop::newcomer`).
+            // Whoever takes them in reads them first (`procedure::participant`).
             "bob: GetAgent(bob's) yes",
             // Out of the session again: its entry in its name, as the first time, then the
             // channel's, whether it may run and be cleared, before anything is stored.

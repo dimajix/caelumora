@@ -19,6 +19,7 @@ mod threads;
 
 pub(crate) use participation::Participation;
 pub(crate) use resolved::{ResolvedKind, ResolvedParticipant};
+pub(crate) use threads::require_opening;
 
 use crate::actor::approval::ApproverActor;
 use crate::actor::user::UserActor;
@@ -383,7 +384,7 @@ impl ChannelLoop {
         let internal_actors = channel_loop.channel.load().internal_actors.clone();
         for internal in &internal_actors {
             let resolved = ResolvedParticipant::internal(internal, session_id, id);
-            channel_loop.start_participant(resolved, line, None, None).await?;
+            channel_loop.add_actor(resolved, line, None, None).await?;
         }
         // The delegates of what is still delegated (issue 557), each reading on from where its
         // open brief was given, before the participants they give to.
@@ -407,7 +408,7 @@ impl ChannelLoop {
                     return Ok(false);
                 };
                 channel_loop.participation.require_runnable(&resolved).await?;
-                channel_loop.start_participant(resolved, thread, None, None).await?;
+                channel_loop.add_actor(resolved, thread, None, None).await?;
                 Ok(true)
             }
             .await;

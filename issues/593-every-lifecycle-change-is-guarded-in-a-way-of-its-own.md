@@ -810,3 +810,28 @@ case; it is decided there, and may make this unnecessary.
   what a session's or channel's making took back - where before nothing was announced; and one
   restored and taken back for the same reason (`keep_restored`) is announced restored, then deleted.
   A new artifact is announced with its version before it may be taken back.
+- **2026-11-20** — Step R3c-2 committed. Step R4 implemented, not committed yet: the procedures of
+  participants and threads (`TakeIn`, `LetGo`, `Follow`, `thread::Open`, `Close`) hold only their
+  parameters, and what taking someone in and letting them go ask - whose participant they are,
+  `JOIN`, a thread's founder the opener's own, whether they may leave, `UpdateSession` and
+  `UpdateChannel` of whoever adds or removes - is asked by the procedures, which act across the
+  session and its channels, in the order it was asked in before; whether they can run and may take
+  part is one question of `Participation` (`require_admitted`, with a channel or without), which the
+  candidates of a session ask too. They store by the controllers of the session and the channel,
+  each step undone by a compensation of its own - the actor's start by its leave, the listing by
+  taking it back -, and the `ChannelLoop` keeps `add_actor`, `remove_actor`, `open_thread` and
+  `close_thread`; the session keeps `follow` (the participants it reads, as they are taken in) and
+  `follow_agents`. Every `require_…` of the loops for participants and threads goes,
+  `session/participants.rs` with them; `channel::require_opening` decides opening a thread, asked by
+  `ChannelLoop::open_thread` as it opens it and ahead by `thread::open`, before its founders are
+  taken into the session - so `OpenThread` is asked twice there now, the one difference of the step.
+  Opening a thread is taken back by `close_thread` in the opener's name, refused while a founder
+  whose take-back failed still takes part, where before it was closed unchecked. A command makes its
+  procedure from the session's id alone (`CommandContext::carry_out`). The tests that go through a
+  procedure to open or close a thread call it `…_by_procedure`, as reclassifying.
+  Reviewed with fresh eyes: `SessionLoop::sessions` goes, nobody making a procedure with the
+  session manager any more, and `Kernel::sessions` is the crate's, by which the procedures reach
+  the running sessions; joining a channel reaches it as reading it does (`SessionLoop::running`);
+  following agents fails no more once the session manager is gone, as no session runs then. A test
+  holds the case of issue 568 as taking someone in is undone: one left out and attending that
+  cannot start after all stays so, without a leave.

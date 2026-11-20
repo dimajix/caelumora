@@ -58,7 +58,7 @@ impl ChannelCommand for DeleteCommand {
         let channel = channel_named(DELETE_COMMAND_NAME, wanted, context).await?;
         let (issuer, id) = (context.issuer.security_context(), channel.id());
         let deleted = context
-            .carry_out(|_, session| Delete::new(&issuer, session, id))
+            .carry_out(|session| Delete::new(&issuer, session, id))
             .await
             .map_err(|e| command_error(DELETE_COMMAND_NAME, &e))?;
         if !deleted {

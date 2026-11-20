@@ -368,8 +368,7 @@ pub(super) async fn add_participant(
     // Through the session: one not in it yet is taken into it, too (issue 221).
     let context = user.security_context();
     let into = Some((channel_id, payload.history));
-    let adding =
-        TakeIn::added(&state.session_manager, &context, session_id, payload.participant, into);
+    let adding = TakeIn::added(&context, session_id, payload.participant, into);
     state.procedures.run(adding).await?;
     Ok(Json(channel_response(&state, &user, session_id, channel_id).await?))
 }
@@ -415,7 +414,7 @@ pub(super) async fn remove_participant(
 ) -> Result<StatusCode, ApiError> {
     let context = user.security_context();
     let from = Some(channel_id);
-    let removing = LetGo::removed(&state.session_manager, &context, session_id, participant, from);
+    let removing = LetGo::removed(&context, session_id, participant, from);
     state.procedures.run(removing).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -429,7 +428,7 @@ pub(super) async fn leave(
 ) -> Result<StatusCode, ApiError> {
     let context = user.security_context();
     let from = Some(channel_id);
-    let leaving = LetGo::leaving(&state.session_manager, &context, session_id, participant, from);
+    let leaving = LetGo::leaving(&context, session_id, participant, from);
     state.procedures.run(leaving).await?;
     Ok(StatusCode::NO_CONTENT)
 }

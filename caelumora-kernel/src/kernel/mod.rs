@@ -276,10 +276,10 @@ impl Kernel {
         &self.procedures
     }
 
-    /// The session manager made for it (`SessionManager::new`), for whoever makes the procedures
-    /// of sessions and their participants where nothing hands it to them - a command in a channel,
-    /// a plugin (issue 593); `None` if none was made, or it is gone.
-    pub fn sessions(&self) -> Option<Arc<SessionManager>> {
+    /// The session manager made for it (`SessionManager::new`), by which the procedures it hands
+    /// the kernel to reach the running sessions as they are carried out (issue 593); `None` if
+    /// none was made, or it is gone.
+    pub(crate) fn sessions(&self) -> Option<Arc<SessionManager>> {
         self.sessions.read().unwrap_or_else(sync::PoisonError::into_inner).upgrade()
     }
 

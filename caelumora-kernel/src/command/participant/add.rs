@@ -73,9 +73,7 @@ impl ChannelCommand for AddCommand {
                 let issuer = context.issuer.security_context();
                 let into = Some((channel_id, HistoryAccess::All));
                 context
-                    .carry_out(|sessions, session| {
-                        TakeIn::added(sessions, &issuer, session, one.id, into)
-                    })
+                    .carry_out(|session| TakeIn::added(&issuer, session, one.id, into))
                     .await
                     .map_err(failed)?;
                 Ok(CommandOutput::private(format!("Added {}.", one.name)))

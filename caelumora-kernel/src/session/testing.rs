@@ -285,7 +285,7 @@ impl SessionManager {
         participant: ActorId,
         into: Option<ChannelId>,
     ) -> Result<Arc<SessionLoop>> {
-        let joining = TakeIn::joining(self, context, id, participant, into);
+        let joining = TakeIn::joining(context, id, participant, into);
         self.kernel().procedures().run(joining).await.map_err(SessionError::untyped)
     }
 
@@ -603,7 +603,7 @@ impl SessionLoop {
         participant: ActorId,
         into: Option<(ChannelId, HistoryAccess)>,
     ) -> Result<()> {
-        let adding = TakeIn::added(&self.manager()?, context, self.id(), participant, into);
+        let adding = TakeIn::added(context, self.id(), participant, into);
         self.procedures().run(adding).await.map(drop).map_err(SessionError::untyped)
     }
 
@@ -617,7 +617,7 @@ impl SessionLoop {
         participant: ActorId,
         into: Option<ChannelId>,
     ) -> Result<()> {
-        let joining = TakeIn::joining(&self.manager()?, context, self.id(), participant, into);
+        let joining = TakeIn::joining(context, self.id(), participant, into);
         self.procedures().run(joining).await.map(drop).map_err(SessionError::untyped)
     }
 
@@ -630,7 +630,7 @@ impl SessionLoop {
         context: &SecurityContext,
         participant: ActorId,
     ) -> Result<()> {
-        let removing = LetGo::removed(&self.manager()?, context, self.id(), participant, None);
+        let removing = LetGo::removed(context, self.id(), participant, None);
         self.procedures().run(removing).await.map_err(SessionError::untyped)
     }
 
@@ -639,7 +639,7 @@ impl SessionLoop {
     /// # Errors
     /// As `LetGo::leaving`.
     pub async fn leave(&self, context: &SecurityContext, participant: ActorId) -> Result<()> {
-        let leaving = LetGo::leaving(&self.manager()?, context, self.id(), participant, None);
+        let leaving = LetGo::leaving(context, self.id(), participant, None);
         self.procedures().run(leaving).await.map_err(SessionError::untyped)
     }
 
@@ -690,13 +690,7 @@ impl SessionLoop {
         origin: ThreadOrigin,
         founders: Vec<ActorId>,
     ) -> Result<ThreadId> {
-        let opening =
-            thread::Open::new(&self.manager()?, context, self.id(), channel, origin, founders);
+        let opening = thread::Open::new(context, self.id(), channel, origin, founders);
         self.procedures().run(opening).await.map_err(SessionError::untyped)
-    }
-
-    /// The session manager of the kernel, which the procedures are made with.
-    fn manager(&self) -> Result<Arc<SessionManager>> {
-        self.sessions().ok_or_else(|| anyhow::Error::msg("the kernel has no session manager"))
     }
 }

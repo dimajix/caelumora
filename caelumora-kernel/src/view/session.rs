@@ -3,8 +3,8 @@
 
 use super::{channel_reading, ReadingBasis};
 use super::{AgentView, ChannelView, Views};
-use crate::channel::ChannelError;
-use crate::session::{ChannelRun, Found, SessionLoop};
+use crate::channel::{ChannelError, ResolvedParticipant};
+use crate::session::{ChannelRun, Found, SessionError, SessionLoop};
 use anyhow::Error;
 use caelumora_api::reader::PrivateNotesElsewhere;
 use caelumora_api::reader::{ViewError, ViewResult};
@@ -31,6 +31,7 @@ use caelumora_domain::value::text::{Briefing, Summary};
 use caelumora_domain::value::time_zone::TimeZone;
 use caelumora_security::{AccessQuestions, ActionType, SecurityContext};
 use chrono::{DateTime, Utc};
+use std::slice;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -51,9 +52,9 @@ const MIN_PREFIX: usize = 2;
 /// The most users, and the most agents, a search finds.
 const CANDIDATES: usize = 20;
 
-/// Why someone cannot be taken in, as `error` of `resolve_to_take_in` or `require_to_take_in`
-/// says it; `None` for an error that says nothing about them - a store that failed -, which a
-/// search does not show.
+/// Why someone cannot be taken in, as `error` of resolving them or of
+/// `Participation::require_admitted` says it; `None` for an error that says nothing about them - a
+/// store that failed -, which a search does not show.
 fn refusal_of(error: &Error) -> Option<CandidateRefusal> {
     match (error.downcast_ref::<ChannelError>(), error.downcast_ref::<StoreError>()) {
         (Some(ChannelError::NotCleared { .. }), _) => Some(CandidateRefusal::NotCleared),
@@ -164,7 +165,7 @@ impl SessionView {
     /// (issue 221): the users and the agents they may read whose names `name` seeks, each with
     /// whether they take part already and - for whoever may change the session, since it tells
     /// whether someone is cleared for the channel - why they could not be taken in, as
-    /// `SessionLoop::require_to_take_in` decides. Nobody for a session that does not run.
+    /// `Participation::require_admitted` decides. Nobody for a session that does not run.
     ///
     /// A search by a prefix is for whoever may change the session, since it tells who exists: of
     /// at least `MIN_PREFIX` characters, and at most `CANDIDATES` of each. A whole name (issue
@@ -238,16 +239,28 @@ impl SessionView {
             NameMatch::Exact(_) => self.nearest(found, channel.as_ref()),
         };
         let running = channel.as_ref().and_then(|channel| channel.running().cloned());
+        let channel_id = running.as_ref().map(|running| running.id());
+        let classified = running.as_ref().map(|running| running.channel());
+        let controllers = self.views.controller_manager();
+        let participation = self.views.participation();
         let mut candidates = Vec::new();
         for (participant, scoped_name) in found {
             let id = participant.actor_id();
             let in_session = self.session.takes_part(id);
             let in_channel = channel.as_ref().is_some_and(|channel| channel.lists(id));
+            // Asked as taking them in asks it (`procedure::participant::take_into_session`).
             let refusal = match may_change && !in_channel {
                 true => async {
-                    let resolved =
-                        session_loop.resolve_to_take_in(&participant, running.as_ref()).await?;
-                    session_loop.require_to_take_in(context, &resolved, running.as_ref()).await
+                    let session = session_loop.id();
+                    let resolving = ResolvedParticipant::resolve(
+                        controllers,
+                        &participant,
+                        session,
+                        channel_id,
+                    );
+                    let resolved = resolving.await?.ok_or(SessionError::CannotTakeIn(id))?;
+                    let admitting = slice::from_ref(&resolved);
+                    participation.require_admitted(context, classified.as_deref(), admitting).await
                 }
                 .await
                 .err()

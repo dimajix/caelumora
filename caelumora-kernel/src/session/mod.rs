@@ -2,7 +2,6 @@
 
 mod channels;
 mod manager;
-mod participants;
 mod settings;
 mod spec;
 #[cfg(any(test, feature = "test-support"))]
@@ -14,7 +13,7 @@ pub use manager::SessionManager;
 pub(crate) use settings::MoveTarget;
 pub use spec::{ChannelSpec, SessionSpec};
 
-use crate::channel::{ChannelLoop, Participation};
+use crate::channel::ChannelLoop;
 use crate::command::CommandExecutor;
 use crate::controller::{ControllerManager, SessionController, WorkspaceController};
 use crate::event::{EventBus, EventSubscription, Following, SubscriptionTopic};
@@ -29,7 +28,7 @@ use caelumora_api::component::ComponentError;
 use caelumora_api::workspace::{WorkspaceError, WorkspaceResult};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::{Agent, AgentUpdateEvent};
-use caelumora_domain::channel::{self, Channel, ChannelId};
+use caelumora_domain::channel::{self, Channel, ChannelId, Participant};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::event::{Announcing, GlobalEvent};
 use caelumora_domain::privacy::SessionPrivacy;
@@ -184,7 +183,7 @@ enum ChannelEntry {
     /// Left out as the session opened (issue 463): its components cannot be read. Held with its
     /// document as it was then; a channel that does not run is changed only as someone is let go
     /// from the session (issue 590), and its copy renewed with it
-    /// (`let_go_where_unavailable_held`).
+    /// (`procedure::participant::let_go_from_session`).
     Unavailable { channel: Arc<Channel>, cause: Arc<ComponentError> },
 }
 
@@ -236,9 +235,6 @@ pub struct SessionLoop {
     controllers: Arc<ControllerManager>,
     /// What a workspace attached to it is reached by.
     workspaces: Arc<WorkspaceManager>,
-    /// Who it may take in, and who may take part in its channels (issue
-    /// 356).
-    participation: Arc<Participation>,
     events: Arc<EventBus>,
     /// The user commands of every channel of the session.
     commands: Arc<CommandExecutor>,
@@ -361,7 +357,6 @@ impl SessionLoop {
             stores: kernel.entity_stores().clone(),
             controllers: Arc::clone(kernel.controller_manager()),
             workspaces: Arc::clone(kernel.workspace_manager()),
-            participation: Arc::clone(kernel.participation()),
             events: Arc::clone(kernel.event_bus()),
             kernel,
             commands,
@@ -411,12 +406,6 @@ impl SessionLoop {
         self.kernel.procedures()
     }
 
-    /// The session manager of the kernel (`Kernel::sessions`), for whoever makes a procedure from
-    /// within the session (`procedures`); `None` once it is gone.
-    pub fn sessions(&self) -> Option<Arc<SessionManager>> {
-        self.kernel.sessions()
-    }
-
     pub fn name(&self) -> Name {
         self.session_controller.name()
     }
@@ -428,6 +417,15 @@ impl SessionLoop {
     /// session's channels then.
     pub fn workspace(&self) -> WorkspaceResult<Arc<WorkspaceController>> {
         self.workspace.load_full().ok_or(WorkspaceError::NotUsableInChannel)
+    }
+
+    /// Follows `participant` from now on, on the session's subscription (issue 590) - its names,
+    /// and its deletion, which its actor follows once it is taken in (`participant::Follow`) -, so
+    /// that nothing of it is missed until it is listed: for a procedure that takes them in, as it
+    /// reads them (`procedure::participant::take_into_session`). A topic followed already is not
+    /// followed twice.
+    pub(crate) fn follow(&self, participant: &Participant) {
+        self.events.follow(&self.following, SubscriptionTopic::of_participant(participant));
     }
 
     /// Runs the session's channels, those it has and those created while it runs, until the session

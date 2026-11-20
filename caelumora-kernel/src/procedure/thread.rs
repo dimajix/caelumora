@@ -5,16 +5,16 @@
 //! shared, so that it is not closed meanwhile, and its founders; closing holds the thread
 //! exclusively. Whoever lets someone go holds the thread they take part in shared, until they have
 //! left (`participant::LetGo`), so that a thread is closed only once whoever left it has left. Both
-//! open the session as opening it does, and carry the change out by the building blocks of the
-//! `SessionLoop` and the `ChannelLoop` - as a plugin's procedures may, which open or close a
-//! thread within a change of their own (issue 558's sub-agents).
+//! open the session as opening it does; the `ChannelLoop` opens and closes the thread, enforcing
+//! who may (`ChannelLoop::open_thread`, `close_thread`) - as a plugin's procedures may have it,
+//! which open or close a thread within a change of their own (issue 558's sub-agents).
 
 use super::participant::{take_into_channel, take_into_session, Entry};
 use super::session::lock_to_open;
-use super::{Compensation, Deferred, Key, Locks, Procedure};
-use crate::channel::ChannelError;
+use super::{sessions_of, Compensation, Deferred, Key, Locks, Procedure};
+use crate::channel::{require_opening, ChannelError};
 use crate::kernel::Kernel;
-use crate::session::{SessionError, SessionLoop, SessionManager};
+use crate::session::{SessionError, SessionLoop};
 use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::channel::{ChannelId, HistoryAccess, ThreadId, ThreadOrigin};
@@ -28,7 +28,6 @@ use std::sync::Arc;
 /// alone (`open`). Holds the new thread, its id chosen before it is
 /// opened, until its founders are taken in.
 pub struct Open {
-    sessions: Arc<SessionManager>,
     context: SecurityContext,
     session: SessionId,
     channel: ChannelId,
@@ -42,15 +41,14 @@ impl Open {
     /// Opens a thread of `channel` of `session` at `origin` on behalf of `context`, with
     /// `founders`.
     pub fn new(
-        sessions: &Arc<SessionManager>,
         context: &SecurityContext,
         session: SessionId,
         channel: ChannelId,
         origin: ThreadOrigin,
         founders: Vec<ActorId>,
     ) -> Self {
-        let (sessions, context, thread) = (Arc::clone(sessions), context.clone(), ThreadId::new());
-        Self { sessions, context, session, channel, thread, origin, founders }
+        let context = context.clone();
+        Self { context, session, channel, thread: ThreadId::new(), origin, founders }
     }
 }
 
@@ -75,12 +73,12 @@ impl Procedure for Open {
     async fn carry_out(
         self,
         (): (),
-        _: &Kernel,
+        kernel: &Kernel,
         log: &mut Compensation,
     ) -> Result<ThreadId, SessionError> {
-        let Self { sessions, context, session, channel, thread, origin, founders } = self;
-        let session = sessions.open_held(&context, session).await?;
-        open(log, &session, &context, channel, thread, origin, founders).await?;
+        let Self { context, session, channel, thread, origin, founders } = self;
+        let session = sessions_of(kernel)?.open_held(&context, session).await?;
+        open(log, kernel, &session, &context, channel, thread, origin, founders).await?;
         Ok(thread)
     }
 }
@@ -89,20 +87,24 @@ impl Procedure for Open {
 /// founders, `founders` - whom `context` acts for, or agents of their own -, taking part in it
 /// alone, for a procedure that holds the thread, the one it is opened at and its founders (`Open`),
 /// or a founder nobody knows yet, an agent just made (the sub-agents' start, issue 558). Everything
-/// is asked before anything is stored: whether `context` may open it there
-/// (`ChannelLoop::require_opening`), that the channel lists no founder yet, and what taking each in
-/// asks, as each is taken into the session (`participant::take_into_session`); then the thread is
-/// opened (`ChannelLoop::open_thread_held`) and each founder taken into the channel as one
-/// (`participant::take_into_channel`). Each listing and the opening are taken back by `log`, the
-/// last first, if a later step fails - a founder as if never taken in.
+/// is asked before anything is stored: whether `context` may open it there (`require_opening`,
+/// asked ahead of the channel, which asks it again as it opens it), that the channel lists no
+/// founder yet, and what taking each in asks, as each is taken into the session
+/// (`participant::take_into_session`); then the thread is opened (`ChannelLoop::open_thread`) and
+/// each founder taken into the channel as one (`participant::take_into_channel`). Each listing and
+/// the opening are taken back by `log`, the last first, if a later step fails - a founder as if
+/// never taken in, the thread closed in the name of `context`, who opened it
+/// (`ChannelLoop::close_thread`).
 ///
 /// # Errors
-/// `SessionError::ChannelNotFound` for a channel `context` may not read; as
-/// `ChannelLoop::require_opening`; `ChannelError::AlreadyParticipant` for a founder the channel
-/// lists; as `participant::take_into_session`, `ChannelLoop::open_thread_held` and
+/// `SessionError::ChannelNotFound` for a channel `context` may not read; as `require_opening`;
+/// `ChannelError::AlreadyParticipant` for a founder the channel lists; as
+/// `participant::take_into_session`, `ChannelLoop::open_thread` and
 /// `participant::take_into_channel` otherwise.
+#[expect(clippy::too_many_arguments, reason = "the thread, where, by whom, with whom, in what")]
 pub async fn open(
     log: &mut Compensation,
+    kernel: &Kernel,
     session: &Arc<SessionLoop>,
     context: &SecurityContext,
     channel: ChannelId,
@@ -111,7 +113,9 @@ pub async fn open(
     founders: Vec<ActorId>,
 ) -> Result<(), SessionError> {
     let channel = session.channel_for(context, channel).await?;
-    channel.require_opening(context, origin).await?;
+    let open = channel.is_open(origin.thread);
+    let access = kernel.access_policy();
+    require_opening(access.as_ref(), context, &channel.channel(), origin, open).await?;
     // Each once, in the order named.
     let mut named = HashSet::new();
     let mut founders = founders;
@@ -126,28 +130,28 @@ pub async fn open(
     let into = Some(&channel);
     let mut asked = Vec::with_capacity(founders.len());
     for founder in founders {
-        asked.push(take_into_session(log, session, context, founder, founding, into).await?);
+        let taking_in = take_into_session(log, kernel, session, context, founder, founding, into);
+        asked.push(taking_in.await?);
     }
-    channel.open_thread_held(context, thread, origin).await?;
+    channel.open_thread(context, thread, origin).await?;
     {
         let (channel, context) = (Arc::clone(&channel), context.clone());
         log.record("opening a thread", async move {
-            channel.undo_opening_held(&context, thread).await;
+            channel.close_thread(&context, thread).await?;
             Ok(())
         });
     }
     let line = (&channel, HistoryAccess::None, thread);
     for founder in asked {
-        take_into_channel(log, context, founder, founding, line).await?;
+        take_into_channel(log, session, context, founder, founding, line).await?;
     }
     Ok(())
 }
 
 /// Closes a thread of a channel on behalf of `context`, starting the session where it does not
-/// run, once nobody takes part in it (`ChannelLoop::close_thread_held`); holds it until `run` has
+/// run, once nobody takes part in it (`ChannelLoop::close_thread`); holds it until `run` has
 /// closed it. `false` if it is not open.
 pub struct Close {
-    sessions: Arc<SessionManager>,
     context: SecurityContext,
     session: SessionId,
     channel: ChannelId,
@@ -157,14 +161,12 @@ pub struct Close {
 impl Close {
     /// Closes `thread` of `channel` of `session` on behalf of `context`.
     pub fn new(
-        sessions: &Arc<SessionManager>,
         context: &SecurityContext,
         session: SessionId,
         channel: ChannelId,
         thread: ThreadId,
     ) -> Self {
-        let sessions = Arc::clone(sessions);
-        Self { sessions, context: context.clone(), session, channel, thread }
+        Self { context: context.clone(), session, channel, thread }
     }
 }
 
@@ -180,18 +182,17 @@ impl Procedure for Close {
     }
 
     /// # Errors
-    /// As `SessionManager::open_held`, `SessionLoop::channel_for` and
-    /// `ChannelLoop::close_thread_held`.
+    /// As `SessionManager::open_held`, `SessionLoop::channel_for` and `ChannelLoop::close_thread`.
     async fn carry_out(
         self,
         (): (),
-        _: &Kernel,
+        kernel: &Kernel,
         _: &mut Compensation,
     ) -> Result<bool, SessionError> {
-        let Self { sessions, context, session, channel, thread } = self;
-        let session = sessions.open_held(&context, session).await?;
+        let Self { context, session, channel, thread } = self;
+        let session = sessions_of(kernel)?.open_held(&context, session).await?;
         let channel = session.channel_for(&context, channel).await?;
-        Ok(channel.close_thread_held(&context, thread).await?)
+        Ok(channel.close_thread(&context, thread).await?)
     }
 }
 
@@ -199,7 +200,7 @@ impl Procedure for Close {
 mod tests {
     use super::{Close, Open};
     use crate::channel::testing::settled;
-    use crate::channel::{ChannelError, ChannelLoop};
+    use crate::channel::{require_opening, ChannelError, ChannelLoop};
     use crate::procedure::participant::LetGo;
     use crate::procedure::testing::{waits_for, Held};
     use crate::procedure::Key;
@@ -230,16 +231,16 @@ mod tests {
         let at_the_line = ThreadOrigin { thread: line, message: MessageId::new() };
 
         let held = Held::key(&executor, Key::Thread(id, main, line), true).await;
-        let opening = Open::new(&world.manager, &alice, id, main, at_the_line, vec![]);
+        let opening = Open::new(&alice, id, main, at_the_line, vec![]);
         let thread = waits_for(held, &executor, opening).await.expect("opened once it is let go");
 
         let held = Held::key(&executor, Key::Thread(id, main, thread), false).await;
-        let closing = Close::new(&world.manager, &alice, id, main, thread);
+        let closing = Close::new(&alice, id, main, thread);
         assert!(waits_for(held, &executor, closing).await.unwrap(), "closed once it is let go");
 
         let held = Held::key(&executor, Key::Thread(id, main, line), true).await;
         let bob = ActorId::User(world.bob);
-        let removing = LetGo::removed(&world.manager, &alice, id, bob, Some(main));
+        let removing = LetGo::removed(&alice, id, bob, Some(main));
         waits_for(held, &executor, removing).await.expect("let go once its thread is let go");
         world.manager.stop(&alice, id).await.unwrap();
     }
@@ -323,7 +324,10 @@ mod tests {
         );
 
         session.remove_participant(&alice, helper).await.expect("let go");
-        assert!(main.close_thread(&alice, thread).await.expect("closed"), "its delegate with it");
+        assert!(
+            main.close_thread_by_procedure(&alice, thread).await.expect("closed"),
+            "its delegate with it"
+        );
         main.history_once(|entries| {
             entries
                 .iter()
@@ -511,15 +515,23 @@ mod tests {
         let session = world.manager.open(&alice, session.id()).await.unwrap();
         let main = Arc::clone(&session.channels()[0]);
         let origin = ThreadOrigin { thread, message: MessageId::new() };
-        main.require_opening(&alice, origin).await.expect_err("a person branches at the line");
-        let refused = main.close_thread(&alice, thread).await.expect_err("it takes part in it");
+        let access = world.kernel.access_policy();
+        let open = main.is_open(origin.thread);
+        let document = main.channel();
+        let opening = require_opening(access.as_ref(), &alice, &document, origin, open);
+        opening.await.expect_err("a person branches at the line");
+        let refused =
+            main.close_thread_by_procedure(&alice, thread).await.expect_err("it takes part in it");
         assert!(
             matches!(channel_error(&refused), Some(ChannelError::ThreadNotEmpty { .. })),
             "open again after the restart, with its founder in it: {refused}"
         );
 
         session.remove_participant(&alice, helper).await.expect("let go");
-        assert!(main.close_thread(&alice, thread).await.expect("closed"), "by whoever opened it");
+        assert!(
+            main.close_thread_by_procedure(&alice, thread).await.expect("closed"),
+            "by whoever opened it"
+        );
         let closed = |e: &HistoryEntry| {
             matches!(e, HistoryEntry::ThreadClosed { thread: t, .. }
                 if *t == thread)
@@ -533,7 +545,7 @@ mod tests {
         world.manager.stop(&alice, session.id()).await.unwrap();
         let session = world.manager.open(&alice, session.id()).await.unwrap();
         let main = Arc::clone(&session.channels()[0]);
-        assert!(!main.close_thread(&alice, thread).await.unwrap(), "closed for good");
+        assert!(!main.close_thread_by_procedure(&alice, thread).await.unwrap(), "closed for good");
         world.manager.stop(&alice, session.id()).await.unwrap();
     }
 

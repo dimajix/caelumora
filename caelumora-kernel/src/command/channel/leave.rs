@@ -71,9 +71,7 @@ impl ChannelCommand for LeaveCommand {
         };
         let (issuer, from) = (context.issuer.security_context(), Some(context.channel.id()));
         context
-            .carry_out(|sessions, session| {
-                LetGo::leaving(sessions, &issuer, session, leaving, from)
-            })
+            .carry_out(|session| LetGo::leaving(&issuer, session, leaving, from))
             .await
             .map_err(|e| command_error(LEAVE_COMMAND_NAME, &e))?;
         Ok(CommandOutput::private(done))

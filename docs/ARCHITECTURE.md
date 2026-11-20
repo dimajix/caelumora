@@ -497,19 +497,19 @@ thread opened or closed. An entry point - a REST handler, the terminal, a comman
 a plugin's writer, the follower of the agents' deletion and restoring
 (`procedure::follower::AgentFollower`, which a program starts beside its `SessionManager`) - makes
 it, as what it asks for, and the kernel's `ProcedureExecutor` carries it out in a task of its own;
-who reaches the session from within it finds the executor and the `SessionManager` there
-(`SessionLoop::procedures`, `sessions`), the latter known to the kernel weakly, since it holds the
-kernel (`Kernel::sessions`, issue 601). The executor holds the kernel weakly as well, made with it,
-and hands it to the procedure it carries out: a procedure holds only what it was asked for, and
-reaches the services of the kernel as it is carried out. It locks what it finds from the top down,
-by a key that names the object's path (`Key`), each key's parents shared with it: exclusively what
-it changes, shared what has to stay as it is. An object it finds locked defers it: it lets go of
-everything, waits for that object and enumerates again, so that nothing waits while it holds
-anything and no order of locks is needed; who waits at an object admits nobody after them. Holding
-its objects, it checks the state it finds and the permissions, once, and carries the change out by
-the building blocks of the objects, which know nothing of locking - what holds them lies around
-them, in the executor -; how to undo each step it records, and the executor undoes it if a later
-step fails (`Compensation`). No procedure is carried out within another - it would wait for
+who reaches the session from within it finds the executor there (`SessionLoop::procedures`). The
+procedures reach the running sessions by the `SessionManager`, which the kernel knows weakly, since
+it holds the kernel (`Kernel::sessions`, issue 601). The executor holds the kernel weakly as well,
+made with it, and hands it to the procedure it carries out: a procedure holds only what it was asked
+for, and reaches the services of the kernel as it is carried out. It locks what it finds from the
+top down, by a key that names the object's path (`Key`), each key's parents shared with it:
+exclusively what it changes, shared what has to stay as it is. An object it finds locked defers it:
+it lets go of everything, waits for that object and enumerates again, so that nothing waits while it
+holds anything and no order of locks is needed; who waits at an object admits nobody after them.
+Holding its objects, it checks the state it finds and the permissions, once, and carries the change
+out by the building blocks of the objects, which know nothing of locking - what holds them lies
+around them, in the executor -; how to undo each step it records, and the executor undoes it if a
+later step fails (`Compensation`). No procedure is carried out within another - it would wait for
 itself -, and the executor refuses it. A procedure that a channel's `run` carries a step out for
 holds its objects until `run` answers. The REST server, as it opens a session for a request, has its
 channels left out as it started built again by a procedure of its own (`procedure::channel::Start`).
@@ -564,7 +564,7 @@ The design repeats a few decisions; new code follows them.
     let go meanwhile as it is built (`ChannelLoop::reconcile`, see
     [CHANNELS.md](CHANNELS.md#letting-someone-go-from-the-session)); a session has its channels
     follow the agents deleted or restored meanwhile as it starts
-    (`SessionLoop::follow_agents_held`).
+    (`SessionLoop::follow_agents`).
 *   **Least authority.** Everything is handed only what it needs: a component gets a narrow context,
     not its actor's runtime; an actor gets its own channel, not the session.
 *   **The kernel decides, the agent side asks.** As the frontends map what the kernel decides, the

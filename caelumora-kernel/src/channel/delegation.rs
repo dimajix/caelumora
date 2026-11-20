@@ -162,7 +162,7 @@ impl ChannelLoop {
     /// Starts the delegate of `thread`, in it.
     async fn start_delegate(&self, thread: ThreadId) {
         let resolved = ResolvedParticipant::delegate(thread, self.session_id, self.id);
-        if let Err(e) = self.start_participant(resolved, thread, None, None).await {
+        if let Err(e) = self.add_actor(resolved, thread, None, None).await {
             warn!("The delegate of thread {} of channel {} cannot start: {:#}", thread, self.id, e);
         }
     }

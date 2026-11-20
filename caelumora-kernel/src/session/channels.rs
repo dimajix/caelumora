@@ -52,7 +52,7 @@ impl SessionLoop {
     /// `procedure::participant::Follow` and a session as it starts (`SessionManager::open_held`) -
     /// those of `only`, or every agent if `None`: a deleted one rests in them, a restored one runs
     /// again (`ChannelLoop::follow_agents`).
-    pub(crate) async fn follow_agents_held(&self, only: Option<&HashSet<AgentId>>) {
+    pub(crate) async fn follow_agents(&self, only: Option<&HashSet<AgentId>>) {
         for channel in self.channels() {
             channel.follow_agents(only).await;
         }
@@ -119,11 +119,16 @@ impl SessionLoop {
         self.running(channel_id, run)
     }
 
-    /// The loop of the channel `channel_id` if `run` says it runs.
+    /// The loop of the channel `channel_id` if `run` says it runs: for whoever reaches a channel
+    /// of the session - who reads it (`channel_for`), who joins it (`procedure::participant`).
     ///
     /// # Errors
     /// `SessionError::ChannelUnavailable` if it does not (issue 463).
-    fn running(&self, channel_id: ChannelId, run: ChannelRun) -> Result<Arc<ChannelLoop>> {
+    pub(crate) fn running(
+        &self,
+        channel_id: ChannelId,
+        run: ChannelRun,
+    ) -> Result<Arc<ChannelLoop>> {
         match run {
             ChannelRun::Running(channel_loop) => Ok(channel_loop),
             ChannelRun::Unavailable(cause) => Err(SessionError::ChannelUnavailable {
@@ -167,19 +172,6 @@ impl SessionLoop {
             self.running(channel.id, run)?;
         }
         Ok(())
-    }
-
-    /// The channel `channel_id` if it runs, for whoever joins it: not asked
-    /// whether they may read it - joining it decides (`ChannelLoop::require_entry`).
-    ///
-    /// # Errors
-    /// `SessionError::ChannelNotFound` if the session lists no such channel,
-    /// `SessionError::ChannelUnavailable` if it does not run (issue 463).
-    pub(crate) fn channel_to_join(&self, channel_id: ChannelId) -> Result<Arc<ChannelLoop>> {
-        let (_, run) = self
-            .listed_channel(channel_id)
-            .ok_or(SessionError::ChannelNotFound { session: self.id, channel: channel_id })?;
-        self.running(channel_id, run)
     }
 
     /// The running channel named `name`.
@@ -236,8 +228,9 @@ impl SessionLoop {
     }
 
     /// Holds `channel`, which the session lists, as not running, its components not to be read
-    /// for `cause` (issue 463) - as it opens, and as building it again fails anew
-    /// (`procedure::channel::Start`).
+    /// for `cause` (issue 463) - as it opens, as building it again fails anew
+    /// (`procedure::channel::Start`), and renewed as someone is let go from it
+    /// (`procedure::participant::let_go_from_session`).
     pub(crate) fn hold_unavailable(&self, channel: Channel, cause: Arc<ComponentError>) {
         self.channels
             .insert(channel.id, ChannelEntry::Unavailable { channel: Arc::new(channel), cause });
@@ -261,67 +254,6 @@ impl SessionLoop {
         );
         self.hold_unavailable(channel, Arc::new(cause));
         Ok(())
-    }
-
-    /// Lets `participant` go from the channel `channel_id`, which does not run (issue 463), on
-    /// behalf of `context`, who let them go from the session (issue 590), for a procedure that lets
-    /// them go (`procedure::participant::let_go_from_session`): in its stored document, as its
-    /// controller lets one go, and in the copy the session holds, so that it is built without them.
-    /// Nothing for a channel that does not list them, one that runs or one the session does not
-    /// list: the procedure asks it of every channel of the session that does not run. Not while it
-    /// is built again: the procedure holds the channel, which building it again holds too
-    /// (`procedure::channel::Start`), so that it is neither built meanwhile nor from a copy that
-    /// still lists them.
-    ///
-    /// # Errors
-    /// Whatever storing the channel reports.
-    pub(crate) async fn let_go_where_unavailable_held(
-        &self,
-        context: &SecurityContext,
-        channel_id: ChannelId,
-        participant: ActorId,
-    ) -> Result<()> {
-        let Some((held, ChannelRun::Unavailable(_))) = self.listed_channel(channel_id) else {
-            return Ok(());
-        };
-        if !held.lists(participant) {
-            return Ok(());
-        }
-        let held = Channel::clone(&held);
-        let by = context.caller_id;
-        let channel = self.let_go_where_not_running_held(held, &[participant], by).await?;
-        if let Some(mut entry) = self.channels.get_mut(&channel_id) {
-            if let ChannelEntry::Unavailable { channel: held, .. } = &mut *entry {
-                *held = Arc::new(channel);
-            }
-        }
-        Ok(())
-    }
-
-    /// `channel`, which does not run, with `participants` let go by `by` (issue 590): stored in the
-    /// kernel's name - letting them go from the session was permitted - by a controller of its own,
-    /// which keeps each as a former participant, lets the group of its participants follow and
-    /// announces it, as for a running channel (`ChannelController::remove_participant`): one left
-    /// out as the session opened (`let_go_where_unavailable_held`), or one restored - before it is
-    /// built, for the document of a deleted channel cannot be changed
-    /// (`procedure::channel::Restore`).
-    ///
-    /// # Errors
-    /// Whatever storing the channel reports.
-    pub(crate) async fn let_go_where_not_running_held(
-        &self,
-        channel: Channel,
-        participants: &[ActorId],
-        by: ActorId,
-    ) -> Result<Channel> {
-        if participants.is_empty() {
-            return Ok(channel);
-        }
-        let controller = self.controllers.new_channel_controller(channel);
-        for participant in participants {
-            controller.remove_participant(&SecurityContext::system(), *participant, by).await?;
-        }
-        Ok(Channel::clone(&controller.load()))
     }
 }
 

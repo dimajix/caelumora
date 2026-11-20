@@ -6,7 +6,8 @@
 //! `AgentManager`, a workspace by the `WorkspaceManager` (`find_or_create`). Its agents are found
 //! or made once the session is, and taken into it as anyone is taken into a running session.
 
-use crate::agent::{AgentManager, AgentSpec};
+use crate::agent::AgentSpec;
+use crate::kernel::Kernel;
 use crate::procedure::participant::{take_in, Entry};
 use crate::procedure::Compensation;
 use crate::session::{SessionError, SessionLoop};
@@ -14,13 +15,14 @@ use crate::workspace::{WorkspaceManager, WorkspaceSpec};
 use anyhow::Result;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::channel::{HistoryAccess, Participant, ThreadId};
-use caelumora_domain::session::SessionId;
+use caelumora_domain::session::{Session, SessionId};
+use caelumora_domain::store::{StoreError, Stored};
 use caelumora_domain::template::{
     ParticipantRequest, SessionTemplate, TemplateResult, WorkspaceTemplate,
 };
 use caelumora_domain::user::UserId;
 use caelumora_domain::workspace::WorkspaceId;
-use caelumora_security::SecurityContext;
+use caelumora_security::{ActionType, Enforcement, SecurityContext};
 use caelumora_store::EntityStores;
 use std::sync::Arc;
 
@@ -76,17 +78,17 @@ pub(crate) async fn resolve_participants(
 /// already, and its `agents`, as `resolve_participants` gives them - into
 /// the channels of `session`, made from it, that name them, as their
 /// founders (`participant::take_in`, issue 420), on behalf of `context`, who
-/// made it. An agent is found or made by `agent_manager`
-/// (`AgentManager::find_or_create`) once the session is, so that one of its scope is made where
-/// `context` may put it, and taken into the session first, as whoever may change it adds one.
-/// What is taken in is taken back by `log` if a later step fails.
+/// made it. An agent is found or made by the kernel's `AgentManager` (`find_or_create`) once the
+/// session is, so that one of its scope is made where `context` may put it, and taken into the
+/// session first, as whoever may change it adds one (`UpdateSession`). What is taken in is taken
+/// back by `log` if a later step fails.
 ///
 /// # Errors
-/// As `AgentManager::find_or_create`, `SessionLoop::require_changing` and
-/// `participant::take_in`; who took part before stays.
+/// As `AgentManager::find_or_create`; `StoreError::PermissionDenied` if `context` may not change
+/// the session; as `participant::take_in`; who took part before stays.
 pub(crate) async fn take_in_participants(
     log: &mut Compensation,
-    agent_manager: &AgentManager,
+    kernel: &Kernel,
     context: &SecurityContext,
     template: &SessionTemplate,
     session: &Arc<SessionLoop>,
@@ -96,10 +98,12 @@ pub(crate) async fn take_in_participants(
     let mut founders: Vec<(String, ActorId)> =
         users.into_iter().map(|(name, user)| (name, user.actor_id())).collect();
     for (name, spec) in agents {
-        let (agent, _) = agent_manager.find_or_create(context, &spec).await?;
+        let (agent, _) = kernel.agent_manager().find_or_create(context, &spec).await?;
         let participant = ActorId::Agent(agent.id);
-        session.require_changing(context).await?;
-        take_in(log, session, context, participant, Entry::Added, None).await?;
+        let document = session.session();
+        let changing = ActionType::update(Session::KIND, &document.security_attributes);
+        kernel.access_policy().require(context, changing, StoreError::PermissionDenied).await?;
+        take_in(log, kernel, session, context, participant, Entry::Added, None).await?;
         founders.push((name, participant));
     }
     for (name, participant) in founders {
@@ -108,7 +112,7 @@ pub(crate) async fn take_in_participants(
                 .channel(channel)
                 .ok_or(SessionError::ChannelNotFound { session: session.id(), channel })?;
             let into = Some((&channel, HistoryAccess::None, ThreadId::line(channel.id())));
-            take_in(log, session, context, participant, Entry::Founding, into).await?;
+            take_in(log, kernel, session, context, participant, Entry::Founding, into).await?;
         }
     }
     Ok(())
@@ -144,6 +148,7 @@ pub(crate) async fn resolve_workspace(
 mod tests {
     use super::*;
     use crate::agent::AgentError;
+    use crate::agent::AgentManager;
     use crate::event::EventBus;
     use crate::scoped::ScopeHolders;
     use caelumora_domain::agent::testing::make_personality;

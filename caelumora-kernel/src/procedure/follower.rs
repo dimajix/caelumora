@@ -31,7 +31,7 @@ impl AgentFollower {
                 let follows = match events.recv().await {
                     Ok(event) => match event.about::<Agent>() {
                         Some((agent, EntityChange::Deleted | EntityChange::Restored)) => {
-                            vec![Follow::agent(&sessions, agent)]
+                            vec![Follow::agent(agent)]
                         }
                         _ => continue,
                     },
@@ -40,7 +40,7 @@ impl AgentFollower {
                             "The agent follower lost {lost} events and follows every session again"
                         );
                         let ids = sessions.running_ids();
-                        ids.into_iter().map(|id| Follow::session(&sessions, id)).collect()
+                        ids.into_iter().map(Follow::session).collect()
                     }
                     // Not while the kernel holds the bus.
                     Err(RecvError::Closed) => return,

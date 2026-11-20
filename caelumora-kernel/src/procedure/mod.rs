@@ -42,12 +42,14 @@ pub use executor::ProcedureExecutor;
 pub use locks::{Deferred, Locks};
 
 use crate::kernel::Kernel;
+use crate::session::{SessionError, SessionManager};
 use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::channel::{ChannelId, ThreadId};
 use caelumora_domain::project::ProjectId;
 use caelumora_domain::session::SessionId;
 use std::fmt;
+use std::sync::Arc;
 
 /// An object of the logical graph a procedure locks, named by its path from the top: locking it
 /// locks its parents shared (`Key::parent`). A project stands apart from the path, since a session
@@ -130,6 +132,14 @@ pub trait Procedure: Send + Sync + 'static {
         kernel: &Kernel,
         log: &mut Compensation,
     ) -> Result<Self::Output, Self::Error>;
+}
+
+/// The session manager of `kernel`, which the procedures open their session by.
+///
+/// # Errors
+/// `ProcedureError::Gone` once it is gone, as the process ends.
+fn sessions_of(kernel: &Kernel) -> Result<Arc<SessionManager>, SessionError> {
+    kernel.sessions().ok_or(ProcedureError::Gone.into())
 }
 
 /// What the executor fails with instead of carrying a procedure out.

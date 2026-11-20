@@ -1180,7 +1180,7 @@ fn mentions_a_user(message: &Message) -> bool {
 mod tests {
     use super::*;
     use crate::channel::tests::*;
-    use crate::channel::{ActorChange, ChannelError, ResolvedParticipant};
+    use crate::channel::{require_opening, ActorChange, ChannelError, ResolvedParticipant};
     use crate::moderator::broadcast_policy::BroadcastPolicy;
     use crate::moderator::{Moderator, Notice, ResponderPolicy, Routing};
     use crate::testing::Script;
@@ -1211,8 +1211,8 @@ mod tests {
     use caelumora_domain::user::{User, UserId};
     use caelumora_domain::value::name::Name;
     use caelumora_domain::work::TurnId;
-    use caelumora_security::AllowAllPolicy;
     use caelumora_security::SecurityContext;
+    use caelumora_security::{AccessPolicy, AllowAllPolicy};
     use chrono::Utc;
     use std::collections::VecDeque;
     use std::slice;
@@ -2956,12 +2956,13 @@ mod tests {
     #[tokio::test]
     async fn a_thread_takes_in_what_is_said_until_it_is_closed() {
         let alice = make_user("alice");
-        let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
+        let access: Arc<dyn AccessPolicy> = Arc::new(AllowAllPolicy::new());
+        let channel = channel_with(&[&alice], Arc::clone(&access)).await;
         let alice_id = ActorId::User(alice.id);
         let system = SecurityContext::system();
         let line = ThreadId::line(channel.id);
         let origin = ThreadOrigin { thread: line, message: MessageId::new() };
-        let thread = channel.open_thread(&system, origin, &[]).await.expect("opened");
+        let thread = channel.open_thread_by_procedure(&system, origin, &[]).await.expect("opened");
         // What `run` does with the changes the channel hands it.
         let (event_tx, _event_rx) = mpsc::channel(10);
         let applied = async || {
@@ -2985,9 +2986,13 @@ mod tests {
         let agent =
             SecurityContext::new(ActorId::Agent(AgentId::new()), Default::default(), channel.id);
         let deeper = ThreadOrigin { thread, message: MessageId::new() };
-        channel.require_opening(&agent, deeper).await.expect("an agent opens one at a thread");
+        let opening = async |context: &SecurityContext| {
+            let open = channel.is_open(deeper.thread);
+            require_opening(access.as_ref(), context, &channel.channel(), deeper, open).await
+        };
+        opening(&agent).await.expect("an agent opens one at a thread");
         let person = SecurityContext::new(alice_id, Default::default(), channel.id);
-        let refused = channel.require_opening(&person, deeper).await.expect_err("not at the line");
+        let refused = opening(&person).await.expect_err("not at the line");
         assert!(
             matches!(
                 refused.downcast_ref::<ChannelError>(),
@@ -2999,20 +3004,23 @@ mod tests {
         // Closing waits until `run` closed it, which the test carries out by hand.
         let closing = tokio::spawn({
             let (channel, system) = (Arc::clone(&channel), system.clone());
-            async move { channel.close_thread(&system, thread).await }
+            async move { channel.close_thread_by_procedure(&system, thread).await }
         });
         time::sleep(Duration::from_millis(20)).await;
         assert!(!closing.is_finished(), "it waits until `run` closed it");
         assert_eq!(channel.admit(&said("being closed")).await, Ok(()), "until `run` closes it");
         applied().await;
         assert!(closing.await.unwrap().expect("closed"), "by its opener");
-        assert!(!channel.close_thread(&system, thread).await.unwrap(), "closed once");
+        assert!(!channel.close_thread_by_procedure(&system, thread).await.unwrap(), "closed once");
         assert_eq!(
             channel.admit(&said("once closed")).await,
             Err(Rejection::ThreadClosed),
             "nothing more once it is closed"
         );
-        assert!(!channel.close_thread(&system, line).await.unwrap(), "and the line never");
+        assert!(
+            !channel.close_thread_by_procedure(&system, line).await.unwrap(),
+            "and the line never"
+        );
     }
 
     /// A channel of alice and bob with a thread at its line delegated into by bob, to alice, in

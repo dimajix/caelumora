@@ -2,7 +2,7 @@
 //! ending a sub-agent are procedures of its own (issue 593) - an agent made (`AgentManager`), a
 //! thread founded with it (`procedure::thread::open`), a brief delegated into it
 //! (`ChannelLoop::delegate`); the agent let go (`procedure::participant::let_go_from_session`), its
-//! thread closed (`ChannelLoop::close_thread_held`) and the agent deleted as its work ends (issue
+//! thread closed (`ChannelLoop::close_thread`) and the agent deleted as its work ends (issue
 //! 557) -, made of the kernel's building blocks. It acts in the work's context, each operation of
 //! the kernel checking itself: the agent of the work gives, its owner owns what it starts.
 
@@ -143,6 +143,7 @@ impl SubAgents {
     /// let go already - an end asked again after it stopped half-way - counts as let go.
     async fn wind_up_held(
         &self,
+        kernel: &Kernel,
         session: &SessionLoop,
         channel: &ChannelLoop,
         thread: ThreadId,
@@ -150,6 +151,7 @@ impl SubAgents {
     ) -> SubAgentResult<()> {
         let context = self.context();
         let leaving = participant::let_go_from_session(
+            kernel,
             session,
             context,
             ActorId::Agent(agent),
@@ -160,7 +162,7 @@ impl SubAgents {
             Ok(()) | Err(SessionError::NotAParticipant { .. }) => {}
             Err(error) => return Err(told(error.untyped())),
         }
-        channel.close_thread_held(context, thread).await.map_err(told)?;
+        channel.close_thread(context, thread).await.map_err(told)?;
         Ok(())
     }
 }
@@ -235,7 +237,7 @@ impl Procedure for Starting {
     async fn carry_out(
         self,
         (): (),
-        _: &Kernel,
+        kernel: &Kernel,
         log: &mut Compensation,
     ) -> SubAgentResult<ThreadId> {
         let Self { work, personality, origin, brief, channel, thread, .. } = self;
@@ -253,7 +255,8 @@ impl Procedure for Starting {
         let context = work.context().clone();
         // Its founder's taking in and the opening, each taken back by `log` (`thread::open`).
         let founders = vec![founder];
-        let opening = thread::open(log, &session, &context, channel, thread, origin, founders);
+        let opening =
+            thread::open(log, kernel, &session, &context, channel, thread, origin, founders);
         opening.await.map_err(told)?;
         channel_loop.delegate(&context, thread, founder, brief).await.map_err(told)?;
         info!("Sub-agent {} started in thread {} by {}", agent, thread, context.caller_id);
@@ -302,14 +305,14 @@ impl Procedure for Ending {
     async fn carry_out(
         self,
         agent: Self::Plan,
-        _: &Kernel,
+        kernel: &Kernel,
         _: &mut Compensation,
     ) -> SubAgentResult<()> {
         agent?;
         let Self { work, thread, .. } = self;
         let (session, channel) = work.running().await?;
         let agent = work.sub_agent(&channel, thread).await?;
-        work.wind_up_held(&session, &channel, thread, agent).await?;
+        work.wind_up_held(kernel, &session, &channel, thread, agent).await?;
         work.agents.delete(work.context(), agent).await.map_err(told)?;
         info!("Sub-agent {} of thread {} ended", agent, thread);
         Ok(())

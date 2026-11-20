@@ -9,8 +9,6 @@ use crate::channel::{ChannelLoop, Participation, ResolvedParticipant};
 use crate::command::CommandExecutor;
 use crate::component::ComponentRegistry;
 use crate::controller::{ChannelController, ControllerManager, SessionController};
-#[cfg(any(test, feature = "test-support"))]
-use crate::procedure::ProcedureExecutor;
 use crate::session::SessionLoop;
 use caelumora_api::component::Services;
 use caelumora_domain::actor::ActorId;
@@ -148,13 +146,13 @@ impl ChannelRuntime {
     }
 }
 
-/// What the tests of a channel of no session take from its runtime: the kernel's executor, by
-/// which they change the channel under a hold of their own (`ChannelLoop::remove_participant`,
-/// issue 593).
+/// What the tests of a channel of no session take from its runtime: the kernel, by whose executor
+/// they change the channel under a hold of their own, as its procedures would
+/// (`ChannelLoop::remove_participant`, issue 593).
 #[cfg(any(test, feature = "test-support"))]
 impl ChannelRuntime {
-    pub(crate) fn procedures(&self) -> &Arc<ProcedureExecutor> {
-        self.kernel.procedures()
+    pub(crate) fn kernel(&self) -> &Arc<Kernel> {
+        &self.kernel
     }
 }
 

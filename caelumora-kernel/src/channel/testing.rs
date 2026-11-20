@@ -17,7 +17,7 @@ use crate::procedure::channel::Reclassify;
 use crate::procedure::participant::{let_go_from_channel, Exit, LetGo, TakeIn};
 use crate::procedure::thread;
 use crate::procedure::{Compensation, Deferred, Key, Locks, Procedure, ProcedureExecutor};
-use crate::session::{SessionError, SessionLoop, SessionManager};
+use crate::session::SessionError;
 use crate::testing::shown;
 use crate::view::AgentContextView;
 use anyhow::{Error, Result};
@@ -559,17 +559,18 @@ impl ChannelLoop {
         participant: ActorId,
         exit: Exit,
     ) -> Result<()> {
-        if let Some((sessions, session)) = self.of_session() {
+        if let Some(session) = self.session_loop() {
             let (id, from) = (session.id(), Some(self.id));
             let letting_go = match exit {
-                Exit::Removed => LetGo::removed(&sessions, context, id, participant, from),
-                Exit::Leaving => LetGo::leaving(&sessions, context, id, participant, from),
+                Exit::Removed => LetGo::removed(context, id, participant, from),
+                Exit::Leaving => LetGo::leaving(context, id, participant, from),
             };
             return session.procedures().run(letting_go).await.map_err(SessionError::untyped);
         }
         let (channel, context) = (Arc::clone(self), context.clone());
+        let kernel = Arc::clone(self.runtime.kernel());
         self.holding(async move {
-            let letting_go = let_go_from_channel(&channel, &context, participant, exit);
+            let letting_go = let_go_from_channel(&kernel, &channel, &context, participant, exit);
             letting_go.await.map_err(SessionError::untyped)
         })
         .await
@@ -585,7 +586,7 @@ impl ChannelLoop {
         context: &SecurityContext,
         classification: Classification,
     ) -> Result<()> {
-        if let Some((_, session)) = self.of_session() {
+        if let Some(session) = self.session_loop() {
             let reclassifying = Reclassify::new(context, session.id(), self.id, classification);
             return session.procedures().run(reclassifying).await.map_err(SessionError::untyped);
         }
@@ -604,57 +605,58 @@ impl ChannelLoop {
         participant: ActorId,
         history: HistoryAccess,
     ) -> Result<()> {
-        let (sessions, session) = self
-            .of_session()
+        let session = self
+            .session_loop()
             .ok_or_else(|| Error::msg("a channel of no session takes nobody in"))?;
         let into = Some((self.id, history));
-        let adding = TakeIn::added(&sessions, context, session.id(), participant, into);
+        let adding = TakeIn::added(context, session.id(), participant, into);
         session.procedures().run(adding).await.map(drop).map_err(SessionError::untyped)
     }
 
-    /// Opens a thread of the channel at `origin` on behalf of `context`, with `founders`, as
-    /// `thread::Open` does; in a channel of no session without founders.
+    /// Opens a thread of the channel at `origin` on behalf of `context`, with `founders`, by the
+    /// procedure that does it (`thread::Open`), as an entry point does; in a channel of no session
+    /// without founders.
     ///
     /// # Errors
     /// As `thread::Open`; if a channel of no session is to take founders in, else as
-    /// `ChannelLoop::open_thread_held`.
-    pub async fn open_thread(
+    /// `ChannelLoop::open_thread`.
+    pub async fn open_thread_by_procedure(
         self: &Arc<Self>,
         context: &SecurityContext,
         origin: ThreadOrigin,
         founders: &[ActorId],
     ) -> Result<ThreadId> {
         let founders = founders.to_vec();
-        if let Some((sessions, session)) = self.of_session() {
-            let opening =
-                thread::Open::new(&sessions, context, session.id(), self.id, origin, founders);
+        if let Some(session) = self.session_loop() {
+            let opening = thread::Open::new(context, session.id(), self.id, origin, founders);
             return session.procedures().run(opening).await.map_err(SessionError::untyped);
         }
         // A channel of no session takes nobody in: its threads are opened without founders.
         anyhow::ensure!(founders.is_empty(), "a channel of no session takes no founders in");
-        let (channel, context, opened) = (Arc::clone(self), context.clone(), ThreadId::new());
-        self.holding(async move { channel.open_thread_held(&context, opened, origin).await })
-            .await?;
+        let (channel, context) = (Arc::clone(self), context.clone());
+        let opened = ThreadId::new();
+        self.holding(async move { channel.open_thread(&context, opened, origin).await }).await?;
         Ok(opened)
     }
 
-    /// Closes `thread` on behalf of `context`, as `thread::Close` does.
+    /// Closes `thread` on behalf of `context` by the procedure that does it (`thread::Close`), as
+    /// an entry point does.
     ///
     /// # Errors
-    /// As `ChannelLoop::close_thread_held`.
-    pub async fn close_thread(
+    /// As `ChannelLoop::close_thread`.
+    pub async fn close_thread_by_procedure(
         self: &Arc<Self>,
         context: &SecurityContext,
         thread: ThreadId,
     ) -> Result<bool> {
-        if let Some((sessions, session)) = self.of_session() {
-            let closing = thread::Close::new(&sessions, context, session.id(), self.id, thread);
+        if let Some(session) = self.session_loop() {
+            let closing = thread::Close::new(context, session.id(), self.id, thread);
             return session.procedures().run(closing).await.map_err(SessionError::untyped);
         }
         let (channel, context) = (Arc::clone(self), context.clone());
         let (closed_tx, closed_rx) = oneshot::channel();
         self.holding(async move {
-            let closed = channel.close_thread_held(&context, thread).await?;
+            let closed = channel.close_thread(&context, thread).await?;
             let _ = closed_tx.send(closed);
             Ok(())
         })
@@ -662,18 +664,13 @@ impl ChannelLoop {
         Ok(closed_rx.await.unwrap_or(false))
     }
 
-    /// The manager and the loop of the channel's session; `None` for a channel of none.
-    fn of_session(&self) -> Option<(Arc<SessionManager>, Arc<SessionLoop>)> {
-        let session = self.session_loop()?;
-        Some((session.sessions()?, session))
-    }
-
     /// Carries `change` out under a hold of the channel, for a channel of no session.
     async fn holding(
         &self,
         change: impl Future<Output = Result<()>> + Send + 'static,
     ) -> Result<()> {
-        under_hold(self.runtime.procedures(), Key::Channel(self.session_id, self.id), change).await
+        let key = Key::Channel(self.session_id, self.id);
+        under_hold(self.runtime.kernel().procedures(), key, change).await
     }
 }
 

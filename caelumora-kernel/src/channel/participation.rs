@@ -136,11 +136,14 @@ impl Participation {
         self.require_cleared(resolved, context, classification)
     }
 
-    /// Nothing if every one of `founders` can run (`require_runnable`) and may take part in
-    /// `channel` (`require_admissible`) - asked before anything of a new or restored channel is
-    /// stored: of the founders of a new one (issue 420), of the participants of a restored one,
-    /// those that still exist (`ResolvedParticipant::resolve_existing`). Each is asked in turn,
-    /// once all are resolved: whatever resolving them reported comes before a refusal.
+    /// Nothing if every one of `participants` can run (`require_runnable`) and, with `channel`,
+    /// may take part in it (`require_admissible`): what is asked before anyone is taken in - into
+    /// a session, and into a channel of it where one is named (`procedure::participant`) -, before
+    /// anything of a new or restored channel is stored, of the founders of a new one (issue 420)
+    /// and the participants of a restored one, those that still exist
+    /// (`ResolvedParticipant::resolve_existing`), and what says whom one cannot take in
+    /// (`SessionView::candidates`). Each is asked in turn, once all are resolved: whatever
+    /// resolving them reported comes before a refusal.
     ///
     /// # Errors
     /// `ChannelError::OutOfScope` or `NotCleared` for the first who may not;
@@ -148,12 +151,14 @@ impl Participation {
     pub(crate) async fn require_admitted(
         &self,
         context: &SecurityContext,
-        channel: &Channel,
-        founders: &[ResolvedParticipant],
+        channel: Option<&Channel>,
+        participants: &[ResolvedParticipant],
     ) -> Result<()> {
-        for founder in founders {
-            self.require_runnable(founder).await?;
-            self.require_admissible(founder, context, &channel.classification)?;
+        for participant in participants {
+            self.require_runnable(participant).await?;
+            if let Some(channel) = channel {
+                self.require_admissible(participant, context, &channel.classification)?;
+            }
         }
         Ok(())
     }
@@ -302,7 +307,7 @@ mod tests {
                 let founders = founders.await.unwrap();
                 kernel
                     .participation()
-                    .require_admitted(&alice_ctx, &channel, &founders)
+                    .require_admitted(&alice_ctx, Some(&channel), &founders)
                     .await
                     .is_ok()
             }

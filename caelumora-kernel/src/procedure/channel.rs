@@ -12,9 +12,9 @@
 //! them go holds it shared (`participant`), so that neither crosses a channel being made, deleted,
 //! restored, built again or reclassified.
 
-use super::participant::{take_in, Entry};
+use super::participant::{let_go_where_not_running, take_in, Entry};
 use super::session::lock_to_open;
-use super::{Compensation, Deferred, Key, Locks, Procedure, ProcedureError};
+use super::{sessions_of, Compensation, Deferred, Key, Locks, Procedure};
 use crate::channel::{ChannelLoop, ResolvedParticipant};
 use crate::kernel::Kernel;
 use crate::scoped::ScopeNotEmpty;
@@ -139,7 +139,7 @@ impl Procedure for Create {
         }
         let into = Some((&channel, HistoryAccess::None, ThreadId::line(channel.id())));
         for founder in founders {
-            take_in(log, &session, &context, founder, Entry::Founding, into).await?;
+            take_in(log, kernel, &session, &context, founder, Entry::Founding, into).await?;
         }
         info!("Channel {}/{} created in session {}", document.name, id, session.id());
         Ok(channel)
@@ -227,7 +227,7 @@ async fn asked_for(
         .await?;
     let controllers = kernel.controller_manager();
     let founders = ResolvedParticipant::resolve_existing(controllers, &participants, &channel);
-    kernel.participation().require_admitted(context, &channel, &founders.await?).await?;
+    kernel.participation().require_admitted(context, Some(&channel), &founders.await?).await?;
     Ok((channel, participants.iter().map(Participant::actor_id).collect()))
 }
 
@@ -442,8 +442,7 @@ impl Procedure for Restore {
                 Ok(mark_deleted(&sessions, &system, &restored, &removal).await?)
             });
         }
-        let document =
-            session.let_go_where_not_running_held(document, &gone, ActorId::System).await?;
+        let document = let_go_where_not_running(kernel, document, &gone, ActorId::System).await?;
         session.controller().add_channel(&context, id).await?;
         {
             let session = Arc::clone(&session);
@@ -510,7 +509,7 @@ async fn to_restore(
         channel.participants.iter().cloned().partition(|p| document.takes_part(p.actor_id()));
     let controllers = kernel.controller_manager();
     let staying = ResolvedParticipant::resolve_existing(controllers, &staying, channel).await?;
-    kernel.participation().require_admitted(context, channel, &staying).await?;
+    kernel.participation().require_admitted(context, Some(channel), &staying).await?;
     let gone = gone.iter().map(Participant::actor_id).collect();
     Ok((deleted, gone))
 }
@@ -636,14 +635,6 @@ impl Procedure for Reclassify {
         let channel = session.channel_for(&context, channel).await?;
         Ok(channel.reclassify(&context, classification).await?)
     }
-}
-
-/// The session manager of `kernel`, which the channels' procedures open their session by.
-///
-/// # Errors
-/// `ProcedureError::Gone` once it is gone, as the process ends.
-fn sessions_of(kernel: &Kernel) -> Result<Arc<SessionManager>, SessionError> {
-    kernel.sessions().ok_or(ProcedureError::Gone.into())
 }
 
 #[cfg(test)]
