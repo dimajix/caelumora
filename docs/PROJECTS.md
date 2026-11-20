@@ -76,14 +76,16 @@ with the session in it and every artifact published so far. No artifact is kept 
 
 The `ProjectManager`, the kernel's (`Kernel::project_manager`), makes shared projects
 (`caelumora-kernel/src/project`), finds one by its name or makes it (`find_or_create`), for the
-terminal program, and holds their `Lifecycle`; deleting, restoring and purging one are procedures
-(`procedure::project`, issue 593), which hold the project and the sessions in it and carry the
-change out by that lifecycle. Deleting a project deletes its sessions as deleting one does
-(`procedure::session::delete`) and what lies in its scope through `ScopedEntities`, in the deleter's
-name: a session or anything else left that they may not delete keeps the project (`ScopeNotEmpty`),
-and what they could delete stays deleted. Restoring brings back what went with it, as far as the
-restorer may; a session in a deleted project is not restored alone. Purging purges all of it, the
-artifacts' content included. A session's own project goes with its session alone.
+terminal program, finds, makes and purges the own projects of sessions, and holds the one
+`Lifecycle` of every project, which the procedures of a session reach through it; deleting,
+restoring and purging a shared one are procedures (`procedure::project`, issue 593), which hold the
+project and the sessions in it and carry the change out by that lifecycle. Deleting a project
+deletes its sessions as deleting one does (`procedure::session::delete`) and what lies in its scope
+through `ScopedEntities`, in the deleter's name: a session or anything else left that they may not
+delete keeps the project (`ScopeNotEmpty`), and what they could delete stays deleted. Restoring
+brings back what went with it, as far as the restorer may; a session in a deleted project is not
+restored alone. Purging purges all of it, the artifacts' content included. A session's own project
+goes with its session alone.
 
 ## Not done yet
 

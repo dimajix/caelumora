@@ -1,6 +1,7 @@
-//! `ProjectManager`: making shared projects (issue 467) and the lifecycle by which they are made,
-//! deleted, restored and purged - the latter three by the procedures of a project
-//! (`procedure::project`, issue 593).
+//! `ProjectManager`: making projects (issue 467) - shared ones, and the own projects of sessions -
+//! and the lifecycle by which they are made, deleted, restored and purged, the latter three by the
+//! procedures of a project and of a session (`procedure::project`, `procedure::session`, issue
+//! 593).
 
 use super::{ProjectError, ProjectResult, ProjectSpec};
 use crate::event::EventBus;
@@ -8,10 +9,11 @@ use crate::group::GroupManager;
 use crate::lifecycle::Lifecycle;
 use crate::scoped::found_or_made;
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::group::Group;
-use caelumora_domain::project::Project;
+use caelumora_domain::group::{Group, GroupId};
+use caelumora_domain::project::{Project, ProjectId};
 use caelumora_domain::scope::Scope;
-use caelumora_domain::store::{StoreError, StoreResultExt};
+use caelumora_domain::session::SessionId;
+use caelumora_domain::store::{StoreError, StoreResult, StoreResultExt};
 use caelumora_domain::value::name::ScopedName;
 use caelumora_domain::value::text::Description;
 use caelumora_security::SecurityContext;
@@ -20,14 +22,14 @@ use std::fmt;
 use std::sync::Arc;
 use tracing::{info, warn};
 
-/// The one that makes shared projects, each with the group of its members, and holds their
-/// lifecycle, by which the procedures of a project delete, restore and purge them. The kernel's
-/// (`Kernel::project_manager`).
+/// The one that makes projects, each with the group of its members - shared ones, and the own
+/// projects of sessions -, and holds their lifecycle, by which the procedures of a project and of
+/// a session delete, restore and purge them. The kernel's (`Kernel::project_manager`).
 pub struct ProjectManager {
-    /// The lifecycle of shared projects: each made, deleted, restored and purged by it, announced
-    /// as each is (issue 593).
+    /// The lifecycle of projects: each made, deleted, restored and purged by it, announced as each
+    /// is but a purge (issue 593).
     projects: Lifecycle<Project>,
-    /// What makes the group of a project's members with it.
+    /// What makes and purges the group of a project's members with it (issue 348).
     groups: Arc<GroupManager>,
 }
 
@@ -38,8 +40,8 @@ impl fmt::Debug for ProjectManager {
 }
 
 impl ProjectManager {
-    /// The manager of the shared projects in `stores`, announced on `events`, each with the group
-    /// of its members made by `groups`.
+    /// The manager of the projects in `stores`, announced on `events`, each with the group of its
+    /// members made by `groups`.
     pub(crate) fn new(
         stores: &EntityStores,
         events: Arc<EventBus>,
@@ -100,8 +102,63 @@ impl ProjectManager {
         .await
     }
 
-    /// The lifecycle of shared projects, by which their procedures delete, restore and purge them
-    /// (`procedure::project`).
+    /// The own project of session `id`, if it is there: the one in its scope, found by its name
+    /// (`Project::own_name`) in the kernel's name - none once it was lifted (issue 467).
+    ///
+    /// # Errors
+    /// Whatever the store reports.
+    pub(crate) async fn load_own(&self, id: SessionId) -> StoreResult<Option<Project>> {
+        let system = SecurityContext::system();
+        self.projects.store().find_by_name(&system, &Project::own_name(id)).await.optional()
+    }
+
+    /// Makes `own`, a session's own project, with the group of its members, in the kernel's name
+    /// (issue 467), each announced as it is made - the group first, so that its members hear of
+    /// the project, and both, or, if the project cannot be made, neither -: as a session is made,
+    /// and for a procedure that moves a session into a new own (`procedure::session::move_to`);
+    /// taken back by `discard_own`.
+    ///
+    /// # Errors
+    /// Whatever the store reports.
+    pub(crate) async fn make_own(&self, own: &mut Project) -> StoreResult<()> {
+        self.groups.keep_participants(Group::of_project(own)).await?;
+        if let Err(error) = self.projects.create(&SecurityContext::system(), own).await {
+            let group = GroupId::of_project(own.id);
+            if let Err(undo) = self.groups.discard_participants(group).await {
+                warn!(project = %own.id, "The group of a session's own project that could not be made is left: {undo}");
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Takes `own`, made as a session's own project and not to be kept, back, in the kernel's name:
+    /// marked deleted and announced so, as its making was announced, and purged
+    /// (`Lifecycle::discard`), the group of its members with it - as making a session fails, and
+    /// for the compensation of moving a session into it.
+    ///
+    /// # Errors
+    /// Whatever the store reports.
+    pub(crate) async fn discard_own(&self, own: &Project) -> StoreResult<()> {
+        self.projects.discard(own).await?;
+        self.groups.discard_participants(GroupId::of_project(own.id)).await
+    }
+
+    /// Removes `own`, the own project of a session, for good with the group of its members, in the
+    /// kernel's name - marked deleted first if it is not -: as the session is purged. What lay in
+    /// its scope is the caller's to have purged. Announces nothing.
+    ///
+    /// # Errors
+    /// Whatever the store reports.
+    pub(crate) async fn purge_own(&self, own: ProjectId) -> StoreResult<()> {
+        self.groups.purge_participants(GroupId::of_project(own)).await?;
+        self.projects.purge_for_good(own).await?;
+        Ok(())
+    }
+
+    /// The lifecycle of projects, shared ones and the own projects of sessions, by which the
+    /// procedures of a project and of a session delete, restore and purge them
+    /// (`procedure::project`, `procedure::session`).
     pub(crate) fn lifecycle(&self) -> &Lifecycle<Project> {
         &self.projects
     }

@@ -1,12 +1,12 @@
-//! Projects (issue 467): what holds the results of sessions. Making a shared project is the
+//! Projects (issue 467): what holds the results of sessions. Making a project is the
 //! `ProjectManager`'s (`manager`), which holds their lifecycle; deleting, restoring and purging
 //! one, with the sessions that lie in it and what lies in its scope, are the procedures of a
 //! project (`procedure::project`); what a project is - its name, description, members, access
 //! list and where it lies - its controller changes (`controller::ProjectController`). A session's
 //! own project is the session's: made, deleted, restored and purged with the session
-//! (`procedure::session`), by the lifecycle the `SessionManager` holds. A session is put into a
-//! project or taken out into its own by `procedure::session::move_to`, which makes it a new own
-//! where its own was lifted.
+//! (`procedure::session`), by the same lifecycle. A session is put into a project or taken out
+//! into its own by `procedure::session::move_to`, which makes it a new own where its own was
+//! lifted.
 
 mod manager;
 mod spec;

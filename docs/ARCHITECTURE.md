@@ -460,19 +460,19 @@ What changes an entity is split by what it changes:
     kinds, and those of the plugins (`SkillManager`, `ArtifactManager`). The lifecycles of
     sessions and shared projects, which touch several objects, are procedures (below): a session's
     carried out by the `SessionManager` - the register of the sessions that run, which it starts
-    and stops, holding the lifecycles of sessions, their channels and their own projects -, the
-    session's loop and the services of the kernel; a shared project's by the lifecycle the
-    `ProjectManager` holds - the kernel's, which makes shared projects - and, for the sessions in
-    it, the procedures of a session. A
+    and stops, holding the lifecycles of sessions and their channels -, the `ProjectManager` for
+    their own projects, the session's loop and the services of the kernel; a shared project's by
+    the lifecycle the `ProjectManager` holds - the kernel's, which makes every project - and, for
+    the sessions in it, the procedures of a session. A
     channel's are procedures too (`procedure::channel`), carried out by the session's controller,
     the session's loop, which runs its channels, and the `SessionManager`, the manager of the
     channels of its sessions; a session's own project is made, deleted, restored and purged with
     the session. Making a
     document, marking it deleted, taking its mark away and purging it are one `Lifecycle` for each
-    kind, which its manager holds - the `SessionManager` one for sessions, their channels and their
-    own projects, the `GroupManager` one for groups - and the controllers of sessions, channels
-    and projects one as well, by which the groups of participants follow them -, the
-    `ProjectManager` one for shared projects,
+    kind, which its manager holds - the `SessionManager` one for sessions and their channels, the
+    `GroupManager` one for groups - and the controllers of sessions, channels and projects one as
+    well, by which the groups of participants follow them -, the `ProjectManager` one for projects,
+    shared ones and the own projects of sessions,
     the `AgentManager`, `WorkspaceManager` and the plugins' managers one for their kinds, by which
     what lies in a scope goes with its holder too (`ScopeMember::lifecycle`, issue 593) -, each
     change but a purge announced at the document's address

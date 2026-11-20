@@ -1,7 +1,6 @@
 //! `SessionManager`: the sessions of the process - the register of those that run here, which it
-//! starts and stops, and the lifecycles of sessions, their channels and their own projects, by
-//! which the procedures of a session make, delete, restore and purge them (`procedure::session`,
-//! issue 593).
+//! starts and stops, and the lifecycles of sessions and their channels, by which the procedures of
+//! a session make, delete, restore and purge them (`procedure::session`, issue 593).
 
 use super::{store_error, Ending, SessionError, SessionLoop};
 use crate::event::EventBus;
@@ -12,19 +11,17 @@ use crate::view::{Viewer, Views};
 use anyhow::Result;
 use caelumora_domain::channel::{Channel, ChannelId};
 use caelumora_domain::event::{Announcing, EventPublisher, GlobalEvent};
-use caelumora_domain::group::{Group, GroupId};
-use caelumora_domain::project::{Project, ProjectId};
+use caelumora_domain::group::GroupId;
 use caelumora_domain::security::SecurityAttributes;
 use caelumora_domain::session;
 use caelumora_domain::session::{Session, SessionId};
-use caelumora_domain::store::{StoreResult, StoreResultExt, Stored};
+use caelumora_domain::store::{StoreResult, Stored};
 use caelumora_security::{ActionType, Enforcement, Policies, SecurityContext};
 use caelumora_store::sessions::{SessionHold, SessionLocks};
 use caelumora_store::EntityStores;
 use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
-use tracing::warn;
 
 pub struct SessionManager {
     sessions: DashMap<SessionId, Arc<SessionLoop>>,
@@ -41,15 +38,13 @@ pub struct SessionManager {
     policies: Policies,
     stores: EntityStores,
     events: Arc<EventBus>,
-    /// What makes and purges the groups of the members of the own projects it makes, and of the
-    /// members of an own project (issue 348).
+    /// What purges the group of the participants of a channel with it (issue 348).
     groups: Arc<GroupManager>,
-    /// The lifecycles of what it is the manager of, by which its sessions, their channels and
-    /// their own projects (issue 467) are made, deleted, restored and purged - by it, or by the
-    /// procedures through it -, each change but a purge announced as it is stored (issue 593).
+    /// The lifecycles of what it is the manager of, by which its sessions and their channels are
+    /// made, deleted, restored and purged - by it, or by the procedures through it -, each change
+    /// but a purge announced as it is stored (issue 593).
     session_lifecycle: Lifecycle<Session>,
     channel_lifecycle: Lifecycle<Channel>,
-    own_lifecycle: Lifecycle<Project>,
 }
 
 /// A session as [`SessionManager::find`] found it for a context that may
@@ -95,8 +90,7 @@ impl SessionManager {
             events: Arc::clone(kernel.event_bus()),
             groups: Arc::clone(kernel.group_manager()),
             session_lifecycle: Lifecycle::new(&stores.sessions, Arc::clone(&events)),
-            channel_lifecycle: Lifecycle::new(&stores.channels, Arc::clone(&events)),
-            own_lifecycle: Lifecycle::new(&stores.projects, events),
+            channel_lifecycle: Lifecycle::new(&stores.channels, events),
             kernel,
         });
         manager.kernel.know_sessions(&manager);
@@ -219,60 +213,6 @@ impl SessionManager {
         removed
     }
 
-    /// The own project of session `id`, if it is there: the one in its scope, found by its name
-    /// (`Project::own_name`) in the kernel's name - none once it was lifted (issue 467).
-    ///
-    /// # Errors
-    /// Whatever the store reports.
-    pub(crate) async fn load_own(&self, id: SessionId) -> StoreResult<Option<Project>> {
-        let system = SecurityContext::system();
-        self.stores.projects.find_by_name(&system, &Project::own_name(id)).await.optional()
-    }
-
-    /// Makes `own`, a session's own project, with the group of its members, in the kernel's name
-    /// (issue 467), each announced as it is made - the group first, so that its members hear of
-    /// the project, and both, or, if the project cannot be made, neither -: as a session is made,
-    /// and for a procedure that moves a session into a new own (`procedure::session::move_to`);
-    /// taken back by `discard_own`.
-    ///
-    /// # Errors
-    /// Whatever the store reports.
-    pub(crate) async fn make_own(&self, own: &mut Project) -> StoreResult<()> {
-        self.groups.keep_participants(Group::of_project(own)).await?;
-        if let Err(error) = self.own_lifecycle.create(&SecurityContext::system(), own).await {
-            let group = GroupId::of_project(own.id);
-            if let Err(undo) = self.groups.discard_participants(group).await {
-                warn!(project = %own.id, "The group of a session's own project that could not be made is left: {undo}");
-            }
-            return Err(error);
-        }
-        Ok(())
-    }
-
-    /// Takes `own`, made as a session's own project and not to be kept, back, in the kernel's name:
-    /// marked deleted and announced so, as its making was announced, then purged with the group of
-    /// its members (`purge_own`) - as making a session fails, and for the compensation of
-    /// moving a session into it.
-    ///
-    /// # Errors
-    /// Whatever the store reports.
-    pub(crate) async fn discard_own(&self, own: &Project) -> StoreResult<()> {
-        self.own_lifecycle.discard(own).await?;
-        self.groups.discard_participants(GroupId::of_project(own.id)).await
-    }
-
-    /// Removes `own`, the own project of a session, for good with the group of its members, in the
-    /// kernel's name - marked deleted first if it is not -: as the session is purged, or its making
-    /// taken back. What lay in its scope is the caller's to have purged. Announces nothing.
-    ///
-    /// # Errors
-    /// Whatever the store reports.
-    pub(crate) async fn purge_own(&self, own: ProjectId) -> StoreResult<()> {
-        self.groups.purge_participants(GroupId::of_project(own)).await?;
-        self.own_lifecycle.purge_for_good(own).await?;
-        Ok(())
-    }
-
     /// Removes the document of channel `id` for good, with the group of its participants, in the
     /// kernel's name - marked deleted first if it is not: a channel of a session being purged,
     /// which is hidden with the session, or one whose creation failed -, since only what was
@@ -307,13 +247,6 @@ impl SessionManager {
     /// procedures of a channel through it, and announced as it is (`procedure::channel`).
     pub(crate) fn channel_lifecycle(&self) -> &Lifecycle<Channel> {
         &self.channel_lifecycle
-    }
-
-    /// The lifecycle of the own projects of its sessions (issue 467), each deleted and restored
-    /// with its session through it, and announced as it is (`procedure::session`); made and purged
-    /// with the group of its members (`make_own`, `purge_own`).
-    pub(crate) fn own_lifecycle(&self) -> &Lifecycle<Project> {
-        &self.own_lifecycle
     }
 
     /// The loop of session `id`, if it runs.

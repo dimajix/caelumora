@@ -573,12 +573,11 @@ impl SessionLoop {
         Ok(())
     }
 
-    /// Attaches `workspace` to the session on behalf of `context`, or with
-    /// `None` takes the one attached away, and holds it live (issue 344):
-    /// stored as changing the session, without asking whether it may be
-    /// attached - its caller asked that (`update_workspace`), or found or made
-    /// it for the session as it made the session (`SessionManager`).
-    /// Returns the workspace as it is held.
+    /// Attaches `workspace` to the session on behalf of `context`, or with `None` takes the one
+    /// attached away, and holds it live (issue 344): stored as changing the session, without asking
+    /// whether it may be attached - its caller asked that (`update_workspace`), or found or made it
+    /// for the session as it made the session (`procedure::session::Create`). Returns the workspace
+    /// as it is held.
     ///
     /// # Errors
     /// Whatever storing the session or reading the workspace reports.

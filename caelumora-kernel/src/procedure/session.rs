@@ -5,10 +5,10 @@
 //! Each locks its session exclusively - opening one that runs locks it shared -, and the project
 //! where it changes whether the session is in it or deleted. Each asks what the change asks and
 //! carries it out by the `SessionManager` - which starts and stops the sessions that run here and
-//! holds the lifecycles of sessions, their channels and their own projects (`Lifecycle`), each
-//! change announced as it is stored -, by the session's loop and controller, and by the services of
-//! the kernel: the groups of the participants, what lies in a scope, the commands, the state of the
-//! channels.
+//! holds the lifecycles of sessions and their channels (`Lifecycle`), each change announced as it
+//! is stored -, by the `ProjectManager`, which holds the lifecycle of their own projects, by the
+//! session's loop and controller, and by the services of the kernel: the groups of the
+//! participants, what lies in a scope, the commands, the state of the channels.
 
 use super::{
     all_or_nothing, sessions_of, Compensation, Deferred, Key, Locks, Procedure, ProcedureExecutor,
@@ -340,11 +340,12 @@ pub(crate) async fn persist(
                 Ok(sessions.session_lifecycle().discard(&made).await?)
             });
         }
-        sessions.make_own(own).await?;
+        let projects = kernel.project_manager();
+        projects.make_own(own).await?;
         {
-            let (sessions, made) = (Arc::clone(&sessions), own.clone());
+            let (projects, made) = (Arc::clone(projects), own.clone());
             log.record("making a session's own project", async move {
-                Ok(sessions.discard_own(&made).await?)
+                Ok(projects.discard_own(&made).await?)
             });
         }
         for channel in channels.iter_mut() {
@@ -639,8 +640,8 @@ impl Procedure for Restore {
 /// the kernel's name - the deletion was permitted -, and the session runs on if it ran, without
 /// what was deleted. Once all of it went, its actors leave, as those of a deleted channel do (issue
 /// 377), and the commands of its channels end (issue 254). Each mark is announced as it is set or
-/// taken away (`SessionManager::session_lifecycle`, `own_lifecycle`). `false` if there is no such
-/// session or `context` may not read it, as every deletion answers (issue 510).
+/// taken away (`SessionManager::session_lifecycle`, `ProjectManager::lifecycle`). `false` if there
+/// is no such session or `context` may not read it, as every deletion answers (issue 510).
 ///
 /// # Errors
 /// As `to_delete`; `SessionError::RunsElsewhere` if another process that shares the stores runs it
@@ -671,11 +672,12 @@ pub(crate) async fn delete(
         });
     }
     if let Some(own) = &own {
-        sessions.own_lifecycle().delete(&SecurityContext::system(), own, removal).await?;
-        let (sessions, own) = (Arc::clone(&sessions), own.id);
+        let projects = kernel.project_manager();
+        projects.lifecycle().delete(&SecurityContext::system(), own, removal).await?;
+        let (projects, own) = (Arc::clone(projects), own.id);
         log.record("marking the session's own project deleted", async move {
             let system = SecurityContext::system();
-            Ok(sessions.own_lifecycle().restore(&system, own).await.map(drop)?)
+            Ok(projects.lifecycle().restore(&system, own).await.map(drop)?)
         });
     }
     let holders = held_by(id, own.as_ref());
@@ -711,7 +713,7 @@ async fn to_delete(
     };
     let deleting = ActionType::delete(Session::KIND, &session.security_attributes);
     kernel.access_policy().require(context, deleting, StoreError::PermissionDenied).await?;
-    let own = sessions.load_own(id).await?;
+    let own = kernel.project_manager().load_own(id).await?;
     Ok(Some((session, own)))
 }
 
@@ -725,8 +727,8 @@ async fn to_delete(
 /// (issue 469). Then what lay in its scope and its own project's comes back, as far as `context`
 /// may restore it; what cannot be is logged and stays deleted - the session comes back all the
 /// same. Each mark is announced as it is taken away or set again
-/// (`SessionManager::session_lifecycle`, `own_lifecycle`). It is not started; opening it starts it,
-/// as any stored session.
+/// (`SessionManager::session_lifecycle`, `ProjectManager::lifecycle`). It is not started; opening
+/// it starts it, as any stored session.
 ///
 /// # Errors
 /// As `to_restore`; `SessionError::RunsElsewhere` if another process that shares the stores holds
@@ -767,7 +769,8 @@ pub(crate) async fn restore(
     }
     // The last step that can fail: nothing after it is undone.
     if let Some(own) = &own {
-        sessions.own_lifecycle().restore(&SecurityContext::system(), own.id).await?;
+        let projects = kernel.project_manager().lifecycle();
+        projects.restore(&SecurityContext::system(), own.id).await?;
     }
     if let Err(e) = kernel.scoped_entities().restore_lying_in(context, &holders, &removal).await {
         warn!(
@@ -928,7 +931,7 @@ async fn remove_behind(
     kernel.scoped_entities().purge_lying_in(&held_by(id, &owns)).await?;
     kernel.group_manager().purge_participants(GroupId::of_session(id)).await?;
     for own in &owns {
-        sessions.purge_own(own.id).await?;
+        kernel.project_manager().purge_own(own.id).await?;
     }
     Ok(())
 }
@@ -1046,8 +1049,7 @@ pub(crate) async fn move_to(
     context: &SecurityContext,
     project: Option<ProjectId>,
 ) -> Result<(), SessionError> {
-    let sessions = sessions_of(kernel)?;
-    let found = project_to_move_to(kernel, &sessions, session, context, project).await?;
+    let found = project_to_move_to(kernel, session, context, project).await?;
     let Some(mut target) = found else {
         return Ok(());
     };
@@ -1058,10 +1060,11 @@ pub(crate) async fn move_to(
     let left = left.filter(|left| !left.is_own());
     match &mut target {
         MoveTarget::NewOwn(own) => {
-            sessions.make_own(own).await?;
-            let (sessions, own) = (Arc::clone(&sessions), own.clone());
+            let projects = kernel.project_manager();
+            projects.make_own(own).await?;
+            let (projects, own) = (Arc::clone(projects), own.clone());
             log.record("making a session's own project", async move {
-                Ok(sessions.discard_own(&own).await?)
+                Ok(projects.discard_own(&own).await?)
             });
         }
         MoveTarget::Shared(shared) => {
@@ -1126,7 +1129,6 @@ impl MoveTarget {
 /// new own is needed and the session is no user's; whatever reading reports.
 async fn project_to_move_to(
     kernel: &Kernel,
-    sessions: &SessionManager,
     session: &SessionLoop,
     context: &SecurityContext,
     project: Option<ProjectId>,
@@ -1148,7 +1150,7 @@ async fn project_to_move_to(
                 shared => MoveTarget::Shared(shared),
             }
         }
-        None => match sessions.load_own(session.id()).await? {
+        None => match kernel.project_manager().load_own(session.id()).await? {
             Some(own) => MoveTarget::Own(own),
             None => MoveTarget::NewOwn(
                 document
@@ -2366,8 +2368,14 @@ mod tests {
             .unwrap();
         manager.update_project(&ctx, session.id(), Some(project.id)).await.unwrap();
         // Its own gone, as lifting it takes it out of the session's scope.
-        let own = manager.load_own(session.id()).await.unwrap().expect("its own");
-        manager.purge_own(own.id).await.unwrap();
+        let own = manager
+            .kernel()
+            .project_manager()
+            .load_own(session.id())
+            .await
+            .unwrap()
+            .expect("its own");
+        manager.kernel().project_manager().purge_own(own.id).await.unwrap();
 
         events.drain().await;
         passing.store(0, Ordering::SeqCst);
@@ -2376,7 +2384,7 @@ mod tests {
             .await
             .expect_err("the session cannot be stored");
         assert_eq!(session.session().project, project.id, "it lies where it lay");
-        let made = manager.load_own(session.id()).await.unwrap();
+        let made = manager.kernel().project_manager().load_own(session.id()).await.unwrap();
         assert!(made.is_none(), "the own made for it is purged: {made:?}");
         // Announced as made, and as taken back, as it happened (issue 593).
         let changes: Vec<_> = events
@@ -2978,7 +2986,10 @@ mod tests {
         let stores = kernel.entity_stores();
         assert!(stores.sessions.get_deleted(&system, session.id).await.is_err(), "no session");
         assert!(stores.channels.get_deleted(&system, first.id).await.is_err(), "no channel");
-        assert!(manager.load_own(session.id).await.unwrap().is_none(), "no project of its own");
+        assert!(
+            manager.kernel().project_manager().load_own(session.id).await.unwrap().is_none(),
+            "no project of its own"
+        );
         for group in [GroupId::of_session(session.id), GroupId::of_channel(first.id)] {
             assert!(stores.groups.get_deleted(&system, group).await.is_err(), "no group");
         }

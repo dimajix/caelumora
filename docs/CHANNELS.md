@@ -74,7 +74,7 @@ sessions it can never lie in, and is not stored.
 Every session has a **project** its results go to (`Session::project`, issue 467): one of its own,
 made with it in its scope, or a shared one it lies in, which it goes with. The session keeps its own
 project as it keeps the group of its participants: made with it, in the kernel's name, and purged
-with it (`SessionManager`); deleted and restored with its mark (`procedure::session`), the project
+with it (`ProjectManager`); deleted and restored with its mark (`procedure::session`), the project
 after the groups, all of them or none; and purged with it. What lies in the project's scope goes
 with the session as what lies in the session's does, and what is left of it keeps the session as
 well (`ScopeNotEmpty`). A session is a user's, so that its project has an owner. How a session is

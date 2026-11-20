@@ -111,7 +111,7 @@ pub struct Kernel {
     attachments: Arc<AttachmentManager>,
     /// The one writer of teams (issue 286).
     groups: Arc<GroupManager>,
-    /// The one that makes shared projects and holds their lifecycle (issue 467).
+    /// The one that makes projects and holds their lifecycle (issue 467).
     projects: Arc<ProjectManager>,
     /// The one owner of agents' lifecycle (issue 314).
     agents: Arc<AgentManager>,
@@ -309,8 +309,9 @@ impl Kernel {
         &self.groups
     }
 
-    /// The one that makes shared projects and holds their lifecycle, by which the procedures of a
-    /// project delete, restore and purge them (issues 467, 593).
+    /// The one that makes projects - shared ones and the own projects of sessions - and holds their
+    /// lifecycle, by which the procedures of a project and of a session delete, restore and purge
+    /// them (issues 467, 593).
     pub fn project_manager(&self) -> &Arc<ProjectManager> {
         &self.projects
     }

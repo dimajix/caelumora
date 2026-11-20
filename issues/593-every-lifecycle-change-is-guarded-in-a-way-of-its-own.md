@@ -921,3 +921,15 @@ case; it is decided there, and may make this unnecessary.
   failed after it would have taken its members' group away from a project restored; `World` no
   longer holds the `ProjectManager` beside the kernel that does; the tests name the procedures of
   a project by their module (`project::Delete`).
+- **2026-11-20** — Step R6 committed. Step 5d split in two, as the maintainer decided: first the
+  own projects of sessions are the `ProjectManager`'s (5d-1), then lifting one is a procedure
+  (5d-2). Step 5d-1 implemented, not committed yet: finding a session's own project, making it
+  with the group of its members, taking it back and purging it (`load_own`, `make_own`,
+  `discard_own`, `purge_own`) move from the `SessionManager` to the `ProjectManager`, whose one
+  lifecycle every project is made, deleted, restored and purged by - shared ones and the own
+  projects of sessions -, in place of a second `Lifecycle<Project>` the `SessionManager` held
+  (`own_lifecycle`). The `SessionManager` keeps the running sessions and the lifecycles of
+  sessions and their channels. No behaviour changes.
+  Reviewed with fresh eyes: the doc comments of the `SessionManager`, the session's procedures and
+  `Kernel::project_manager` and PROJECTS.md say which manager holds the own projects now; what the
+  moved methods' doc comments claimed of `discard_own` and `purge_own` is corrected.
