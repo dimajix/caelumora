@@ -30,7 +30,7 @@ use caelumora_domain::channel::Participant;
 use caelumora_domain::channel::{Channel, ChannelField};
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_domain::channel::{ChannelId, HistoryAccess, ThreadId};
-use caelumora_domain::event::{Announcing, GlobalEvent};
+use caelumora_domain::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_domain::group::{Group, GroupId};
 use caelumora_domain::project::{Project, ProjectId};
 use caelumora_domain::query::{Filter, Query};
@@ -52,7 +52,7 @@ use caelumora_security::{
     AccessQuestions, ActionType, Enforcement, Policies, SecurityContext, JOIN,
 };
 use caelumora_store::sessions::{SessionHold, SessionLocks};
-use caelumora_store::{purge_behind, Deleted, EntityStores, StateStore};
+use caelumora_store::{Deleted, EntityStores, StateStore};
 use dashmap::DashMap;
 use std::collections::HashSet;
 use std::iter;
@@ -133,6 +133,7 @@ impl SessionManager {
     /// The session manager of `kernel`, which knows it from then on (`Kernel::sessions`).
     pub fn new(kernel: Arc<Kernel>) -> Arc<Self> {
         let stores = kernel.entity_stores();
+        let events: Arc<dyn EventPublisher> = Arc::<EventBus>::clone(kernel.event_bus());
         let manager = Arc::new(Self {
             sessions: DashMap::new(),
             handles: DashMap::new(),
@@ -149,11 +150,9 @@ impl SessionManager {
             scoped: Arc::clone(kernel.scoped_entities()),
             groups: Arc::clone(kernel.group_manager()),
             attachments: Arc::clone(kernel.attachment_manager()),
-            session_lifecycle: Lifecycle::new(&stores.sessions, kernel.event_bus(), |s| s.id),
-            channel_lifecycle: Lifecycle::new(&stores.channels, kernel.event_bus(), |c| {
-                (c.session_id, c.id)
-            }),
-            own_lifecycle: Lifecycle::new(&stores.projects, kernel.event_bus(), |p| p.id),
+            session_lifecycle: Lifecycle::new(&stores.sessions, Arc::clone(&events)),
+            channel_lifecycle: Lifecycle::new(&stores.channels, Arc::clone(&events)),
+            own_lifecycle: Lifecycle::new(&stores.projects, events),
             kernel,
         });
         manager.kernel.know_sessions(&manager);
@@ -468,7 +467,7 @@ impl SessionManager {
             let _ = self.session_lifecycle.delete(&system, session, &removal).await;
             let _ =
                 purge_for_good(self.stores.groups.as_ref(), GroupId::of_session(session.id)).await;
-            let _ = purge_for_good(self.stores.sessions.as_ref(), session.id).await;
+            let _ = self.session_lifecycle.purge_for_good(session.id).await;
             return Err(error.into());
         }
         Ok(())
@@ -959,10 +958,10 @@ impl SessionManager {
             return Ok(false);
         }
         let held = self.hold(id)?;
-        let purged = purge_behind(self.stores.sessions.as_ref(), context, id, async |session| {
-            self.remove_behind(session).await
-        })
-        .await?;
+        let purged = self
+            .session_lifecycle
+            .purge(context, id, async |session| self.remove_behind(session).await)
+            .await?;
         if let (true, Some(locks)) = (purged, &self.locks) {
             if let Err(e) = locks.forget(id) {
                 warn!(session = %id, "What held a session purged is left: {e}");

@@ -259,6 +259,10 @@ impl Stored for Group {
         self.id
     }
 
+    fn address(&self) -> GroupId {
+        self.id()
+    }
+
     fn unique_name(&self) -> Option<ScopedName> {
         Some(self.scoped_name())
     }

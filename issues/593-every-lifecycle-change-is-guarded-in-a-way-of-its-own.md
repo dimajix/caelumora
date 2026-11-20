@@ -780,3 +780,15 @@ case; it is decided there, and may make this unnecessary.
   for it, as restoring a channel does, so that the groups do not come back for whoever may not
   restore it. `Stored` is to answer the address of a document (R3c), in place of the function
   each `Lifecycle` is given.
+- **2026-11-20** — Step R3b committed. R3c, decided with the maintainer in two steps, its first
+  implemented, not committed yet: `Stored::address` answers where a document lies, as its events
+  name it, in place of the function each `Lifecycle` was given; `Lifecycle` takes in purging
+  (`purge`, after what lies behind a document, and `purge_for_good` in the kernel's name),
+  announcing nothing, and stays the crate's until the plugins' managers use it in the second step;
+  the `GroupManager` and the `ProjectManager` carry their lifecycle out by it. The `ProjectManager`
+  restores the group of a project's members before the project, and asks `Restore` ahead for it,
+  as restoring a session does, refusing one whose purge is begun first; a new project's group
+  comes after it, as it has no members yet who would hear of it, and `CreateProject` is asked of
+  first. A team, with nothing behind it, is purged at once, its purge not begun first. The second
+  step moves `ScopeMember` onto `lifecycle()`, with the `AgentManager`, the `WorkspaceManager`,
+  `ScopeHolders`, `ScopedEntities` and the plugins' managers.

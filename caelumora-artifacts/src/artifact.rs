@@ -245,6 +245,10 @@ impl Stored for Artifact {
         self.id
     }
 
+    fn address(&self) -> ArtifactId {
+        self.id()
+    }
+
     fn unique_name(&self) -> Option<ScopedName> {
         Some(self.scoped_name())
     }

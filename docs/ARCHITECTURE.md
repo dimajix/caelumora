@@ -464,9 +464,13 @@ What changes an entity is split by what it changes:
     (`procedure::channel`), carried out by the session's controller, the session's loop, which
     runs its channels, and the `SessionManager`, the manager of the channels of its sessions; a
     session's own project is made, deleted, restored and purged with the session. Making a
-    document, marking it deleted and taking its mark away are one `Lifecycle` for each kind, which
-    its manager holds - the `SessionManager` one for sessions, their channels and their own
-    projects (issue 593).
+    document, marking it deleted, taking its mark away and purging it are one `Lifecycle` for each
+    kind, which its manager holds - the `SessionManager` one for sessions, their channels and their
+    own projects, the `GroupManager` one for groups, the `ProjectManager` one for shared projects
+    (issue 593) -, each change but a purge announced at the document's address
+    (`Stored::address`). The group of a document's participants or members is made or restored
+    before the document, so that they hear it made or restored - but for a new shared project,
+    which has no members yet, and whose creation is asked of first.
 *   **Whoever makes a change announces it**, in the method that makes it: a manager what it
     makes, deletes and restores (`Lifecycle`), a controller what it writes, a running session or
     channel what it starts, stops and lets in. No procedure announces anything. An undo is a

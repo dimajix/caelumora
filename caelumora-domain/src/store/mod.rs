@@ -240,6 +240,10 @@ pub trait Stored: Secured + Clone + Serialize + DeserializeOwned + Send + Sync +
     /// Its id.
     fn id(&self) -> Self::Id;
 
+    /// Where it lies, as its events name it (issue 335): its id, or the id of the entity it lies
+    /// in and its own - a channel's `(SessionId, ChannelId)`.
+    fn address(&self) -> Address<Self>;
+
     /// Its name and the scope it lies in, if its kind is `Scoped` - a name
     /// unique of its kind in that scope, which the store keeps so (issue
     /// 250) -; `None` for a kind without one.

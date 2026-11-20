@@ -152,6 +152,10 @@ impl Stored for Project {
         self.id
     }
 
+    fn address(&self) -> ProjectId {
+        self.id()
+    }
+
     fn unique_name(&self) -> Option<ScopedName> {
         Some(self.scoped_name())
     }

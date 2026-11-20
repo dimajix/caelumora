@@ -184,6 +184,10 @@ impl Stored for Channel {
         self.id
     }
 
+    fn address(&self) -> (SessionId, ChannelId) {
+        (self.session_id, self.id)
+    }
+
     fn unique_name(&self) -> Option<ScopedName> {
         Some(self.scoped_name())
     }

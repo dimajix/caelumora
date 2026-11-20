@@ -149,6 +149,10 @@ impl Stored for AgentMemory {
         self.id
     }
 
+    fn address(&self) -> AgentMemoryId {
+        self.id()
+    }
+
     fn deleted(&self) -> Option<&Removal> {
         self.deleted.as_ref()
     }

@@ -4,6 +4,7 @@
 
 use super::{store_error, GroupError, GroupResult, GroupSpec};
 use crate::event::EventBus;
+use crate::lifecycle::Lifecycle;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::event::{Announcing, GlobalEvent};
 use caelumora_domain::group::{Group, GroupField, GroupId, GroupUpdateEvent};
@@ -26,7 +27,9 @@ use tracing::{info, warn};
 /// (issues 348, 467).
 pub struct GroupManager {
     users: Arc<dyn EntityStore<User>>,
-    groups: Arc<dyn EntityStore<Group>>,
+    /// The lifecycle of groups: each made, deleted, restored and purged by it, announced as each is
+    /// (issue 593).
+    groups: Lifecycle<Group>,
     /// Asked where the manager asks before the store does (issue 312).
     access_policy: Arc<dyn AccessPolicy>,
     events: Arc<EventBus>,
@@ -46,7 +49,7 @@ impl GroupManager {
     ) -> Self {
         Self {
             users: Arc::clone(&stores.users),
-            groups: Arc::clone(&stores.groups),
+            groups: Lifecycle::new(&stores.groups, Arc::<EventBus>::clone(&events)),
             access_policy,
             events,
         }
@@ -64,7 +67,6 @@ impl GroupManager {
         let GroupSpec { name, scope } = spec;
         let mut group = Group::team(ScopedName::new(&name, scope)?, owner);
         self.groups.create(ctx, &mut group).await?;
-        self.events.announce(GlobalEvent::created::<Group>(&group.id), &group);
         info!(group = %group.id, by = %ctx.caller_id, "Group created");
         Ok(group)
     }
@@ -118,7 +120,7 @@ impl GroupManager {
         members: Option<Vec<UserId>>,
     ) -> GroupResult<Group> {
         let (group, mut told) = loop {
-            let mut group = self.groups.get(ctx, id).await.map_err(store_error(id))?;
+            let mut group = self.groups.store().get(ctx, id).await.map_err(store_error(id))?;
             if !group.is_team() {
                 return Err(GroupError::NotATeam(id));
             }
@@ -152,6 +154,7 @@ impl GroupManager {
             group.updated_at = Utc::now();
             if self
                 .groups
+                .store()
                 .update(ctx, &mut group)
                 .await
                 .written()
@@ -180,14 +183,15 @@ impl GroupManager {
     /// `NotATeam` for a group that is no team, or whatever the store
     /// reports, `PermissionDenied` included.
     pub async fn delete(&self, ctx: &SecurityContext, id: GroupId) -> GroupResult<bool> {
-        let Some(group) = self.groups.get(ctx, id).await.optional()? else { return Ok(false) };
+        let Some(group) = self.groups.store().get(ctx, id).await.optional()? else {
+            return Ok(false);
+        };
         if !group.is_team() {
             return Err(GroupError::NotATeam(id));
         }
-        if !self.groups.delete(ctx, id, &Removal::now(ctx.caller_id)).await? {
+        if !self.groups.delete(ctx, &group, &Removal::now(ctx.caller_id)).await? {
             return Ok(false);
         }
-        self.events.announce(GlobalEvent::deleted::<Group>(&id), &group);
         info!(group = %id, by = %ctx.caller_id, "Group deleted");
         Ok(true)
     }
@@ -202,12 +206,11 @@ impl GroupManager {
     /// among it.
     pub async fn restore(&self, ctx: &SecurityContext, id: GroupId) -> GroupResult<Group> {
         let Deleted { entity: deleted, .. } =
-            self.groups.get_deleted(ctx, id).await.map_err(store_error(id))?;
+            self.groups.store().get_deleted(ctx, id).await.map_err(store_error(id))?;
         if !deleted.is_team() {
             return Err(GroupError::NotATeam(id));
         }
         let group = self.groups.restore(ctx, id).await.map_err(store_error(id))?;
-        self.events.announce(GlobalEvent::restored::<Group>(&id), &group);
         info!(group = %id, by = %ctx.caller_id, "Group restored");
         Ok(group)
     }
@@ -221,14 +224,16 @@ impl GroupManager {
     /// belongs to, `PermissionDenied`, or whatever the store reports.
     pub async fn purge(&self, ctx: &SecurityContext, id: GroupId) -> GroupResult<bool> {
         let Some(Deleted { entity: deleted, .. }) =
-            self.groups.get_deleted(ctx, id).await.optional()?
+            self.groups.store().get_deleted(ctx, id).await.optional()?
         else {
             return Ok(false);
         };
         if !deleted.is_team() {
             return Err(GroupError::NotATeam(id));
         }
-        let purged = self.groups.purge(ctx, id).await?;
+        // Nothing lies behind a team: purged at once, its purge not begun first
+        // (`Lifecycle::purge`).
+        let purged = self.groups.store().purge(ctx, id).await?;
         if purged {
             info!(group = %id, by = %ctx.caller_id, "Group purged");
         }
@@ -247,7 +252,8 @@ impl GroupManager {
     /// its channels and its own project's members (issue 467), or of a channel -, as what holds
     /// them is deleted, marked with `removal`, its mark (issue 469): all of them or, if one fails,
     /// none - those deleted before are restored again, so that what holds them, which is then
-    /// kept, keeps its members. Announced once all are deleted.
+    /// kept, keeps its members. Each is announced as it is deleted, and restored as it is restored
+    /// again (`Lifecycle`).
     ///
     /// # Errors
     /// Whatever the store reports.
@@ -258,8 +264,8 @@ impl GroupManager {
     ) -> StoreResult<()> {
         let system = SecurityContext::system();
         let mut deleted: Vec<Group> = Vec::new();
-        for group in self.groups.list(&system, &lying_in(holders)).await?.items {
-            match self.groups.delete(&system, group.id, removal).await {
+        for group in self.groups.store().list(&system, &lying_in(holders)).await?.items {
+            match self.groups.delete(&system, &group, removal).await {
                 Ok(true) => deleted.push(group),
                 // Deleted meanwhile by another - with a channel, say -: not this deletion's.
                 Ok(false) => {}
@@ -273,9 +279,6 @@ impl GroupManager {
                 }
             }
         }
-        for group in deleted {
-            self.events.announce(GlobalEvent::deleted::<Group>(&group.id), &group);
-        }
         Ok(())
     }
 
@@ -283,7 +286,8 @@ impl GroupManager {
     /// `removal`, the mark of what holds them - deleted with it, not with a channel deleted before
     /// it (issue 469) -, as that is restored: all of them or, if one fails, none - those restored
     /// before are marked again with `removal`, so that they come back with what holds them once it
-    /// is restored. Announced once all are restored.
+    /// is restored. Each is announced as it is restored, and deleted as it is marked again
+    /// (`Lifecycle`).
     ///
     /// # Errors
     /// Whatever the store reports.
@@ -294,23 +298,24 @@ impl GroupManager {
     ) -> StoreResult<()> {
         let system = SecurityContext::system();
         let mut restored = Vec::new();
-        for group in
-            self.groups.list_deleted_with(&system, removal.id, &lying_in(holders)).await?.items
+        for group in self
+            .groups
+            .store()
+            .list_deleted_with(&system, removal.id, &lying_in(holders))
+            .await?
+            .items
         {
             match self.groups.restore(&system, group.id).await {
                 Ok(group) => restored.push(group),
                 Err(e) => {
                     for group in &restored {
-                        if let Err(undo) = self.groups.delete(&system, group.id, removal).await {
+                        if let Err(undo) = self.groups.delete(&system, group, removal).await {
                             warn!(group = %group.id, "The group of participants could not be restored and not be deleted again: {undo}");
                         }
                     }
                     return Err(e);
                 }
             }
-        }
-        for group in restored {
-            self.events.announce(GlobalEvent::restored::<Group>(&group.id), &group);
         }
         Ok(())
     }

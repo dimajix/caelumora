@@ -6,6 +6,7 @@ use super::{store_error, ProjectError, ProjectResult, ProjectSpec};
 use crate::error::is_forbidden;
 use crate::event::EventBus;
 use crate::group::{keep_participants, GroupManager};
+use crate::lifecycle::Lifecycle;
 use crate::procedure::all_or_nothing;
 #[cfg(any(test, feature = "test-support"))]
 use crate::procedure::project::{Delete, Purge, Restore};
@@ -15,7 +16,6 @@ use crate::procedure::ProcedureExecutor;
 use crate::scoped::{found_or_made, purge_for_good, ScopeNotEmpty, ScopedEntities};
 use crate::session::{SessionError, SessionManager};
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::event::{Announcing, GlobalEvent};
 use caelumora_domain::group::{Group, GroupId};
 use caelumora_domain::project::{Project, ProjectId};
 use caelumora_domain::query::{Filter, Query};
@@ -25,8 +25,8 @@ use caelumora_domain::session::{Session, SessionField};
 use caelumora_domain::store::{StoreError, StoreResultExt, Stored};
 use caelumora_domain::value::name::ScopedName;
 use caelumora_domain::value::text::Description;
-use caelumora_security::SecurityContext;
-use caelumora_store::{purge_behind, Deleted, EntityStores};
+use caelumora_security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
+use caelumora_store::{Deleted, EntityStores};
 use std::fmt;
 use std::slice;
 use std::sync::Arc;
@@ -40,9 +40,13 @@ pub struct ProjectManager {
     /// What deletes, restores and purges the sessions that lie in a project.
     sessions: Arc<SessionManager>,
     stores: EntityStores,
+    /// The lifecycle of shared projects: each made, deleted, restored and purged by it, announced
+    /// as each is (issue 593).
+    projects: Lifecycle<Project>,
+    /// Asked ahead where the store asks again (issue 312).
+    access_policy: Arc<dyn AccessPolicy>,
     /// What deletes and restores the group of a project's members with it.
     groups: Arc<GroupManager>,
-    events: Arc<EventBus>,
     /// What goes with a project deleted, restored or purged.
     scoped: Arc<ScopedEntities>,
 }
@@ -57,18 +61,22 @@ impl ProjectManager {
     /// The manager of the projects of the kernel `sessions` works with.
     pub fn new(sessions: Arc<SessionManager>) -> Self {
         let kernel = Arc::clone(sessions.kernel());
+        let stores = kernel.entity_stores();
         Self {
-            stores: kernel.entity_stores().clone(),
+            projects: Lifecycle::new(&stores.projects, Arc::<EventBus>::clone(kernel.event_bus())),
+            access_policy: Arc::clone(kernel.access_policy()),
+            stores: stores.clone(),
             groups: Arc::clone(kernel.group_manager()),
-            events: Arc::clone(kernel.event_bus()),
             scoped: Arc::clone(kernel.scoped_entities()),
             sessions,
         }
     }
 
     /// Makes the shared project `spec` asks for, of the user `ctx` acts for - in the global scope
-    /// or their own -, with nobody among its members yet (`CreateProject`, asked by the store), and
-    /// the group of its members in the kernel's name.
+    /// or their own -, with nobody among its members yet (`CreateProject`, asked by the store),
+    /// announced as it is stored (`Lifecycle`), then the group of its members in the kernel's name:
+    /// asked first what the caller may, as nobody hears of it by the group yet. If the group cannot
+    /// be made, the project is marked deleted again, announced so, and purged.
     ///
     /// # Errors
     /// `OwnerNotAUser`, `InvalidScope` for another scope, `Invalid` for a name or a description
@@ -82,16 +90,21 @@ impl ProjectManager {
         require_shared(&scope)?;
         let mut project = Project::new(ScopedName::new(&name, scope)?, owner);
         project.description = Description::optional(description.as_deref())?;
-        self.stores.projects.create(ctx, &mut project).await?;
+        self.projects.create(ctx, &mut project).await?;
         if let Err(e) =
             keep_participants(self.stores.groups.as_ref(), Group::of_project(&project)).await
         {
-            if let Err(cleanup) = purge_for_good(self.stores.projects.as_ref(), project.id).await {
+            let system = SecurityContext::system();
+            let removal = Removal::now(system.caller_id);
+            let discarded = async {
+                self.projects.delete(&system, &project, &removal).await?;
+                self.projects.purge_for_good(project.id).await
+            };
+            if let Err(cleanup) = discarded.await {
                 warn!(project = %project.id, "A project whose group could not be made is left: {cleanup}");
             }
             return Err(e.into());
         }
-        self.events.announce(GlobalEvent::created::<Project>(&project.id), &project);
         info!(project = %project.id, by = %ctx.caller_id, "Project created");
         Ok(project)
     }
@@ -112,7 +125,7 @@ impl ProjectManager {
         require_shared(&spec.scope)?;
         let name = ScopedName::new(&spec.name, spec.scope.clone())?;
         found_or_made(
-            || async { Ok(self.stores.projects.find_by_name(ctx, &name).await.optional()?) },
+            || async { Ok(self.projects.store().find_by_name(ctx, &name).await.optional()?) },
             || self.create(ctx, spec.clone()),
             |e| matches!(e, ProjectError::Store(StoreError::NameTaken { .. })),
         )
@@ -138,7 +151,7 @@ impl ProjectManager {
         ctx: &SecurityContext,
         id: ProjectId,
     ) -> ProjectResult<bool> {
-        let Some(project) = self.stores.projects.get(ctx, id).await.optional()? else {
+        let Some(project) = self.projects.store().get(ctx, id).await.optional()? else {
             return Ok(false);
         };
         if project.is_own() {
@@ -147,7 +160,7 @@ impl ProjectManager {
         // One mark for all that goes with it (issue 469); marked before its scope is gone through,
         // so that nothing is put into it afterwards (`ScopeHolders`, issue 458).
         let removal = Removal::now(ctx.caller_id);
-        if !self.stores.projects.delete(ctx, id, &removal).await? {
+        if !self.projects.delete(ctx, &project, &removal).await? {
             return Ok(false);
         }
         let holder = project.holds();
@@ -167,26 +180,28 @@ impl ProjectManager {
         }
         .await;
         if let Err(error) = deleted {
-            if let Err(undo) = self.stores.projects.restore(&SecurityContext::system(), id).await {
+            if let Err(undo) = self.projects.restore(&SecurityContext::system(), id).await {
                 warn!(project = %id, "A project could not be deleted and not be unmarked again: {undo}");
             }
             return Err(error);
         }
-        self.events.announce(GlobalEvent::deleted::<Project>(&id), &project);
         info!(project = %id, by = %ctx.caller_id, "Project deleted");
         Ok(true)
     }
 
-    /// Restores the deleted project `id` on behalf of `ctx` (`Restore`), for a procedure that holds
-    /// it and its deleted sessions exclusively (`procedure::project::Restore`): its mark taken away
-    /// and the group of its members restored in the kernel's name - both, or neither: it keeps its
-    /// mark then, so that it can be tried again (issue 469) -, then the sessions deleted with it
-    /// and what lay in its scope - what carries its mark -, as far as `ctx` may restore them; what
-    /// they may not stays deleted, and the project comes back all the same.
+    /// Restores the deleted project `id` on behalf of `ctx` (`Restore`, asked ahead and by the
+    /// store again), for a procedure that holds it and its deleted sessions exclusively
+    /// (`procedure::project::Restore`): the group of its members restored in the kernel's
+    /// name - first, so that they hear it restored -, then its mark taken away, announced - both,
+    /// or neither: the group goes again and the project keeps its mark, so that it can be tried
+    /// again (issue 469) -, then the sessions deleted with it and what lay in its scope - what
+    /// carries its mark -, as far as `ctx` may restore them; what they may not stays deleted, and
+    /// the project comes back all the same.
     ///
     /// # Errors
-    /// `NotFound` if it is not deleted or not the caller's to see, `InvalidScope` for a session's
-    /// own, or whatever else the store reports - `NameTaken` among it.
+    /// `NotFound` if it is not deleted or not the caller's to see, or its purge is begun (issue
+    /// 496), `InvalidScope` for a session's own, `PermissionDenied` if they may not restore it, or
+    /// whatever else the store reports - `NameTaken` among it.
     pub(crate) async fn restore_held(
         &self,
         ctx: &SecurityContext,
@@ -194,24 +209,33 @@ impl ProjectManager {
     ) -> ProjectResult<Project> {
         // What went with it carries its mark (issue 469).
         let Deleted { entity: deleted, removal } =
-            self.stores.projects.get_deleted(ctx, id).await.map_err(store_error(id))?;
+            self.projects.store().get_deleted(ctx, id).await.map_err(store_error(id))?;
+        // One whose purge is begun is the store's to refuse, as it would: refused before anything
+        // else is asked or restored.
+        if deleted.purging() {
+            return Err(ProjectError::NotFound(id));
+        }
         if deleted.is_own() {
             return Err(ProjectError::InvalidScope);
         }
-        let project = self.stores.projects.restore(ctx, id).await.map_err(store_error(id))?;
-        let holder = project.holds();
-        // If its members cannot come back, it is marked again as it was, so that a restoring tried
-        // again finds what went with it.
-        if let Err(error) =
-            self.groups.restore_participants(slice::from_ref(&holder), &removal).await
-        {
-            if let Err(undo) =
-                self.stores.projects.delete(&SecurityContext::system(), id, &removal).await
-            {
-                warn!(project = %id, "A project could not be restored and not be marked deleted again: {undo}");
+        // Asked ahead, as the store asks again as it restores it: the group of its members comes
+        // back first, so that they hear it restored, and not for whoever may not restore it.
+        let restoring = ActionType::restore(Project::KIND, &deleted.security_attributes);
+        self.access_policy.require(ctx, restoring, StoreError::PermissionDenied).await?;
+        let holder = deleted.holds();
+        self.groups.restore_participants(slice::from_ref(&holder), &removal).await?;
+        // If it cannot come back, its members' group goes again, so that a restoring tried again
+        // finds what went with it.
+        let project = match self.projects.restore(ctx, id).await {
+            Ok(project) => project,
+            Err(error) => {
+                let holders = slice::from_ref(&holder);
+                if let Err(undo) = self.groups.delete_participants(holders, &removal).await {
+                    warn!(project = %id, "The group of a project that could not be restored could not be deleted again: {undo}");
+                }
+                return Err(store_error(id)(error));
             }
-            return Err(error.into());
-        }
+        };
         for session in self
             .stores
             .sessions
@@ -230,7 +254,6 @@ impl ProjectManager {
         {
             warn!(project = %id, "The project was restored, but not what lies in its scope: {e}");
         }
-        self.events.announce(GlobalEvent::restored::<Project>(&id), &project);
         info!(project = %id, by = %ctx.caller_id, "Project restored");
         Ok(project)
     }
@@ -252,17 +275,15 @@ impl ProjectManager {
         id: ProjectId,
     ) -> ProjectResult<bool> {
         let Some(Deleted { entity: deleted, .. }) =
-            self.stores.projects.get_deleted(ctx, id).await.optional()?
+            self.projects.store().get_deleted(ctx, id).await.optional()?
         else {
             return Ok(false);
         };
         if deleted.is_own() {
             return Err(ProjectError::InvalidScope);
         }
-        let purged = purge_behind(self.stores.projects.as_ref(), ctx, id, async |project| {
-            self.remove_behind(project).await
-        })
-        .await?;
+        let purged =
+            self.projects.purge(ctx, id, async |project| self.remove_behind(project).await).await?;
         if purged {
             info!(project = %id, by = %ctx.caller_id, "Project purged");
         }

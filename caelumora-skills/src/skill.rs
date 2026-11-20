@@ -129,6 +129,10 @@ impl Stored for Skill {
         self.id
     }
 
+    fn address(&self) -> SkillId {
+        self.id()
+    }
+
     fn unique_name(&self) -> Option<ScopedName> {
         Some(self.scoped_name())
     }

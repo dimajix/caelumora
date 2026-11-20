@@ -2308,7 +2308,20 @@ async fn a_project_is_its_owners_and_read_by_its_members() {
         "deleted, it is hers alone to restore: {refused:?}"
     );
     assert!(!world.projects.purge(&carol, project.id).await.unwrap(), "or to purge");
-    world.projects.restore(&alice, project.id).await.expect("she restores it");
+    let (restored, asked) = world.asked(world.projects.restore(&alice, project.id)).await;
+    restored.expect("she restores it");
+    // Hers alone: who hears it restored is asked as the bus delivers it, whenever that is.
+    let hers: Vec<_> = asked.into_iter().filter(|line| line.starts_with("alice:")).collect();
+    assert_eq!(
+        hers,
+        checks(&[
+            "alice: ReadDeletedProject(alice's) yes",
+            // Asked ahead, as the group of its members comes back first (issue 593).
+            "alice: RestoreProject(alice's) yes",
+            "alice: ReadDeletedProject(alice's) yes",
+            "alice: RestoreProject(alice's) yes",
+        ])
+    );
 }
 
 /// A project is found by its name or made (`ProjectManager::find_or_create`) as the caller reads

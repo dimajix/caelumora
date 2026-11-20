@@ -293,6 +293,10 @@ impl Stored for SessionTemplate {
         self.id
     }
 
+    fn address(&self) -> SessionTemplateId {
+        self.id()
+    }
+
     fn unique_name(&self) -> Option<ScopedName> {
         Some(Scoped::scoped_name(self))
     }

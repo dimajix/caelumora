@@ -97,6 +97,10 @@ impl Stored for User {
         self.id
     }
 
+    fn address(&self) -> UserId {
+        self.id()
+    }
+
     fn deleted(&self) -> Option<&Removal> {
         self.deleted.as_ref()
     }
@@ -149,6 +153,10 @@ impl Stored for UserProfile {
 
     fn id(&self) -> UserId {
         self.user_id()
+    }
+
+    fn address(&self) -> UserId {
+        self.id()
     }
 
     fn deleted(&self) -> Option<&Removal> {

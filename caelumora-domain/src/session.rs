@@ -134,6 +134,10 @@ impl Stored for Session {
         self.id
     }
 
+    fn address(&self) -> SessionId {
+        self.id()
+    }
+
     fn deleted(&self) -> Option<&Removal> {
         self.deleted.as_ref()
     }

@@ -592,6 +592,10 @@ mod tests {
             self.id
         }
 
+        fn address(&self) -> NoteId {
+            self.id()
+        }
+
         fn deleted(&self) -> Option<&Removal> {
             self.deleted.as_ref()
         }
@@ -701,6 +705,10 @@ mod tests {
 
         fn id(&self) -> NoteId {
             self.0.id
+        }
+
+        fn address(&self) -> NoteId {
+            self.id()
         }
 
         fn deleted(&self) -> Option<&Removal> {

@@ -132,6 +132,10 @@ impl Stored for Workspace {
         self.id
     }
 
+    fn address(&self) -> WorkspaceId {
+        self.id()
+    }
+
     fn unique_name(&self) -> Option<ScopedName> {
         Some(self.scoped_name())
     }

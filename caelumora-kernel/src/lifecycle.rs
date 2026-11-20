@@ -1,24 +1,24 @@
-//! `Lifecycle`: the documents of one kind made, marked deleted and their mark taken away, each
-//! announced as it is stored - the lifecycle of a kind as its manager carries it out (issue 593).
+//! `Lifecycle`: the documents of one kind made, marked deleted, their mark taken away and purged -
+//! the lifecycle of a kind as its manager carries it out, each change but a purge announced as it
+//! is stored (issue 593).
 
-use crate::event::EventBus;
-use caelumora_domain::event::{Announcing, GlobalEvent};
+use crate::scoped::purge_for_good;
+use caelumora_domain::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_domain::removal::Removal;
-use caelumora_domain::store::{Address, StoreResult, Stored};
+use caelumora_domain::store::{StoreError, StoreResult, Stored};
 use caelumora_security::SecurityContext;
-use caelumora_store::EntityStore;
+use caelumora_store::{purge_behind, EntityStore};
 use std::fmt;
+use std::ops::AsyncFnOnce;
 use std::sync::Arc;
 
-/// The lifecycle of the documents of one kind, as its manager carries it out: each made, marked
-/// deleted or its mark taken away in the store - which asks whether the caller may -, and
-/// announced, so that whoever makes the change announces it, an undo as much as the change it
-/// undoes (issue 593). Purging announces nothing, as no purge does.
+/// The lifecycle of the documents of one kind, as its manager carries it out - a manager of the
+/// kernel's or of a plugin's: each made, marked deleted, its mark taken away or purged in the
+/// store, which asks whether the caller may, and each but a purge announced as it is stored, so
+/// that whoever makes a change announces it, an undo as much as the change it undoes (issue 593).
 pub(crate) struct Lifecycle<T: Stored> {
     store: Arc<dyn EntityStore<T>>,
-    events: Arc<EventBus>,
-    /// Where a document of the kind lies, which its events are about.
-    address: fn(&T) -> Address<T>,
+    events: Arc<dyn EventPublisher>,
 }
 
 impl<T: Stored> fmt::Debug for Lifecycle<T> {
@@ -28,14 +28,15 @@ impl<T: Stored> fmt::Debug for Lifecycle<T> {
 }
 
 impl<T: Stored> Lifecycle<T> {
-    /// The lifecycle of the documents in `store`, announced on `events`, each lying where
-    /// `address` says.
-    pub(crate) fn new(
-        store: &Arc<dyn EntityStore<T>>,
-        events: &Arc<EventBus>,
-        address: fn(&T) -> Address<T>,
-    ) -> Self {
-        Self { store: Arc::clone(store), events: Arc::clone(events), address }
+    /// The lifecycle of the documents in `store`, announced through `events`.
+    pub(crate) fn new(store: &Arc<dyn EntityStore<T>>, events: Arc<dyn EventPublisher>) -> Self {
+        Self { store: Arc::clone(store), events }
+    }
+
+    /// The store of the kind, for what is read and changed of it apart from its lifecycle - and to
+    /// purge what has nothing behind it.
+    pub(crate) fn store(&self) -> &dyn EntityStore<T> {
+        self.store.as_ref()
     }
 
     /// Stores `document` as new on behalf of `ctx` (`Create…`, asked by the store), then announces
@@ -45,7 +46,7 @@ impl<T: Stored> Lifecycle<T> {
     /// Whatever the store reports, `StoreError::PermissionDenied` and `NameTaken` among it.
     pub(crate) async fn create(&self, ctx: &SecurityContext, document: &mut T) -> StoreResult<()> {
         self.store.create(ctx, document).await?;
-        self.events.announce(GlobalEvent::created::<T>(&(self.address)(document)), document);
+        self.events.announce(GlobalEvent::created::<T>(&document.address()), document);
         Ok(())
     }
 
@@ -63,7 +64,7 @@ impl<T: Stored> Lifecycle<T> {
         if !self.store.delete(ctx, document.id(), removal).await? {
             return Ok(false);
         }
-        self.events.announce(GlobalEvent::deleted::<T>(&(self.address)(document)), document);
+        self.events.announce(GlobalEvent::deleted::<T>(&document.address()), document);
         Ok(true)
     }
 
@@ -74,7 +75,34 @@ impl<T: Stored> Lifecycle<T> {
     /// Whatever the store reports, `StoreError::NotFound` for no such deleted document among it.
     pub(crate) async fn restore(&self, ctx: &SecurityContext, id: T::Id) -> StoreResult<T> {
         let document = self.store.restore(ctx, id).await?;
-        self.events.announce(GlobalEvent::restored::<T>(&(self.address)(&document)), &document);
+        self.events.announce(GlobalEvent::restored::<T>(&document.address()), &document);
         Ok(document)
+    }
+
+    /// Removes the deleted document `id` for good on behalf of `ctx`, in the order of every purge
+    /// of what has something behind it (`purge_behind`): its purge begun (`Purge`, asked by the
+    /// store), then what lies behind it (`remove_behind`), then the document. Announces nothing, as
+    /// no purge does. `false` if there was nothing deleted the caller could see.
+    ///
+    /// # Errors
+    /// What `remove_behind` fails with, or whatever the store reports; the document stays deleted,
+    /// its purge begun, for the next purge to finish (issue 496).
+    pub(crate) async fn purge<E: From<StoreError>>(
+        &self,
+        ctx: &SecurityContext,
+        id: T::Id,
+        remove_behind: impl AsyncFnOnce(&T) -> Result<(), E>,
+    ) -> Result<bool, E> {
+        purge_behind(self.store.as_ref(), ctx, id, remove_behind).await
+    }
+
+    /// Removes `id` for good in the kernel's name, marked deleted first if it is not, since only
+    /// what was deleted is purged (`purge_for_good`): for what goes with something purged, or was
+    /// made for something whose making failed. Announces nothing. `false` if there is none.
+    ///
+    /// # Errors
+    /// Whatever the store reports.
+    pub(crate) async fn purge_for_good(&self, id: T::Id) -> StoreResult<bool> {
+        purge_for_good(self.store.as_ref(), id).await
     }
 }
