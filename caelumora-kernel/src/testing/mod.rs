@@ -11,11 +11,15 @@
     reason = "test code: what fails here fails the test that runs it"
 )]
 
+#[cfg(test)]
+mod announced;
 mod scripted_agent;
 #[cfg(test)]
 mod stand_in;
 mod unasked_language_model;
 
+#[cfg(test)]
+pub(crate) use announced::Announced;
 pub use scripted_agent::{Script, ScriptedAgent, ScriptedAgents};
 #[cfg(test)]
 pub(crate) use stand_in::StandIn;

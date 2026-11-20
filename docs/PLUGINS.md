@@ -90,7 +90,8 @@ it registers, a plugin
     nothing is left in the scope of a holder deleted meanwhile (issue 458);
 *   makes what it keeps behind an agent go with it (`agent_member`, an `AgentMember`): removed
     when the agent is purged, after the kernel's own state of it - by the `AgentManager`,
-    whether the agent is purged alone or with its scope;
+    whether the agent is purged alone or with its scope -, for good by the `Lifecycle` of its kind
+    (`purge_for_good`), as the agent's memory goes;
 *   claims its section of the configuration (`config::<C>(name)`), read as `C`, under `plugins`, and
     of the seed files (`seed_section`, a `SeedSection`), at their top level - the seed holds what
     the plugins keep, and no library claims a section of it, so that it has nothing to keep apart;

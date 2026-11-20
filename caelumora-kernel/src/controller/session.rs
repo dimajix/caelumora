@@ -342,40 +342,20 @@ impl SessionController {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::Announced;
     use caelumora_domain::actor::ActorId;
-    use caelumora_domain::confidentiality::Classification;
-    use caelumora_domain::security::SecurityAttributes;
     use caelumora_domain::session::testing::bare_session;
     use caelumora_domain::user::UserId;
     use caelumora_domain::value::ValueError;
     use caelumora_security::Policies;
     use caelumora_store::Persistence;
     use chrono::{Duration, Utc};
-    use std::sync::Mutex;
 
     /// A session's document alone, owned by the system: what the controller changes and stores. Its
     /// tests are about storing a change, not about a session the kernel makes, with the groups of
     /// its participants and a project of its own (issue 486).
     fn session() -> Session {
         bare_session(SessionId::new())
-    }
-
-    #[derive(Debug, Default)]
-    struct Announced(Mutex<Vec<GlobalEvent>>);
-
-    impl EventPublisher for Announced {
-        fn publish(&self, event: GlobalEvent, _attributes: SecurityAttributes) {
-            self.0.lock().unwrap().push(event);
-        }
-
-        fn publish_classified(
-            &self,
-            event: GlobalEvent,
-            attributes: SecurityAttributes,
-            _classifications: &[Classification],
-        ) {
-            self.publish(event, attributes);
-        }
     }
 
     #[tokio::test]
@@ -455,9 +435,7 @@ mod tests {
         controller.add_participant(&ctx, Participant::User(bob)).await.expect("taken in again");
 
         let joins = announced
-            .0
-            .lock()
-            .unwrap()
+            .taken()
             .iter()
             .filter(|event| {
                 let update =
@@ -492,10 +470,10 @@ mod tests {
             (Some("Release 2.0"), None),
             "empty is none"
         );
-        assert!(
-            matches!(announced.0.lock().unwrap().as_slice(), [event] if matches!(event.about::<Session>().and_then(|(_, change)| change.update::<SessionUpdateEvent>()), Some(SessionUpdateEvent::DescriptionChanged { .. }))),
-            "announced"
-        );
+        let taken = announced.taken();
+        let [event] = taken.as_slice() else { panic!("announced once: {taken:?}") };
+        let update = event.about::<Session>().and_then(|(_, c)| c.update::<SessionUpdateEvent>());
+        assert!(matches!(update, Some(SessionUpdateEvent::DescriptionChanged { .. })), "announced");
 
         let refused = controller.update_description(&ctx, Some("two\nlines"), None).await;
         assert!(
@@ -516,6 +494,6 @@ mod tests {
             stored.summary,
             "unchanged by what is refused"
         );
-        assert_eq!(announced.0.lock().unwrap().len(), 1);
+        assert!(announced.taken().is_empty(), "nothing announced of what is refused");
     }
 }

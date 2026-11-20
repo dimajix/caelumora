@@ -559,27 +559,16 @@ where
     }
 }
 
-/// Removes `id` of `store` for good, in the kernel's name: marked deleted first if it is not, since
-/// only what was deleted is purged (issue 164) - for what goes with something purged, or was made
-/// for something whose making failed. `false` if there is none.
-///
-/// # Errors
-/// Whatever else the store reports.
-pub async fn purge_for_good<T: Stored>(store: &dyn EntityStore<T>, id: T::Id) -> StoreResult<bool> {
-    let system = SecurityContext::system();
-    if store.delete(&system, id.clone(), &Removal::now(ActorId::System)).await.optional()?.is_none()
-    {
-        return Ok(false);
-    }
-    store.purge(&system, id).await
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{found_or_made, ScopeHolders, Unowned};
+    use super::{found_or_made, ScopeHolders, ScopeMember, Unowned};
+    use crate::event::EventBus;
+    use crate::lifecycle::Lifecycle;
+    use crate::testing::{Announced, World};
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::channel::testing::make_channel;
-    use caelumora_domain::component::ComponentBundle;
+    use caelumora_domain::component::{ComponentBundle, ComponentBundleId};
+    use caelumora_domain::event::{EntityChange, GlobalEvent};
     use caelumora_domain::project::Project;
     use caelumora_domain::removal::Removal;
     use caelumora_domain::scope::Scope;
@@ -591,7 +580,9 @@ mod tests {
     use caelumora_domain::value::name::ScopedName;
     use caelumora_security::{Policies, SecurityContext};
     use caelumora_store::{EntityStores, Persistence};
+    use std::slice;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     /// What `found_or_made` answers when nothing is found at first and making fails with `made`,
     /// while the second lookup finds `then`; and how often it looked.
@@ -723,5 +714,91 @@ mod tests {
             mark,
             "stays deleted with the session, as it was"
         );
+    }
+
+    /// A member of the bundles' kind whose lifecycle announces what it changes, as the managers of
+    /// the kinds that announce theirs do - not as `Unowned`.
+    struct AnnouncedBundles(Lifecycle<ComponentBundle>);
+
+    impl ScopeMember for AnnouncedBundles {
+        type Entity = ComponentBundle;
+
+        fn lifecycle(&self) -> &Lifecycle<ComponentBundle> {
+            &self.0
+        }
+    }
+
+    /// The changes of `bundle` among `announced`, in order.
+    fn changes_of(announced: &[GlobalEvent], bundle: ComponentBundleId) -> Vec<EntityChange> {
+        let about = |event: &GlobalEvent| match event.about::<ComponentBundle>() {
+            Some((id, change)) if id == bundle => Some(change.clone()),
+            _ => None,
+        };
+        announced.iter().filter_map(about).collect()
+    }
+
+    /// Issue 593: what is taken back as the holder of its scope went meanwhile is announced as it
+    /// is undone - made, then deleted; restored, then deleted again -, as its making or restoring
+    /// was announced: what was announced is what happened.
+    #[tokio::test]
+    async fn what_is_taken_back_is_announced_as_the_counterpart_of_what_was() {
+        let stores =
+            EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all()).unwrap();
+        let holders = ScopeHolders::new(&stores);
+        let announced = Arc::new(Announced::default());
+        let publisher = Arc::<Announced>::clone(&announced);
+        let bundles = AnnouncedBundles(Lifecycle::new(&stores.component_bundles, publisher));
+        let system = SecurityContext::system();
+        let mut session = bare_session(SessionId::new());
+        stores.sessions.create(&system, &mut session).await.unwrap();
+        let in_session = Scope::SessionScope { session_id: session.id };
+        let mut kept = bundle("kept", &in_session);
+        bundles.lifecycle().create(&system, &mut kept).await.unwrap();
+        let mark = Removal::now(ActorId::System);
+        bundles.lifecycle().delete(&system, &kept, &mark).await.unwrap();
+        stores.sessions.delete(&system, session.id, &mark).await.unwrap();
+        announced.taken();
+
+        let mut late = bundle("late", &in_session);
+        bundles.lifecycle().create(&system, &mut late).await.unwrap();
+        holders.keep_made(&bundles, &late).await.expect_err("made too late");
+        let made = [EntityChange::Created, EntityChange::Deleted];
+        assert_eq!(changes_of(&announced.taken(), late.id), made, "made, then taken back");
+
+        holders.restore(&bundles, &system, kept.id).await.expect_err("restored too late");
+        let restored = [EntityChange::Restored, EntityChange::Deleted];
+        assert_eq!(changes_of(&announced.taken(), kept.id), restored, "restored, then taken back");
+    }
+
+    /// Issue 593: what lies in a scope and announces nothing of its own (`Unowned`) - here a
+    /// component bundle - is deleted and restored with its holder without a word, though the
+    /// kernel's bus carries what other writers announce of the same kind.
+    #[tokio::test]
+    async fn what_announces_nothing_goes_with_its_holder_without_a_word() {
+        let world = World::new().await;
+        let session = world.session_of(&[], &[], &[]).await;
+        let in_session = Scope::SessionScope { session_id: session.id() };
+        let stores = world.kernel.entity_stores();
+        let system = SecurityContext::system();
+        let mut subscription = world.kernel.event_bus().subscribe_all();
+        let mut bundle = bundle("quiet", &in_session);
+        let announcing = Lifecycle::new(
+            &stores.component_bundles,
+            Arc::<EventBus>::clone(world.kernel.event_bus()),
+        );
+        announcing.create(&system, &mut bundle).await.unwrap();
+        let heard = changes_of(&subscription.drain().await, bundle.id);
+        assert_eq!(heard, [EntityChange::Created], "the bus carries it");
+
+        let scoped = world.kernel.scoped_entities();
+        let mark = Removal::now(ActorId::System);
+        let holders = slice::from_ref(&in_session);
+        scoped.delete_lying_in(&system, holders, &mark).await.unwrap();
+        assert!(stores.component_bundles.get(&system, bundle.id).await.is_err(), "gone with it");
+        scoped.restore_lying_in(&system, holders, &mark).await.unwrap();
+        stores.component_bundles.get(&system, bundle.id).await.expect("back with it");
+        let heard = changes_of(&subscription.drain().await, bundle.id);
+        assert!(heard.is_empty(), "neither announced: {heard:?}");
+        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 }

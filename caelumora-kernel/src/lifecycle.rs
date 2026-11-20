@@ -2,10 +2,9 @@
 //! the lifecycle of a kind as its manager carries it out, each change but a purge announced as it
 //! is stored (issue 593).
 
-use crate::scoped::purge_for_good;
 use caelumora_domain::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_domain::removal::Removal;
-use caelumora_domain::store::{StoreError, StoreResult, Stored};
+use caelumora_domain::store::{StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_security::SecurityContext;
 use caelumora_store::{purge_behind, EntityStore};
 use std::fmt;
@@ -110,12 +109,18 @@ impl<T: Stored> Lifecycle<T> {
     }
 
     /// Removes `id` for good in the kernel's name, marked deleted first if it is not, since only
-    /// what was deleted is purged (`purge_for_good`): for what goes with something purged, or was
-    /// made for something whose making failed. Announces nothing. `false` if there is none.
+    /// what was deleted is purged (issue 164): for what goes with something purged - a plugin's
+    /// document with what it belongs to -, or was made for something whose making failed. Announces
+    /// nothing. `false` if there is none.
     ///
     /// # Errors
-    /// Whatever the store reports.
-    pub(crate) async fn purge_for_good(&self, id: T::Id) -> StoreResult<bool> {
-        purge_for_good(self.store.as_ref(), id).await
+    /// Whatever else the store reports.
+    pub async fn purge_for_good(&self, id: T::Id) -> StoreResult<bool> {
+        let system = SecurityContext::system();
+        let removal = Removal::now(system.caller_id);
+        if self.store.delete(&system, id.clone(), &removal).await.optional()?.is_none() {
+            return Ok(false);
+        }
+        self.store.purge(&system, id).await
     }
 }

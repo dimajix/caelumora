@@ -24,7 +24,7 @@ impl Plugin for MemoryPlugin {
 
     fn register(&self, kernel: &mut KernelBuilder) -> Result<()> {
         let memories = kernel.entity_store::<AgentMemory>()?;
-        let manager = Arc::new(MemoryManager::new(memories, Arc::clone(kernel.event_bus())));
+        let manager = Arc::new(MemoryManager::new(&memories, Arc::clone(kernel.event_bus())));
         kernel.agent_member(Arc::clone(&manager));
         let reading = Arc::clone(&manager);
         kernel.extend_readers::<dyn MemoryReader, _, _>(move |session| {

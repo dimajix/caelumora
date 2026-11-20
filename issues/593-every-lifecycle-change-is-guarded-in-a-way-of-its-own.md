@@ -835,3 +835,14 @@ case; it is decided there, and may make this unnecessary.
   following agents fails no more once the session manager is gone, as no session runs then. A test
   holds the case of issue 568 as taking someone in is undone: one left out and attending that
   cannot start after all stays so, without a leave.
+- **2026-11-20** — Step R4 committed. A small step after it, from the review of R3c-2, at the
+  maintainer's request, implemented, not committed yet: purging for good in the kernel's name is
+  `Lifecycle::purge_for_good` alone - public now, for the plugins -, in place of the free
+  `scoped::purge_for_good` beside it; the `MemoryManager` of `caelumora-memory` holds a
+  `Lifecycle<AgentMemory>`, by which a memory is made, announced so, and purged with its agent,
+  and announces a commit to a memory made as before. Two tests hold what R3c-2 announced: what
+  `ScopeHolders` takes back is announced as the counterpart of its making or restoring, and what
+  lies in a scope without announcing - an `Unowned` kind - goes with its holder without a word. The
+  three copies of a publisher that records what is announced, in the tests of the controllers of
+  users and sessions and of the user provider, are one (`testing::Announced`), which these tests
+  use too.
