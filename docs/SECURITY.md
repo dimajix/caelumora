@@ -313,7 +313,8 @@ lose theirs.
     *   `Group` - a team, or the participants of a session or a channel. A member counts wherever
         they act, not only in that place, and only while the group is there: a deleted group
         grants nothing - except that its members are told of a deletion (`HearDeleted`), since
-        the participants' groups of a session go with it, before its deletion is announced.
+        the participants' groups of a session go with it, before or after its deletion is
+        heard of.
     *   `Everyone` - every user, an agent by its owner: a session anybody may join, a workspace
         anybody may read.
 *   **What the policy learns.** Who belongs to a group is a fact neither the attributes nor the

@@ -3260,6 +3260,8 @@ async fn restoring_a_session_needs_owning_it() {
         asked,
         checks(&[
             "alice: ReadDeletedSession(alice's) yes",
+            // Asked ahead, as the groups of its participants come back before it (issue 593).
+            "alice: RestoreSession(alice's) yes",
             "alice: ReadDeletedSession(alice's) yes",
             "alice: RestoreSession(alice's) yes",
         ]),
@@ -4724,7 +4726,7 @@ async fn the_groups_of_a_session_go_and_come_back_with_it_announced() {
         [
             GlobalEvent::deleted::<Group>(&of_session),
             GlobalEvent::deleted::<Group>(&of_channel),
-            GlobalEvent::deleted::<Channel>(&(session_id, main)),
+            // Its channel is hidden with it, not marked: nothing announces it deleted (issue 593).
             GlobalEvent::deleted::<Session>(&session_id),
         ],
     )
@@ -4733,7 +4735,12 @@ async fn the_groups_of_a_session_go_and_come_back_with_it_announced() {
     world.manager.restore(&alice, session_id).await.unwrap();
     hears(
         &mut bobs,
-        [GlobalEvent::restored::<Group>(&of_session), GlobalEvent::restored::<Group>(&of_channel)],
+        [
+            GlobalEvent::restored::<Group>(&of_session),
+            GlobalEvent::restored::<Group>(&of_channel),
+            // Heard by a participant, its group restored before it (issue 593).
+            GlobalEvent::restored::<Session>(&session_id),
+        ],
     )
     .await;
 }

@@ -392,10 +392,14 @@ The procedures, by step, each step reviewed and committed on its own:
      which only pass a call on to its controller, go.
    - R3b: whoever makes a change announces it, in the method that makes it; no procedure
      announces anything. The lifecycle of a document - created, marked deleted, its mark taken
-     away - is written and announced by its controller (`ChannelController`, `SessionController`,
-     `ProjectController`), as a controller announces every other change it writes; an undo is a
-     change too, and announces what balances what it undoes - a failed procedure shows what
-     happened, its states in between among it.
+     away - is written and announced by its manager (`Lifecycle`, which the `SessionManager` holds
+     for sessions, their channels and their own projects), as a controller announces every change
+     it writes; an undo is a change too, and announces what balances what it undoes - a failed
+     procedure shows what happened, its states in between among it.
+   - R3c: `Lifecycle` takes in purging too - checked (`purge_behind`) and in the kernel's name
+     (`purge_for_good`), announcing nothing, as no purge does -, and the managers of the other kinds
+     (`AgentManager`, `GroupManager`, `WorkspaceManager`, `ProjectManager`) carry their lifecycle
+     out by it in place of copies of their own.
    - R4: participants and threads (`participant::TakeIn`, `LetGo`, `Follow`, `thread::Open`,
      `Close`): the `ChannelLoop` keeps `add_actor`, `remove_actor`, `open_thread` and
      `close_thread`, each enforcing what it does; every `require_…` of the loops goes, to the
@@ -758,3 +762,21 @@ case; it is decided there, and may make this unnecessary.
   procedure only holds the channel. The tests' way to reclassify by the procedure is
   `reclassify_by_procedure`. Decided with the maintainer as a step of its own after R3 (R3b):
   whoever makes a change announces it, a failed procedure showing its states in between.
+- **2026-11-20** — Step R3 committed. Step R3b implemented, not committed yet: as the maintainer
+  decided, the lifecycle of a document is its manager's, not its controller's - a controller is the
+  writer of a document that exists. `Lifecycle<T>` (`lifecycle.rs`) makes a document, marks it
+  deleted and takes its mark away, each announced as it is stored; the `SessionManager` holds one
+  for its sessions, their channels and their own projects, and the procedures carry the change out
+  by it and announce nothing. An undo announces what balances what it undoes: a creation taken back
+  is marked deleted and announced so before it is purged (`discard_own` for an own project). A
+  session's deletion no longer announces its channels deleted, which are hidden with it and not
+  marked - as its restoring announced only the session already. The maintainer asked to take
+  purging into `Lifecycle` as a step of its own (R3c).
+  As the reviewer found and the maintainer decided, the group of a document's participants or
+  members is made or restored before the document: an announcement of its making or restoring is
+  asked of as reading it, which admits by a group only once the group is there - announced as it
+  is stored, a session, a channel or an own project would otherwise reach its participants or not
+  as the bus happened to ask before or after the group. Restoring a session asks `Restore` ahead
+  for it, as restoring a channel does, so that the groups do not come back for whoever may not
+  restore it. `Stored` is to answer the address of a document (R3c), in place of the function
+  each `Lifecycle` is given.

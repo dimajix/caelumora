@@ -307,9 +307,9 @@ impl Procedure for Restore {
 /// 348) - all of it with the session's mark, by `context`'s caller (issue 469). If something is
 /// left, or the project or the groups cannot go, `log` takes the marks away again, in the kernel's
 /// name - the deletion was permitted -, and the session runs on if it ran, without what was
-/// deleted. Once all of it went, its actors leave and the commands of its channels end, and the
-/// deletion is announced. `false` if there is no such session or `context` may not read it, as
-/// every deletion answers (issue 510).
+/// deleted. Once all of it went, its actors leave and the commands of its channels end. Each mark
+/// is announced as it is set or taken away (`Lifecycle`). `false` if there is no such session or
+/// `context` may not read it, as every deletion answers (issue 510).
 ///
 /// # Errors
 /// As `SessionManager::session_to_delete`; `SessionError::RunsElsewhere` if another process that
@@ -322,13 +322,13 @@ pub(crate) async fn delete(
     id: SessionId,
     removal: &Removal,
 ) -> Result<bool, SessionError> {
-    let Some((session, channels, own)) = sessions.session_to_delete(context, id).await? else {
+    let Some((session, own)) = sessions.session_to_delete(context, id).await? else {
         return Ok(false);
     };
     // Held against the other processes until the procedure - or its part - is done, undone too
     // (issue 554).
     log.keep(sessions.hold(id)?);
-    if !sessions.mark_session_deleted_held(context, id, removal).await? {
+    if !sessions.mark_session_deleted_held(context, &session, removal).await? {
         return Ok(false);
     }
     let unmarked = Arc::clone(sessions);
@@ -337,7 +337,7 @@ pub(crate) async fn delete(
         unmarked.unmark_session_held(&system, id).await.map(drop)
     });
     if let Some(own) = &own {
-        sessions.mark_own_deleted_held(own.id, removal).await?;
+        sessions.mark_own_deleted_held(own, removal).await?;
         let (unmarked, own) = (Arc::clone(sessions), own.id);
         log.record("marking the session's own project deleted", async move {
             unmarked.unmark_own_held(own).await.map(drop)
@@ -346,18 +346,20 @@ pub(crate) async fn delete(
     sessions.delete_scope_held(context, id, own.as_ref(), removal).await?;
     sessions.delete_participant_groups_held(id, own.as_ref(), removal).await?;
     sessions.stop_deleted_held(id).await;
-    sessions.announce_deleted(&session, &channels, own.as_ref(), context);
+    info!(session = %id, by = %context.caller_id, "Session deleted");
     Ok(true)
 }
 
 /// Restores the deleted session `id` on behalf of `context`, for a procedure that holds it
-/// exclusively (`SessionManager::session_to_restore`, issue 164): its mark taken away, then - in
-/// the kernel's name (issues 348, 467) - the groups of its participants and theirs, and its own
-/// project with the group of its members, so that whatever fails later its participants reach it
-/// and its results have their place; if they cannot come back, `log` marks the session again as it
-/// was, in the kernel's name, so that a restoring tried again finds what went with it (issue 469).
+/// exclusively (`SessionManager::session_to_restore`, issue 164): the groups of its participants
+/// and theirs first, in the kernel's name (issues 348, 467), so that whoever they let read the
+/// session hears it restored; then its mark taken away, and its own project's, so that whatever
+/// fails later its participants reach it and its results have their place; if something cannot
+/// come back, `log` takes the groups away and marks the session again as it was, in the kernel's
+/// name, so that a restoring tried again finds what went with it (issue 469).
 /// Then what lay in its scope and its own project's comes back, as far as `context` may restore
-/// it. It is not started; opening it starts it, as any stored session.
+/// it. Each mark is announced as it is taken away or set again (`Lifecycle`). It is not started;
+/// opening it starts it, as any stored session.
 ///
 /// # Errors
 /// As `SessionManager::session_to_restore`; `SessionError::RunsElsewhere` if another process that
@@ -373,17 +375,19 @@ pub(crate) async fn restore(
     // Held against the other processes until the procedure - or its part - is done, undone too
     // (issue 554).
     log.keep(sessions.hold(id)?);
-    let session = sessions.unmark_session_held(context, id).await?;
-    let (marked, again) = (Arc::clone(sessions), removal.clone());
-    log.record("taking the session's mark away", async move {
-        let system = SecurityContext::system();
-        marked.mark_session_deleted_held(&system, id, &again).await.map(drop)
-    });
+    // The groups first, so that whoever they let read the session and its own project hears them
+    // restored.
     sessions.restore_participant_groups_held(id, own.as_ref(), &removal).await?;
     let deleted = Arc::clone(sessions);
     let (of_own, again) = (own.clone(), removal.clone());
     log.record("restoring the groups of the session's participants", async move {
         deleted.delete_participant_groups_held(id, of_own.as_ref(), &again).await
+    });
+    let session = sessions.unmark_session_held(context, id).await?;
+    let (marked, restored, again) = (Arc::clone(sessions), session.clone(), removal.clone());
+    log.record("taking the session's mark away", async move {
+        let system = SecurityContext::system();
+        marked.mark_session_deleted_held(&system, &restored, &again).await.map(drop)
     });
     // The last step that can fail: nothing after it is undone.
     let own = match own {
@@ -391,7 +395,7 @@ pub(crate) async fn restore(
         None => None,
     };
     sessions.restore_scope_held(context, id, own.as_ref(), &removal).await;
-    sessions.announce_restored(&session, own.as_ref(), context);
+    info!(session = %id, by = %context.caller_id, "Session restored");
     Ok(session)
 }
 
@@ -500,7 +504,7 @@ impl Procedure for Move {
     ) -> Result<(), SessionError> {
         let Self { sessions, context, id, project } = self;
         let session = sessions.open_held(&context, id).await?;
-        move_to(log, &session, &context, project).await
+        move_to(log, &sessions, &session, &context, project).await
     }
 }
 
@@ -510,14 +514,16 @@ impl Procedure for Move {
 /// (`SessionLoop::project_to_move_to`); nothing where it lies already. The project it goes to is
 /// shared with its participants for reading, or its new own made, before the session is stored as
 /// lying there, so that it never lies where its participants read nothing - taken back by `log` if
-/// storing it fails -; then a new own is announced, and the shared project it left has the entry of
-/// its participants taken away, in the kernel's name - what cannot be is logged. Nothing moves:
+/// storing it fails, a new own marked deleted again, announced so as it was announced made, and
+/// purged -; then the shared project it left has the entry of its participants taken away, in the
+/// kernel's name - what cannot be is logged. Nothing moves:
 /// what went to the project before stays there, only what comes now goes to the other.
 ///
 /// # Errors
 /// As `SessionLoop::project_to_move_to`; whatever making, sharing or storing reports.
 pub(crate) async fn move_to(
     log: &mut Compensation,
+    sessions: &Arc<SessionManager>,
     session: &Arc<SessionLoop>,
     context: &SecurityContext,
     project: Option<ProjectId>,
@@ -528,10 +534,10 @@ pub(crate) async fn move_to(
     let left = session.load_shared_project().await?;
     match &mut target {
         MoveTarget::NewOwn(own) => {
-            session.make_own_project_held(own).await?;
-            let (session, own) = (Arc::clone(session), own.id);
+            sessions.make_own_held(own).await?;
+            let (sessions, own) = (Arc::clone(sessions), own.clone());
             log.record("making a session's own project", async move {
-                session.purge_own_project_held(own).await
+                sessions.discard_own_held(&own).await
             });
         }
         MoveTarget::Shared(shared) => {
@@ -545,9 +551,6 @@ pub(crate) async fn move_to(
     }
     let to = target.project().id;
     session.store_project_held(context, to).await?;
-    if let MoveTarget::NewOwn(own) = &target {
-        session.announce_own_made(own);
-    }
     if let Some(left) = left {
         if let Err(e) = session.unshare_project_held(left.id).await {
             warn!(session = %session.id(), project = %left.id, "The project a session left is still shared with its participants: {e:#}");

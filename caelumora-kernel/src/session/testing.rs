@@ -24,7 +24,7 @@ use crate::procedure::{channel, thread};
 use crate::procedure::{Compensation, Deferred, Key, Locks, Procedure};
 use crate::session::{ChannelSpec, SessionError, SessionLoop, SessionManager, SessionSpec};
 use crate::testing::TestKernel;
-use anyhow::{Error, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::actor::{ActorEvent, Rejection};
@@ -697,6 +697,6 @@ impl SessionLoop {
 
     /// The session manager of the kernel, which the procedures are made with.
     fn manager(&self) -> Result<Arc<SessionManager>> {
-        self.sessions().ok_or_else(|| Error::msg("the kernel has no session manager"))
+        self.sessions().ok_or_else(|| anyhow::Error::msg("the kernel has no session manager"))
     }
 }

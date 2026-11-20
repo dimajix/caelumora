@@ -1,14 +1,11 @@
 //! Changing a running session: its name, language, time zone, privacy, approval rules,
 //! description, workspace and project.
 
-use super::{
-    held_workspace, load_own, make_own, purge_own, require_attachable, SessionError, SessionLoop,
-};
+use super::{held_workspace, load_own, require_attachable, SessionError, SessionLoop};
 use crate::controller::WorkspaceController;
 use crate::project;
 use anyhow::Result;
 use caelumora_domain::approval::ApprovalRule;
-use caelumora_domain::event::{Announcing, GlobalEvent};
 use caelumora_domain::group::GroupId;
 use caelumora_domain::privacy::PrivacyConfig;
 use caelumora_domain::project::{Project, ProjectId};
@@ -239,27 +236,6 @@ impl SessionLoop {
         Ok(found.filter(|found| !found.is_own()))
     }
 
-    /// Makes `own`, a new own project of the session (`MoveTarget::NewOwn`), with the group of its
-    /// members, in the kernel's name (issue 467), for a procedure that moves the session into it;
-    /// purged again by `purge_own_project_held`.
-    ///
-    /// # Errors
-    /// Whatever the store reports.
-    pub(crate) async fn make_own_project_held(&self, own: &mut Project) -> Result<()> {
-        make_own(&self.stores, own).await?;
-        Ok(())
-    }
-
-    /// Purges project `own`, made as the session's own, for good with the group of its members, in
-    /// the kernel's name - for the compensation of moving the session into it.
-    ///
-    /// # Errors
-    /// Whatever the store reports.
-    pub(crate) async fn purge_own_project_held(&self, own: ProjectId) -> Result<()> {
-        purge_own(&self.stores, own).await?;
-        Ok(())
-    }
-
     /// Shares project `project` with the session's participants for reading, in the kernel's name,
     /// since the session's move was asked, so that every participant publishes into it, before
     /// the session is stored as lying there; the entry is taken away by `unshare_project_held`.
@@ -298,11 +274,6 @@ impl SessionLoop {
     ) -> Result<()> {
         self.session_controller.update_project(context, project).await?;
         Ok(())
-    }
-
-    /// Announces `own`, made as the session's new own project, once the session lies in it.
-    pub(crate) fn announce_own_made(&self, own: &Project) {
-        self.events.announce(GlobalEvent::created::<Project>(&own.id), own);
     }
 
     /// Project `id` as `context` reaches it (`GetProject`), if the session may lie in it: a shared

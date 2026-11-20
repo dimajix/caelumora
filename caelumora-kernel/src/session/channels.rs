@@ -710,8 +710,8 @@ mod tests {
         let stopped = events.iter().position(|e| matches!(e.about::<Channel>(), Some(((_, cid), EntityChange::Custom { name: STOPPED, .. })) if cid == id));
         let deleted = events.iter().position(|e| matches!(e.about::<Channel>(), Some(((_, cid), EntityChange::Deleted)) if cid == id));
         assert!(
-            stopped.is_some() && deleted.is_some() && stopped < deleted,
-            "stopped, then deleted: {events:?}"
+            stopped.is_some() && deleted.is_some() && deleted < stopped,
+            "deleted as it is marked, then stopped (issue 593): {events:?}"
         );
 
         assert!(!session.delete_channel(&ctx, id).await.unwrap(), "gone (issue 513)");

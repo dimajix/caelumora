@@ -20,6 +20,7 @@ use crate::controller::{ControllerManager, SessionController, WorkspaceControlle
 use crate::event::{EventBus, EventSubscription, Following, SubscriptionTopic};
 use crate::group::keep_participants;
 use crate::kernel::{ChannelRuntime, Kernel};
+use crate::lifecycle::Lifecycle;
 use crate::procedure::{ProcedureError, ProcedureExecutor};
 use crate::scoped::{purge_for_good, ScopeNotEmpty};
 use crate::view::{Viewer, Views};
@@ -37,6 +38,7 @@ use caelumora_domain::group::Group;
 use caelumora_domain::group::GroupId;
 use caelumora_domain::privacy::SessionPrivacy;
 use caelumora_domain::project::{Project, ProjectId};
+use caelumora_domain::removal::Removal;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::session::{Session, SessionId};
 use caelumora_domain::store::{StoreError, StoreResult, StoreResultExt};
@@ -303,21 +305,43 @@ async fn purge_own(stores: &EntityStores, own: ProjectId) -> StoreResult<()> {
     Ok(())
 }
 
-/// Makes `own`, a session's own project, with the group of its members, in the kernel's name (issue
-/// 467) - both, or, if the group cannot be made, neither: as the session is made, or taken out of a
-/// project once its own was lifted. Announcing it is the caller's.
+/// Makes `own`, a session's own project, by `lifecycle`, which announces it, with the group of its
+/// members, in the kernel's name (issue 467) - the group first, so that its members hear of the
+/// project, and both, or, if the project cannot be made, neither: as the session is made, or taken
+/// out of a project once its own was lifted.
 ///
 /// # Errors
 /// Whatever the store reports.
-async fn make_own(stores: &EntityStores, own: &mut Project) -> StoreResult<()> {
-    stores.projects.create(&SecurityContext::system(), own).await?;
-    if let Err(error) = keep_participants(stores.groups.as_ref(), Group::of_project(own)).await {
-        if let Err(undo) = purge_for_good(stores.projects.as_ref(), own.id).await {
-            warn!(project = %own.id, "A session's own project whose group could not be made is left: {undo}");
+async fn make_own(
+    lifecycle: &Lifecycle<Project>,
+    stores: &EntityStores,
+    own: &mut Project,
+) -> StoreResult<()> {
+    keep_participants(stores.groups.as_ref(), Group::of_project(own)).await?;
+    if let Err(error) = lifecycle.create(&SecurityContext::system(), own).await {
+        if let Err(undo) = purge_for_good(stores.groups.as_ref(), GroupId::of_project(own.id)).await
+        {
+            warn!(project = %own.id, "The group of a session's own project that could not be made is left: {undo}");
         }
         return Err(error);
     }
     Ok(())
+}
+
+/// Takes `own`, made as a session's own project and not to be kept, back, in the kernel's name: it
+/// is marked deleted by `lifecycle`, which announces it so, as its making was announced, then
+/// purged for good with the group of its members (`purge_own`).
+///
+/// # Errors
+/// Whatever the store reports.
+async fn discard_own(
+    lifecycle: &Lifecycle<Project>,
+    stores: &EntityStores,
+    own: &Project,
+) -> StoreResult<()> {
+    let system = SecurityContext::system();
+    lifecycle.delete(&system, own, &Removal::now(system.caller_id)).await?;
+    purge_own(stores, own.id).await
 }
 
 /// Asks whether `context` may attach the workspace `id` to the session `session_id` (issue 253):

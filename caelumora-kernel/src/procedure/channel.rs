@@ -18,7 +18,7 @@ use super::{Compensation, Deferred, Key, Locks, Procedure, ProcedureError};
 use crate::channel::{ChannelLoop, ResolvedParticipant};
 use crate::group::keep_participants;
 use crate::kernel::Kernel;
-use crate::scoped::ScopeNotEmpty;
+use crate::scoped::{purge_for_good, ScopeNotEmpty};
 use crate::session::{
     purge_channel_document, require_classification, unavailable_components, ChannelRun,
     ChannelSpec, SessionError, SessionLoop, SessionManager,
@@ -28,8 +28,7 @@ use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::channel::{Channel, ChannelId, HistoryAccess, Participant, ThreadId};
 use caelumora_domain::confidentiality::Classification;
-use caelumora_domain::event::{Announcing, GlobalEvent};
-use caelumora_domain::group::Group;
+use caelumora_domain::group::{Group, GroupId};
 use caelumora_domain::removal::Removal;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::session::SessionId;
@@ -38,7 +37,7 @@ use caelumora_domain::template::InternalActorTemplate;
 use caelumora_domain::value::language::Language;
 use caelumora_domain::value::name::Name;
 use caelumora_security::{ActionType, Enforcement, SecurityContext};
-use caelumora_store::{Deleted, EntityStores};
+use caelumora_store::Deleted;
 use std::iter;
 use std::slice;
 use std::sync::Arc;
@@ -82,14 +81,15 @@ impl Procedure for Create {
         Ok(())
     }
 
-    /// Asked before anything is stored (`asked_for`); then stored (`CreateChannel`, asked by the
-    /// store), the group of its participants made in the kernel's name (issue 348), listed in the
-    /// session last - which asks whether `context` may change it (`UpdateSession`) - and run, each
-    /// step taken back by `log`, the last first, if a later one fails: stopped, taken off the
-    /// session's list and purged with its group, in the kernel's name, its creation being
-    /// permitted, as if it had never been made. Its founders join it by the one way in once it runs
-    /// (`participant::take_in`, issue 420), so that its history records them as anyone who joins
-    /// later; it is announced as created once they joined.
+    /// Asked before anything is stored (`asked_for`); then the group of its participants made in
+    /// the kernel's name (issue 348) - first, so that whoever it lets read the channel hears it
+    /// created -, the channel stored (`CreateChannel`, asked by the store) and announced as created
+    /// (`SessionManager::channel_lifecycle`), listed in the session last - which asks whether
+    /// `context` may change it (`UpdateSession`) - and run, each step taken back by `log`, the last
+    /// first, if a later one fails: stopped, taken off the session's list, marked deleted and
+    /// announced so, and purged with its group, in the kernel's name, its creation being
+    /// permitted. Its founders join it by the one way in once it runs (`participant::take_in`,
+    /// issue 420), so that its history records them as anyone who joins later.
     ///
     /// # Errors
     /// As `SessionManager::open_held` and `asked_for`; `StoreError::NameTaken` if the session has
@@ -102,17 +102,31 @@ impl Procedure for Create {
         log: &mut Compensation,
     ) -> Result<Arc<ChannelLoop>, SessionError> {
         let Self { context, session, id, spec } = self;
-        let session = sessions_of(kernel)?.open_held(&context, session).await?;
+        let sessions = sessions_of(kernel)?;
+        let session = sessions.open_held(&context, session).await?;
         let (mut document, founders) = asked_for(kernel, &session, &context, id, spec).await?;
+        // Its group first, so that whoever it lets read the channel hears it created.
         let stores = kernel.entity_stores();
-        stores.channels.create(&context, &mut document).await?;
+        keep_participants(stores.groups.as_ref(), Group::of_channel(&document)).await?;
         {
-            let stores = stores.clone();
+            // Its creation was permitted: taken back in the kernel's name.
+            let groups = Arc::clone(&stores.groups);
+            log.record("keeping a channel's group", async move {
+                Ok(purge_for_good(groups.as_ref(), GroupId::of_channel(id)).await.map(drop)?)
+            });
+        }
+        sessions.channel_lifecycle().create(&context, &mut document).await?;
+        {
+            // Announced as deleted, as it was announced created.
+            let (sessions, stores) = (Arc::clone(&sessions), stores.clone());
+            let made = document.clone();
             log.record("storing a channel", async move {
+                let system = SecurityContext::system();
+                let removal = Removal::now(system.caller_id);
+                sessions.channel_lifecycle().delete(&system, &made, &removal).await?;
                 Ok(purge_channel_document(&stores, id).await.map(drop)?)
             });
         }
-        keep_participants(stores.groups.as_ref(), Group::of_channel(&document)).await?;
         session.controller().add_channel(&context, id).await?;
         {
             let session = Arc::clone(&session);
@@ -132,10 +146,7 @@ impl Procedure for Create {
         for founder in founders {
             take_in(log, &session, &context, founder, Entry::Founding, into).await?;
         }
-        let created = channel.channel();
-        let event = GlobalEvent::created::<Channel>(&(session.id(), id));
-        kernel.event_bus().announce(event, &*created);
-        info!("Channel {}/{} created in session {}", created.name, id, session.id());
+        info!("Channel {}/{} created in session {}", document.name, id, session.id());
         Ok(channel)
     }
 }
@@ -260,9 +271,9 @@ impl Procedure for Delete {
     /// fails -, and the group of its participants, in the kernel's name (issue 348); all of it
     /// carries the channel's mark and comes back with it (issues 178, 469). If any of it fails, the
     /// channel is marked no more and listed again, in the kernel's name - without what was deleted
-    /// of its scope, but with its group -, and runs on. Then it is stopped and its deletion
-    /// announced. `false` if there is no channel the caller reaches, as every deletion answers
-    /// (issue 513).
+    /// of its scope, but with its group -, and runs on. Its deletion is announced as it is marked,
+    /// and as it is taken back its restoring. Then it is stopped. `false` if there is no channel
+    /// the caller reaches, as every deletion answers (issue 513).
     ///
     /// # Errors
     /// As `SessionManager::open_held` and `mark_deleted`; `StoreError::PermissionDenied` if
@@ -276,7 +287,8 @@ impl Procedure for Delete {
         log: &mut Compensation,
     ) -> Result<bool, SessionError> {
         let Self { context, session, channel: id } = self;
-        let session = sessions_of(kernel)?.open_held(&context, session).await?;
+        let sessions = sessions_of(kernel)?;
+        let session = sessions.open_held(&context, session).await?;
         let Some((channel, _)) = session.listed_channel_for(&context, id).await else {
             return Ok(false);
         };
@@ -291,11 +303,12 @@ impl Procedure for Delete {
             });
         }
         let removal = Removal::now(context.caller_id);
-        mark_deleted(kernel.entity_stores(), &context, session.id(), id, &removal).await?;
+        mark_deleted(&sessions, &context, &channel, &removal).await?;
         {
-            let stores = kernel.entity_stores().clone();
+            let sessions = Arc::clone(&sessions);
             log.record("marking a channel deleted", async move {
-                Ok(stores.channels.restore(&SecurityContext::system(), id).await.map(drop)?)
+                let system = SecurityContext::system();
+                Ok(sessions.channel_lifecycle().restore(&system, id).await.map(drop)?)
             });
         }
         let scope = Scope::ChannelScope { session_id: session.id(), channel_id: id };
@@ -304,8 +317,6 @@ impl Procedure for Delete {
         ScopeNotEmpty::require_empty(&scope, left)?;
         kernel.group_manager().delete_participants(holders, &removal).await?;
         session.remove_channel(id).await;
-        let event = GlobalEvent::deleted::<Channel>(&(session.id(), id));
-        kernel.event_bus().announce(event, &*channel);
         info!(
             "Channel {}/{} deleted from session {} by {}",
             channel.name,
@@ -317,26 +328,26 @@ impl Procedure for Delete {
     }
 }
 
-/// Marks the document of channel `id` of session `session` deleted on behalf of `context` (issue
-/// 164), kept as removed as `removal` says: it and its state stay stored - it can be restored -
-/// until it is purged with its session (`SessionManager::purge_held`). Marked before what lies in
-/// its scope, so that nothing of it goes unless the channel's deletion was granted, and nothing is
-/// put into its scope afterwards (`ScopeHolders`, issue 458) - as it is deleted, and for the
-/// compensation of restoring it.
+/// Marks `channel` deleted on behalf of `context` (issue 164), kept as removed as `removal` says,
+/// and announced so (`SessionManager::channel_lifecycle`): it and its state stay stored - it can be
+/// restored - until it is purged with its session (`SessionManager::purge_held`). Marked before
+/// what lies in its scope, so that nothing of it goes unless the channel's deletion was granted,
+/// and nothing is put into its scope afterwards (`ScopeHolders`, issue 458) - as it is deleted, and
+/// for the compensation of restoring it.
 ///
 /// # Errors
 /// `SessionError::ChannelNotFound` if the store finds nothing `context` could delete - gone
 /// meanwhile, by another process; `StoreError::PermissionDenied` if they may not delete it;
 /// whatever else the store reports.
 async fn mark_deleted(
-    stores: &EntityStores,
+    sessions: &SessionManager,
     context: &SecurityContext,
-    session: SessionId,
-    id: ChannelId,
+    channel: &Channel,
     removal: &Removal,
 ) -> Result<(), SessionError> {
-    if !stores.channels.delete(context, id, removal).await? {
-        return Err(SessionError::ChannelNotFound { session, channel: id });
+    if !sessions.channel_lifecycle().delete(context, channel, removal).await? {
+        let (session, channel) = (channel.session_id, channel.id);
+        return Err(SessionError::ChannelNotFound { session, channel });
     }
     Ok(())
 }
@@ -390,16 +401,16 @@ impl Procedure for Restore {
         Ok(Ok(()))
     }
 
-    /// Asked first (`to_restore`); then its mark taken away (`Restore`, asked by the store), the
-    /// group of its participants restored with it in the kernel's name (issue 348) - once it runs,
-    /// its participants reach it, whatever of its scope comes back -, who was let go from the
-    /// session while it was deleted (issue 590) let go from it, in the kernel's name and removed by
-    /// it, before it is built, listed in the session again - which asks whether `context` may
-    /// change it - and run from its stored state. If any of that fails, it is deleted again with
-    /// its group, marked as it was, in the kernel's name, so that it is neither half back nor lost,
-    /// and a restoring tried again finds what went with it. What was deleted with it comes back
-    /// last (issue 178) - what cannot is logged, and the channel stays restored -; it is announced
-    /// as restored.
+    /// Asked first (`to_restore`); then the group of its participants restored in the kernel's name
+    /// (issue 348) - first, so that whoever it lets read the channel hears it restored, and once it
+    /// runs, its participants reach it, whatever of its scope comes back -, its mark taken away
+    /// (`Restore`, asked by the store) and announced (`SessionManager::channel_lifecycle`), who was
+    /// let go from the session while it was deleted (issue 590) let go from it, in the kernel's
+    /// name and removed by it, before it is built, listed in the session again - which asks whether
+    /// `context` may change it - and run from its stored state. If any of that fails, it is deleted
+    /// again with its group, marked as it was, in the kernel's name, so that it is neither half
+    /// back nor lost, and a restoring tried again finds what went with it. What was deleted with it
+    /// comes back last (issue 178) - what cannot is logged, and the channel stays restored.
     ///
     /// # Errors
     /// As `SessionManager::open_held` and `to_restore`; `StoreError::NameTaken` if its name was
@@ -413,18 +424,11 @@ impl Procedure for Restore {
     ) -> Result<Arc<ChannelLoop>, SessionError> {
         read?;
         let Self { context, session, channel: id } = self;
-        let session = sessions_of(kernel)?.open_held(&context, session).await?;
+        let sessions = sessions_of(kernel)?;
+        let session = sessions.open_held(&context, session).await?;
         let (Deleted { removal, .. }, gone) = to_restore(kernel, &session, &context, id).await?;
-        let stores = kernel.entity_stores();
-        let document = stores.channels.restore(&context, id).await?;
-        {
-            // Its restoring was permitted: deleted again in the kernel's name.
-            let (stores, session, removal) = (stores.clone(), session.id(), removal.clone());
-            log.record("taking a channel's mark away", async move {
-                let system = SecurityContext::system();
-                Ok(mark_deleted(&stores, &system, session, id, &removal).await?)
-            });
-        }
+        // Its group first, so that whoever it lets read the channel hears it restored; its
+        // restoring was permitted: deleted again in the kernel's name.
         let scope = Scope::ChannelScope { session_id: session.id(), channel_id: id };
         let groups = kernel.group_manager();
         groups.restore_participants(slice::from_ref(&scope), &removal).await?;
@@ -432,6 +436,15 @@ impl Procedure for Restore {
             let (groups, scope, removal) = (Arc::clone(groups), scope.clone(), removal.clone());
             log.record("restoring a channel's group", async move {
                 Ok(groups.delete_participants(slice::from_ref(&scope), &removal).await?)
+            });
+        }
+        let document = sessions.channel_lifecycle().restore(&context, id).await?;
+        {
+            let (sessions, restored) = (Arc::clone(&sessions), document.clone());
+            let removal = removal.clone();
+            log.record("taking a channel's mark away", async move {
+                let system = SecurityContext::system();
+                Ok(mark_deleted(&sessions, &system, &restored, &removal).await?)
             });
         }
         let document =
@@ -454,8 +467,6 @@ impl Procedure for Restore {
                 e
             );
         }
-        let event = GlobalEvent::restored::<Channel>(&(session.id(), id));
-        kernel.event_bus().announce(event, &document);
         info!(
             "Channel {}/{} restored in session {} by {}",
             document.name,
