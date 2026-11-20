@@ -10,8 +10,8 @@
 //! which open or close a thread within a change of their own (issue 558's sub-agents).
 
 use super::participant::{take_into_channel, take_into_session, Entry};
-use super::session::lock_to_open;
-use super::{sessions_of, Compensation, Deferred, Key, Locks, Procedure};
+use super::session::{self, lock_to_open};
+use super::{Compensation, Deferred, Key, Locks, Procedure};
 use crate::channel::{require_opening, ChannelError};
 use crate::kernel::Kernel;
 use crate::session::{SessionError, SessionLoop};
@@ -69,7 +69,7 @@ impl Procedure for Open {
     }
 
     /// # Errors
-    /// As `SessionManager::open_held` and `open`.
+    /// As `session::open` and `open`.
     async fn carry_out(
         self,
         (): (),
@@ -77,7 +77,7 @@ impl Procedure for Open {
         log: &mut Compensation,
     ) -> Result<ThreadId, SessionError> {
         let Self { context, session, channel, thread, origin, founders } = self;
-        let session = sessions_of(kernel)?.open_held(&context, session).await?;
+        let session = session::open(kernel, &context, session).await?;
         open(log, kernel, &session, &context, channel, thread, origin, founders).await?;
         Ok(thread)
     }
@@ -182,7 +182,7 @@ impl Procedure for Close {
     }
 
     /// # Errors
-    /// As `SessionManager::open_held`, `SessionLoop::channel_for` and `ChannelLoop::close_thread`.
+    /// As `session::open`, `SessionLoop::channel_for` and `ChannelLoop::close_thread`.
     async fn carry_out(
         self,
         (): (),
@@ -190,7 +190,7 @@ impl Procedure for Close {
         _: &mut Compensation,
     ) -> Result<bool, SessionError> {
         let Self { context, session, channel, thread } = self;
-        let session = sessions_of(kernel)?.open_held(&context, session).await?;
+        let session = session::open(kernel, &context, session).await?;
         let channel = session.channel_for(&context, channel).await?;
         Ok(channel.close_thread(&context, thread).await?)
     }

@@ -281,14 +281,8 @@ async fn main() -> Result<()> {
         false => None,
     };
     let views = session_manager.views(Viewer::new(security));
-    let sessions = Sessions::new(
-        Arc::clone(&kernel),
-        Arc::clone(&session_manager),
-        owner,
-        views.clone(),
-        place,
-        args.template.clone(),
-    );
+    let sessions =
+        Sessions::new(Arc::clone(&kernel), owner, views.clone(), place, args.template.clone());
     let opening = match args.invocation() {
         Invocation::List => {
             for line in listing(&sessions.list().await?, None) {
@@ -314,7 +308,7 @@ async fn main() -> Result<()> {
         talk(session_loop, views, sessions, controller, bus, screen.as_mut(), signalled).await;
     // The terminal given back first: the shutdown may take a while.
     drop(screen);
-    session::shut_down(kernel.procedures(), &session_manager).await;
+    session::shut_down(kernel.procedures()).await;
     talked
 }
 

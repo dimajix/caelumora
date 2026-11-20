@@ -863,3 +863,24 @@ case; it is decided there, and may make this unnecessary.
   `ChannelController::new` is, so that nobody outside makes a second writer of a session's
   document; what the session's `update_*` said of their effect - an agent told from its next turn
   on, a privacy that lets go only what is said from then on - is said by the controller's.
+- **2026-11-20** — Step R5a committed. Step R5b implemented, not committed yet: the
+  `SessionManager` is the register of the sessions that run here - it starts them (`start`) and
+  stops them (`stop_running`, their actors ended as `Ending` says, stopped or leaving), holds them
+  against the other processes (`hold`) and finds them (`find`, `running`) - and holds the
+  lifecycles of sessions, their channels and their own projects (`session_lifecycle`,
+  `channel_lifecycle`, `own_lifecycle`; `make_own`, `discard_own`, `purge_own`, `purge_channel`).
+  Opening a session (`procedure::session::open`, `open_to_take_in`), stopping, deleting, restoring
+  and purging it - what they ask first, the marks, what lies in its scope, the groups of its
+  participants, the commands of its channels, what lies behind it as it is purged - are the
+  procedures' and their functions', in place of the manager's building blocks, and the procedures
+  of a session hold only their parameters; shutting the sessions down and starting the interrupted
+  again take the executor and the kernel alone. The register's stop keeps the name
+  `stop_running`: `stop` is the tests' way to stop a session by its procedure, which nearly three
+  hundred tests call. Creating a session is the next step.
+  Reviewed with fresh eyes: what the store reports of a session not there is turned into the
+  session's error in one place of the module (`session::store_error`); shutting the sessions down
+  logs it where the session manager is gone, rather than claiming nothing ran; the documents name
+  the procedures where they named the manager's building blocks, and CHANNELS.md no longer says
+  the loops were the crate's - they are public, and components are handed neither. The tests of
+  deleting, restoring and purging a session move to `procedure::session` with creating one, in the
+  next step.

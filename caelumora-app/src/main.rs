@@ -113,9 +113,8 @@ async fn main() -> Result<()> {
     // What was under way when the process last ended goes on (issue 388),
     // beside the requests rather than before them.
     tokio::spawn({
-        let procedures = Arc::clone(kernel.procedures());
-        let session_manager = Arc::clone(&session_manager);
-        async move { session::resume_interrupted(&procedures, &session_manager).await }
+        let kernel = Arc::clone(&kernel);
+        async move { session::resume_interrupted(&kernel).await }
     });
 
     let shutdown = CancellationToken::new();
@@ -150,11 +149,8 @@ async fn main() -> Result<()> {
 
     let listener = TcpListener::bind(config.server.address).await?;
     tracing::info!("Caelumora listening on {}", listener.local_addr()?);
-    let serving = axum::serve(listener, app).with_graceful_shutdown(shutdown_on_signal(
-        procedures,
-        session_manager,
-        shutdown.clone(),
-    ));
+    let serving = axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_on_signal(procedures, shutdown.clone()));
     tokio::select! {
         served = serving.into_future() => served?,
         () = async { shutdown.cancelled().await; time::sleep(CONNECTIONS_CLOSE).await } => {
@@ -175,14 +171,10 @@ const CONNECTIONS_CLOSE: Duration = Duration::from_secs(1);
 /// meanwhile requests are still answered, but one that reaches a session, a
 /// procedure, refused; then `shutdown` ends every stream, and the server takes
 /// no new request.
-async fn shutdown_on_signal(
-    procedures: Arc<ProcedureExecutor>,
-    session_manager: Arc<SessionManager>,
-    shutdown: CancellationToken,
-) {
+async fn shutdown_on_signal(procedures: Arc<ProcedureExecutor>, shutdown: CancellationToken) {
     signalled().await;
     tracing::info!("Caelumora is shutting down");
-    session::shut_down(&procedures, &session_manager).await;
+    session::shut_down(&procedures).await;
     shutdown.cancel();
 }
 

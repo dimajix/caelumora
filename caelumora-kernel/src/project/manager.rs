@@ -10,7 +10,9 @@ use crate::lifecycle::Lifecycle;
 use crate::procedure::all_or_nothing;
 #[cfg(any(test, feature = "test-support"))]
 use crate::procedure::project::{Delete, Purge, Restore};
-use crate::procedure::session::{delete as delete_session, restore as restore_session};
+use crate::procedure::session::{
+    delete as delete_session, purge as purge_session, restore as restore_session,
+};
 #[cfg(any(test, feature = "test-support"))]
 use crate::procedure::ProcedureExecutor;
 use crate::scoped::{found_or_made, ScopeNotEmpty, ScopedEntities};
@@ -236,7 +238,7 @@ impl ProjectManager {
             .items
         {
             let restored = all_or_nothing("restoring a session", async |log| {
-                restore_session(log, &self.sessions, ctx, session.id).await
+                restore_session(log, self.sessions.kernel(), ctx, session.id).await
             });
             if let Err(e) = restored.await {
                 info!(project = %id, session = %session.id, "A session of a restored project stays deleted: {e}");
@@ -291,8 +293,8 @@ impl ProjectManager {
     async fn remove_behind(&self, project: &Project) -> ProjectResult<()> {
         let system = SecurityContext::system();
         for Deleted { entity: session, .. } in self.deleted_sessions_in(project.id).await? {
-            let purged = self.sessions.purge_held(&system, session.id).await;
-            purged.map_err(ProjectError::Session)?;
+            let purged = purge_session(self.sessions.kernel(), &system, session.id).await;
+            purged.map_err(|e| ProjectError::Session(e.untyped()))?;
         }
         self.scoped.purge_lying_in(slice::from_ref(&project.holds())).await?;
         self.groups.purge_participants(GroupId::of_project(project.id)).await?;
@@ -334,7 +336,7 @@ impl ProjectManager {
         let mut kept = 0;
         for session in sessions {
             let deleted = all_or_nothing("deleting a session", async |log| {
-                delete_session(log, &self.sessions, ctx, session.id, removal).await
+                delete_session(log, self.sessions.kernel(), ctx, session.id, removal).await
             });
             match deleted.await {
                 Ok(true) => {}

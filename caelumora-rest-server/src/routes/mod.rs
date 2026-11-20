@@ -55,7 +55,7 @@ pub async fn ensure_session(
 ) -> Result<Arc<SessionLoop>, ApiError> {
     // The running session, or loaded from the store and started - either way
     // only if this user may read it (issue 11).
-    let opening = Open::new(&state.session_manager, &user.security_context(), session_id);
+    let opening = Open::new(&user.security_context(), session_id);
     let session = state.procedures.run(opening).await?;
     // Its channels left out as it started built again, where they can be now (issue 463).
     state.procedures.run(Start::left_out(session_id)).await?;

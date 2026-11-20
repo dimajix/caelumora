@@ -13,8 +13,8 @@
 //! carried the change out - an actor started and its join announced, an actor ended and its leave
 //! announced -, so that nobody takes the same participant in or lets them go meanwhile.
 
-use super::session::lock_to_open;
-use super::{sessions_of, Compensation, Deferred, Key, Locks, Procedure};
+use super::session::{self, lock_to_open};
+use super::{Compensation, Deferred, Key, Locks, Procedure};
 use crate::channel::{ChannelError, ChannelLoop, ResolvedParticipant};
 use crate::kernel::Kernel;
 use crate::session::{ChannelRun, SessionError, SessionLoop};
@@ -34,8 +34,8 @@ use tracing::info;
 
 /// Takes a participant into a session, and into a channel of it at once if one is named - added
 /// by whoever may change them, or joining by their own act -, starting the session where it does
-/// not run: as opening it does for who adds (`SessionManager::open_held`), in the kernel's name
-/// for who may join or read it for who joins (`SessionManager::open_to_take_in`).
+/// not run: as opening it does for who adds (`session::open`), in the kernel's name
+/// for who may join or read it for who joins (`session::open_to_take_in`).
 pub struct TakeIn {
     context: SecurityContext,
     session: SessionId,
@@ -101,7 +101,7 @@ impl Procedure for TakeIn {
     /// it: running, not asked whether they may read it - joining it decides.
     ///
     /// # Errors
-    /// As `SessionManager::open_held` or `open_to_take_in`; `StoreError::PermissionDenied` if
+    /// As `session::open` or `open_to_take_in`; `StoreError::PermissionDenied` if
     /// whoever adds may not change the session or the channel; as `SessionLoop::channel_for`;
     /// `SessionError::ChannelNotFound` or `ChannelUnavailable` for a channel to join that the
     /// session does not list or that does not run (issue 463); as `take_in`.
@@ -112,11 +112,10 @@ impl Procedure for TakeIn {
         log: &mut Compensation,
     ) -> Result<Arc<SessionLoop>, SessionError> {
         let Self { context, session, participant, coming_in } = self;
-        let sessions = sessions_of(kernel)?;
         let access = kernel.access_policy();
         let (session, entry, into) = match coming_in {
             ComingIn::Added(into) => {
-                let session = sessions.open_held(&context, session).await?;
+                let session = session::open(kernel, &context, session).await?;
                 let document = session.session();
                 if into.is_none() || !document.takes_part(participant) {
                     let changing = ActionType::update(Session::KIND, &document.security_attributes);
@@ -135,7 +134,7 @@ impl Procedure for TakeIn {
                 (session, Entry::Added, channel)
             }
             ComingIn::Joining(into) => {
-                let session = sessions.open_to_take_in(&context, session).await?;
+                let session = session::open_to_take_in(kernel, &context, session).await?;
                 let channel = match into {
                     Some(id) => Some((channel_to_join(&session, id)?, HistoryAccess::All)),
                     None => None,
@@ -236,7 +235,7 @@ impl Procedure for LetGo {
     }
 
     /// # Errors
-    /// As `SessionManager::open_held`, `SessionLoop::channel_for` for the channel named, and as
+    /// As `session::open`, `SessionLoop::channel_for` for the channel named, and as
     /// `let_go_from_channel` or `let_go_from_session`.
     async fn carry_out(
         self,
@@ -245,7 +244,7 @@ impl Procedure for LetGo {
         _: &mut Compensation,
     ) -> Result<(), SessionError> {
         let Self { context, session, participant, from, exit } = self;
-        let session = sessions_of(kernel)?.open_held(&context, session).await?;
+        let session = session::open(kernel, &context, session).await?;
         match from {
             Some(channel) => {
                 let channel = session.channel_for(&context, channel).await?;
@@ -807,7 +806,7 @@ impl Procedure for Follow {
     type Output = ();
     type Error = SessionError;
 
-    /// Nothing once the session manager is gone: no session runs then.
+    /// Nothing once the session manager is gone: no session of it is reached then.
     async fn enumerate(
         &self,
         kernel: &Kernel,
@@ -853,7 +852,7 @@ impl Procedure for Follow {
     }
 
     /// Nothing fails: what cannot be read or run is logged and left as it is, and nothing is
-    /// followed once the session manager is gone, as no session runs then.
+    /// followed once the session manager is gone, as no session of it is reached then.
     async fn carry_out(
         self,
         followed: Self::Plan,

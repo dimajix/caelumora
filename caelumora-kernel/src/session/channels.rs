@@ -49,7 +49,7 @@ impl SessionLoop {
     }
 
     /// Has every channel of the session follow whether its agents exist (issue 314), for
-    /// `procedure::participant::Follow` and a session as it starts (`SessionManager::open_held`) -
+    /// `procedure::participant::Follow` and a session as it starts (`procedure::session::open`) -
     /// those of `only`, or every agent if `None`: a deleted one rests in them, a restored one runs
     /// again (`ChannelLoop::follow_agents`).
     pub(crate) async fn follow_agents(&self, only: Option<&HashSet<AgentId>>) {
@@ -79,7 +79,7 @@ impl SessionLoop {
     /// for a session that stops (issue 377): they keep what they are in the
     /// middle of, to be resumed when it runs again. All channels at once;
     /// returns once their actors have ended, or `STOP_GRACE` has passed.
-    pub(crate) async fn stop_actors(&self) {
+    pub(super) async fn stop_actors(&self) {
         future::join_all(self.channels().iter().map(|channel| channel.stop_actors())).await;
     }
 
@@ -87,7 +87,7 @@ impl SessionLoop {
     /// (`ChannelLoop::leave_actors`), for a session that is deleted (issue
     /// 377): as when each of its channels is deleted. All channels at once;
     /// returns once their actors have ended, or `STOP_GRACE` has passed.
-    pub(crate) async fn leave_actors(&self) {
+    pub(super) async fn leave_actors(&self) {
         future::join_all(self.channels().iter().map(|channel| channel.leave_actors())).await;
     }
 

@@ -73,12 +73,12 @@ sessions it can never lie in, and is not stored.
 
 Every session has a **project** its results go to (`Session::project`, issue 467): one of its own,
 made with it in its scope, or a shared one it lies in, which it goes with. The session keeps its own
-project as it keeps the group of its participants (`SessionManager`): made with it, in the kernel's
-name; deleted and restored with its mark, the project after the groups, all of them or none; and
-purged with it. What lies in the project's scope goes with the session as what lies in the session's
-does, and what is left of it keeps the session as well (`ScopeNotEmpty`). A session is a user's, so
-that its project has an owner. How a session is put into a project, and how its own is kept, is in
-[PROJECTS.md](PROJECTS.md).
+project as it keeps the group of its participants: made with it, in the kernel's name, and purged
+with it (`SessionManager`); deleted and restored with its mark (`procedure::session`), the project
+after the groups, all of them or none; and purged with it. What lies in the project's scope goes
+with the session as what lies in the session's does, and what is left of it keeps the session as
+well (`ScopeNotEmpty`). A session is a user's, so that its project has an owner. How a session is
+put into a project, and how its own is kept, is in [PROJECTS.md](PROJECTS.md).
 
 Every session has a privacy policy: whom it lets read what was said in it from other sessions. It is
 taken over from its template (private unless the template says otherwise), changed only by the
@@ -699,8 +699,8 @@ Who is not in the session yet is taken into it first, and with a channel named i
 once - by whoever may change the session (`TakeIn::added`), which opens it as opening any session
 does, or by their own act where an entry of the session's access list grants them `Join`
 (`TakeIn::joining`), which opens it in the kernel's name for one who may join or read it
-(`SessionManager::open_to_take_in`): who joins reads nothing of it before they did. Who joins takes
-in themselves or their own agent, never someone else. A third way in is founding a thread
+(`procedure::session::open_to_take_in`): who joins reads nothing of it before they did. Who joins
+takes in themselves or their own agent, never someone else. A third way in is founding a thread
 (`procedure::thread::Open`, see [Its threads](#its-threads)): its founders, the opener's own, are
 taken into the session and the channel in the kernel's name, opening the thread being permitted.
 
@@ -762,7 +762,7 @@ channel it takes part in until it is restored. The channels follow its mark inst
 
 The follower follows every agent's deletion and restoring, and after it lost events looks at the
 agents of every running session again; a session looks at all its agents as it starts, as opening
-it does (`SessionManager::open_held`), so that a deletion or a restore while its channels were built
+it does (`procedure::session::open`), so that a deletion or a restore while its channels were built
 is not missed. A session subscribes to the events of its participants as it is made, and follows
 each one it takes in as it takes them in, for their renames (see [`@`-Mentions](#-mentions)).
 
@@ -1288,9 +1288,8 @@ controller, no registry and no store leaves it. Whether a command of an agent is
 of its session the kernel decides as it builds the actor: an agent whose command has the name of one
 of the session's is refused (issue 37).
 
-The full `ChannelLoop` and `SessionLoop` are `pub(crate)`, so components from other crates cannot
-reach them. Components are not given their actor's runtime either, only what their
-`ComponentContext` holds; see [COMPONENTS.md](COMPONENTS.md).
+Components from other crates are handed neither the `ChannelLoop` nor the `SessionLoop`, nor their
+actor's runtime, only what their `ComponentContext` holds; see [COMPONENTS.md](COMPONENTS.md).
 
 ## Moderators
 

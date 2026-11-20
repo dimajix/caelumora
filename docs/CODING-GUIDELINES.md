@@ -251,12 +251,14 @@ Test helpers the module offers to other modules' tests are its `testing.rs` (iss
 Its methods are named by the verbs of the lifecycle, without the kind - the manager names it:
 `create`, `delete`, `restore` and `purge`, and for what runs, `open` and `stop`
 (`AgentManager::delete`; issue 354). A lifecycle that touches several objects - a session's, a
-shared project's - is a procedure's (issue 593): each verb a type named so in the module
-`procedure` of the kind (`procedure::session::Open`, `procedure::project::Delete`), which an entry
-point makes and the kernel's `ProcedureExecutor` carries out. Its manager then offers the building
-blocks the procedures carry the change out by, named `…_held` where it is the verb the procedure
-carries out (`SessionManager::purge_held`); what holds the objects lies around them, in the
-executor, not in their signatures.
+shared project's - is a procedure's (issue 593): each verb a type named so in the module `procedure`
+of the kind (`procedure::session::Open`, `procedure::project::Delete`), which an entry point makes
+and the kernel's `ProcedureExecutor` carries out. Its manager then offers the building blocks the
+procedures carry the change out by, named `…_held` where it is the verb the procedure carries out
+(`ProjectManager::purge_held`); what holds the objects lies around them, in the executor, not in
+their signatures. Where the procedures carry the change out themselves - a session's
+(`procedure::session`) -, the manager keeps what runs and the lifecycles it holds
+(`SessionManager::start`, `session_lifecycle`).
 
 The verbs on one entity, found by its id, answer what is not there - or not the caller's to see -
 alike: `delete` and `purge` answer `false`, since for whoever wants it gone it is gone (how a REST

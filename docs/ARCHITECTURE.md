@@ -458,12 +458,15 @@ What changes an entity is split by what it changes:
 *   **Its lifecycle is its manager's** - making it, deleting, restoring and purging it, with what
     lies in its scope: the `AgentManager`'s, `GroupManager`'s and `WorkspaceManager`'s for their
     kinds, and those of the plugins (`SkillManager`, `ArtifactManager`). The lifecycles of
-    sessions and shared projects, which touch several objects, are procedures (below), carried out
-    by the building blocks of the `SessionManager` and the `ProjectManager` - made by the program
-    beside the `SessionManager`, which it holds. A channel's are procedures too
-    (`procedure::channel`), carried out by the session's controller, the session's loop, which
-    runs its channels, and the `SessionManager`, the manager of the channels of its sessions; a
-    session's own project is made, deleted, restored and purged with the session. Making a
+    sessions and shared projects, which touch several objects, are procedures (below): a session's
+    carried out by the `SessionManager` - the register of the sessions that run, which it starts
+    and stops, holding the lifecycles of sessions, their channels and their own projects -, the
+    session's loop and the services of the kernel; a shared project's by the building blocks of the
+    `ProjectManager` - made by the program beside the `SessionManager`, which it holds. A
+    channel's are procedures too (`procedure::channel`), carried out by the session's controller,
+    the session's loop, which runs its channels, and the `SessionManager`, the manager of the
+    channels of its sessions; a session's own project is made, deleted, restored and purged with
+    the session. Making a
     document, marking it deleted, taking its mark away and purging it are one `Lifecycle` for each
     kind, which its manager holds - the `SessionManager` one for sessions, their channels and their
     own projects, the `GroupManager` one for groups - and the controllers of sessions, channels

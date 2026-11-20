@@ -6004,7 +6004,7 @@ async fn one_the_channel_cannot_take_in_is_rolled_back_out_of_the_session() {
     assert_eq!(
         asked,
         checks(&[
-            // Whether he may reach the session to join it (`SessionManager::open_to_take_in`).
+            // Whether he may reach the session to join it (`procedure::session::open_to_take_in`).
             "bob: JoinSession(alice's) yes",
             // Whoever takes them in reads them first (`procedure::participant`).
             "bob: GetAgent(bob's) yes",

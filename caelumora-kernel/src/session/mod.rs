@@ -20,7 +20,7 @@ use crate::procedure::{ProcedureError, ProcedureExecutor};
 use crate::scoped::ScopeNotEmpty;
 use crate::view::{Viewer, Views};
 use crate::workspace::WorkspaceManager;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Error, Result};
 use arc_swap::ArcSwapOption;
 use caelumora_api::component::ComponentError;
 use caelumora_api::workspace::{WorkspaceError, WorkspaceResult};
@@ -187,6 +187,16 @@ enum ChannelEntry {
     Unavailable { channel: Arc<Channel>, cause: Arc<ComponentError> },
 }
 
+/// How the actors of a session end as it stops (`SessionManager::stop_running`): stopped, to be
+/// resumed when it runs again, or leaving for good, as it is deleted (issue 377).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Ending {
+    /// Stopped, each keeping what it is in the middle of.
+    Stop,
+    /// Leaving, as from a deleted channel.
+    Leave,
+}
+
 /// Whether a channel the running session lists runs (issue 463).
 #[derive(Debug, Clone)]
 pub(crate) enum ChannelRun {
@@ -255,6 +265,16 @@ pub struct SessionLoop {
     /// What the participants it takes in are followed by on `subscription` (issue 590), from
     /// wherever it takes them in.
     following: Following,
+}
+
+/// `error` of the store about session `id`: that there is none - or none
+/// the caller may see - is the session's own error, what the request named
+/// and did not find (issue 323).
+pub(crate) fn store_error(id: SessionId) -> impl FnOnce(StoreError) -> Error {
+    move |error| match error {
+        StoreError::NotFound { .. } => SessionError::NotFound(id).into(),
+        error => error.into(),
+    }
 }
 
 /// Asks whether `context` may attach the workspace `id` to the session `session_id` (issue 253):

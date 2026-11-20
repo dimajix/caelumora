@@ -14,8 +14,8 @@ use tokio_util::sync::CancellationToken;
 pub struct AppState {
     pub auth: Arc<Auth>,
     pub kernel: Arc<Kernel>,
-    /// The sessions that run, and the building blocks of their lifecycles, which the procedures
-    /// the handlers make are given.
+    /// The sessions that run, whose views the handlers read; held, so that the kernel, which knows
+    /// it weakly, reaches it as its procedures are carried out.
     pub session_manager: Arc<SessionManager>,
     /// Makes, deletes, restores and purges shared projects (issue 467), made beside
     /// `session_manager`, which it holds.

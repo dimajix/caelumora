@@ -240,7 +240,7 @@ async fn update_project(
     session_id: SessionId,
     project: Option<ProjectId>,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
-    let moving = Move::new(&state.session_manager, &user.security_context(), session_id, project);
+    let moving = Move::new(&user.security_context(), session_id, project);
     state.procedures.run(moving).await?;
     Ok(Json(session_response(state, user, session_id).await?))
 }

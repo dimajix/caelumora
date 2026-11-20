@@ -39,8 +39,7 @@ pub(super) async fn create_session(
         project: payload.project_id,
     };
     let context = user.security_context();
-    let creating =
-        Create::from_template(&state.session_manager, &context, payload.template_id, spec);
+    let creating = Create::from_template(&context, payload.template_id, spec);
     let session_loop = state.procedures.run(creating).await?;
 
     Ok(Json(listed(&state, &user, session_loop.id()).await?))
@@ -120,7 +119,7 @@ pub(super) async fn restore_session(
     Path(session_id): Path<SessionId>,
     user: AuthenticatedUser,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
-    let restoring = Restore::new(&state.session_manager, &user.security_context(), session_id);
+    let restoring = Restore::new(&user.security_context(), session_id);
     state.procedures.run(restoring).await?;
     Ok(Json(session_response(&state, &user, session_id).await?))
 }
@@ -132,7 +131,7 @@ pub(super) async fn purge_session(
     Path(session_id): Path<SessionId>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let purging = Purge::new(&state.session_manager, &user.security_context(), session_id);
+    let purging = Purge::new(&user.security_context(), session_id);
     match state.procedures.run(purging).await? {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found(
@@ -149,7 +148,7 @@ pub(super) async fn delete_session(
 ) -> Result<StatusCode, ApiError> {
     // Deleting stops the running loop, marks the session deleted - kept with its channels until
     // it is purged (issue 164) - and emits the corresponding lifecycle events.
-    let deleting = Delete::new(&state.session_manager, &user.security_context(), session_id);
+    let deleting = Delete::new(&user.security_context(), session_id);
     match state.procedures.run(deleting).await? {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found(

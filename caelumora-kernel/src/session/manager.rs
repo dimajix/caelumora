@@ -1,9 +1,12 @@
-//! `SessionManager`: the sessions of the process - those that run, and the building blocks that
-//! create, start, stop, delete, restore and purge them, which the procedures of a session carry
-//! out (`procedure::session`, issue 593).
+//! `SessionManager`: the sessions of the process - the register of those that run here, which it
+//! starts and stops, and the lifecycles of sessions, their channels and their own projects, by
+//! which the procedures of a session make, delete, restore and purge them (`procedure::session`,
+//! issue 593).
 
-use super::{require_attachable, require_classification, SessionError, SessionLoop, SessionSpec};
-use crate::attachment::AttachmentManager;
+use super::{
+    require_attachable, require_classification, store_error, Ending, SessionError, SessionLoop,
+    SessionSpec,
+};
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use crate::group::GroupManager;
@@ -13,25 +16,20 @@ use crate::lifecycle::Lifecycle;
 use crate::procedure::participant::{take_in, Entry};
 use crate::procedure::session::move_to;
 use crate::procedure::Compensation;
-use crate::scoped::{ScopeNotEmpty, ScopedEntities};
 use crate::template::{
     resolve_participants, resolve_workspace, take_in_participants, TemplateParticipants,
 };
 use crate::view::{Viewer, Views};
-use crate::workspace::reaper::CommandReaper;
 use crate::workspace::WorkspaceManager;
 use anyhow::{Error, Result};
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_domain::channel::Participant;
-use caelumora_domain::channel::{Channel, ChannelField, ChannelId};
+use caelumora_domain::channel::{Channel, ChannelId};
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_domain::channel::{HistoryAccess, ThreadId};
 use caelumora_domain::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_domain::group::{Group, GroupId};
 use caelumora_domain::project::{Project, ProjectId};
-use caelumora_domain::query::{Filter, Query};
-use caelumora_domain::removal::Removal;
-use caelumora_domain::scope::{Scope, ScopeField};
 use caelumora_domain::security::{SecurityAttributes, Subject};
 use caelumora_domain::session;
 use caelumora_domain::session::{Session, SessionId};
@@ -44,20 +42,15 @@ use caelumora_domain::value::language::Language;
 use caelumora_domain::value::name::Name;
 use caelumora_domain::value::time_zone::TimeZone;
 use caelumora_domain::workspace::WorkspaceChoice;
-use caelumora_security::{
-    AccessQuestions, ActionType, Enforcement, Policies, SecurityContext, JOIN,
-};
+use caelumora_security::{ActionType, Enforcement, Policies, SecurityContext};
 use caelumora_store::sessions::{SessionHold, SessionLocks};
-use caelumora_store::{Deleted, EntityStores, StateStore};
+use caelumora_store::EntityStores;
 use dashmap::DashMap;
-use std::collections::HashSet;
-use std::iter;
 #[cfg(any(test, feature = "test-support"))]
 use std::mem;
-use std::ops::AsyncFnOnce;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
-use tracing::{info, warn};
+use tracing::warn;
 
 pub struct SessionManager {
     sessions: DashMap<SessionId, Arc<SessionLoop>>,
@@ -73,23 +66,16 @@ pub struct SessionManager {
     /// 229).
     policies: Policies,
     stores: EntityStores,
-    state_store: Arc<dyn StateStore>,
     events: Arc<EventBus>,
     controllers: Arc<ControllerManager>,
     /// What the workspaces of the sessions it makes are found or made by.
     workspaces: Arc<WorkspaceManager>,
-    /// What ends the commands of a stopped session's channels (issue 254).
-    command_reaper: Arc<CommandReaper>,
-    /// What goes with a session deleted, restored or purged (issue 178).
-    scoped: Arc<ScopedEntities>,
-    /// What makes, deletes, restores and purges the groups of its participants with it (issue
-    /// 348).
+    /// What makes and purges the groups of the participants of a session it makes, and of the
+    /// members of an own project (issue 348).
     groups: Arc<GroupManager>,
-    /// What removes the attachments of the channels of a session purged (issue 282).
-    attachments: Arc<AttachmentManager>,
-    /// The lifecycles of what it is the manager of, each made, deleted and restored by it and
-    /// announced as it is (issue 593): its sessions, their channels, and their own projects,
-    /// which are made, deleted and restored with them (issue 467).
+    /// The lifecycles of what it is the manager of, by which its sessions, their channels and
+    /// their own projects (issue 467) are made, deleted, restored and purged - by it, or by the
+    /// procedures through it -, each change but a purge announced as it is stored (issue 593).
     session_lifecycle: Lifecycle<Session>,
     channel_lifecycle: Lifecycle<Channel>,
     own_lifecycle: Lifecycle<Project>,
@@ -107,7 +93,7 @@ pub(crate) enum Found {
 
 impl Found {
     /// The session as it is now.
-    fn session(&self) -> Session {
+    pub(crate) fn session(&self) -> Session {
         match self {
             Found::Running(session_loop) => (*session_loop.session()).clone(),
             Found::Stored(session) => session.clone(),
@@ -115,7 +101,7 @@ impl Found {
     }
 
     /// The session's attributes as they are now, without the rest of it.
-    fn attributes(&self) -> SecurityAttributes {
+    pub(crate) fn attributes(&self) -> SecurityAttributes {
         match self {
             Found::Running(session_loop) => session_loop.session().security_attributes.clone(),
             Found::Stored(session) => session.security_attributes.clone(),
@@ -135,14 +121,10 @@ impl SessionManager {
             holds: DashMap::new(),
             policies: kernel.policies().clone(),
             stores: kernel.entity_stores().clone(),
-            state_store: Arc::clone(kernel.state_store()),
             events: Arc::clone(kernel.event_bus()),
             controllers: Arc::clone(kernel.controller_manager()),
             workspaces: Arc::clone(kernel.workspace_manager()),
-            command_reaper: Arc::clone(kernel.command_reaper()),
-            scoped: Arc::clone(kernel.scoped_entities()),
             groups: Arc::clone(kernel.group_manager()),
-            attachments: Arc::clone(kernel.attachment_manager()),
             session_lifecycle: Lifecycle::new(&stores.sessions, Arc::clone(&events)),
             channel_lifecycle: Lifecycle::new(&stores.channels, Arc::clone(&events)),
             own_lifecycle: Lifecycle::new(&stores.projects, events),
@@ -152,11 +134,11 @@ impl SessionManager {
         manager
     }
 
-    /// Build the runtime loop for an (already-persisted) session, register it, spawn its
-    /// run task, and announce that the session has started running. For a procedure that holds
-    /// the session exclusively, with `hold`, the session held for this process where others share
-    /// the stores (`hold`, issue 554), which it keeps as long as the session runs.
-    async fn spawn_session(
+    /// Starts `session`, stored already, with `channels` here, for a procedure that holds it
+    /// exclusively: its loop built, registered and run in a task of its own, and announced as
+    /// `session::STARTED`; held by `hold` - the session held for this process where others share
+    /// the stores (`hold`, issue 554) - as long as it runs.
+    pub(crate) async fn start(
         &self,
         session: Session,
         channels: Vec<Channel>,
@@ -367,7 +349,7 @@ impl SessionManager {
                 controller.share(context, group, *grant).await?;
             }
             if let Some(project) = spec.project {
-                move_to(log, &self.kernel, self, session, context, Some(project)).await?;
+                move_to(log, &self.kernel, session, context, Some(project)).await?;
             }
             Ok(())
         }
@@ -393,7 +375,7 @@ impl SessionManager {
     /// they join (`procedure::participant::take_in`).
     ///
     /// # Errors
-    /// As `persist`; whatever starting the session reports (`spawn_session`).
+    /// As `persist`; whatever starting the session reports (`start`).
     async fn establish(
         &self,
         context: &SecurityContext,
@@ -405,7 +387,7 @@ impl SessionManager {
         // Held before anything is stored, so that what cannot hold it leaves nothing behind.
         let hold = self.hold(id)?;
         self.persist(context, &mut session, &mut own, &mut channels).await?;
-        self.spawn_session(session, channels, hold).await
+        self.start(session, channels, hold).await
     }
 
     /// Stores the brand-new `session` with its own project `own` and its `channels`, whose creation
@@ -438,7 +420,7 @@ impl SessionManager {
         let made = async {
             self.groups.keep_participants(Group::of_session(session)).await?;
             self.session_lifecycle.create(context, session).await?;
-            self.make_own_held(own).await?;
+            self.make_own(own).await?;
             for channel in channels.iter_mut() {
                 self.groups.keep_participants(Group::of_channel(channel)).await?;
                 self.channel_lifecycle.create(context, channel).await?;
@@ -454,7 +436,7 @@ impl SessionManager {
                 let _ = self.channel_lifecycle.discard(channel).await;
                 let _ = self.groups.discard_participants(GroupId::of_channel(channel.id)).await;
             }
-            let _ = self.discard_own_held(own).await;
+            let _ = self.discard_own(own).await;
             let _ = self.session_lifecycle.discard(session).await;
             let _ = self.groups.discard_participants(GroupId::of_session(session.id)).await;
             return Err(error.into());
@@ -462,177 +444,31 @@ impl SessionManager {
         Ok(())
     }
 
-    /// The channels `session` lists, loaded in the kernel's name: starting a session the caller may
-    /// read follows from an action already permitted, and it must not fail because the caller is
-    /// not in one of its channels.
-    async fn load_channels(&self, session: &Session) -> Result<Vec<Channel>> {
-        let system = SecurityContext::system();
-        let mut channels = Vec::with_capacity(session.channels.len());
-        for id in &session.channels {
-            channels.push(self.stores.channels.get(&system, *id).await?);
-        }
-        Ok(channels)
-    }
-
-    /// Session `id`, to take someone into it on behalf of `context`, for a procedure that holds it
-    /// as `open_held` says: opened in the kernel's name if an entry of its access list lets
-    /// `context` join it, or they may read it - who may join reads nothing of it before they did.
-    ///
-    /// # Errors
-    /// `SessionError::NotFound` if there is no such session or `context` may neither join nor read
-    /// it; as `open_held` otherwise.
-    pub(crate) async fn open_to_take_in(
-        &self,
-        context: &SecurityContext,
-        id: SessionId,
-    ) -> Result<Arc<SessionLoop>> {
-        let not_found = || SessionError::NotFound(id);
-        let system = SecurityContext::system();
-        let attributes = self.find(&system, id).await.map_err(|_| not_found())?.attributes();
-        let reachable = self
-            .policies
-            .access_policy()
-            .check(context, ActionType::custom(Session::KIND, &JOIN, &attributes))
-            .await
-            || self.policies.access_policy().may_read_session(context, &attributes).await;
-        if !reachable {
-            return Err(not_found().into());
-        }
-        self.open_held(&system, id).await
-    }
-
-    /// Session `id` for `context`, for a procedure that holds it - exclusively where it does not
-    /// run: the running one - whose channels left out as it started whoever opens it has built
-    /// again (`procedure::channel::Start`, issue 463) -, or loaded from the store and started -
-    /// which announces it as `session::STARTED`, not as created, as the session exists already.
-    ///
-    /// # Errors
-    /// `SessionError::NotFound` if there is no such session or `context` may not read it,
-    /// `SessionError::RunsElsewhere` if another process that shares the stores runs it (issue
-    /// 554); whatever loading or starting it reports otherwise.
-    pub(crate) async fn open_held(
-        &self,
-        context: &SecurityContext,
-        id: SessionId,
-    ) -> Result<Arc<SessionLoop>> {
-        match self.find(context, id).await? {
-            Found::Running(running) => Ok(running),
-            Found::Stored(session) => {
-                let hold = self.hold(id)?;
-                let channels = self.load_channels(&session).await?;
-                let started = self.spawn_session(session, channels, hold).await?;
-                // An agent deleted or restored while its channels were built: the follower missed
-                // it, as the session ran nowhere yet (`procedure::participant::Follow`).
-                started.follow_agents(None).await;
-                Ok(started)
-            }
-        }
-    }
-
-    /// Stops session `id` on behalf of `context` without deleting it, for a procedure that holds
-    /// it exclusively, so that a start under way is not missed (issue 62): its channels and actors
-    /// stop, for everybody in it (`StopSession`) - each actor keeps what it is in the middle of, to
-    /// be resumed when the session runs again, and is given up to `STOP_GRACE` to store it (issue
-    /// 377) -, and the commands of its channels end (issue 254). Answers whether it ran.
-    ///
-    /// # Errors
-    /// `SessionError::NotFound` if there is no such session or `context` may not read it,
-    /// `StoreError::PermissionDenied` if they may read but not stop it - whether it runs or not.
-    pub(crate) async fn stop_held(&self, context: &SecurityContext, id: SessionId) -> Result<bool> {
-        let found = self.find(context, id).await?;
-        let attributes = found.attributes();
-        self.policies
-            .access_policy()
-            .require(context, ActionType::StopSession(&attributes), StoreError::PermissionDenied)
-            .await?;
-        if !matches!(found, Found::Running(_)) {
-            return Ok(false);
-        }
-        let Some(stopped) = self.stop_running(id, SessionLoop::stop_actors).await else {
-            return Ok(false);
-        };
-        self.end_commands_of(&stopped).await;
-        Ok(true)
-    }
-
-    /// The project session `id` lies in - running, stored or deleted -, read in the kernel's name,
-    /// for a procedure to lock as it enumerates; `None` if there is no such session, or it cannot
-    /// be read.
-    pub(crate) async fn project_of(&self, id: SessionId) -> Option<ProjectId> {
-        if let Some(running) = self.running(id) {
-            return Some(running.session().project);
-        }
-        let system = SecurityContext::system();
-        match self.stores.sessions.get(&system, id).await {
-            Ok(session) => Some(session.project),
-            Err(_) => {
-                let deleted = self.stores.sessions.get_deleted(&system, id).await;
-                deleted.ok().map(|deleted| deleted.entity.project)
-            }
-        }
-    }
-
-    /// The sessions in which an agent's work was under way when the process last ended (issue
-    /// 388), as the state store's index of the work under way lists them
-    /// (`StateStore::channels_with_work_under_way`), read in the kernel's name; a channel that is
-    /// gone is passed over.
-    pub(crate) async fn interrupted(&self) -> Vec<SessionId> {
-        let channels = match self.state_store.channels_with_work_under_way().await {
-            Ok(channels) => channels,
-            Err(error) => {
-                warn!("The work under way at the last end cannot be read, nothing is started again: {error}");
-                return Vec::new();
-            }
-        };
-        let system = SecurityContext::system();
-        let mut sessions = HashSet::new();
-        for channel_id in channels {
-            match self.stores.channels.get(&system, channel_id).await {
-                Ok(channel) => {
-                    sessions.insert(channel.session_id);
-                }
-                Err(error) => info!(
-                    "Channel {channel_id}, in which work was under way, is passed over: {error}"
-                ),
-            }
-        }
-        sessions.into_iter().collect()
-    }
-
     /// The sessions that run.
     pub(crate) fn running_ids(&self) -> Vec<SessionId> {
         self.sessions.iter().map(|entry| *entry.key()).collect()
     }
 
-    /// Ends, of the commands of every session, what does not outlive the process, as the sessions
-    /// are shut down (`CommandReaper::shutdown`), for the procedure that holds them: an Open
-    /// Terminal instance keeps its commands, unlike at a stop.
-    pub(crate) async fn shut_down_commands(&self) {
-        self.command_reaper.shutdown().await;
-    }
-
-    /// Ends every command started in a channel of `stopped`, with what it
-    /// started: what stops a session ends what runs in its channels (issue
-    /// 254).
-    async fn end_commands_of(&self, stopped: &SessionLoop) {
-        self.command_reaper.end_commands_in(&stopped.session().channels).await;
-    }
-
     /// Stops session `id` if it runs, for a procedure that holds it exclusively. Its actors are
-    /// ended first by `end_actors`, told to stop (`SessionLoop::stop_actors`) or to leave
-    /// (`SessionLoop::leave_actors`), and given `STOP_GRACE` to end by themselves before the
-    /// session's task, and with it whoever did not, is aborted (issue 377); once it has ended, and
-    /// every channel's task is aborted with it, every channel it started is announced stopped, then
-    /// the session (issue 593). Nobody finds it running meanwhile.
+    /// ended first as `ending` says - told to stop, to be resumed when it runs again
+    /// (`SessionLoop::stop_actors`), or to leave for good (`SessionLoop::leave_actors`) - and given
+    /// `STOP_GRACE` to end by themselves before the session's task, and with it whoever did not, is
+    /// aborted (issue 377); once it has ended, and every channel's task is aborted with it, every
+    /// channel it started is announced stopped, then the session (issue 593), and its hold for this
+    /// process is let go. Nobody finds it running meanwhile. What runs in its channels besides -
+    /// the commands - is the caller's to end.
     pub(crate) async fn stop_running(
         &self,
         id: SessionId,
-        end_actors: impl AsyncFnOnce(&SessionLoop),
+        ending: Ending,
     ) -> Option<Arc<SessionLoop>> {
         let handle = self.handles.remove(&id).map(|(_, handle)| handle);
         let removed = self.sessions.remove(&id).map(|(_, s)| s);
         if let Some(session_loop) = &removed {
-            end_actors(session_loop).await;
+            match ending {
+                Ending::Stop => session_loop.stop_actors().await,
+                Ending::Leave => session_loop.leave_actors().await,
+            }
         }
         if let Some(handle) = handle {
             handle.abort();
@@ -649,149 +485,6 @@ impl SessionManager {
         removed
     }
 
-    /// Session `id`, to be deleted on behalf of `context` by a procedure that holds it
-    /// exclusively until it is gone from the store, so that nothing starts it again from there
-    /// meanwhile (issue 62): with its own project (issue 467), as both are before they go - the
-    /// events carry the attributes as they were, as once deleted they are nowhere to look up (issue
-    /// 39). Asked before anything happens: a refused deletion must
-    /// not stop the session on the way (issue 11). `None` if there is no such session or `context`
-    /// may not read it, as every deletion answers (issue 510).
-    ///
-    /// # Errors
-    /// `StoreError::PermissionDenied` if they may read but not delete it; whatever the store
-    /// reports.
-    pub(crate) async fn session_to_delete(
-        &self,
-        context: &SecurityContext,
-        id: SessionId,
-    ) -> Result<Option<(Session, Option<Project>)>> {
-        let session = match self.find(context, id).await {
-            Ok(found) => found.session(),
-            Err(error) if matches!(error.downcast_ref(), Some(SessionError::NotFound(_))) => {
-                return Ok(None);
-            }
-            Err(error) => return Err(error),
-        };
-        self.policies
-            .access_policy()
-            .require(
-                context,
-                ActionType::delete(Session::KIND, &session.security_attributes),
-                StoreError::PermissionDenied,
-            )
-            .await?;
-        let own = self.load_own(id).await?;
-        Ok(Some((session, own)))
-    }
-
-    /// The deleted session `id`, to be restored on behalf of `context` by a procedure that holds
-    /// it exclusively, as deleting and purging it do: a purge never meets it half restored. Its
-    /// mark - what was deleted with it carries it and comes back with it (issues 178, 469) -, with
-    /// its own project deleted with it. A session that lies in a shared project is not restored
-    /// while the project is deleted: it comes back with the project.
-    ///
-    /// # Errors
-    /// `SessionError::NotFound` if there is no such deleted session, `context` may not see it
-    /// (`ReadDeleted`, asked first, issue 304) or its purge is begun (issue 496),
-    /// `SessionError::ProjectDeleted` if the shared project it lies in is deleted,
-    /// `StoreError::PermissionDenied` if they may see but not restore it (`Restore`, asked last);
-    /// whatever else the store reports.
-    pub(crate) async fn session_to_restore(
-        &self,
-        context: &SecurityContext,
-        id: SessionId,
-    ) -> Result<(Removal, Option<Project>)> {
-        // As `context`, so that whoever may not see it learns nothing more.
-        let Deleted { entity: deleted, removal } =
-            self.stores.sessions.get_deleted(context, id).await.map_err(store_error(id))?;
-        // One whose purge is begun is the store's to refuse, as it would; refused before anything
-        // else is asked, so that its own project, purged already, is not taken for a shared one
-        // deleted.
-        if deleted.purging() {
-            return Err(SessionError::NotFound(id).into());
-        }
-        let own = self
-            .stores
-            .projects
-            .list_deleted_with(&SecurityContext::system(), removal.id, &lying_in(id))
-            .await?
-            .items
-            .pop();
-        let lies_in_own = own.as_ref().is_some_and(|own| own.id == deleted.project);
-        if !lies_in_own
-            && self
-                .stores
-                .projects
-                .get(&SecurityContext::system(), deleted.project)
-                .await
-                .optional()?
-                .is_none()
-        {
-            return Err(SessionError::ProjectDeleted(deleted.project).into());
-        }
-        // Asked ahead, as the store asks again as it restores it: the groups of its participants
-        // come back before it, and are not to come back for whoever may not restore it.
-        let restoring = ActionType::restore(Session::KIND, &deleted.security_attributes);
-        self.policies
-            .access_policy()
-            .require(context, restoring, StoreError::PermissionDenied)
-            .await?;
-        Ok((removal, own))
-    }
-
-    /// Marks session `id` deleted on behalf of `context`, with `removal` - its own, or the mark of
-    /// a deletion it goes with: of the project it lies in (issue 469) -, for a procedure that holds
-    /// it exclusively; as it is deleted, or its restoring undone in the kernel's name. Marked, not
-    /// removed (issue 164): its channels and their state stay as they are, hidden with it - a
-    /// channel is reached only through its session - until it is restored or purged. Marked before
-    /// what lies in its scope, so that nothing of it goes unless its deletion was granted, and
-    /// nothing is put into its scope afterwards (`ScopeHolders`, issue 458). Announced deleted, as
-    /// it was (`Lifecycle`); its channels are not, as nothing of them changes. `false` if the store
-    /// finds nothing of it to mark.
-    ///
-    /// # Errors
-    /// Whatever the store reports, `StoreError::PermissionDenied` among it.
-    pub(crate) async fn mark_session_deleted_held(
-        &self,
-        context: &SecurityContext,
-        session: &Session,
-        removal: &Removal,
-    ) -> Result<bool> {
-        Ok(self.session_lifecycle.delete(context, session, removal).await?)
-    }
-
-    /// Takes the mark of the deleted session `id` away on behalf of `context`, for a procedure that
-    /// holds it exclusively: as it is restored, or its deletion undone in the kernel's name;
-    /// announced restored (`Lifecycle`). It is not started; opening it starts it, as any stored
-    /// session.
-    ///
-    /// # Errors
-    /// `SessionError::NotFound` if there is no such deleted session or `context` may not see it,
-    /// `StoreError::PermissionDenied` if they may see but not restore it; whatever else the store
-    /// reports.
-    pub(crate) async fn unmark_session_held(
-        &self,
-        context: &SecurityContext,
-        id: SessionId,
-    ) -> Result<Session> {
-        self.session_lifecycle.restore(context, id).await.map_err(store_error(id))
-    }
-
-    /// Marks `own`, the own project of a session, deleted with `removal`, in the kernel's name, for
-    /// a procedure that holds the session exclusively, as the session is deleted - a holder before
-    /// its scope, as the session is (issues 467, 458) -; announced deleted (`Lifecycle`).
-    ///
-    /// # Errors
-    /// Whatever the store reports.
-    pub(crate) async fn mark_own_deleted_held(
-        &self,
-        own: &Project,
-        removal: &Removal,
-    ) -> Result<()> {
-        self.own_lifecycle.delete(&SecurityContext::system(), own, removal).await?;
-        Ok(())
-    }
-
     /// The own project of session `id`, if it is there: the one in its scope, found by its name
     /// (`Project::own_name`) in the kernel's name - none once it was lifted (issue 467).
     ///
@@ -806,11 +499,11 @@ impl SessionManager {
     /// (issue 467), each announced as it is made - the group first, so that its members hear of
     /// the project, and both, or, if the project cannot be made, neither -: as a session is made,
     /// and for a procedure that moves a session into a new own (`procedure::session::move_to`);
-    /// taken back by `discard_own_held`.
+    /// taken back by `discard_own`.
     ///
     /// # Errors
     /// Whatever the store reports.
-    pub(crate) async fn make_own_held(&self, own: &mut Project) -> StoreResult<()> {
+    pub(crate) async fn make_own(&self, own: &mut Project) -> StoreResult<()> {
         self.groups.keep_participants(Group::of_project(own)).await?;
         if let Err(error) = self.own_lifecycle.create(&SecurityContext::system(), own).await {
             let group = GroupId::of_project(own.id);
@@ -824,12 +517,12 @@ impl SessionManager {
 
     /// Takes `own`, made as a session's own project and not to be kept, back, in the kernel's name:
     /// marked deleted and announced so, as its making was announced, then purged with the group of
-    /// its members (`purge_own_held`) - as making a session fails, and for the compensation of
+    /// its members (`purge_own`) - as making a session fails, and for the compensation of
     /// moving a session into it.
     ///
     /// # Errors
     /// Whatever the store reports.
-    pub(crate) async fn discard_own_held(&self, own: &Project) -> StoreResult<()> {
+    pub(crate) async fn discard_own(&self, own: &Project) -> StoreResult<()> {
         self.own_lifecycle.discard(own).await?;
         self.groups.discard_participants(GroupId::of_project(own.id)).await
     }
@@ -840,7 +533,7 @@ impl SessionManager {
     ///
     /// # Errors
     /// Whatever the store reports.
-    pub(crate) async fn purge_own_held(&self, own: ProjectId) -> StoreResult<()> {
+    pub(crate) async fn purge_own(&self, own: ProjectId) -> StoreResult<()> {
         self.groups.purge_participants(GroupId::of_project(own)).await?;
         self.own_lifecycle.purge_for_good(own).await?;
         Ok(())
@@ -853,197 +546,9 @@ impl SessionManager {
     ///
     /// # Errors
     /// Whatever the store reports.
-    pub(crate) async fn purge_channel_held(&self, id: ChannelId) -> StoreResult<bool> {
+    pub(crate) async fn purge_channel(&self, id: ChannelId) -> StoreResult<bool> {
         self.groups.purge_participants(GroupId::of_channel(id)).await?;
         self.channel_lifecycle.purge_for_good(id).await
-    }
-
-    /// Takes the mark of `own`, the own project of a session, away in the kernel's name, for a
-    /// procedure that holds the session exclusively: as the session is restored, or its deletion
-    /// undone; announced restored (`Lifecycle`).
-    ///
-    /// # Errors
-    /// Whatever the store reports.
-    pub(crate) async fn unmark_own_held(&self, own: ProjectId) -> Result<Project> {
-        Ok(self.own_lifecycle.restore(&SecurityContext::system(), own).await?)
-    }
-
-    /// Deletes what lies in the scope of session `id`, in its channels' and in `own`'s, its own
-    /// project's, as far as `context` may delete it (issue 320), marked with `removal`, for a
-    /// procedure that holds the session exclusively, as it is deleted. Its agents take part in no
-    /// other session (`Scope::admits`): they leave nothing. What is deleted stays deleted, also if
-    /// something is left.
-    ///
-    /// # Errors
-    /// `SessionError::ScopeNotEmpty` if something is left that `context` may not delete; whatever
-    /// else the store reports.
-    pub(crate) async fn delete_scope_held(
-        &self,
-        context: &SecurityContext,
-        id: SessionId,
-        own: Option<&Project>,
-        removal: &Removal,
-    ) -> Result<()> {
-        let scope = Scope::SessionScope { session_id: id };
-        let left = self.scoped.delete_lying_in(context, &held_by(id, own), removal).await?;
-        ScopeNotEmpty::require_empty(&scope, left).map_err(SessionError::from)?;
-        Ok(())
-    }
-
-    /// Restores what lay in the scope of session `id`, in its channels' and in `own`'s, its own
-    /// project's, and carries `removal`, as far as `context` may restore it, for a procedure that
-    /// holds the session exclusively, as it is restored. What cannot be is logged and stays
-    /// deleted: the session comes back all the same.
-    pub(crate) async fn restore_scope_held(
-        &self,
-        context: &SecurityContext,
-        id: SessionId,
-        own: Option<&Project>,
-        removal: &Removal,
-    ) {
-        if let Err(e) = self.scoped.restore_lying_in(context, &held_by(id, own), removal).await {
-            warn!(
-                "Session {} was restored, but not what lies in its scope or its project's: {}",
-                id, e
-            );
-        }
-    }
-
-    /// Deletes the groups of the participants of session `id`, of its channels' and of the members
-    /// of `own`, its own project, marked with `removal`, in the kernel's name (issue 348) - all of
-    /// them or none -, for a procedure that holds the session exclusively: as it is deleted - last,
-    /// since its participants reach it by them while it is kept -, or its restoring undone.
-    ///
-    /// # Errors
-    /// Whatever the store reports.
-    pub(crate) async fn delete_participant_groups_held(
-        &self,
-        id: SessionId,
-        own: Option<&Project>,
-        removal: &Removal,
-    ) -> Result<()> {
-        self.groups.delete_participants(&held_by(id, own), removal).await?;
-        Ok(())
-    }
-
-    /// Restores the groups of the participants of session `id`, of its channels' and of the
-    /// members of `own`, its own project, that carry `removal`, in the kernel's name (issue 348) -
-    /// all of them or none -, for a procedure that holds the session exclusively: as it is
-    /// restored, first, so that whatever fails later its participants reach it, or its deletion
-    /// undone.
-    ///
-    /// # Errors
-    /// Whatever the store reports.
-    pub(crate) async fn restore_participant_groups_held(
-        &self,
-        id: SessionId,
-        own: Option<&Project>,
-        removal: &Removal,
-    ) -> Result<()> {
-        self.groups.restore_participants(&held_by(id, own), removal).await?;
-        Ok(())
-    }
-
-    /// Stops session `id` if it runs, as it is deleted, for a procedure that holds it exclusively:
-    /// its actors leave, as those of a deleted channel do (issue 377), and the commands of its
-    /// channels end (issue 254).
-    pub(crate) async fn stop_deleted_held(&self, id: SessionId) {
-        if let Some(stopped) = self.stop_running(id, SessionLoop::leave_actors).await {
-            self.end_commands_of(&stopped).await;
-        }
-    }
-
-    /// The projects deleted that lie in the scope of session `id` - its own, deleted with it -,
-    /// read in the kernel's name.
-    ///
-    /// # Errors
-    /// Whatever the store reports.
-    async fn deleted_own(&self, id: SessionId) -> StoreResult<Vec<Deleted<Project>>> {
-        Ok(self
-            .stores
-            .projects
-            .list_deleted(&SecurityContext::system(), &lying_in(id))
-            .await?
-            .items)
-    }
-
-    /// Removes the deleted session `id` for good on behalf of `context` (issue 164), in the order
-    /// of every purge of what has something behind it (`purge_behind`): its purge begun, then - in
-    /// the kernel's name, since the purge was permitted - what lies behind it (`remove_behind`),
-    /// then its document. Only what was deleted is purged; the store asks `Purge`. A step that
-    /// fails leaves the session deleted, its purge begun, so that the next purge removes what is
-    /// left (issue 496). For a procedure that holds it exclusively, as deleting and restoring it
-    /// do, so that a purge never meets it half deleted or half restored. `false` if there was
-    /// nothing deleted the caller could see, as every purge answers (issue 510).
-    ///
-    /// # Errors
-    /// `StoreError::PermissionDenied` if they may see it but not purge it,
-    /// `SessionError::RunsElsewhere` if another process that shares the stores holds it (issue
-    /// 554), or whatever the stores report.
-    pub(crate) async fn purge_held(
-        &self,
-        context: &SecurityContext,
-        id: SessionId,
-    ) -> Result<bool> {
-        // What the caller may not see, or what is not deleted, is not there to purge: asked before
-        // whether another process holds it, which they learn of only for what they see.
-        if self.stores.sessions.get_deleted(context, id).await.optional()?.is_none() {
-            return Ok(false);
-        }
-        let held = self.hold(id)?;
-        let purged = self
-            .session_lifecycle
-            .purge(context, id, async |session| self.remove_behind(session).await)
-            .await?;
-        if let (true, Some(locks)) = (purged, &self.locks) {
-            if let Err(e) = locks.forget(id) {
-                warn!(session = %id, "What held a session purged is left: {e}");
-            }
-        }
-        drop(held);
-        if purged {
-            info!(session = %id, by = %context.caller_id, "Session purged");
-        }
-        Ok(purged)
-    }
-
-    /// Removes what lies behind `session` once its purge is begun, in the kernel's name: the state
-    /// of its channels, those it lists and those deleted from it before, the content of their
-    /// attachments (issue 282) and then their documents; what lay in its scope and in its channels'
-    /// (issue 178), the group of its participants (issue 348), and its own project with what lies
-    /// in its scope (issue 467). What a purge that failed before removed already is passed over.
-    ///
-    /// # Errors
-    /// Whatever the stores report.
-    async fn remove_behind(&self, session: &Session) -> Result<()> {
-        let id = session.id;
-        let mut channels = session.channels.clone();
-        let of_it = Query::filtered(Filter::eq(ChannelField::Session, id));
-        channels.extend(
-            self.stores
-                .channels
-                .list_deleted(&SecurityContext::system(), &of_it)
-                .await?
-                .items
-                .into_iter()
-                .map(|c| c.entity.id),
-        );
-        // The state lives in the `StateStore`, which may be another store than the session's; the
-        // attachments its history carries go with it. Both before the document, which is what
-        // finds them.
-        for channel_id in channels {
-            self.state_store.delete_channel_state(channel_id).await?;
-            self.attachments.purge(channel_id).await?;
-            self.purge_channel_held(channel_id).await?;
-        }
-        let owns: Vec<Project> =
-            self.deleted_own(id).await?.into_iter().map(|own| own.entity).collect();
-        self.scoped.purge_lying_in(&held_by(id, &owns)).await?;
-        self.groups.purge_participants(GroupId::of_session(id)).await?;
-        for own in &owns {
-            self.purge_own_held(own.id).await?;
-        }
-        Ok(())
     }
 
     /// The root of the views (issue 163): every session `viewer` may
@@ -1058,10 +563,23 @@ impl SessionManager {
         &self.kernel
     }
 
+    /// The lifecycle of its sessions: each made, deleted, restored and purged by the procedures of
+    /// a session through it, and announced as it is (`procedure::session`).
+    pub(crate) fn session_lifecycle(&self) -> &Lifecycle<Session> {
+        &self.session_lifecycle
+    }
+
     /// The lifecycle of the channels of its sessions: each made, deleted and restored by the
     /// procedures of a channel through it, and announced as it is (`procedure::channel`).
     pub(crate) fn channel_lifecycle(&self) -> &Lifecycle<Channel> {
         &self.channel_lifecycle
+    }
+
+    /// The lifecycle of the own projects of its sessions (issue 467), each deleted and restored
+    /// with its session through it, and announced as it is (`procedure::session`); made and purged
+    /// with the group of its members (`make_own`, `purge_own`).
+    pub(crate) fn own_lifecycle(&self) -> &Lifecycle<Project> {
+        &self.own_lifecycle
     }
 
     /// The loop of session `id`, if it runs.
@@ -1120,29 +638,6 @@ impl SessionManager {
         }
         Ok(session_loop)
     }
-}
-
-/// The scopes session `id` holds, and what lies in them goes with it: its own, with its channels',
-/// and the scope of `own`, its own project, while it is there (issue 467).
-fn held_by<'a>(id: SessionId, own: impl IntoIterator<Item = &'a Project>) -> Vec<Scope> {
-    iter::once(Scope::SessionScope { session_id: id })
-        .chain(own.into_iter().map(Project::holds))
-        .collect()
-}
-
-/// `error` of the store about session `id`: that there is none - or none
-/// the caller may see - is the session's own error, what the request named
-/// and did not find (issue 323).
-fn store_error(id: SessionId) -> impl FnOnce(StoreError) -> Error {
-    move |error| match error {
-        StoreError::NotFound { .. } => SessionError::NotFound(id).into(),
-        error => error.into(),
-    }
-}
-
-/// What lies in the scope of session `id`: of projects, its own.
-fn lying_in(id: SessionId) -> Query<ScopeField> {
-    Query::filtered(Filter::lying_within(&Scope::SessionScope { session_id: id }))
 }
 
 #[cfg(test)]
@@ -1406,7 +901,7 @@ mod tests {
 
             async fn carry_out(self, (): (), _: &Kernel, _: &mut Compensation) -> Result<()> {
                 self.go.acquire().await?.forget();
-                self.manager.spawn_session(self.session, self.channels, None).await?;
+                self.manager.start(self.session, self.channels, None).await?;
                 Ok(())
             }
         }
@@ -2163,7 +1658,7 @@ mod tests {
         manager.update_project(&ctx, session.id(), Some(project.id)).await.unwrap();
         // Its own gone, as lifting it takes it out of the session's scope.
         let own = manager.load_own(session.id()).await.unwrap().expect("its own");
-        manager.purge_own_held(own.id).await.unwrap();
+        manager.purge_own(own.id).await.unwrap();
 
         events.drain().await;
         passing.store(0, Ordering::SeqCst);

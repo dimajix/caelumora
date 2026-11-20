@@ -13,7 +13,7 @@
 //! restored, built again or reclassified.
 
 use super::participant::{let_go_where_not_running, take_in, Entry};
-use super::session::lock_to_open;
+use super::session::{self, lock_to_open};
 use super::{sessions_of, Compensation, Deferred, Key, Locks, Procedure};
 use crate::channel::{ChannelLoop, ResolvedParticipant};
 use crate::kernel::Kernel;
@@ -91,7 +91,7 @@ impl Procedure for Create {
     /// issue 420), so that its history records them as anyone who joins later.
     ///
     /// # Errors
-    /// As `SessionManager::open_held` and `asked_for`; `StoreError::NameTaken` if the session has
+    /// As `session::open` and `asked_for`; `StoreError::NameTaken` if the session has
     /// a channel of that name (issue 250), `StoreError::PermissionDenied` if `context` may not
     /// create it or change the session; whatever building it and taking a founder in report.
     async fn carry_out(
@@ -102,7 +102,7 @@ impl Procedure for Create {
     ) -> Result<Arc<ChannelLoop>, SessionError> {
         let Self { context, session, id, spec } = self;
         let sessions = sessions_of(kernel)?;
-        let session = sessions.open_held(&context, session).await?;
+        let session = session::open(kernel, &context, session).await?;
         let (mut document, founders) = asked_for(kernel, &session, &context, id, spec).await?;
         // Its group first, so that whoever it lets read the channel hears it created.
         let groups = kernel.group_manager();
@@ -271,7 +271,7 @@ impl Procedure for Delete {
     /// the caller reaches, as every deletion answers (issue 513).
     ///
     /// # Errors
-    /// As `SessionManager::open_held` and `mark_deleted`; `StoreError::PermissionDenied` if
+    /// As `session::open` and `mark_deleted`; `StoreError::PermissionDenied` if
     /// `context` may not delete the channel or change the session; `SessionError::ScopeNotEmpty` if
     /// something of its scope is left that `context` may not delete; whatever else the stores
     /// report.
@@ -283,7 +283,7 @@ impl Procedure for Delete {
     ) -> Result<bool, SessionError> {
         let Self { context, session, channel: id } = self;
         let sessions = sessions_of(kernel)?;
-        let session = sessions.open_held(&context, session).await?;
+        let session = session::open(kernel, &context, session).await?;
         let Some((channel, _)) = session.listed_channel_for(&context, id).await else {
             return Ok(false);
         };
@@ -325,7 +325,7 @@ impl Procedure for Delete {
 
 /// Marks `channel` deleted on behalf of `context` (issue 164), kept as removed as `removal` says,
 /// and announced so (`SessionManager::channel_lifecycle`): it and its state stay stored - it can be
-/// restored - until it is purged with its session (`SessionManager::purge_held`). Marked before
+/// restored - until it is purged with its session (`procedure::session::purge`). Marked before
 /// what lies in its scope, so that nothing of it goes unless the channel's deletion was granted,
 /// and nothing is put into its scope afterwards (`ScopeHolders`, issue 458) - as it is deleted, and
 /// for the compensation of restoring it.
@@ -408,7 +408,7 @@ impl Procedure for Restore {
     /// comes back last (issue 178) - what cannot is logged, and the channel stays restored.
     ///
     /// # Errors
-    /// As `SessionManager::open_held` and `to_restore`; `StoreError::NameTaken` if its name was
+    /// As `session::open` and `to_restore`; `StoreError::NameTaken` if its name was
     /// taken since (issue 250), `StoreError::PermissionDenied` if `context` may not restore it or
     /// change the session; whatever building it reports.
     async fn carry_out(
@@ -420,7 +420,7 @@ impl Procedure for Restore {
         read?;
         let Self { context, session, channel: id } = self;
         let sessions = sessions_of(kernel)?;
-        let session = sessions.open_held(&context, session).await?;
+        let session = session::open(kernel, &context, session).await?;
         let (Deleted { removal, .. }, gone) = to_restore(kernel, &session, &context, id).await?;
         // Its group first, so that whoever it lets read the channel hears it restored; its
         // restoring was permitted: deleted again in the kernel's name.
@@ -622,7 +622,7 @@ impl Procedure for Reclassify {
     }
 
     /// # Errors
-    /// As `SessionManager::open_held`, `SessionLoop::channel_for` and
+    /// As `session::open`, `SessionLoop::channel_for` and
     /// `ChannelLoop::reclassify`.
     async fn carry_out(
         self,
@@ -631,7 +631,7 @@ impl Procedure for Reclassify {
         _: &mut Compensation,
     ) -> Result<(), SessionError> {
         let Self { context, session, channel, classification } = self;
-        let session = sessions_of(kernel)?.open_held(&context, session).await?;
+        let session = session::open(kernel, &context, session).await?;
         let channel = session.channel_for(&context, channel).await?;
         Ok(channel.reclassify(&context, classification).await?)
     }

@@ -76,7 +76,7 @@ impl ChannelLoop {
     /// telling it apart would need the channel to keep why it left out whom (issue 564). One that
     /// cannot be read or run is logged and left as it is. Of a running one only whether it exists
     /// is asked, not again whether it may run. For a procedure that holds the agents
-    /// (`participant::Follow`), or a session it starts (`SessionManager::open_held`): nobody takes
+    /// (`participant::Follow`), or a session it starts (`procedure::session::open`): nobody takes
     /// them in or lets them go meanwhile (issue 593).
     pub(crate) async fn follow_agents(&self, only: Option<&HashSet<AgentId>>) {
         let agents: Vec<Participant> = self

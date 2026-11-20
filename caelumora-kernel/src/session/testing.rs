@@ -147,8 +147,9 @@ impl SessionManager {
 
 /// What the tests do with sessions as the entry points do (issue 593): each a procedure, carried
 /// out by the kernel's executor (`Kernel::procedures`), under the verb the entry points ask for -
-/// the manager itself offers only the building blocks -, failing as the building blocks fail
-/// (`SessionError::untyped`), so that a test looks into the error as it did before.
+/// the manager itself offers only the register of the running sessions and the lifecycles -,
+/// failing as the procedures fail (`SessionError::untyped`), so that a test looks into the error as
+/// it did before.
 impl SessionManager {
     /// Creates `session` with its `channels` on behalf of `context`, as a template would
     /// (`Built`).
@@ -172,12 +173,12 @@ impl SessionManager {
     /// # Errors
     /// As `SessionManager::make_from_template`.
     pub async fn create_from_template(
-        self: &Arc<Self>,
+        &self,
         context: &SecurityContext,
         template_id: SessionTemplateId,
         spec: SessionSpec,
     ) -> Result<Arc<SessionLoop>> {
-        let creating = Create::from_template(self, context, template_id, spec);
+        let creating = Create::from_template(context, template_id, spec);
         self.kernel().procedures().run(creating).await.map_err(SessionError::untyped)
     }
 
@@ -186,13 +187,9 @@ impl SessionManager {
     ///
     /// # Errors
     /// As `Open`.
-    pub async fn open(
-        self: &Arc<Self>,
-        context: &SecurityContext,
-        id: SessionId,
-    ) -> Result<Arc<SessionLoop>> {
+    pub async fn open(&self, context: &SecurityContext, id: SessionId) -> Result<Arc<SessionLoop>> {
         let procedures = self.kernel().procedures();
-        let opened = procedures.run(Open::new(self, context, id)).await;
+        let opened = procedures.run(Open::new(context, id)).await;
         let opened = opened.map_err(SessionError::untyped)?;
         // Its channels left out as it started built again, as the REST server has them (issue 463).
         let starting = channel::Start::left_out(id);
@@ -204,26 +201,18 @@ impl SessionManager {
     ///
     /// # Errors
     /// As `Stop`.
-    pub async fn stop(self: &Arc<Self>, context: &SecurityContext, id: SessionId) -> Result<bool> {
-        self.kernel()
-            .procedures()
-            .run(Stop::new(self, context, id))
-            .await
-            .map_err(SessionError::untyped)
+    pub async fn stop(&self, context: &SecurityContext, id: SessionId) -> Result<bool> {
+        self.kernel().procedures().run(Stop::new(context, id)).await.map_err(SessionError::untyped)
     }
 
     /// Deletes session `id` on behalf of `context` (`procedure::session::Delete`).
     ///
     /// # Errors
     /// As `procedure::session::delete`.
-    pub async fn delete(
-        self: &Arc<Self>,
-        context: &SecurityContext,
-        id: SessionId,
-    ) -> Result<bool> {
+    pub async fn delete(&self, context: &SecurityContext, id: SessionId) -> Result<bool> {
         self.kernel()
             .procedures()
-            .run(Delete::new(self, context, id))
+            .run(Delete::new(context, id))
             .await
             .map_err(SessionError::untyped)
     }
@@ -232,14 +221,10 @@ impl SessionManager {
     ///
     /// # Errors
     /// As `procedure::session::restore`.
-    pub async fn restore(
-        self: &Arc<Self>,
-        context: &SecurityContext,
-        id: SessionId,
-    ) -> Result<Session> {
+    pub async fn restore(&self, context: &SecurityContext, id: SessionId) -> Result<Session> {
         self.kernel()
             .procedures()
-            .run(Restore::new(self, context, id))
+            .run(Restore::new(context, id))
             .await
             .map_err(SessionError::untyped)
     }
@@ -247,13 +232,9 @@ impl SessionManager {
     /// Purges session `id` on behalf of `context` (`procedure::session::Purge`).
     ///
     /// # Errors
-    /// As `SessionManager::purge_held`.
-    pub async fn purge(self: &Arc<Self>, context: &SecurityContext, id: SessionId) -> Result<bool> {
-        self.kernel()
-            .procedures()
-            .run(Purge::new(self, context, id))
-            .await
-            .map_err(SessionError::untyped)
+    /// As `procedure::session::purge`.
+    pub async fn purge(&self, context: &SecurityContext, id: SessionId) -> Result<bool> {
+        self.kernel().procedures().run(Purge::new(context, id)).await.map_err(SessionError::untyped)
     }
 
     /// Puts session `id` into `project` on behalf of `context`, or into its own with `None`
@@ -262,14 +243,14 @@ impl SessionManager {
     /// # Errors
     /// As `Move`.
     pub async fn update_project(
-        self: &Arc<Self>,
+        &self,
         context: &SecurityContext,
         id: SessionId,
         project: Option<ProjectId>,
     ) -> Result<()> {
         self.kernel()
             .procedures()
-            .run(Move::new(self, context, id, project))
+            .run(Move::new(context, id, project))
             .await
             .map_err(SessionError::untyped)
     }
@@ -279,7 +260,7 @@ impl SessionManager {
     /// # Errors
     /// As `TakeIn::joining`.
     pub async fn join(
-        self: &Arc<Self>,
+        &self,
         context: &SecurityContext,
         id: SessionId,
         participant: ActorId,
@@ -290,13 +271,13 @@ impl SessionManager {
     }
 
     /// Shuts the sessions down as the process ends (`procedure::session::shut_down`).
-    pub async fn shutdown(self: &Arc<Self>) {
-        shut_down(self.kernel().procedures(), self).await;
+    pub async fn shutdown(&self) {
+        shut_down(self.kernel().procedures()).await;
     }
 
     /// Starts the sessions interrupted again (`procedure::session::resume_interrupted`).
-    pub async fn resume_interrupted(self: &Arc<Self>) -> usize {
-        resume_interrupted(self.kernel().procedures(), self).await
+    pub async fn resume_interrupted(&self) -> usize {
+        resume_interrupted(self.kernel()).await
     }
 }
 
