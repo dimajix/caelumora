@@ -119,8 +119,9 @@ impl SessionLoop {
         self.running(channel_id, run)
     }
 
-    /// The loop of the channel `channel_id` if `run` says it runs: for whoever reaches a channel
-    /// of the session - who reads it (`channel_for`), who joins it (`procedure::participant`).
+    /// The loop of the channel `channel_id` if `run` says it runs: for whoever reaches a channel of
+    /// the session - who reads it (`channel_for`), who joins it (`procedure::participant`), who
+    /// makes it and checks that every channel runs (`procedure::session`).
     ///
     /// # Errors
     /// `SessionError::ChannelUnavailable` if it does not (issue 463).
@@ -160,18 +161,6 @@ impl SessionLoop {
         )
         .await?;
         Some((channel, run))
-    }
-
-    /// Nothing if every channel the session lists runs.
-    ///
-    /// # Errors
-    /// `SessionError::ChannelUnavailable` for the first that does not (issue
-    /// 463).
-    pub(super) fn require_running(&self) -> Result<()> {
-        for (channel, run) in self.listed_channels() {
-            self.running(channel.id, run)?;
-        }
-        Ok(())
     }
 
     /// The running channel named `name`.

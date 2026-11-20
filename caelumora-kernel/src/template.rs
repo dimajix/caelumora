@@ -1,7 +1,7 @@
 //! Finding or making what a session template names (issue 88): the domain
 //! says what each participant is for a session (`ParticipantTemplate::
 //! request`); this resolves the requests against the store, on behalf of
-//! whoever creates the session. `SessionManager::make_from_template` is
+//! whoever creates the session. `procedure::session::Create` is
 //! its caller. What is found or made is found or made by its owner - an agent by the
 //! `AgentManager`, a workspace by the `WorkspaceManager` (`find_or_create`). Its agents are found
 //! or made once the session is, and taken into it as anyone is taken into a running session.
@@ -230,7 +230,7 @@ mod tests {
         let system = SecurityContext::system();
         let sessions = &stores.sessions;
         // Of what `create_from_template` stores before it makes the agents - the session with its
-        // groups, its own project and its channels (`SessionManager::persist`) - only the
+        // groups, its own project and its channels (`procedure::session::persist`) - only the
         // document: making the agents reads no more of it (issue 486).
         if sessions.get(&system, session_id).await.is_err() {
             let mut session = Session {

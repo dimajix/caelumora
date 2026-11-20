@@ -241,9 +241,10 @@ it the Rust files a commit adds or changes.
 
 A manager is the one owner of the lifecycle of a kind - it makes, deletes, restores and purges it:
 `AgentManager`, `WorkspaceManager`, `GroupManager`, `ControllerManager`, `UserManager`; the
-`SessionManager` and the `ProjectManager` offer the building blocks of a lifecycle that is
-procedures' (below). It lives in its module's `manager.rs`, declared `mod manager;` and exported
-from `mod.rs` with `pub use manager::XyzManager;`, so that it is imported by its module's path
+`ProjectManager` offers the building blocks of a lifecycle that is procedures', the `SessionManager`
+what runs and the lifecycles the procedures carry the change out by (below). It lives in its
+module's `manager.rs`, declared `mod manager;` and exported from `mod.rs` with `pub use
+manager::XyzManager;`, so that it is imported by its module's path
 (`crate::workspace::WorkspaceManager`). `mod.rs` holds the module's description, its error type,
 what its parts share, and its exports, so that the manager's methods and tests do not bury them.
 Test helpers the module offers to other modules' tests are its `testing.rs` (issue 364).
@@ -428,7 +429,9 @@ A type takes the services it works with - the `AccessPolicy`, the stores, the ev
     that its users cannot reach past it (issue 359). A procedure is the exception: it holds only
     what it was asked for and is handed the `Kernel` as it is carried out (issue 593) - one action
     across objects, whose services are those the kernel has; what it records to undo holds what
-    that undo touches, not the kernel.
+    that undo touches, not the kernel - but for an undo that is itself such an action: a session
+    not made, deleted and purged as a whole, holds the kernel, as the procedures it repeats are
+    handed it (`procedure::session::record_creation`).
 *   **The policies travel as a pair.** A type that asks both the `AccessPolicy` and the
     `ConfidentialityPolicy` holds them as one `Policies` (`caelumora-security`) and is made with
     `&Policies`, as a manager is made with `&EntityStores`, and a function that asks both takes

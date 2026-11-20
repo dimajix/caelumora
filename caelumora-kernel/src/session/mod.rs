@@ -284,7 +284,7 @@ pub(crate) fn store_error(id: SessionId) -> impl FnOnce(StoreError) -> Error {
 ///
 /// # Errors
 /// What `WorkspaceManager::reached_to_attach` reports; `SessionError::WorkspaceOutOfScope`.
-async fn require_attachable(
+pub(crate) async fn require_attachable(
     workspaces: &WorkspaceManager,
     context: &SecurityContext,
     id: WorkspaceId,

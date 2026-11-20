@@ -13,7 +13,7 @@
 //! restored, built again or reclassified.
 
 use super::participant::{let_go_where_not_running, take_in, Entry};
-use super::session::{self, lock_to_open};
+use super::session::{self, lock_to_open, record_discarding_group};
 use super::{sessions_of, Compensation, Deferred, Key, Locks, Procedure};
 use crate::channel::{ChannelLoop, ResolvedParticipant};
 use crate::kernel::Kernel;
@@ -107,13 +107,8 @@ impl Procedure for Create {
         // Its group first, so that whoever it lets read the channel hears it created.
         let groups = kernel.group_manager();
         groups.keep_participants(Group::of_channel(&document)).await?;
-        {
-            // Its creation was permitted: taken back in the kernel's name.
-            let groups = Arc::clone(groups);
-            log.record("keeping a channel's group", async move {
-                Ok(groups.discard_participants(GroupId::of_channel(id)).await?)
-            });
-        }
+        // Its creation was permitted: taken back in the kernel's name.
+        record_discarding_group(log, groups, GroupId::of_channel(id));
         sessions.channel_lifecycle().create(&context, &mut document).await?;
         {
             // Announced as deleted, as it was announced created.

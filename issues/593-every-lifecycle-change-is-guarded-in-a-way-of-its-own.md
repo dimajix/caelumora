@@ -884,3 +884,23 @@ case; it is decided there, and may make this unnecessary.
   the loops were the crate's - they are public, and components are handed neither. The tests of
   deleting, restoring and purging a session move to `procedure::session` with creating one, in the
   next step.
+- **2026-11-20** — Step R5b committed. Step R5c implemented, not committed yet: creating a session
+  is `session::Create`'s - what it asks first, building it from the template, establishing it,
+  finding or making its workspace and completing it (`make_from_template`, `complete`) -, and
+  establishing and storing a brand-new session are functions of the procedures (`establish`,
+  `persist`), which the tests' way of making one shares. Storing it is all or nothing
+  (`all_or_nothing`), each step with its compensation - the groups, the session, its own project,
+  its channels, each discarded and announced so if a later one fails - in place of the rollback
+  `persist` wrote by hand; what is made once it is stored is taken back by deleting and purging the
+  session (`roll_back_creation`), which holds the kernel rather than the manager. Of creating a
+  session, the `SessionManager` keeps what runs and its lifecycles - holding and starting it, its
+  own project made with the group of its members -; `SessionLoop::require_running` goes. The tests
+  of a session's lifecycle are `procedure::session`'s, beside the code they test. The rule of the
+  `…_held` names in CODING-GUIDELINES.md stays until the projects are restructured (R6), whose
+  manager still offers such building blocks.
+  Reviewed with fresh eyes: a test holds storing a session that fails part of the way - nothing
+  left, what was made announced deleted, the last first -, which none held before; the free
+  function that creates a session from a template is `make_from_template`, apart from the
+  constructor `Create::from_template`; creating a channel takes back the group of its participants
+  as storing a session does (`record_discarding_group`); CODING-GUIDELINES.md names the undo that
+  holds the kernel, as it repeats procedures that are handed it.
