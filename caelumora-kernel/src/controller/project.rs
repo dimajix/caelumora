@@ -2,6 +2,7 @@
 
 use super::document::LiveDocument;
 use crate::group::{keep_participants, require_nameable};
+use crate::lifecycle::Lifecycle;
 use crate::project::{store_error, ProjectError, ProjectResult};
 use arc_swap::Guard;
 use caelumora_domain::actor::ActorId;
@@ -33,7 +34,9 @@ use tracing::error;
 pub struct ProjectController {
     project: LiveDocument<Project>,
     users: Arc<dyn EntityStore<User>>,
-    groups: Arc<dyn EntityStore<Group>>,
+    /// The lifecycle of groups, by which the group of its members follows them; whose groups an
+    /// access list may name is asked of its store.
+    groups: Lifecycle<Group>,
     /// Asked whether the caller may change it before anything of others is asked (issue 312).
     access_policy: Arc<dyn AccessPolicy>,
 }
@@ -52,10 +55,10 @@ impl ProjectController {
                 project,
                 Arc::clone(&stores.projects),
                 Arc::clone(&stores.groups),
-                event_publisher,
+                Arc::clone(&event_publisher),
             ),
             users: Arc::clone(&stores.users),
-            groups: Arc::clone(&stores.groups),
+            groups: Lifecycle::new(&stores.groups, event_publisher),
             access_policy,
         }
     }
@@ -129,7 +132,7 @@ impl ProjectController {
             .collect();
         let event = ProjectUpdateEvent::MembersChanged(wanted);
         let project = writing.apply(ctx, &event).await.map_err(store_error(self.id()))?;
-        if let Err(e) = keep_participants(self.groups.as_ref(), Group::of_project(&project)).await {
+        if let Err(e) = keep_participants(&self.groups, Group::of_project(&project)).await {
             error!(project = %project.id, "The group of the project's members does not follow them: {e}");
         }
         writing.announce_also_to(
@@ -156,7 +159,7 @@ impl ProjectController {
     ) -> ProjectResult<()> {
         let mut writing = self.project.write().await;
         let project = writing.reached(ctx).await.map_err(store_error(self.id()))?;
-        require_nameable(self.groups.as_ref(), ctx, &project.security_attributes.acl, &acl).await?;
+        require_nameable(self.groups.store(), ctx, &project.security_attributes.acl, &acl).await?;
         writing
             .change_access(ctx, &ProjectUpdateEvent::AccessChanged, |list| *list = acl.clone())
             .await
@@ -183,7 +186,7 @@ impl ProjectController {
             return Ok(());
         }
         let entry = AclEntry { subject, grant };
-        require_nameable(self.groups.as_ref(), ctx, acl, slice::from_ref(&entry)).await?;
+        require_nameable(self.groups.store(), ctx, acl, slice::from_ref(&entry)).await?;
         writing
             .change_access(ctx, &ProjectUpdateEvent::AccessChanged, |list| {
                 list.retain(|entry| entry.subject != subject);

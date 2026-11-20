@@ -16,12 +16,11 @@ use super::participant::{take_in, Entry};
 use super::session::lock_to_open;
 use super::{Compensation, Deferred, Key, Locks, Procedure, ProcedureError};
 use crate::channel::{ChannelLoop, ResolvedParticipant};
-use crate::group::keep_participants;
 use crate::kernel::Kernel;
-use crate::scoped::{purge_for_good, ScopeNotEmpty};
+use crate::scoped::ScopeNotEmpty;
 use crate::session::{
-    purge_channel_document, require_classification, unavailable_components, ChannelRun,
-    ChannelSpec, SessionError, SessionLoop, SessionManager,
+    require_classification, unavailable_components, ChannelRun, ChannelSpec, SessionError,
+    SessionLoop, SessionManager,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -106,25 +105,21 @@ impl Procedure for Create {
         let session = sessions.open_held(&context, session).await?;
         let (mut document, founders) = asked_for(kernel, &session, &context, id, spec).await?;
         // Its group first, so that whoever it lets read the channel hears it created.
-        let stores = kernel.entity_stores();
-        keep_participants(stores.groups.as_ref(), Group::of_channel(&document)).await?;
+        let groups = kernel.group_manager();
+        groups.keep_participants(Group::of_channel(&document)).await?;
         {
             // Its creation was permitted: taken back in the kernel's name.
-            let groups = Arc::clone(&stores.groups);
+            let groups = Arc::clone(groups);
             log.record("keeping a channel's group", async move {
-                Ok(purge_for_good(groups.as_ref(), GroupId::of_channel(id)).await.map(drop)?)
+                Ok(groups.discard_participants(GroupId::of_channel(id)).await?)
             });
         }
         sessions.channel_lifecycle().create(&context, &mut document).await?;
         {
             // Announced as deleted, as it was announced created.
-            let (sessions, stores) = (Arc::clone(&sessions), stores.clone());
-            let made = document.clone();
+            let (sessions, made) = (Arc::clone(&sessions), document.clone());
             log.record("storing a channel", async move {
-                let system = SecurityContext::system();
-                let removal = Removal::now(system.caller_id);
-                sessions.channel_lifecycle().delete(&system, &made, &removal).await?;
-                Ok(purge_channel_document(&stores, id).await.map(drop)?)
+                Ok(sessions.channel_lifecycle().discard(&made).await?)
             });
         }
         session.controller().add_channel(&context, id).await?;

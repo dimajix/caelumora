@@ -3,6 +3,7 @@
 use super::check_restricting;
 use super::document::LiveDocument;
 use crate::group::keep_participants;
+use crate::lifecycle::Lifecycle;
 use arc_swap::Guard;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::AgentId;
@@ -16,7 +17,7 @@ use caelumora_domain::security::Subject;
 use caelumora_domain::store::{StoreError, StoreResult};
 use caelumora_domain::value::name::Name;
 use caelumora_security::SecurityContext;
-use caelumora_store::{EntityStore, EntityStores};
+use caelumora_store::EntityStores;
 use std::sync::Arc;
 use tracing::error;
 
@@ -26,7 +27,8 @@ use tracing::error;
 #[derive(Debug)]
 pub struct ChannelController {
     channel: LiveDocument<Channel>,
-    groups: Arc<dyn EntityStore<Group>>,
+    /// The lifecycle of groups, by which the group of its participants follows them.
+    groups: Lifecycle<Group>,
 }
 
 impl ChannelController {
@@ -41,9 +43,9 @@ impl ChannelController {
                 channel,
                 Arc::clone(&stores.channels),
                 Arc::clone(&stores.groups),
-                event_publisher,
+                Arc::clone(&event_publisher),
             ),
-            groups: Arc::clone(&stores.groups),
+            groups: Lifecycle::new(&stores.groups, event_publisher),
         }
     }
 
@@ -287,7 +289,7 @@ impl ChannelController {
     /// 286): the change of the participants was permitted and is stored. A failure is logged and
     /// corrected by the next change, which derives the group anew.
     async fn keep_participants(&self, channel: &Channel) {
-        if let Err(e) = keep_participants(self.groups.as_ref(), Group::of_channel(channel)).await {
+        if let Err(e) = keep_participants(&self.groups, Group::of_channel(channel)).await {
             error!(channel = %channel.id, "The group of the channel's participants does not follow them: {e}");
         }
     }

@@ -65,7 +65,7 @@ impl SkillViews for Views {
 
     async fn deleted_skills(&self) -> SkillResult<Vec<DeletedSnapshot<SkillId>>> {
         Ok(self
-            .deleted_of(self.skill_manager()?.store().as_ref(), &Query::all(), |skill| {
+            .deleted_of(self.skill_manager()?.store(), &Query::all(), |skill| {
                 skill.name.to_string()
             })
             .await?)

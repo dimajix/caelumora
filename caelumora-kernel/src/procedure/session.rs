@@ -537,7 +537,7 @@ pub(crate) async fn move_to(
             sessions.make_own_held(own).await?;
             let (sessions, own) = (Arc::clone(sessions), own.clone());
             log.record("making a session's own project", async move {
-                sessions.discard_own_held(&own).await
+                Ok(sessions.discard_own_held(&own).await?)
             });
         }
         MoveTarget::Shared(shared) => {

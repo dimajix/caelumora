@@ -23,7 +23,7 @@ use caelumora_domain::channel::Channel;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::config::DEFAULT_MAX_FILE_BYTES;
 use caelumora_domain::content::ContentId;
-use caelumora_domain::event::{Announcing, EventPublisher, GlobalEvent};
+use caelumora_domain::event::{Announcing, GlobalEvent};
 use caelumora_domain::group::{Group, GroupId};
 use caelumora_domain::project::ProjectId;
 use caelumora_domain::removal::Removal;
@@ -37,10 +37,11 @@ use caelumora_kernel::content::{keep_digested, ContentStorage};
 use caelumora_kernel::event::EventBus;
 use caelumora_kernel::group::{prune_gone_groups, require_nameable};
 use caelumora_kernel::kernel::KernelBuilder;
+use caelumora_kernel::lifecycle::Lifecycle;
 use caelumora_kernel::scoped::{ScopeHolders, ScopeMember};
 use caelumora_security::confidentiality::ConfidentialityQuestions;
 use caelumora_security::{ActionType, Enforcement, Policies, SecurityContext, WRITE};
-use caelumora_store::{purge_behind, EntityStore};
+use caelumora_store::EntityStore;
 use chrono::Utc;
 use serde::Deserialize;
 use std::fmt;
@@ -97,7 +98,9 @@ fn store_error(id: ArtifactId) -> impl FnOnce(StoreError) -> ArtifactError {
 }
 
 pub struct ArtifactManager {
-    artifacts: Arc<dyn EntityStore<Artifact>>,
+    /// The lifecycle of artifacts: each deleted, restored and purged by it, announced as each is
+    /// (issue 593); made by publishing, announced with the version it is made with.
+    artifacts: Lifecycle<Artifact>,
     /// Asked whether an artifact may be published into a project's scope (issue 467).
     holders: Arc<ScopeHolders>,
     groups: Arc<dyn EntityStore<Group>>,
@@ -141,11 +144,12 @@ impl ArtifactManager {
                 ComponentError::InvalidConfig(format!("plugins.artifacts.keep_in {why}"))
             })?
             .map(|(name, storage)| (name.to_string(), Arc::clone(storage)));
+        let events = Arc::clone(kernel.event_bus());
         Ok(Self {
-            artifacts,
+            artifacts: Lifecycle::new(&artifacts, Arc::<EventBus>::clone(&events)),
             holders: Arc::clone(kernel.scope_holders()),
             groups: Arc::clone(&kernel.entity_stores().groups),
-            events: Arc::clone(kernel.event_bus()),
+            events,
             policies: kernel.policies().clone(),
             storages,
             keep_in,
@@ -154,8 +158,8 @@ impl ArtifactManager {
     }
 
     /// The store of artifacts, which the views read in the viewer's name.
-    pub(crate) fn store(&self) -> &Arc<dyn EntityStore<Artifact>> {
-        &self.artifacts
+    pub(crate) fn store(&self) -> &dyn EntityStore<Artifact> {
+        self.artifacts.store()
     }
 
     /// Whether artifacts can be published: a storage is configured.
@@ -209,8 +213,12 @@ impl ArtifactManager {
         self.holders.require(ctx, &name.scope).await?;
         // Found whoever's it is, so that one not the caller's to add to is
         // refused as such rather than taken for a name to make anew.
-        let existing =
-            self.artifacts.find_by_name(&SecurityContext::system(), name).await.optional()?;
+        let existing = self
+            .artifacts
+            .store()
+            .find_by_name(&SecurityContext::system(), name)
+            .await
+            .optional()?;
         let (id, (storage_name, storage)) = match &existing {
             Some(artifact) => {
                 self.policies
@@ -296,7 +304,7 @@ impl ArtifactManager {
                 );
                 artifact.grant_reading(participants);
                 artifact.grant_reading(members);
-                self.artifacts.create(ctx, &mut artifact).await.map(|()| (artifact, 1))
+                self.artifacts.store().create(ctx, &mut artifact).await.map(|()| (artifact, 1))
             }
         };
         let (artifact, number) = match stored {
@@ -306,13 +314,8 @@ impl ArtifactManager {
                 return Err(e.into());
             }
         };
-        // A new artifact is kept only if the project is still there (issue 458); one that was
-        // there before goes with the project if it was written first, and was not found by the
-        // write otherwise - marked deleted, changed since it was read (issue 492).
-        if made {
-            self.holders.keep_made(self, &artifact).await?;
-        }
-        // Heard by whoever reads the artifact and the version.
+        // Heard by whoever reads the artifact and the version - a new one as it is made, so that
+        // taking it back below balances it (issue 593).
         let event = if made {
             GlobalEvent::created::<Artifact>(&id)
         } else {
@@ -325,6 +328,13 @@ impl ArtifactManager {
                 artifact.version_attributes(version),
                 slice::from_ref(&artifact.classification),
             );
+        }
+        // A new artifact is kept only if the project is still there (issue 458), taken back and
+        // announced deleted otherwise; one that was there before goes with the project if it was
+        // written first, and was not found by the write otherwise - marked deleted, changed since
+        // it was read (issue 492).
+        if made {
+            self.holders.keep_made(self, &artifact).await?;
         }
         info!(artifact = %id, version = number, by = %ctx.caller_id, "Artifact published");
         Ok((artifact, number))
@@ -351,7 +361,7 @@ impl ArtifactManager {
             if self.update(&system, &mut artifact).await.written()?.is_some() {
                 return Ok((artifact, number));
             }
-            artifact = self.artifacts.get(&system, artifact.id).await?;
+            artifact = self.artifacts.store().get(&system, artifact.id).await?;
         }
     }
 
@@ -364,7 +374,7 @@ impl ArtifactManager {
     /// caller reads the artifact again and changes it once more.
     async fn update(&self, ctx: &SecurityContext, artifact: &mut Artifact) -> StoreResult<()> {
         prune_gone_groups(self.groups.as_ref(), artifact.access_lists_mut()).await;
-        self.artifacts.update(ctx, artifact).await
+        self.artifacts.store().update(ctx, artifact).await
     }
 
     /// Removes what was kept as `content` of artifact `artifact` of `project` for a publication
@@ -439,7 +449,8 @@ impl ArtifactManager {
         versions: bool,
     ) -> ArtifactResult<Artifact> {
         let artifact = loop {
-            let mut artifact = self.artifacts.get(ctx, id).await.map_err(store_error(id))?;
+            let mut artifact =
+                self.artifacts.store().get(ctx, id).await.map_err(store_error(id))?;
             require_nameable(self.groups.as_ref(), ctx, &artifact.security_attributes.acl, &acl)
                 .await?;
             if versions {
@@ -488,7 +499,8 @@ impl ArtifactManager {
     ) -> ArtifactResult<Artifact> {
         let description = Description::optional(description)?;
         let artifact = loop {
-            let mut artifact = self.artifacts.get(ctx, id).await.map_err(store_error(id))?;
+            let mut artifact =
+                self.artifacts.store().get(ctx, id).await.map_err(store_error(id))?;
             artifact.description = description.clone();
             artifact.updated_at = Utc::now();
             if self.update(ctx, &mut artifact).await.written()?.is_some() {
@@ -513,13 +525,12 @@ impl ArtifactManager {
     /// # Errors
     /// Whatever the store reports, `PermissionDenied` included.
     pub async fn delete(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<bool> {
-        let Some(artifact) = self.artifacts.get(ctx, id).await.optional()? else {
+        let Some(artifact) = self.artifacts.store().get(ctx, id).await.optional()? else {
             return Ok(false);
         };
-        if !self.artifacts.delete(ctx, id, &Removal::now(ctx.caller_id)).await? {
+        if !self.artifacts.delete(ctx, &artifact, &Removal::now(ctx.caller_id)).await? {
             return Ok(false);
         }
-        self.events.announce(GlobalEvent::deleted::<Artifact>(&id), &artifact);
         info!(artifact = %id, by = %ctx.caller_id, "Artifact deleted");
         Ok(true)
     }
@@ -534,7 +545,6 @@ impl ArtifactManager {
     /// else the store reports - `NameTaken` among it.
     pub async fn restore(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<Artifact> {
         let artifact = self.holders.restore(self, ctx, id).await.map_err(store_error(id))?;
-        self.events.announce(GlobalEvent::restored::<Artifact>(&id), &artifact);
         info!(artifact = %id, by = %ctx.caller_id, "Artifact restored");
         Ok(artifact)
     }
@@ -548,10 +558,10 @@ impl ArtifactManager {
     /// `PermissionDenied`, `StorageGone`, `InvalidScope` for a document that could not be stored,
     /// `Content`, or whatever the store reports.
     pub async fn purge(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<bool> {
-        let purged = purge_behind(self.artifacts.as_ref(), ctx, id, async |artifact| {
-            self.remove_content(artifact).await
-        })
-        .await?;
+        let purged = self
+            .artifacts
+            .purge(ctx, id, async |artifact| self.remove_content(artifact).await)
+            .await?;
         if purged {
             info!(artifact = %id, by = %ctx.caller_id, "Artifact purged");
         }
@@ -575,12 +585,8 @@ impl ArtifactManager {
 impl ScopeMember for ArtifactManager {
     type Entity = Artifact;
 
-    fn store(&self) -> &dyn EntityStore<Artifact> {
-        self.artifacts.as_ref()
-    }
-
-    fn events(&self) -> Option<&dyn EventPublisher> {
-        Some(self.events.as_ref())
+    fn lifecycle(&self) -> &Lifecycle<Artifact> {
+        &self.artifacts
     }
 
     /// Removes the content of `artifact`, as `purge` does; it is its storage too.

@@ -16,7 +16,8 @@
 //! lies behind an entity - an agent's state, a workspace's place, an artifact's content - is
 //! removed by it once the entity's purge is begun, before the entity is purged (issue 492): no
 //! restoring takes it back meanwhile. Personalities, session templates and component bundles,
-//! which have none, are members by their store (`Unowned`), which marks them alone.
+//! which have none, are members by a lifecycle of their own (`Unowned`), which marks them alone
+//! and announces nothing.
 //!
 //! Nothing is put into a scope whose holder is gone (issue 458): whoever puts something there asks
 //! `ScopeHolders` first that the holder is there and not deleted, and once it is written, asks
@@ -39,10 +40,10 @@
 //! the holder comes back all the same. Purging, the system's or an administrator's, is done in the
 //! kernel's name.
 
+use crate::lifecycle::Lifecycle;
 use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::channel::Channel;
-use caelumora_domain::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_domain::project::Project;
 use caelumora_domain::query::{Filter, Query};
 use caelumora_domain::removal::Removal;
@@ -52,7 +53,7 @@ use caelumora_domain::store::{
     EntityKind, NoEntity, StoreError, StoreResult, StoreResultExt, Stored,
 };
 use caelumora_security::SecurityContext;
-use caelumora_store::{purge_behind, Deleted, EntityStore, EntityStores};
+use caelumora_store::{Deleted, EntityStore, EntityStores};
 use std::fmt;
 use std::future::Future;
 use std::sync::Arc;
@@ -115,14 +116,9 @@ pub trait ScopeMember: Send + Sync {
     /// The kind of entity it is: one that lies in a scope, and in no other entity.
     type Entity: Stored<Within = NoEntity, Field: ScopedField> + Scoped;
 
-    /// The store its entities are kept in.
-    fn store(&self) -> &dyn EntityStore<Self::Entity>;
-
-    /// Where what is deleted and restored is announced, as its owner announces its own deletions
-    /// and restorings; `None`, the default, announces nothing.
-    fn events(&self) -> Option<&dyn EventPublisher> {
-        None
-    }
+    /// The lifecycle of its kind (`Lifecycle`), by which what lies in a scope is deleted, restored
+    /// and purged with what holds it - each but a purge announced as its owner announces its own.
+    fn lifecycle(&self) -> &Lifecycle<Self::Entity>;
 
     /// Removes what lies behind `entity` - an agent's state, a workspace's place, an artifact's
     /// content -, whose purge is begun: `purge_behind` gives it the entity between
@@ -193,20 +189,19 @@ impl<M: ScopeMember> ScopedKind for M {
         holder: &Scope,
         removal: &Removal,
     ) -> StoreResult<usize> {
-        let store = self.store();
+        let lifecycle = self.lifecycle();
+        let store = lifecycle.store();
         let mut left = 0;
         for entity in store
             .list(&SecurityContext::system(), &Query::filtered(Filter::lying_within(holder)))
             .await?
             .items
         {
-            if deleted_unless_refused(store.delete(ctx, entity.id(), removal).await)? {
-                if let Some(events) = self.events() {
-                    events.announce(GlobalEvent::deleted::<M::Entity>(&entity.id()), &entity);
-                }
-            } else if store.get(&SecurityContext::system(), entity.id()).await.optional()?.is_some()
+            // Announced as it is deleted; left only if it is still there: one deleted meanwhile
+            // by another is gone.
+            if !deleted_unless_refused(lifecycle.delete(ctx, &entity, removal).await)?
+                && store.get(&SecurityContext::system(), entity.id()).await.optional()?.is_some()
             {
-                // Left only if it is still there: one deleted meanwhile by another is gone.
                 left += 1;
             }
         }
@@ -219,8 +214,9 @@ impl<M: ScopeMember> ScopedKind for M {
         holder: &Scope,
         removal: &Removal,
     ) -> StoreResult<()> {
-        let store = self.store();
-        for entity in store
+        let lifecycle = self.lifecycle();
+        for entity in lifecycle
+            .store()
             .list_deleted_with(
                 &SecurityContext::system(),
                 removal.id,
@@ -229,29 +225,24 @@ impl<M: ScopeMember> ScopedKind for M {
             .await?
             .items
         {
-            if let Some(restored) =
-                restored_unless_refused(store.restore(ctx, entity.id()).await, &entity)?
-            {
-                if let Some(events) = self.events() {
-                    events.announce(GlobalEvent::restored::<M::Entity>(&restored.id()), &restored);
-                }
-            }
+            // Announced as it is restored; one that stays deleted is not.
+            restored_unless_refused(lifecycle.restore(ctx, entity.id()).await, &entity)?;
         }
         Ok(())
     }
 
     async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
         let system = SecurityContext::system();
-        for Deleted { entity, .. } in self
+        let lifecycle = self.lifecycle();
+        for Deleted { entity, .. } in lifecycle
             .store()
             .list_deleted(&system, &Query::filtered(Filter::lying_within(holder)))
             .await?
             .items
         {
-            purge_behind(self.store(), &system, entity.id(), async |entity| {
-                self.remove_behind(entity).await
-            })
-            .await?;
+            lifecycle
+                .purge(&system, entity.id(), async |entity| self.remove_behind(entity).await)
+                .await?;
         }
         Ok(())
     }
@@ -347,8 +338,16 @@ impl ScopedEntities {
 }
 
 /// A kind without an owner of its own - personalities, session templates and component bundles - as
-/// a `ScopeMember`: marked and purged in its store alone, with nothing announced.
-pub(crate) struct Unowned<T: Stored>(pub(crate) Arc<dyn EntityStore<T>>);
+/// a `ScopeMember`: marked and purged in its store alone, with nothing announced, as nobody
+/// announces its lifecycle elsewhere either.
+pub(crate) struct Unowned<T: Stored>(Lifecycle<T>);
+
+impl<T: Stored> Unowned<T> {
+    /// The kind kept in `store`, as a member of the scopes it lies in.
+    pub(crate) fn new(store: &Arc<dyn EntityStore<T>>) -> Self {
+        Self(Lifecycle::new(store, Arc::new(())))
+    }
+}
 
 impl<T> ScopeMember for Unowned<T>
 where
@@ -356,8 +355,8 @@ where
 {
     type Entity = T;
 
-    fn store(&self) -> &dyn EntityStore<T> {
-        self.0.as_ref()
+    fn lifecycle(&self) -> &Lifecycle<T> {
+        &self.0
     }
 }
 
@@ -414,12 +413,13 @@ impl ScopeHolders {
         Ok(())
     }
 
-    /// Keeps `entity`, made by `member`'s store a moment ago, if the holder of its scope is still
-    /// there - asked in the kernel's name -; takes it back otherwise: made after the holder's
+    /// Keeps `entity`, made by `member`'s lifecycle a moment ago, if the holder of its scope is
+    /// still there - asked in the kernel's name -; takes it back otherwise: made after the holder's
     /// deletion went through the scope, it would be left behind. Taken back as a holder's purge
-    /// takes it: marked deleted, then purged with what lies behind it (`purge_behind`) - so that if
-    /// removing fails, it stays deleted and goes with the holder's purge. Purged meanwhile with the
-    /// holder, before what lies behind it was made, what lies behind it is removed alone.
+    /// takes it: marked deleted - announced so, as it was announced made -, then purged with what
+    /// lies behind it (`Lifecycle::purge`) - so that if removing fails, it stays deleted and goes
+    /// with the holder's purge. Purged meanwhile with the holder, before what lies behind it was
+    /// made, what lies behind it is removed alone.
     ///
     /// # Errors
     /// `StoreError::NotFound` for the holder if it went, or whatever taking back reports.
@@ -431,21 +431,21 @@ impl ScopeHolders {
         let Err(gone) = self.still_there(entity).await else { return Ok(()) };
         info!(kind = %M::Entity::KIND, id = %entity.id(), "Taken back: what holds its scope went while it was made");
         let system = SecurityContext::system();
-        let store = member.store();
-        store.delete(&system, entity.id(), &Removal::now(ActorId::System)).await?;
-        if !purge_behind(store, &system, entity.id(), async |made| member.remove_behind(made).await)
-            .await?
-        {
+        let lifecycle = member.lifecycle();
+        // Announced deleted, as it was announced made.
+        lifecycle.delete(&system, entity, &Removal::now(ActorId::System)).await?;
+        let removed = async |made: &M::Entity| member.remove_behind(made).await;
+        if !lifecycle.purge(&system, entity.id(), removed).await? {
             member.remove_behind(entity).await?;
         }
         Err(gone)
     }
 
-    /// Restores `id` of `member`'s store on behalf of `ctx`, as the store restores it, and keeps it
+    /// Restores `id` by `member`'s lifecycle on behalf of `ctx`, announced as it is, and keeps it
     /// only if the holder of its scope is still there (`keep_restored`): otherwise it is marked
-    /// deleted again with the mark it carried - read in the kernel's name before, since the mark is
-    /// the kernel's to give back; the store asks `ctx` as it restores. Answers the entity as
-    /// restored.
+    /// deleted again with the mark it carried, announced so - read in the kernel's name before,
+    /// since the mark is the kernel's to give back; the store asks `ctx` as it restores. Answers
+    /// the entity as restored.
     ///
     /// # Errors
     /// `StoreError::NotFound` if there is no such deleted entity, `ctx` may not see it, its purge
@@ -457,15 +457,15 @@ impl ScopeHolders {
         ctx: &SecurityContext,
         id: <M::Entity as Stored>::Id,
     ) -> StoreResult<M::Entity> {
-        let store = member.store();
+        let lifecycle = member.lifecycle();
         let Deleted { removal, .. } =
-            store.get_deleted(&SecurityContext::system(), id.clone()).await?;
-        let entity = store.restore(ctx, id).await?;
+            lifecycle.store().get_deleted(&SecurityContext::system(), id.clone()).await?;
+        let entity = lifecycle.restore(ctx, id).await?;
         self.keep_restored(member, &entity, &removal).await?;
         Ok(entity)
     }
 
-    /// Keeps `entity`, restored by `member`'s store a moment ago, if the holder of its scope is
+    /// Keeps `entity`, restored by `member`'s lifecycle a moment ago, if the holder of its scope is
     /// still there - asked in the kernel's name -; marks it deleted again with `removal`, the mark
     /// it carried, otherwise.
     ///
@@ -479,7 +479,8 @@ impl ScopeHolders {
     ) -> StoreResult<()> {
         let Err(gone) = self.still_there(entity).await else { return Ok(()) };
         info!(kind = %M::Entity::KIND, id = %entity.id(), "Stays deleted: what holds its scope went while it was restored");
-        member.store().delete(&SecurityContext::system(), entity.id(), removal).await?;
+        // Announced deleted again, as it was announced restored.
+        member.lifecycle().delete(&SecurityContext::system(), entity, removal).await?;
         Err(gone)
     }
 
@@ -507,22 +508,22 @@ fn deleted_unless_refused(deleted: StoreResult<bool>) -> StoreResult<bool> {
     }
 }
 
-/// What `restored` says was restored of `deleted`; `None` if it stays
-/// deleted: its name was taken meanwhile, it is not the caller's to
-/// restore (issue 320), or its purge is begun (issue 492).
-fn restored_unless_refused<D: Stored, T>(
-    restored: StoreResult<T>,
-    deleted: &D,
-) -> StoreResult<Option<T>> {
+/// Nothing if `restored` says `deleted` was restored, or that it stays deleted - logged: its name
+/// was taken meanwhile, it is not the caller's to restore (issue 320), or its purge is begun
+/// (issue 492).
+///
+/// # Errors
+/// Whatever else the store reported.
+fn restored_unless_refused<D: Stored, T>(restored: StoreResult<T>, deleted: &D) -> StoreResult<()> {
     match restored {
-        Ok(value) => Ok(Some(value)),
+        Ok(_) => Ok(()),
         Err(StoreError::NameTaken { .. }) => {
             warn!(kind = %D::KIND, id = %deleted.id(), "Stays deleted: its name was taken while what holds its scope was deleted");
-            Ok(None)
+            Ok(())
         }
         Err(e) if e.is_absent_or_refused() => {
             info!(kind = %D::KIND, id = %deleted.id(), "Stays deleted: it is not the caller's to restore, or its purge is begun");
-            Ok(None)
+            Ok(())
         }
         Err(e) => Err(e),
     }
@@ -591,7 +592,6 @@ mod tests {
     use caelumora_security::{Policies, SecurityContext};
     use caelumora_store::{EntityStores, Persistence};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
 
     /// What `found_or_made` answers when nothing is found at first and making fails with `made`,
     /// while the second lookup finds `then`; and how often it looked.
@@ -688,7 +688,7 @@ mod tests {
         let stores =
             EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all()).unwrap();
         let holders = ScopeHolders::new(&stores);
-        let bundles = Unowned(Arc::clone(&stores.component_bundles));
+        let bundles = Unowned::new(&stores.component_bundles);
         let system = SecurityContext::system();
         let mut session = bare_session(SessionId::new());
         stores.sessions.create(&system, &mut session).await.unwrap();

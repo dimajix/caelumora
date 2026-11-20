@@ -3,21 +3,20 @@
 //! out (`procedure::session`, issue 593).
 
 use super::{
-    discard_own, load_own, make_own, purge_channel_document, purge_own, require_attachable,
-    require_classification, SessionError, SessionLoop, SessionSpec,
+    load_own, require_attachable, require_classification, SessionError, SessionLoop, SessionSpec,
 };
 use crate::agent::AgentManager;
 use crate::attachment::AttachmentManager;
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
-use crate::group::{keep_participants, GroupManager};
+use crate::group::GroupManager;
 use crate::kernel::Kernel;
 use crate::lifecycle::Lifecycle;
 #[cfg(any(test, feature = "test-support"))]
 use crate::procedure::participant::{take_in, Entry};
 use crate::procedure::session::move_to;
 use crate::procedure::Compensation;
-use crate::scoped::{purge_for_good, ScopeNotEmpty, ScopedEntities};
+use crate::scoped::{ScopeNotEmpty, ScopedEntities};
 use crate::template::{
     resolve_participants, resolve_workspace, take_in_participants, TemplateParticipants,
 };
@@ -27,9 +26,9 @@ use crate::workspace::WorkspaceManager;
 use anyhow::{Error, Result};
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_domain::channel::Participant;
-use caelumora_domain::channel::{Channel, ChannelField};
+use caelumora_domain::channel::{Channel, ChannelField, ChannelId};
 #[cfg(any(test, feature = "test-support"))]
-use caelumora_domain::channel::{ChannelId, HistoryAccess, ThreadId};
+use caelumora_domain::channel::{HistoryAccess, ThreadId};
 use caelumora_domain::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_domain::group::{Group, GroupId};
 use caelumora_domain::project::{Project, ProjectId};
@@ -88,8 +87,8 @@ pub struct SessionManager {
     agents: Arc<AgentManager>,
     /// What goes with a session deleted, restored or purged (issue 178).
     scoped: Arc<ScopedEntities>,
-    /// What deletes and restores the groups of its participants with it
-    /// (issue 348).
+    /// What makes, deletes, restores and purges the groups of its participants with it (issue
+    /// 348).
     groups: Arc<GroupManager>,
     /// What removes the attachments of the channels of a session purged (issue 282).
     attachments: Arc<AttachmentManager>,
@@ -443,11 +442,11 @@ impl SessionManager {
         }
         // Each group before what it lets be read, so that its members hear it created.
         let made = async {
-            keep_participants(self.stores.groups.as_ref(), Group::of_session(session)).await?;
+            self.groups.keep_participants(Group::of_session(session)).await?;
             self.session_lifecycle.create(context, session).await?;
-            make_own(&self.own_lifecycle, &self.stores, own).await?;
+            self.make_own_held(own).await?;
             for channel in channels.iter_mut() {
-                keep_participants(self.stores.groups.as_ref(), Group::of_channel(channel)).await?;
+                self.groups.keep_participants(Group::of_channel(channel)).await?;
                 self.channel_lifecycle.create(context, channel).await?;
             }
             Ok::<_, StoreError>(())
@@ -457,17 +456,13 @@ impl SessionManager {
             // The session's creation was permitted, so it is rolled back in the kernel's name -
             // what was not made yet is not found, which is no matter, and not announced; its group
             // goes either way.
-            let system = SecurityContext::system();
-            let removal = Removal::now(system.caller_id);
             for channel in channels.iter() {
-                let _ = self.channel_lifecycle.delete(&system, channel, &removal).await;
-                let _ = purge_channel_document(&self.stores, channel.id).await;
+                let _ = self.channel_lifecycle.discard(channel).await;
+                let _ = self.groups.discard_participants(GroupId::of_channel(channel.id)).await;
             }
-            let _ = discard_own(&self.own_lifecycle, &self.stores, own).await;
-            let _ = self.session_lifecycle.delete(&system, session, &removal).await;
-            let _ =
-                purge_for_good(self.stores.groups.as_ref(), GroupId::of_session(session.id)).await;
-            let _ = self.session_lifecycle.purge_for_good(session.id).await;
+            let _ = self.discard_own_held(own).await;
+            let _ = self.session_lifecycle.discard(session).await;
+            let _ = self.groups.discard_participants(GroupId::of_session(session.id)).await;
             return Err(error.into());
         }
         Ok(())
@@ -803,26 +798,60 @@ impl SessionManager {
         Ok(())
     }
 
-    /// Makes `own`, a new own project of a session (`MoveTarget::NewOwn`), with the group of its
-    /// members, in the kernel's name (issue 467), announced as it is made, for a procedure that
-    /// moves the session into it (`procedure::session::move_to`); taken back by `discard_own_held`.
+    /// Makes `own`, a session's own project, with the group of its members, in the kernel's name
+    /// (issue 467), each announced as it is made - the group first, so that its members hear of
+    /// the project, and both, or, if the project cannot be made, neither -: as a session is made,
+    /// and for a procedure that moves a session into a new own (`procedure::session::move_to`);
+    /// taken back by `discard_own_held`.
     ///
     /// # Errors
     /// Whatever the store reports.
-    pub(crate) async fn make_own_held(&self, own: &mut Project) -> Result<()> {
-        make_own(&self.own_lifecycle, &self.stores, own).await?;
+    pub(crate) async fn make_own_held(&self, own: &mut Project) -> StoreResult<()> {
+        self.groups.keep_participants(Group::of_project(own)).await?;
+        if let Err(error) = self.own_lifecycle.create(&SecurityContext::system(), own).await {
+            let group = GroupId::of_project(own.id);
+            if let Err(undo) = self.groups.discard_participants(group).await {
+                warn!(project = %own.id, "The group of a session's own project that could not be made is left: {undo}");
+            }
+            return Err(error);
+        }
         Ok(())
     }
 
-    /// Takes `own`, made as a session's own, back, in the kernel's name - marked deleted and
-    /// announced so, then purged with the group of its members - for the compensation of moving the
-    /// session into it.
+    /// Takes `own`, made as a session's own project and not to be kept, back, in the kernel's name:
+    /// marked deleted and announced so, as its making was announced, then purged with the group of
+    /// its members (`purge_own_held`) - as making a session fails, and for the compensation of
+    /// moving a session into it.
     ///
     /// # Errors
     /// Whatever the store reports.
-    pub(crate) async fn discard_own_held(&self, own: &Project) -> Result<()> {
-        discard_own(&self.own_lifecycle, &self.stores, own).await?;
+    pub(crate) async fn discard_own_held(&self, own: &Project) -> StoreResult<()> {
+        self.own_lifecycle.discard(own).await?;
+        self.groups.discard_participants(GroupId::of_project(own.id)).await
+    }
+
+    /// Removes `own`, the own project of a session, for good with the group of its members, in the
+    /// kernel's name - marked deleted first if it is not -: as the session is purged, or its making
+    /// taken back. What lay in its scope is the caller's to have purged. Announces nothing.
+    ///
+    /// # Errors
+    /// Whatever the store reports.
+    pub(crate) async fn purge_own_held(&self, own: ProjectId) -> StoreResult<()> {
+        self.groups.purge_participants(GroupId::of_project(own)).await?;
+        self.own_lifecycle.purge_for_good(own).await?;
         Ok(())
+    }
+
+    /// Removes the document of channel `id` for good, with the group of its participants, in the
+    /// kernel's name - marked deleted first if it is not: a channel of a session being purged,
+    /// which is hidden with the session, or one whose creation failed -, since only what was
+    /// deleted is purged (issue 164). Announces nothing. `false` if there was none.
+    ///
+    /// # Errors
+    /// Whatever the store reports.
+    pub(crate) async fn purge_channel_held(&self, id: ChannelId) -> StoreResult<bool> {
+        self.groups.purge_participants(GroupId::of_channel(id)).await?;
+        self.channel_lifecycle.purge_for_good(id).await
     }
 
     /// Takes the mark of `own`, the own project of a session, away in the kernel's name, for a
@@ -1001,14 +1030,14 @@ impl SessionManager {
         for channel_id in channels {
             self.state_store.delete_channel_state(channel_id).await?;
             self.attachments.purge(channel_id).await?;
-            purge_channel_document(&self.stores, channel_id).await?;
+            self.purge_channel_held(channel_id).await?;
         }
         let owns: Vec<Project> =
             self.deleted_own(id).await?.into_iter().map(|own| own.entity).collect();
         self.scoped.purge_lying_in(&held_by(id, &owns)).await?;
-        purge_for_good(self.stores.groups.as_ref(), GroupId::of_session(id)).await?;
+        self.groups.purge_participants(GroupId::of_session(id)).await?;
         for own in &owns {
-            purge_own(&self.stores, own.id).await?;
+            self.purge_own_held(own.id).await?;
         }
         Ok(())
     }
@@ -1124,7 +1153,7 @@ mod tests {
     use crate::procedure::{Compensation, Deferred, Key, Locks, Procedure, ProcedureError};
     use crate::project::{ProjectManager, ProjectSpec};
     use crate::session::testing::*;
-    use crate::session::{load_own, purge_own, SessionLoop};
+    use crate::session::{load_own, SessionLoop};
     use crate::session::{SessionError, SessionManager, SessionSpec};
     use crate::testing::TestKernel;
     use crate::view::Viewer;
@@ -1143,7 +1172,7 @@ mod tests {
     use caelumora_domain::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::event::{EntityChange, GlobalEvent};
-    use caelumora_domain::group::GroupId;
+    use caelumora_domain::group::{Group, GroupId};
     use caelumora_domain::project::Project;
     use caelumora_domain::query::Query;
     use caelumora_domain::removal::Removal;
@@ -1203,9 +1232,17 @@ mod tests {
         });
         let started = events.iter().position(|e| matches!(e.about::<Session>(), Some((id, EntityChange::Custom { name: session::STARTED, .. })) if id == session_id));
 
+        // The group of its participants before it, as whoever makes a change announces it, and
+        // so that the group admits them as the bus delivers it (issue 593).
+        let group_created = events.iter().position(|e| {
+            e.about::<Group>() == Some((GroupId::of_session(session_id), &EntityChange::Created))
+        });
+
         assert!(created.is_some(), "expected SessionCreated, got {:?}", events);
         assert!(ch_created.is_some(), "expected the channel created, got {:?}", events);
         assert!(started.is_some(), "expected SessionStarted, got {:?}", events);
+        assert!(group_created.is_some(), "expected its group created, got {:?}", events);
+        assert!(group_created < created, "its group first: {:?}", events);
         assert!(created < ch_created && ch_created < started, "wrong order: {:?}", events);
 
         // It is now persisted and running.
@@ -2121,7 +2158,7 @@ mod tests {
         manager.update_project(&ctx, session.id(), Some(project.id)).await.unwrap();
         // Its own gone, as lifting it takes it out of the session's scope.
         let own = load_own(&stores, session.id()).await.unwrap().expect("its own");
-        purge_own(&stores, own.id).await.unwrap();
+        manager.purge_own_held(own.id).await.unwrap();
 
         events.drain().await;
         passing.store(0, Ordering::SeqCst);

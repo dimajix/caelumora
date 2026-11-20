@@ -16,7 +16,7 @@ use std::sync::Arc;
 /// kernel's or of a plugin's: each made, marked deleted, its mark taken away or purged in the
 /// store, which asks whether the caller may, and each but a purge announced as it is stored, so
 /// that whoever makes a change announces it, an undo as much as the change it undoes (issue 593).
-pub(crate) struct Lifecycle<T: Stored> {
+pub struct Lifecycle<T: Stored> {
     store: Arc<dyn EntityStore<T>>,
     events: Arc<dyn EventPublisher>,
 }
@@ -29,13 +29,13 @@ impl<T: Stored> fmt::Debug for Lifecycle<T> {
 
 impl<T: Stored> Lifecycle<T> {
     /// The lifecycle of the documents in `store`, announced through `events`.
-    pub(crate) fn new(store: &Arc<dyn EntityStore<T>>, events: Arc<dyn EventPublisher>) -> Self {
+    pub fn new(store: &Arc<dyn EntityStore<T>>, events: Arc<dyn EventPublisher>) -> Self {
         Self { store: Arc::clone(store), events }
     }
 
     /// The store of the kind, for what is read and changed of it apart from its lifecycle - and to
     /// purge what has nothing behind it.
-    pub(crate) fn store(&self) -> &dyn EntityStore<T> {
+    pub fn store(&self) -> &dyn EntityStore<T> {
         self.store.as_ref()
     }
 
@@ -44,7 +44,7 @@ impl<T: Stored> Lifecycle<T> {
     ///
     /// # Errors
     /// Whatever the store reports, `StoreError::PermissionDenied` and `NameTaken` among it.
-    pub(crate) async fn create(&self, ctx: &SecurityContext, document: &mut T) -> StoreResult<()> {
+    pub async fn create(&self, ctx: &SecurityContext, document: &mut T) -> StoreResult<()> {
         self.store.create(ctx, document).await?;
         self.events.announce(GlobalEvent::created::<T>(&document.address()), document);
         Ok(())
@@ -55,7 +55,7 @@ impl<T: Stored> Lifecycle<T> {
     ///
     /// # Errors
     /// Whatever the store reports, `StoreError::PermissionDenied` among it.
-    pub(crate) async fn delete(
+    pub async fn delete(
         &self,
         ctx: &SecurityContext,
         document: &T,
@@ -79,6 +79,19 @@ impl<T: Stored> Lifecycle<T> {
         Ok(document)
     }
 
+    /// Takes `document`, made a moment ago and not to be kept, back in the kernel's name: marked
+    /// deleted and announced so, as its making was announced, then purged for good - as what made
+    /// it fails afterwards. What lies behind it is the caller's.
+    ///
+    /// # Errors
+    /// Whatever the store reports.
+    pub(crate) async fn discard(&self, document: &T) -> StoreResult<()> {
+        let system = SecurityContext::system();
+        self.delete(&system, document, &Removal::now(system.caller_id)).await?;
+        self.purge_for_good(document.id()).await?;
+        Ok(())
+    }
+
     /// Removes the deleted document `id` for good on behalf of `ctx`, in the order of every purge
     /// of what has something behind it (`purge_behind`): its purge begun (`Purge`, asked by the
     /// store), then what lies behind it (`remove_behind`), then the document. Announces nothing, as
@@ -87,7 +100,7 @@ impl<T: Stored> Lifecycle<T> {
     /// # Errors
     /// What `remove_behind` fails with, or whatever the store reports; the document stays deleted,
     /// its purge begun, for the next purge to finish (issue 496).
-    pub(crate) async fn purge<E: From<StoreError>>(
+    pub async fn purge<E: From<StoreError>>(
         &self,
         ctx: &SecurityContext,
         id: T::Id,

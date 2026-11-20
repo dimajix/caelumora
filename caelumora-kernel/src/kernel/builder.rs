@@ -705,9 +705,9 @@ impl KernelBuilder {
         ));
         self.provide(Arc::clone(&agents))?;
         let kernel_members: [Arc<dyn ScopedKind>; 5] = [
-            Arc::new(Unowned(Arc::clone(&self.entity_stores.personalities))),
-            Arc::new(Unowned(Arc::clone(&self.entity_stores.session_templates))),
-            Arc::new(Unowned(Arc::clone(&self.entity_stores.component_bundles))),
+            Arc::new(Unowned::new(&self.entity_stores.personalities)),
+            Arc::new(Unowned::new(&self.entity_stores.session_templates)),
+            Arc::new(Unowned::new(&self.entity_stores.component_bundles)),
             Arc::<AgentManager>::clone(&agents),
             Arc::<WorkspaceManager>::clone(&self.workspaces),
         ];

@@ -1,7 +1,8 @@
-//! `GroupManager`: making, changing, deleting, restoring and purging teams, and deleting and
-//! restoring the groups of participants and members with their session, channel or project
-//! (issues 286, 348, 467).
+//! `GroupManager`: making, changing, deleting, restoring and purging teams, and making, deleting,
+//! restoring and purging the groups of participants and members with their session, channel or
+//! project (issues 286, 348, 467).
 
+use super::keep_participants;
 use super::{store_error, GroupError, GroupResult, GroupSpec};
 use crate::event::EventBus;
 use crate::lifecycle::Lifecycle;
@@ -22,9 +23,9 @@ use std::fmt;
 use std::sync::Arc;
 use tracing::{info, warn};
 
-/// The one writer of teams (issue 286), and what deletes and restores the groups of the
-/// participants of a session or channel, and of the members of a session's own project, with it
-/// (issues 348, 467).
+/// The one writer of teams (issue 286), and what makes, deletes, restores and purges the groups
+/// of the participants of a session or channel, and of the members of a project, with it (issues
+/// 348, 467).
 pub struct GroupManager {
     users: Arc<dyn EntityStore<User>>,
     /// The lifecycle of groups: each made, deleted, restored and purged by it, announced as each is
@@ -248,6 +249,40 @@ impl GroupManager {
 /// session or channel that is there has the group of its participants there as well, whatever the
 /// caller may do with groups.
 impl GroupManager {
+    /// Stores `participants` as the group of the participants of a session or channel, or of the
+    /// members of a project, in the kernel's name (`keep_participants`): made or restored, it is
+    /// announced; that its members changed is not.
+    ///
+    /// # Errors
+    /// Whatever the store reports.
+    pub(crate) async fn keep_participants(&self, participants: Group) -> StoreResult<()> {
+        keep_participants(&self.groups, participants).await
+    }
+
+    /// Takes the group of participants or members `id`, made a moment ago and not to be kept, back
+    /// in the kernel's name - marked deleted and announced so, as its making was announced, then
+    /// purged -, as what it was made for cannot be made after all. Nothing for none.
+    ///
+    /// # Errors
+    /// Whatever the store reports.
+    pub(crate) async fn discard_participants(&self, id: GroupId) -> StoreResult<()> {
+        let system = SecurityContext::system();
+        match self.groups.store().get(&system, id).await.optional()? {
+            Some(group) => self.groups.discard(&group).await,
+            None => Ok(()),
+        }
+    }
+
+    /// Removes the group of participants or members `id` for good in the kernel's name, marked
+    /// deleted first if it is not - as what it belongs to is purged, or its making is taken back.
+    /// Announces nothing, as no purge does. `false` if there was none.
+    ///
+    /// # Errors
+    /// Whatever the store reports.
+    pub(crate) async fn purge_participants(&self, id: GroupId) -> StoreResult<bool> {
+        self.groups.purge_for_good(id).await
+    }
+
     /// Deletes the groups of the participants that lie in `holders` or within them - of a session,
     /// its channels and its own project's members (issue 467), or of a channel -, as what holds
     /// them is deleted, marked with `removal`, its mark (issue 469): all of them or, if one fails,

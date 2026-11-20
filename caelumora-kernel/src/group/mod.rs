@@ -33,6 +33,7 @@ mod spec;
 pub use manager::GroupManager;
 pub use spec::GroupSpec;
 
+use crate::lifecycle::Lifecycle;
 use caelumora_domain::group::{Group, GroupId};
 use caelumora_domain::security::{AclEntry, Subject};
 use caelumora_domain::store::{StoreError, StoreResult, StoreResultExt};
@@ -155,25 +156,28 @@ async fn is_gone(store: &dyn EntityStore<Group>, id: GroupId) -> bool {
 }
 
 /// Stores `participants` as the group of the participants of a session or channel - or of the
-/// members of a project (issue 467) -, in the kernel's name: its members replace those stored, and
-/// the group is made if there is none yet. Called only while the session, channel or project is
-/// there, so a group found deleted is restored first (issue 347): it goes and comes back with it
-/// (issue 348), but taking back a deletion that failed may have failed, too. Written or made
-/// meanwhile elsewhere, the group is read again and the members set once more (issues 492, 500).
+/// members of a project (issue 467) -, in the kernel's name, by `groups`, the lifecycle of groups:
+/// its members replace those stored, and the group is made if there is none yet, announced as it is
+/// made. Called only while the session, channel or project is there, so a group found deleted is
+/// restored first (issue 347), announced as it is restored: it goes and comes back with it (issue
+/// 348), but taking back a deletion that failed may have failed, too. That its members changed is
+/// not announced: who joins and leaves is, as they do. Written or made meanwhile elsewhere, the
+/// group is read again and the members set once more (issues 492, 500).
 ///
 /// # Errors
 /// Whatever the store reports.
 pub(crate) async fn keep_participants(
-    store: &dyn EntityStore<Group>,
+    groups: &Lifecycle<Group>,
     mut participants: Group,
 ) -> StoreResult<()> {
+    let store = groups.store();
     let system = SecurityContext::system();
     loop {
         let mut stored = match store.get(&system, participants.id).await.optional()? {
             Some(stored) => stored,
             None => match store.get_deleted(&system, participants.id).await.optional()? {
-                Some(_) => store.restore(&system, participants.id).await?,
-                None => match store.create(&system, &mut participants).await.created()? {
+                Some(_) => groups.restore(&system, participants.id).await?,
+                None => match groups.create(&system, &mut participants).await.created()? {
                     Some(()) => return Ok(()),
                     None => continue,
                 },
@@ -194,6 +198,7 @@ pub(crate) async fn keep_participants(
 mod tests {
     use super::*;
     use crate::event::EventBus;
+    use crate::lifecycle::Lifecycle;
     use async_trait::async_trait;
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::channel::ChannelId;
@@ -318,12 +323,17 @@ mod tests {
         let name =
             ScopedName::new("participants", Scope::SessionScope { session_id: session }).unwrap();
         let participants = Group { id: GroupId::of_session(session), ..Group::team(name, owner) };
-        keep_participants(groups.as_ref(), participants.clone()).await.expect("made");
+        keep_participants(&Lifecycle::new(&groups, Arc::new(())), participants.clone())
+            .await
+            .expect("made");
         groups.delete(&system, participants.id, &Removal::now(system.caller_id)).await.unwrap();
 
-        keep_participants(groups.as_ref(), Group { members: vec![bob], ..participants.clone() })
-            .await
-            .expect("restored, not made again");
+        keep_participants(
+            &Lifecycle::new(&groups, Arc::new(())),
+            Group { members: vec![bob], ..participants.clone() },
+        )
+        .await
+        .expect("restored, not made again");
         assert_eq!(
             groups.get(&system, participants.id).await.unwrap().members,
             [bob],
@@ -344,12 +354,17 @@ mod tests {
             ScopedName::new("participants", Scope::SessionScope { session_id: session }).unwrap();
         let participants =
             Group { id: GroupId::of_session(session), ..Group::team(name, UserId::new()) };
-        keep_participants(groups.as_ref(), participants.clone()).await.expect("made");
+        keep_participants(&Lifecycle::new(&groups, Arc::new(())), participants.clone())
+            .await
+            .expect("made");
 
         refusals.store(1, Ordering::SeqCst);
-        keep_participants(groups.as_ref(), Group { members: vec![bob], ..participants.clone() })
-            .await
-            .expect("set once more");
+        keep_participants(
+            &Lifecycle::new(&groups, Arc::new(())),
+            Group { members: vec![bob], ..participants.clone() },
+        )
+        .await
+        .expect("set once more");
         assert_eq!(refusals.load(Ordering::SeqCst), 0, "refused once");
         assert_eq!(groups.get(&system, participants.id).await.unwrap().members, [bob]);
     }
@@ -372,7 +387,9 @@ mod tests {
         };
 
         refusals.store(1, Ordering::SeqCst);
-        keep_participants(groups.as_ref(), participants.clone()).await.expect("read again");
+        keep_participants(&Lifecycle::new(&groups, Arc::new(())), participants.clone())
+            .await
+            .expect("read again");
         assert_eq!(refusals.load(Ordering::SeqCst), 0, "refused once");
         assert_eq!(groups.get(&system, participants.id).await.unwrap().members, [bob]);
     }
@@ -435,7 +452,9 @@ mod tests {
         let of_project = Group::of_project(&own);
         let groups = [&of_session, &of_channel, &of_project];
         for group in groups {
-            keep_participants(stores.groups.as_ref(), group.clone()).await.unwrap();
+            keep_participants(&Lifecycle::new(&stores.groups, Arc::new(())), group.clone())
+                .await
+                .unwrap();
         }
         let holders = [Scope::SessionScope { session_id }, own.holds()];
         let there = async |id: GroupId| stores.groups.get(&system, id).await.is_ok();

@@ -43,22 +43,26 @@ session.
 Each kind that may lie in a scope is a `ScopeMember` (issue 323), and `ScopedEntities` goes through
 them in the order they were registered; what is done with them is the same for every kind, and a
 member says only what its kind adds. What has a manager of its own - agents, workspaces, skills,
-artifacts - is a member by it, announced as it announces its own deletions - an artifact to whoever
-reads it, as when it is deleted alone (issues 319, 316) -, and what lies behind an entity - an
-agent's states in its channels and its memory, a workspace's place, an artifact's content - is
-removed before the entity is purged. Personalities, session templates and component bundles, which
-have none, are members by their store (`Unowned`), which marks them and announces nothing.
+artifacts - is a member by it and its `Lifecycle`, which announces each deletion and restoring as
+the manager announces its own (issues 319, 316, 593), and what lies behind an entity - an agent's
+states in its channels and its memory, a workspace's place, an artifact's content - is removed
+before the entity is purged. Personalities, session templates and component bundles, which have
+none, are members by a lifecycle of their own (`Unowned`), which marks them and announces nothing.
 
 The groups of the participants of a session and of its channels lie in its scope as well, but are
 not among what lies there: they belong to the session or channel itself, and its participants reach
 it by them (issue 348). They go and come back with its mark, in the kernel's name, whoever deletes
 or restores it - all of them or none (`GroupManager::delete_participants`, `restore_participants`),
-announced as a team. Deleting deletes them last, once nothing else of the scope is left, so that a
-session kept keeps its members; if they cannot go, the mark is taken away again, and they stay.
-Restoring restores them first, with the mark; if they cannot come back, the session or channel is
-marked again as it was - with them, so that a restoring tried again finds all of it -, and the
-restoring fails. So a session or channel that is there always has the group of its participants
-there, too. Purging purges them with it (`scoped::purge_for_good`).
+each announced as a team is. The `GroupManager` makes them too, announced as they are made, and
+purges them (`keep_participants`, `purge_participants`), and the controllers of the session, the
+channel or the project keep them following the participants by the same lifecycle of groups; who
+joins and leaves is announced as they do, not as a change of the group. Deleting deletes them last,
+once nothing else of the scope is left, so that a session kept keeps its members; if they cannot go,
+the mark is taken away again, and they stay. Restoring restores them first, with the mark; if they
+cannot come back, the session or channel is marked again as it was - with them, so that a restoring
+tried again finds all of it -, and the restoring fails. So a session or channel that is there always
+has the group of its participants there, too. Purging purges them with it
+(`GroupManager::purge_participants`).
 
 That holds because what lies in a session's or a channel's scope is used only within it
 (`Scope::admits`): an agent of it takes part only in that session's channels, or in that channel,

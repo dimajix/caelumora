@@ -5,12 +5,12 @@
 use super::{require_classification, store_error, WorkspaceSpec};
 use crate::backend::NamedBackends;
 use crate::event::EventBus;
-use crate::scoped::{found_or_made, purge_for_good, ScopeHolders, ScopeMember};
+use crate::lifecycle::Lifecycle;
+use crate::scoped::{found_or_made, ScopeHolders, ScopeMember};
 use crate::terminal::TerminalProvider;
 use async_trait::async_trait;
 use caelumora_api::workspace::{WorkspaceError, WorkspaceResult};
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_domain::removal::Removal;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::store::{StoreError, StoreResult, StoreResultExt, Stored};
@@ -18,16 +18,17 @@ use caelumora_domain::value::name::ScopedName;
 use caelumora_domain::value::text::Description;
 use caelumora_domain::workspace::{Workspace, WorkspaceId};
 use caelumora_security::{ActionType, Enforcement, Policies, SecurityContext};
-use caelumora_store::{purge_behind, EntityStore, EntityStores};
+use caelumora_store::EntityStores;
 use std::fmt;
 use std::sync::Arc;
 use tracing::{info, warn};
 
 pub struct WorkspaceManager {
-    workspaces: Arc<dyn EntityStore<Workspace>>,
+    /// The lifecycle of workspaces: each made, deleted, restored and purged by it, announced as
+    /// each is (issue 593).
+    workspaces: Lifecycle<Workspace>,
     /// Asked whether a workspace may be put into a scope.
     holders: Arc<ScopeHolders>,
-    events: Arc<EventBus>,
     /// Who may make and change a workspace in a scope, and what may flow where and who is cleared
     /// for what (issue 304).
     policies: Policies,
@@ -55,9 +56,8 @@ impl WorkspaceManager {
         storages: Arc<NamedBackends<dyn TerminalProvider>>,
     ) -> Self {
         Self {
-            workspaces: Arc::clone(&stores.workspaces),
+            workspaces: Lifecycle::new(&stores.workspaces, events),
             holders,
-            events,
             policies: policies.clone(),
             storages,
         }
@@ -127,13 +127,13 @@ impl WorkspaceManager {
         self.workspaces.create(ctx, &mut workspace).await?;
         if let Err(e) = provider.create(workspace.id).await {
             warn!(workspace = %workspace.id, "The place of a new workspace could not be made: {e}");
-            if let Err(cleanup) = purge_for_good(self.workspaces.as_ref(), workspace.id).await {
+            // Announced deleted, as it was announced made.
+            if let Err(cleanup) = self.workspaces.discard(&workspace).await {
                 warn!(workspace = %workspace.id, "A workspace whose place could not be made is left deleted: {cleanup}");
             }
             return Err(e.into());
         }
         self.holders.keep_made(self, &workspace).await?;
-        self.events.announce(GlobalEvent::created::<Workspace>(&workspace.id), &workspace);
         info!(workspace = %workspace.id, storage, by = %ctx.caller_id, "Workspace created");
         Ok(workspace)
     }
@@ -155,7 +155,7 @@ impl WorkspaceManager {
         let name = ScopedName::new(&spec.name, spec.scope.clone())?;
         found_or_made(
             || async {
-                match self.workspaces.find_by_name(ctx, &name).await.optional()? {
+                match self.workspaces.store().find_by_name(ctx, &name).await.optional()? {
                     Some(found) if found.storage == spec.storage => Ok(Some(found)),
                     Some(_) => Err(WorkspaceError::InAnotherStorage(name.name.clone())),
                     None => Ok(None),
@@ -179,10 +179,9 @@ impl WorkspaceManager {
             Err(WorkspaceError::NotFound(_)) => return Ok(false),
             Err(e) => return Err(e),
         };
-        if !self.workspaces.delete(ctx, id, &Removal::now(ctx.caller_id)).await? {
+        if !self.workspaces.delete(ctx, &workspace, &Removal::now(ctx.caller_id)).await? {
             return Ok(false);
         }
-        self.events.announce(GlobalEvent::deleted::<Workspace>(&id), &workspace);
         info!(workspace = %id, by = %ctx.caller_id, "Workspace deleted");
         Ok(true)
     }
@@ -201,7 +200,6 @@ impl WorkspaceManager {
         id: WorkspaceId,
     ) -> WorkspaceResult<Workspace> {
         let workspace = self.holders.restore(self, ctx, id).await.map_err(store_error(id))?;
-        self.events.announce(GlobalEvent::restored::<Workspace>(&id), &workspace);
         info!(workspace = %id, by = %ctx.caller_id, "Workspace restored");
         Ok(workspace)
     }
@@ -216,10 +214,10 @@ impl WorkspaceManager {
     /// `PermissionDenied`, `StorageGone` if its storage is no longer configured, a `TerminalError`
     /// of removing the place, or whatever the store reports.
     pub async fn purge(&self, ctx: &SecurityContext, id: WorkspaceId) -> WorkspaceResult<bool> {
-        let purged = purge_behind(self.workspaces.as_ref(), ctx, id, async |workspace| {
-            self.remove_place(workspace).await
-        })
-        .await?;
+        let purged = self
+            .workspaces
+            .purge(ctx, id, async |workspace| self.remove_place(workspace).await)
+            .await?;
         if purged {
             info!(workspace = %id, by = %ctx.caller_id, "Workspace purged");
         }
@@ -243,7 +241,7 @@ impl WorkspaceManager {
     /// `NotFound` if there is none they may read or are cleared for, so
     /// that nothing can be probed; or whatever else the store reports.
     async fn reached(&self, ctx: &SecurityContext, id: WorkspaceId) -> WorkspaceResult<Workspace> {
-        self.workspaces.get(ctx, id).await.map_err(store_error(id))
+        self.workspaces.store().get(ctx, id).await.map_err(store_error(id))
     }
 
     /// Workspace `id` as `ctx` reaches it to attach it to a session (issue 253): reached as
@@ -276,12 +274,8 @@ impl WorkspaceManager {
 impl ScopeMember for WorkspaceManager {
     type Entity = Workspace;
 
-    fn store(&self) -> &dyn EntityStore<Workspace> {
-        self.workspaces.as_ref()
-    }
-
-    fn events(&self) -> Option<&dyn EventPublisher> {
-        Some(self.events.as_ref())
+    fn lifecycle(&self) -> &Lifecycle<Workspace> {
+        &self.workspaces
     }
 
     /// Removes the place of `workspace`, as `purge` does; it is its storage too.

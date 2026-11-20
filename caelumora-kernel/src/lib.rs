@@ -12,7 +12,7 @@ pub mod event;
 pub mod group;
 pub mod kernel;
 mod library;
-pub(crate) mod lifecycle;
+pub mod lifecycle;
 pub mod moderator;
 pub mod plugin;
 pub mod procedure;

@@ -5,7 +5,7 @@
 use super::{store_error, ProjectError, ProjectResult, ProjectSpec};
 use crate::error::is_forbidden;
 use crate::event::EventBus;
-use crate::group::{keep_participants, GroupManager};
+use crate::group::GroupManager;
 use crate::lifecycle::Lifecycle;
 use crate::procedure::all_or_nothing;
 #[cfg(any(test, feature = "test-support"))]
@@ -13,7 +13,7 @@ use crate::procedure::project::{Delete, Purge, Restore};
 use crate::procedure::session::{delete as delete_session, restore as restore_session};
 #[cfg(any(test, feature = "test-support"))]
 use crate::procedure::ProcedureExecutor;
-use crate::scoped::{found_or_made, purge_for_good, ScopeNotEmpty, ScopedEntities};
+use crate::scoped::{found_or_made, ScopeNotEmpty, ScopedEntities};
 use crate::session::{SessionError, SessionManager};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::group::{Group, GroupId};
@@ -45,7 +45,7 @@ pub struct ProjectManager {
     projects: Lifecycle<Project>,
     /// Asked ahead where the store asks again (issue 312).
     access_policy: Arc<dyn AccessPolicy>,
-    /// What deletes and restores the group of a project's members with it.
+    /// What makes, deletes, restores and purges the group of a project's members with it.
     groups: Arc<GroupManager>,
     /// What goes with a project deleted, restored or purged.
     scoped: Arc<ScopedEntities>,
@@ -91,16 +91,8 @@ impl ProjectManager {
         let mut project = Project::new(ScopedName::new(&name, scope)?, owner);
         project.description = Description::optional(description.as_deref())?;
         self.projects.create(ctx, &mut project).await?;
-        if let Err(e) =
-            keep_participants(self.stores.groups.as_ref(), Group::of_project(&project)).await
-        {
-            let system = SecurityContext::system();
-            let removal = Removal::now(system.caller_id);
-            let discarded = async {
-                self.projects.delete(&system, &project, &removal).await?;
-                self.projects.purge_for_good(project.id).await
-            };
-            if let Err(cleanup) = discarded.await {
+        if let Err(e) = self.groups.keep_participants(Group::of_project(&project)).await {
+            if let Err(cleanup) = self.projects.discard(&project).await {
                 warn!(project = %project.id, "A project whose group could not be made is left: {cleanup}");
             }
             return Err(e.into());
@@ -303,7 +295,7 @@ impl ProjectManager {
             purged.map_err(ProjectError::Session)?;
         }
         self.scoped.purge_lying_in(slice::from_ref(&project.holds())).await?;
-        purge_for_good(self.stores.groups.as_ref(), GroupId::of_project(project.id)).await?;
+        self.groups.purge_participants(GroupId::of_project(project.id)).await?;
         Ok(())
     }
 
@@ -503,6 +495,35 @@ mod tests {
             stores.component_bundles.get(&system, bundle.id).await.is_ok(),
             "and what lay in its scope"
         );
+    }
+
+    /// A project that cannot come back once the group of its members did takes the group away
+    /// again, marked as the project is, so that a restoring tried again finds it (issues 469, 593).
+    #[tokio::test]
+    async fn a_project_that_cannot_come_back_takes_its_members_group_away_again() {
+        let (kernel, passing) = failing_kernel(Project::KIND);
+        let stores = kernel.entity_stores().clone();
+        let manager = SessionManager::new(kernel);
+        let projects = Arc::new(ProjectManager::new(Arc::clone(&manager)));
+        let owner = UserId::new();
+        let ctx =
+            SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
+        let system = SecurityContext::system();
+        let project = projects
+            .create(&ctx, ProjectSpec::new("report", Scope::UserScope { user_id: owner }))
+            .await
+            .unwrap();
+        projects.delete(&ctx, project.id).await.unwrap();
+        let mark = stores.projects.get_deleted(&system, project.id).await.unwrap().removal;
+
+        passing.store(0, Ordering::SeqCst);
+        projects.restore(&ctx, project.id).await.expect_err("it cannot come back");
+        let group = stores.groups.get_deleted(&system, GroupId::of_project(project.id)).await;
+        assert_eq!(group.expect("its group deleted again").removal, mark, "with its mark");
+
+        passing.store(usize::MAX, Ordering::SeqCst);
+        projects.restore(&ctx, project.id).await.expect("restored when tried again");
+        assert!(stores.groups.get(&system, GroupId::of_project(project.id)).await.is_ok());
     }
 
     /// Issue 496: a purge that fails part of the way - here as the channel of a session in the

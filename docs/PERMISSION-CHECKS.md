@@ -294,7 +294,7 @@ An agent's views are built per piece of work, with the agent's place, and handed
 | Delete, restore, purge (`GroupManager::delete`, `restore`, `purge`) | store `GetGroup` or `ReadDeleted`; a group that is no team refused (structural); store `GetGroup` + `DeleteGroup`, `ReadDeleted` + `Restore` or `ReadDeleted` + `Purge` | R1 | `GetGroup` (store) for a deletion, `ReadDeleted` (store) otherwise | `NotFound`, `NotATeam`, `PermissionDenied` |
 | Name a group in an access list (`require_nameable`) | store `GetGroup` (U,1) per newly named group | R1 | - | `Validation` |
 | Drop entries for groups that are gone (`prune_gone_groups`, issue 347) | per group the lists name, read in S, also among the deleted, before a controller's document or an artifact is stored | - | - | - |
-| The participants' and members' groups (`keep_participants`, `delete_participants`, `restore_participants`, `purge_for_good`) | in S, after the change of the participants or members, or the deletion, restoring or purge of their session, channel or project, was permitted | - | - | - |
+| The participants' and members' groups (`GroupManager::keep_participants`, `delete_participants`, `restore_participants`, `purge_participants`) | in S, after the change of the participants or members, or the deletion, restoring or purge of their session, channel or project, was permitted | - | - | - |
 
 ### Views, snapshots and events
 

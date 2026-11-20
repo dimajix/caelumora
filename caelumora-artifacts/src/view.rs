@@ -94,7 +94,7 @@ impl ArtifactViews for Views {
 
     async fn deleted_artifacts(&self) -> ArtifactResult<Vec<DeletedSnapshot<ArtifactId>>> {
         Ok(self
-            .deleted_of(self.artifact_manager()?.store().as_ref(), &Query::all(), |artifact| {
+            .deleted_of(self.artifact_manager()?.store(), &Query::all(), |artifact| {
                 artifact.name.to_string()
             })
             .await?)

@@ -466,8 +466,12 @@ What changes an entity is split by what it changes:
     session's own project is made, deleted, restored and purged with the session. Making a
     document, marking it deleted, taking its mark away and purging it are one `Lifecycle` for each
     kind, which its manager holds - the `SessionManager` one for sessions, their channels and their
-    own projects, the `GroupManager` one for groups, the `ProjectManager` one for shared projects
-    (issue 593) -, each change but a purge announced at the document's address
+    own projects, the `GroupManager` one for groups - and the controllers of sessions, channels
+    and projects one as well, by which the groups of participants follow them -, the
+    `ProjectManager` one for shared projects,
+    the `AgentManager`, `WorkspaceManager` and the plugins' managers one for their kinds, by which
+    what lies in a scope goes with its holder too (`ScopeMember::lifecycle`, issue 593) -, each
+    change but a purge announced at the document's address
     (`Stored::address`). The group of a document's participants or members is made or restored
     before the document, so that they hear it made or restored - but for a new shared project,
     which has no members yet, and whose creation is asked of first.

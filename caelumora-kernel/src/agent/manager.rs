@@ -16,29 +16,30 @@
 
 use super::{store_error, AgentError, AgentMember, AgentResult, AgentSpec};
 use crate::event::EventBus;
+use crate::lifecycle::Lifecycle;
 use crate::scoped::{found_or_made, ScopeHolders, ScopeMember};
 use async_trait::async_trait;
 use caelumora_domain::agent::{Agent, AgentId, Personality};
-use caelumora_domain::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_domain::removal::Removal;
 use caelumora_domain::store::{StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_domain::value::name::ScopedName;
 use caelumora_security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
-use caelumora_store::{purge_behind, EntityStore, EntityStores, StateStore};
+use caelumora_store::{EntityStore, EntityStores, StateStore};
 use std::fmt;
 use std::sync::Arc;
 use tracing::info;
 
 /// The one owner of agents' lifecycle (issue 314).
 pub struct AgentManager {
-    agents: Arc<dyn EntityStore<Agent>>,
+    /// The lifecycle of agents: each made, deleted, restored and purged by it, announced as each is
+    /// (issue 593).
+    agents: Lifecycle<Agent>,
     personalities: Arc<dyn EntityStore<Personality>>,
     /// Asked whether an agent may be put into a scope.
     holders: Arc<ScopeHolders>,
     states: Arc<dyn StateStore>,
     /// What the plugins keep behind an agent, removed after its state as it is purged.
     agent_members: Vec<Arc<dyn AgentMember>>,
-    events: Arc<EventBus>,
     access_policy: Arc<dyn AccessPolicy>,
 }
 
@@ -58,12 +59,11 @@ impl AgentManager {
         access_policy: Arc<dyn AccessPolicy>,
     ) -> Self {
         Self {
-            agents: Arc::clone(&stores.agents),
+            agents: Lifecycle::new(&stores.agents, events),
             personalities: Arc::clone(&stores.personalities),
             holders,
             states,
             agent_members,
-            events,
             access_policy,
         }
     }
@@ -107,7 +107,6 @@ impl AgentManager {
         }
         self.agents.create(context, &mut agent).await?;
         self.holders.keep_made(self, &agent).await?;
-        self.events.announce(GlobalEvent::created::<Agent>(&agent.id), &agent);
         info!(agent = %agent.id, by = %context.caller_id, "Agent created");
         Ok(agent)
     }
@@ -130,7 +129,7 @@ impl AgentManager {
         let name = ScopedName::new(&spec.name, spec.scope.clone())?;
         found_or_made(
             || async {
-                match self.agents.find_by_name(context, &name).await.optional()? {
+                match self.agents.store().find_by_name(context, &name).await.optional()? {
                     Some(found) if found.personality_id == spec.personality_id => Ok(Some(found)),
                     Some(_) => Err(AgentError::OfAnotherPersonality(name.name.clone())),
                     None => Ok(None),
@@ -157,7 +156,9 @@ impl AgentManager {
     /// `StoreError::PermissionDenied` if they may read it but not delete
     /// it, or whatever else the store reports.
     pub async fn delete(&self, context: &SecurityContext, id: AgentId) -> AgentResult<bool> {
-        let Some(agent) = self.agents.get(context, id).await.optional()? else { return Ok(false) };
+        let Some(agent) = self.agents.store().get(context, id).await.optional()? else {
+            return Ok(false);
+        };
         self.access_policy
             .require(
                 context,
@@ -165,10 +166,9 @@ impl AgentManager {
                 StoreError::PermissionDenied,
             )
             .await?;
-        if !self.agents.delete(context, id, &Removal::now(context.caller_id)).await? {
+        if !self.agents.delete(context, &agent, &Removal::now(context.caller_id)).await? {
             return Ok(false);
         }
-        self.events.announce(GlobalEvent::deleted::<Agent>(&id), &agent);
         info!(agent = %id, by = %context.caller_id, "Agent deleted");
         Ok(true)
     }
@@ -187,7 +187,6 @@ impl AgentManager {
     /// agent took its name in its scope meanwhile (issue 250).
     pub async fn restore(&self, context: &SecurityContext, id: AgentId) -> AgentResult<Agent> {
         let agent = self.holders.restore(self, context, id).await.map_err(store_error(id))?;
-        self.events.announce(GlobalEvent::restored::<Agent>(&id), &agent);
         info!(agent = %id, by = %context.caller_id, "Agent restored");
         Ok(agent)
     }
@@ -205,10 +204,8 @@ impl AgentManager {
     /// `StoreError::PermissionDenied` if they may see it but not purge it, or whatever else the
     /// stores report.
     pub async fn purge(&self, context: &SecurityContext, id: AgentId) -> AgentResult<bool> {
-        let purged = purge_behind(self.agents.as_ref(), context, id, async |agent| {
-            self.remove_behind(agent).await
-        })
-        .await?;
+        let purged =
+            self.agents.purge(context, id, async |agent| self.remove_behind(agent).await).await?;
         if purged {
             info!(agent = %id, by = %context.caller_id, "Agent purged");
         }
@@ -223,12 +220,8 @@ impl AgentManager {
 impl ScopeMember for AgentManager {
     type Entity = Agent;
 
-    fn store(&self) -> &dyn EntityStore<Agent> {
-        self.agents.as_ref()
-    }
-
-    fn events(&self) -> Option<&dyn EventPublisher> {
-        Some(self.events.as_ref())
+    fn lifecycle(&self) -> &Lifecycle<Agent> {
+        &self.agents
     }
 
     /// Removes the states of `agent` in every channel, and then what the plugins keep behind it

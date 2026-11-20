@@ -83,7 +83,8 @@ it registers, a plugin
     `caelumora-model-ollama`, the backend `comfyui` of `caelumora-model-comfyui` (issue 525) and the
     backend `systemone` of `caelumora-model-systemone` (issue 551);
 *   makes its kind go with what holds the scope it lies in (`scope_member`, a `ScopeMember`, which
-    says only what its kind adds - where it announces and what lies behind an entity), and
+    says only what its kind adds - the `Lifecycle` of its kind, which announces what it makes,
+    deletes and restores, and what lies behind an entity), and
     puts it into a scope only by the holders of scopes (`scope_holders`, a `ScopeHolders`): asked
     before it writes (`require`) and once it has written (`keep_made`, `restore`), so that
     nothing is left in the scope of a holder deleted meanwhile (issue 458);

@@ -3,6 +3,7 @@
 use super::check_restricting;
 use super::document::LiveDocument;
 use crate::group::keep_participants;
+use crate::lifecycle::Lifecycle;
 use arc_swap::Guard;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::approval::ApprovalRule;
@@ -17,7 +18,7 @@ use caelumora_domain::store::{StoreError, StoreResult};
 use caelumora_domain::value::name::Name;
 use caelumora_domain::workspace::WorkspaceId;
 use caelumora_security::SecurityContext;
-use caelumora_store::{EntityStore, EntityStores};
+use caelumora_store::EntityStores;
 use std::sync::Arc;
 use tracing::error;
 
@@ -25,7 +26,8 @@ use tracing::error;
 #[derive(Debug)]
 pub struct SessionController {
     session: LiveDocument<Session>,
-    groups: Arc<dyn EntityStore<Group>>,
+    /// The lifecycle of groups, by which the group of its participants follows them.
+    groups: Lifecycle<Group>,
 }
 
 impl SessionController {
@@ -40,9 +42,9 @@ impl SessionController {
                 session,
                 Arc::clone(&stores.sessions),
                 Arc::clone(&stores.groups),
-                event_publisher,
+                Arc::clone(&event_publisher),
             ),
-            groups: Arc::clone(&stores.groups),
+            groups: Lifecycle::new(&stores.groups, event_publisher),
         }
     }
 
@@ -331,7 +333,7 @@ impl SessionController {
     /// 286), as a channel's does: the change was permitted and is stored. A failure is logged and
     /// corrected by the next change, which derives the group anew.
     async fn keep_participants(&self, session: &Session) {
-        if let Err(e) = keep_participants(self.groups.as_ref(), Group::of_session(session)).await {
+        if let Err(e) = keep_participants(&self.groups, Group::of_session(session)).await {
             error!(session = %session.id, "The group of the session's participants does not follow them: {e}");
         }
     }

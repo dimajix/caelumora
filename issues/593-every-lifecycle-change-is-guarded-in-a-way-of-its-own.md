@@ -792,3 +792,21 @@ case; it is decided there, and may make this unnecessary.
   first. A team, with nothing behind it, is purged at once, its purge not begun first. The second
   step moves `ScopeMember` onto `lifecycle()`, with the `AgentManager`, the `WorkspaceManager`,
   `ScopeHolders`, `ScopedEntities` and the plugins' managers.
+- **2026-11-20** — Step R3c-1 committed. Step R3c-2 implemented, not committed yet: `ScopeMember`
+  hands out the `Lifecycle` of its kind (`lifecycle()`) in place of its store and where it
+  announces, so that `ScopedEntities` deletes, restores and purges what lies in a scope, and
+  `ScopeHolders` takes back what was made or restored meanwhile, by the lifecycles - each change
+  announced as its manager announces its own. `Lifecycle` is public now, for the plugins'
+  managers: the `AgentManager`, the `WorkspaceManager`, the `SkillManager` and the
+  `ArtifactManager` carry their lifecycle out by it - an artifact made by publishing is announced
+  with its version as before, which the lifecycle cannot. `Unowned` kinds have a lifecycle that
+  announces nothing, as before. The `GroupManager` makes the participants' groups - announced as
+  they are made or restored, not as their members change - and purges them
+  (`keep_participants`, `purge_participants`), and purging a channel's document or an own
+  project are the `SessionManager`'s (`purge_channel_held`, `purge_own_held`), by its lifecycles.
+  What is made and taken back is announced made and then deleted (`Lifecycle::discard`,
+  `GroupManager::discard_participants`): an agent, a workspace, a skill or an artifact taken back
+  as the holder of its scope went meanwhile (`keep_made`), a workspace whose place cannot be made,
+  what a session's or channel's making took back - where before nothing was announced; and one
+  restored and taken back for the same reason (`keep_restored`) is announced restored, then deleted.
+  A new artifact is announced with its version before it may be taken back.

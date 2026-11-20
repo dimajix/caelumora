@@ -18,11 +18,9 @@ use crate::channel::{ChannelLoop, Participation};
 use crate::command::CommandExecutor;
 use crate::controller::{ControllerManager, SessionController, WorkspaceController};
 use crate::event::{EventBus, EventSubscription, Following, SubscriptionTopic};
-use crate::group::keep_participants;
 use crate::kernel::{ChannelRuntime, Kernel};
-use crate::lifecycle::Lifecycle;
 use crate::procedure::{ProcedureError, ProcedureExecutor};
-use crate::scoped::{purge_for_good, ScopeNotEmpty};
+use crate::scoped::ScopeNotEmpty;
 use crate::view::{Viewer, Views};
 use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Result};
@@ -34,11 +32,8 @@ use caelumora_domain::agent::{Agent, AgentUpdateEvent};
 use caelumora_domain::channel::{self, Channel, ChannelId};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::event::{Announcing, GlobalEvent};
-use caelumora_domain::group::Group;
-use caelumora_domain::group::GroupId;
 use caelumora_domain::privacy::SessionPrivacy;
 use caelumora_domain::project::{Project, ProjectId};
-use caelumora_domain::removal::Removal;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::session::{Session, SessionId};
 use caelumora_domain::store::{StoreError, StoreResult, StoreResultExt};
@@ -55,7 +50,6 @@ use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::{AbortHandle, JoinSet};
-use tracing::warn;
 
 /// A request for a channel that cannot be met as asked (issue 09). The
 /// messages are meant for users (see `crate::error::user_message`).
@@ -268,18 +262,6 @@ pub struct SessionLoop {
     following: Following,
 }
 
-/// Removes the document of channel `channel_id` for good, in the kernel's name, with the group of
-/// its participants: marked deleted first if it is not - a channel of a session being purged, which
-/// is hidden with the session, or one whose creation failed - since only what was deleted is purged
-/// (issue 164).
-pub(crate) async fn purge_channel_document(
-    stores: &EntityStores,
-    channel_id: ChannelId,
-) -> StoreResult<bool> {
-    purge_for_good(stores.groups.as_ref(), GroupId::of_channel(channel_id)).await?;
-    purge_for_good(stores.channels.as_ref(), channel_id).await
-}
-
 /// The own project of session `id`, if it is there: the one in its scope, found by its name
 /// (`Project::own_name`) in the kernel's name - none once it was lifted (issue 467).
 ///
@@ -291,57 +273,6 @@ async fn load_own(stores: &EntityStores, id: SessionId) -> StoreResult<Option<Pr
         .find_by_name(&SecurityContext::system(), &Project::own_name(id))
         .await
         .optional()
-}
-
-/// Removes `own`, the own project of a session, for good with the group of its members, in the
-/// kernel's name: as the session is purged, its making failed, or it was moved into an own made
-/// for it that it does not lie in after all. What lay in its scope is the caller's to have purged.
-///
-/// # Errors
-/// Whatever the store reports.
-async fn purge_own(stores: &EntityStores, own: ProjectId) -> StoreResult<()> {
-    purge_for_good(stores.groups.as_ref(), GroupId::of_project(own)).await?;
-    purge_for_good(stores.projects.as_ref(), own).await?;
-    Ok(())
-}
-
-/// Makes `own`, a session's own project, by `lifecycle`, which announces it, with the group of its
-/// members, in the kernel's name (issue 467) - the group first, so that its members hear of the
-/// project, and both, or, if the project cannot be made, neither: as the session is made, or taken
-/// out of a project once its own was lifted.
-///
-/// # Errors
-/// Whatever the store reports.
-async fn make_own(
-    lifecycle: &Lifecycle<Project>,
-    stores: &EntityStores,
-    own: &mut Project,
-) -> StoreResult<()> {
-    keep_participants(stores.groups.as_ref(), Group::of_project(own)).await?;
-    if let Err(error) = lifecycle.create(&SecurityContext::system(), own).await {
-        if let Err(undo) = purge_for_good(stores.groups.as_ref(), GroupId::of_project(own.id)).await
-        {
-            warn!(project = %own.id, "The group of a session's own project that could not be made is left: {undo}");
-        }
-        return Err(error);
-    }
-    Ok(())
-}
-
-/// Takes `own`, made as a session's own project and not to be kept, back, in the kernel's name: it
-/// is marked deleted by `lifecycle`, which announces it so, as its making was announced, then
-/// purged for good with the group of its members (`purge_own`).
-///
-/// # Errors
-/// Whatever the store reports.
-async fn discard_own(
-    lifecycle: &Lifecycle<Project>,
-    stores: &EntityStores,
-    own: &Project,
-) -> StoreResult<()> {
-    let system = SecurityContext::system();
-    lifecycle.delete(&system, own, &Removal::now(system.caller_id)).await?;
-    purge_own(stores, own.id).await
 }
 
 /// Asks whether `context` may attach the workspace `id` to the session `session_id` (issue 253):
