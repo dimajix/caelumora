@@ -154,7 +154,7 @@ impl ChannelLoop {
     ///
     /// # Errors
     /// `ChannelError::NotAParticipant`; `ChannelError::Forbidden` if they may not leave; what
-    /// resolving the participant reports (`Participation::resolve`).
+    /// resolving the participant reports (`ResolvedParticipant::resolve`).
     pub(crate) async fn require_exit(
         &self,
         context: &SecurityContext,
@@ -261,7 +261,7 @@ impl ChannelLoop {
             let actor = participant.actor_id();
             match self.actors.load().get(&actor).cloned() {
                 // Running: only whether it still exists matters.
-                Some(running) => match self.participation.agent_exists(id).await {
+                Some(running) => match self.controllers.agent_exists(id).await {
                     Ok(true) => {}
                     Ok(false) => {
                         let system = SecurityContext::system();

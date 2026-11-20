@@ -165,7 +165,7 @@ impl SessionLoop {
     ///
     /// # Errors
     /// `SessionError::NotAParticipant`; `StoreError::PermissionDenied` if they may not leave; what
-    /// resolving the participant reports (`Participation::resolve`).
+    /// resolving the participant reports (`ResolvedParticipant::resolve`).
     pub(crate) async fn require_exit(
         &self,
         context: &SecurityContext,
@@ -178,7 +178,8 @@ impl SessionLoop {
         if exit == Exit::Leaving {
             let attributes = self.session().security_attributes.clone();
             let leaving = ActionType::LeaveSession(&attributes);
-            let Some(resolved) = self.participation.resolve(&leaver, self.id, None).await? else {
+            let resolving = ResolvedParticipant::resolve(&self.controllers, &leaver, self.id, None);
+            let Some(resolved) = resolving.await? else {
                 return Err(StoreError::PermissionDenied(leaving.refused()).into());
             };
             self.participation
@@ -219,7 +220,7 @@ impl SessionLoop {
     }
 
     /// `participant` with what its actor is built from, to be taken into the session and into
-    /// `channel` too, where one is named (`Participation::resolve`). Asks nothing.
+    /// `channel` too, where one is named (`ResolvedParticipant::resolve`). Asks nothing.
     ///
     /// # Errors
     /// `SessionError::CannotTakeIn` for a user or agent that no longer exists; whatever reading
@@ -229,8 +230,8 @@ impl SessionLoop {
         participant: &Participant,
         channel: Option<&Arc<ChannelLoop>>,
     ) -> Result<ResolvedParticipant> {
-        self.participation
-            .resolve(participant, self.id, channel.map(|channel| channel.id()))
+        let channel = channel.map(|channel| channel.id());
+        ResolvedParticipant::resolve(&self.controllers, participant, self.id, channel)
             .await?
             .ok_or_else(|| SessionError::CannotTakeIn(participant.actor_id()).into())
     }

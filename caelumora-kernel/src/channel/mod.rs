@@ -7,6 +7,7 @@ mod history;
 mod inbox;
 mod participants;
 mod participation;
+mod resolved;
 mod run;
 mod settings;
 #[cfg(any(test, feature = "test-support"))]
@@ -16,7 +17,8 @@ mod tests;
 mod thread;
 mod threads;
 
-pub(crate) use participation::{Participation, ResolvedKind, ResolvedParticipant};
+pub(crate) use participation::Participation;
+pub(crate) use resolved::{ResolvedKind, ResolvedParticipant};
 
 use crate::actor::approval::ApproverActor;
 use crate::actor::user::UserActor;
@@ -166,7 +168,7 @@ pub enum ChannelError {
     ThreadQuiet { thread: ThreadId, channel: ChannelId },
 }
 
-/// Whether `error` of `Participation::resolve` or of building its actor says
+/// Whether `error` of `ResolvedParticipant::resolve` or of building its actor says
 /// that the participant cannot be run - its agent's personality, or the
 /// component bundles it includes (issue 270), are gone or not the
 /// agent's to read - rather than that the store failed.
@@ -467,9 +469,10 @@ impl ChannelLoop {
     }
 
     /// `participant` with what its actor is built from
-    /// (`Participation::resolve`).
+    /// (`ResolvedParticipant::resolve`).
     async fn resolve(&self, participant: &Participant) -> Result<Option<ResolvedParticipant>> {
-        self.participation.resolve(participant, self.session_id, Some(self.id)).await
+        ResolvedParticipant::resolve(&self.controllers, participant, self.session_id, Some(self.id))
+            .await
     }
 
     /// The session the channel belongs to (issues 123, 361), given it with

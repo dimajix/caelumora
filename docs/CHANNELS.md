@@ -671,15 +671,16 @@ Adding is asked first as `UpdateChannel`, before anything of the newcomer is loo
 `cleared` with the channel's classification, where a policy can hold the channel's level against the
 newcomer (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
 
-Who takes part in a channel and whether they may is one question, owned by `Participation` (issue
-356), which the `Kernel` holds once for the instance with the services it is asked with: the
-agents' store, the controllers, the `AccessPolicy` and the `ConfidentialityPolicy`. It resolves a
-participant as a document names it into a `ResolvedParticipant` - what its actor is built from, and
-the place it takes part in -, which asks nothing, and answers whether it may run, join or leave, lie
-where it may and is cleared for the channel, each a question of its own that whoever needs it asks
-in its order. The session and channel loops and the `SessionManager` ask it alike: when
-a channel is created, restored or built, when someone is taken in or leaves or an agent comes back,
-and when a channel is reclassified.
+Whether someone may take part in a channel is decided in one place, `Participation` (issue 356),
+which the `Kernel` holds once for the instance with the policies it decides by: the `AccessPolicy`
+and the `ConfidentialityPolicy`. It is given a participant resolved - a `ResolvedParticipant`, what
+a document names resolved by the controllers into what its actor is built from, and the place it
+takes part in (`ResolvedParticipant::resolve`), which asks nothing -, and answers whether it may
+run, join or leave, lie where it may and is cleared for the channel, each a question of its own that
+whoever needs it asks in its order. The session and channel loops ask it - the procedures through
+them, until they ask it themselves (issue 593, step 5r): when a channel is created, restored or
+built, when someone is taken in or leaves or an agent comes back, and when a channel is
+reclassified.
 
 ### Taking someone into the session
 
@@ -743,8 +744,8 @@ channel it takes part in until it is restored. The channels follow its mark inst
     lists it, in the kernel's name, by a procedure that holds the agent there
     (`participant::Follow`), and announces it as a leave (`channel::LEFT`);
 *   a channel that starts leaves it out, as any participant that no longer exists -
-    `Participation::resolve` asks the store whether it exists, not the controllers, which keep an
-    agent's controller while an actor of it still runs;
+    `ResolvedParticipant::resolve` asks the store whether it exists, not the controllers, which keep
+    an agent's controller while an actor of it still runs;
 *   the views show it as a former participant, removed as its mark says, and keep its name, so that
     what it said keeps its sender.
 

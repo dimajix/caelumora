@@ -380,9 +380,9 @@ The procedures, by step, each step reviewed and committed on its own:
    - R1: `Admitted` goes, with `Locks::admitted`; `Compensation::keep` keeps what holds a session
      against the other processes until the procedure is done, undone too. The rule of who enforces
      and who decides is written down.
-   - R2: resolving a participant moves from `Participation` to the `ControllerManager`
-     (`resolve_participant`, `agent_exists`), so that `Participation` only decides;
-     `require_admitted` takes the participants resolved.
+   - R2: resolving a participant moves out of `Participation` - to `ResolvedParticipant::resolve`,
+     beside its other constructors, and `ControllerManager::agent_exists` -, so that
+     `Participation` only decides; `require_admitted` takes the participants resolved.
    - R3: the executor holds the kernel, weak, and hands it to the procedures it carries out
      (`Procedure::enumerate`, `carry_out`), and a procedure holds only its parameters - each
      procedure from the step that rewrites it on. Then the lifecycle of
@@ -727,3 +727,13 @@ case; it is decided there, and may make this unnecessary.
   the future that undoes it, run only if it is undone; `Compensation::keep` keeps what holds a
   session against the other processes until the procedure is done, undone too. The rule of who
   enforces and who decides is in SECURITY.md.
+- **2026-11-20** — Step R1 committed. Step R2 implemented, not committed yet: as the maintainer
+  decided, resolving a participant is `ResolvedParticipant::resolve`, beside its constructors
+  `internal` and `delegate`, rather than the `ControllerManager`'s - which would have known a type
+  of the channels it is beneath -, and `resolve_existing` for whom `require_admitted` is asked of;
+  whether an agent exists is `ControllerManager::agent_exists`. `ResolvedParticipant` has a file of
+  its own (`channel/resolved.rs`), and `Participation` holds the policies alone.
+  The one difference of R2: `require_admitted` is asked once all are resolved, so that a
+  participant that cannot be resolved - an agent whose personality is gone - is reported before a
+  refusal of one named earlier; before, each was resolved and asked in turn. Whether an agent may
+  take part by where it lies is a decision of `Participation`'s (`require_in_scope`).

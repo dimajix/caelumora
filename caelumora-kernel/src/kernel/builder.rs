@@ -713,11 +713,7 @@ impl KernelBuilder {
         ];
         let scope_members = kernel_members.into_iter().chain(self.scope_members).collect();
         let scoped = Arc::new(ScopedEntities::new(scope_members));
-        let participation = Arc::new(Participation::new(
-            Arc::clone(&self.entity_stores.agents),
-            Arc::clone(&self.controller_manager),
-            &self.policies,
-        ));
+        let participation = Arc::new(Participation::new(&self.policies));
         Ok(Kernel {
             policies: self.policies,
             state_store: self.persistence.state_store(),

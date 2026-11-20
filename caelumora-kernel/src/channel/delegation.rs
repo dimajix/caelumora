@@ -2,8 +2,8 @@
 //! delegate to its recipient, and what came of it brought back to its giver where the thread was
 //! opened - each thread's delegation kept in the channel's state, which the channel alone writes.
 
-use super::participation::ResolvedParticipant;
 use super::run::RunningActor;
+use super::ResolvedParticipant;
 use super::{ActorChange, ChannelError, ChannelLoop};
 use crate::actor::delegate::DelegateActor;
 use anyhow::{anyhow, Result};

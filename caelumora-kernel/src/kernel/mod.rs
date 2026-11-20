@@ -95,7 +95,8 @@ pub struct Kernel {
     agent_kinds: Arc<AgentKinds>,
     event_bus: Arc<EventBus>,
     controller_manager: Arc<ControllerManager>,
-    /// Who takes part in a channel and whether they may (issue 356).
+    /// The decisions on participants: whether one may run, take part in a channel, and act for
+    /// whom (issue 356).
     participation: Arc<Participation>,
     commands: ComponentConfig,
     /// What the system restricts of tool calls everywhere
@@ -253,7 +254,8 @@ impl Kernel {
         &self.controller_manager
     }
 
-    /// Who takes part in a channel and whether they may (issue 356).
+    /// The decisions on participants: whether one may run, take part in a channel, and act for
+    /// whom (issue 356).
     pub(crate) fn participation(&self) -> &Arc<Participation> {
         &self.participation
     }

@@ -1,127 +1,31 @@
-//! Who takes part in a channel: a participant with what its actor is built from, and whether it
-//! may take part - come in, or go out by its own act.
+//! `Participation`: the decisions on participants - whether one may run, take part in a channel,
+//! and act for whom, by its own act or as its owner.
 
-use super::ChannelError;
-use crate::controller::{
-    AgentController, ControllerManager, PersonalityController, UserController,
-};
+use super::{ChannelError, ResolvedKind, ResolvedParticipant};
 use anyhow::Result;
-use caelumora_domain::actor::ActorId;
-use caelumora_domain::agent::{Agent, AgentId, Personality};
-use caelumora_domain::approval::Approver;
-use caelumora_domain::channel::{Channel, ChannelId, InternalActor, Participant, ThreadId};
+use caelumora_domain::agent::Personality;
+use caelumora_domain::channel::Channel;
 use caelumora_domain::confidentiality::Classification;
-use caelumora_domain::role::RoleId;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::security::Refused;
-use caelumora_domain::session::SessionId;
-use caelumora_domain::store::{StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_domain::store::{StoreError, StoreResult, Stored};
 use caelumora_security::confidentiality::ConfidentialityQuestions;
 use caelumora_security::{ActionType, Enforcement, Policies, SecurityContext};
-use caelumora_store::EntityStore;
-use std::iter;
-use std::sync::Arc;
 
-/// A participant as a document names it (`Participant`), resolved: with
-/// what it is in this instance (`ResolvedKind`) - what its actor is built
-/// from, and what its context and clearances follow from -, and the place
-/// it takes part in: a channel of a session, or the session alone, as it is
-/// taken in without a channel (issues 354, 356). Resolved, and asked
-/// whether it may take part there, by `Participation`.
-#[derive(Debug, Clone)]
-pub(crate) struct ResolvedParticipant {
-    kind: ResolvedKind,
-    session_id: SessionId,
-    /// `None` for one taken into the session alone.
-    channel_id: Option<ChannelId>,
-}
-
-/// What a participant is resolved to: the instance's controller of its
-/// user or agent (issue 121) - or, for an internal actor of the channel
-/// (issue 420), the approver itself, or the thread a delegate delegates into (issue 557). An
-/// agent comes with the controller of its personality (issue 406), whose kind says how its
-/// actor is built (issue 179, `AgentKinds`). What it is cleared for follows
-/// from it as well (`ResolvedParticipant::clearances`).
-#[derive(Debug, Clone)]
-pub(crate) enum ResolvedKind {
-    User(Arc<UserController>),
-    Agent(Arc<AgentController>, Arc<PersonalityController>),
-    Approver(Approver),
-    Delegate(ThreadId),
-}
-
-/// The question who takes part in a channel and whether they may, with the
-/// services it is asked with (issue 356): the store of the agents - whether
-/// one exists -, the controllers participants are built from, the
-/// `AccessPolicy` and the `ConfidentialityPolicy`. One for the instance,
-/// held by the `Kernel`, asked by the session and channel loops and
-/// the `SessionManager` alike - when a channel is created, restored or
-/// built, when someone joins or is added, when someone leaves, when an agent
-/// comes back and when a channel is reclassified.
+/// The decisions on participants (issue 356): who may run, take part in a channel, and act for
+/// whom - asked by whoever enforces them: a loop as it acts, a procedure as it acts or ahead, each
+/// refusal turned into the asker's error. One for the instance, held by the `Kernel`, deciding by
+/// its `AccessPolicy` and `ConfidentialityPolicy` alone; who a participant is, it is given
+/// (`ResolvedParticipant::resolve`).
 #[derive(Debug)]
 pub(crate) struct Participation {
-    agents: Arc<dyn EntityStore<Agent>>,
-    controllers: Arc<ControllerManager>,
     policies: Policies,
 }
 
 impl Participation {
-    pub(crate) fn new(
-        agents: Arc<dyn EntityStore<Agent>>,
-        controllers: Arc<ControllerManager>,
-        policies: &Policies,
-    ) -> Self {
-        Self { agents, controllers, policies: policies.clone() }
-    }
-
-    /// `participant` of channel `channel_id` of session `session_id` - of the session alone
-    /// without one - resolved: with its controller, an agent also with its personality's, for its
-    /// own context and for its actor to be built from; `None` if its user or agent no longer
-    /// exists, an agent as `agent_exists` says. Asks nothing: whether it may run is
-    /// `require_runnable`'s, asked by whoever builds its actor or admits it.
-    ///
-    /// # Errors
-    /// Whatever else the store reports when loading it - also that an agent's personality is gone.
-    pub(crate) async fn resolve(
-        &self,
-        participant: &Participant,
-        session_id: SessionId,
-        channel_id: Option<ChannelId>,
-    ) -> Result<Option<ResolvedParticipant>> {
-        let at = |kind| ResolvedParticipant { kind, session_id, channel_id };
-        let agent = match participant {
-            Participant::User(id) => {
-                return Ok(self
-                    .controllers
-                    .user_controller(*id)
-                    .await
-                    .optional()?
-                    .map(|user| at(ResolvedKind::User(user))))
-            }
-            Participant::Agent(id) => {
-                if !self.agent_exists(*id).await? {
-                    return Ok(None);
-                }
-                match self.controllers.agent_controller(*id).await.optional()? {
-                    Some(agent) => agent,
-                    None => return Ok(None),
-                }
-            }
-        };
-        let personality =
-            self.controllers.personality_controller(agent.load().personality_id).await?;
-        Ok(Some(at(ResolvedKind::Agent(agent, personality))))
-    }
-
-    /// Whether agent `id` exists - neither deleted nor purged -, asked of
-    /// the agents' store rather than of the controllers: the instance keeps
-    /// the controller of an agent while an actor of it runs, also once it
-    /// was deleted (issue 314).
-    ///
-    /// # Errors
-    /// Whatever the store reports but that there is none.
-    pub(crate) async fn agent_exists(&self, id: AgentId) -> StoreResult<bool> {
-        Ok(self.agents.get(&SecurityContext::system(), id).await.optional()?.is_some())
+    /// The decisions on participants, by `policies`.
+    pub(crate) fn new(policies: &Policies) -> Self {
+        Self { policies: policies.clone() }
     }
 
     /// Nothing if `resolved` can be run: an agent only with a personality it may read, in its place
@@ -132,7 +36,7 @@ impl Participation {
     /// # Errors
     /// `StoreError::PermissionDenied` if the personality is not the agent's to read.
     pub(crate) async fn require_runnable(&self, resolved: &ResolvedParticipant) -> StoreResult<()> {
-        match (&resolved.kind, resolved.context()) {
+        match (resolved.kind(), resolved.context()) {
             (ResolvedKind::Agent(_, personality), Some(context)) => {
                 self.policies
                     .access_policy()
@@ -201,7 +105,7 @@ impl Participation {
         context: &SecurityContext,
         classification: &Classification,
     ) -> Result<()> {
-        let Some(channel) = resolved.channel_id else { return Ok(()) };
+        let Some(channel) = resolved.channel_id() else { return Ok(()) };
         let participant = resolved.actor_id();
         for roles in resolved.clearances() {
             self.policies.confidentiality().require_cleared(
@@ -217,7 +121,7 @@ impl Participation {
 
     /// Nothing if `resolved` may take part in its channel, classified
     /// `classification`, asked in `context`: it lies where it may
-    /// (`ResolvedParticipant::require_in_scope`) and is cleared for it
+    /// (`require_in_scope`) and is cleared for it
     /// (`require_cleared`).
     ///
     /// # Errors
@@ -228,137 +132,47 @@ impl Participation {
         context: &SecurityContext,
         classification: &Classification,
     ) -> Result<()> {
-        resolved.require_in_scope()?;
+        require_in_scope(resolved)?;
         self.require_cleared(resolved, context, classification)
     }
 
-    /// Nothing if every one of `participants` that still exists can run (`require_runnable`) and
-    /// may take part in `channel` (`require_admissible`) - asked before anything of a new or
-    /// restored channel is stored: of the founders of a new one (issue 420), of the participants of
-    /// a restored one.
+    /// Nothing if every one of `founders` can run (`require_runnable`) and may take part in
+    /// `channel` (`require_admissible`) - asked before anything of a new or restored channel is
+    /// stored: of the founders of a new one (issue 420), of the participants of a restored one,
+    /// those that still exist (`ResolvedParticipant::resolve_existing`). Each is asked in turn,
+    /// once all are resolved: whatever resolving them reported comes before a refusal.
     ///
     /// # Errors
     /// `ChannelError::OutOfScope` or `NotCleared` for the first who may not;
-    /// `StoreError::PermissionDenied` for an agent that cannot run; whatever reading a participant
-    /// reports.
+    /// `StoreError::PermissionDenied` for an agent that cannot run.
     pub(crate) async fn require_admitted(
         &self,
         context: &SecurityContext,
         channel: &Channel,
-        participants: &[Participant],
+        founders: &[ResolvedParticipant],
     ) -> Result<()> {
-        for participant in participants {
-            if let Some(resolved) =
-                self.resolve(participant, channel.session_id, Some(channel.id)).await?
-            {
-                self.require_runnable(&resolved).await?;
-                self.require_admissible(&resolved, context, &channel.classification)?;
-            }
+        for founder in founders {
+            self.require_runnable(founder).await?;
+            self.require_admissible(founder, context, &channel.classification)?;
         }
         Ok(())
     }
 }
 
-impl ResolvedParticipant {
-    /// `internal`, an internal actor of channel `channel_id` of session
-    /// `session_id` (issue 420): what its actor is built from, nothing to
-    /// resolve.
-    pub(crate) fn internal(
-        internal: &InternalActor,
-        session_id: SessionId,
-        channel_id: ChannelId,
-    ) -> Self {
-        let kind = match internal {
-            InternalActor::Approver(approver) => ResolvedKind::Approver(approver.clone()),
-        };
-        Self { kind, session_id, channel_id: Some(channel_id) }
-    }
-
-    /// The delegate of `thread`, of channel `channel_id` of session `session_id` (issue 557): an
-    /// internal actor of the channel, which nothing lists - the thread it delegates into is what
-    /// its actor is built from.
-    pub(crate) fn delegate(thread: ThreadId, session_id: SessionId, channel_id: ChannelId) -> Self {
-        Self { kind: ResolvedKind::Delegate(thread), session_id, channel_id: Some(channel_id) }
-    }
-
-    /// What its actor is built from.
-    pub(crate) fn kind(&self) -> &ResolvedKind {
-        &self.kind
-    }
-
-    pub(crate) fn actor_id(&self) -> ActorId {
-        match &self.kind {
-            ResolvedKind::User(user) => ActorId::User(user.id()),
-            ResolvedKind::Agent(agent, _) => ActorId::Agent(agent.id()),
-            ResolvedKind::Approver(approver) => ActorId::Approver(approver.id),
-            ResolvedKind::Delegate(thread) => ActorId::Delegate(*thread),
-        }
-    }
-
-    /// The context the participant acts in, in its place: a user's own, an
-    /// agent's with its owner's rights and roles, limited by its
-    /// personality's (issue 179) - as the controllers hold them now (issues
-    /// 304, 306). None for an internal actor of the channel. A participant of the session alone
-    /// acts in no channel, which a `SecurityContext` names as the default id.
-    pub(super) fn context(&self) -> Option<SecurityContext> {
-        let (session, channel) = (self.session_id, self.channel_id.unwrap_or_default());
-        match &self.kind {
-            ResolvedKind::User(user) => Some(user.security_context(session, channel)),
-            ResolvedKind::Agent(agent, personality) => {
-                Some(agent.security_context(session, channel, personality.load().limiting_roles()))
-            }
-            ResolvedKind::Approver(_) | ResolvedKind::Delegate(_) => None,
-        }
-    }
-
-    /// The context the participant acts in, in `channel`, for `initiator` (issue 516): a user's
-    /// own, an agent's with its owner's rights and roles, limited by its personality, as the
-    /// controllers hold them now, the approver's and a delegate's - internal actors of the
-    /// channel - answered for by the channel's owner (`SecurityContext::of_approver`,
-    /// `of_delegate`).
-    pub(crate) fn context_in(&self, channel: &Channel, initiator: ActorId) -> SecurityContext {
-        let own = match &self.kind {
-            ResolvedKind::User(user) => user.security_context(channel.session_id, channel.id),
-            ResolvedKind::Agent(agent, personality) => agent.security_context(
-                channel.session_id,
-                channel.id,
-                personality.load().limiting_roles(),
-            ),
-            ResolvedKind::Approver(approver) => SecurityContext::of_approver(approver, channel),
-            ResolvedKind::Delegate(thread) => SecurityContext::of_delegate(*thread, channel),
-        };
-        SecurityContext { initiator_id: initiator, ..own }
-    }
-
-    /// The sets of roles the participant has to be cleared by, each of them
-    /// (issues 133, 179): a user's own; an agent's owner's - it must not
-    /// see more than the person responsible for it - and, if its
-    /// personality limits it, those roles too, which narrow the owner's and
-    /// never widen them. None for an internal actor of the channel.
-    fn clearances(&self) -> Vec<Vec<RoleId>> {
-        let Some(context) = self.context() else { return Vec::new() };
-        iter::once(context.roles).chain(context.limiting_roles).collect()
-    }
-
-    /// Nothing if the participant may take part in its channel by where it lies:
-    /// an agent of a session's or a channel's scope only within it
-    /// (`Scope::admits`, issue 178). A question of a channel: a participant of
-    /// the session alone is not asked it, and answers nothing.
-    ///
-    /// # Errors
-    /// `ChannelError::OutOfScope` if it may not.
-    fn require_in_scope(&self) -> Result<(), ChannelError> {
-        let Some(channel_id) = self.channel_id else { return Ok(()) };
-        let ResolvedKind::Agent(agent, _) = &self.kind else { return Ok(()) };
-        if agent
-            .load()
-            .name
-            .scope
-            .admits(&Scope::ChannelScope { session_id: self.session_id, channel_id })
-        {
-            Ok(())
-        } else {
-            Err(ChannelError::OutOfScope { participant: self.actor_id(), channel: channel_id })
+/// Nothing if `resolved` may take part in its channel by where it lies: an agent of a session's or
+/// a channel's scope only within it (`Scope::admits`, issue 178). A question of a channel: a
+/// participant of the session alone is not asked it, and answers nothing.
+///
+/// # Errors
+/// `ChannelError::OutOfScope` if it may not.
+fn require_in_scope(resolved: &ResolvedParticipant) -> Result<(), ChannelError> {
+    let Some(channel_id) = resolved.channel_id() else { return Ok(()) };
+    let ResolvedKind::Agent(agent, _) = resolved.kind() else { return Ok(()) };
+    let channel = Scope::ChannelScope { session_id: resolved.session_id(), channel_id };
+    match agent.load().name.scope.admits(&channel) {
+        true => Ok(()),
+        false => {
+            Err(ChannelError::OutOfScope { participant: resolved.actor_id(), channel: channel_id })
         }
     }
 }
@@ -374,6 +188,7 @@ fn own_context(
 
 #[cfg(test)]
 mod tests {
+    use crate::channel::ResolvedParticipant;
     use crate::session::testing::*;
     use crate::session::{ChannelSpec, SessionManager};
     use caelumora_domain::actor::ActorId;
@@ -481,9 +296,13 @@ mod tests {
                     classification,
                     None,
                 );
+                let named = [Participant::Agent(id)];
+                let controllers = kernel.controller_manager();
+                let founders = ResolvedParticipant::resolve_existing(controllers, &named, &channel);
+                let founders = founders.await.unwrap();
                 kernel
                     .participation()
-                    .require_admitted(&alice_ctx, &channel, &[Participant::Agent(id)])
+                    .require_admitted(&alice_ctx, &channel, &founders)
                     .await
                     .is_ok()
             }

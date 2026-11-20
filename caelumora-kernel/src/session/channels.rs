@@ -4,7 +4,7 @@ use super::{
     purge_channel_document, require_classification, ChannelEntry, ChannelRun, ChannelSpec, Listed,
     SessionError, SessionLoop,
 };
-use crate::channel::ChannelLoop;
+use crate::channel::{ChannelLoop, ResolvedParticipant};
 use crate::group::keep_participants;
 use crate::scoped::ScopeNotEmpty;
 use crate::view::{channel_reading, ReadingBasis};
@@ -280,7 +280,10 @@ impl SessionLoop {
                 StoreError::PermissionDenied,
             )
             .await?;
-        self.participation.require_admitted(context, &channel, &participants).await?;
+        let founders =
+            ResolvedParticipant::resolve_existing(&self.controllers, &participants, &channel)
+                .await?;
+        self.participation.require_admitted(context, &channel, &founders).await?;
         Ok((channel, participants.iter().map(Participant::actor_id).collect()))
     }
 
@@ -751,6 +754,8 @@ impl SessionLoop {
         let session = self.session();
         let (staying, gone): (Vec<Participant>, Vec<Participant>) =
             channel.participants.iter().cloned().partition(|p| session.takes_part(p.actor_id()));
+        let staying =
+            ResolvedParticipant::resolve_existing(&self.controllers, &staying, channel).await?;
         self.participation.require_admitted(context, channel, &staying).await?;
         let gone = gone.iter().map(Participant::actor_id).collect();
         Ok((deleted, gone))
