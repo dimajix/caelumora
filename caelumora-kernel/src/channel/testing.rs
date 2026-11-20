@@ -16,9 +16,7 @@ use crate::kernel::{ChannelRuntime, Kernel, ParticipantRuntime};
 use crate::procedure::channel::Reclassify;
 use crate::procedure::participant::{let_go_from_channel, Exit, LetGo, TakeIn};
 use crate::procedure::thread;
-use crate::procedure::{
-    Admitted, Compensation, Deferred, Key, Locks, Procedure, ProcedureExecutor,
-};
+use crate::procedure::{Compensation, Deferred, Key, Locks, Procedure, ProcedureExecutor};
 use crate::session::{SessionError, SessionLoop, SessionManager};
 use crate::testing::shown;
 use crate::view::AgentContextView;
@@ -59,6 +57,7 @@ use caelumora_store::{EntityStores, Persistence};
 use futures::future::BoxFuture;
 use std::collections::HashMap;
 use std::convert::Infallible;
+use std::future::Future;
 use std::mem;
 use std::sync;
 use std::sync::Arc;
@@ -569,12 +568,9 @@ impl ChannelLoop {
             return session.procedures().run(letting_go).await.map_err(SessionError::untyped);
         }
         let (channel, context) = (Arc::clone(self), context.clone());
-        self.holding(move |admitted| {
-            Box::pin(async move {
-                let letting_go =
-                    let_go_from_channel(admitted, &channel, &context, participant, exit);
-                letting_go.await.map_err(SessionError::untyped)
-            })
+        self.holding(async move {
+            let letting_go = let_go_from_channel(&channel, &context, participant, exit);
+            letting_go.await.map_err(SessionError::untyped)
         })
         .await
     }
@@ -594,12 +590,7 @@ impl ChannelLoop {
             return session.procedures().run(reclassifying).await.map_err(SessionError::untyped);
         }
         let (channel, context) = (Arc::clone(self), context.clone());
-        self.holding(move |admitted| {
-            Box::pin(
-                async move { channel.reclassify_held(admitted, &context, classification).await },
-            )
-        })
-        .await
+        self.holding(async move { channel.reclassify_held(&context, classification).await }).await
     }
 
     /// Adds `participant` to the channel on behalf of `context`, seeing as much of its history as
@@ -642,12 +633,8 @@ impl ChannelLoop {
         // A channel of no session takes nobody in: its threads are opened without founders.
         anyhow::ensure!(founders.is_empty(), "a channel of no session takes no founders in");
         let (channel, context, opened) = (Arc::clone(self), context.clone(), ThreadId::new());
-        self.holding(move |admitted| {
-            Box::pin(
-                async move { channel.open_thread_held(admitted, &context, opened, origin).await },
-            )
-        })
-        .await?;
+        self.holding(async move { channel.open_thread_held(&context, opened, origin).await })
+            .await?;
         Ok(opened)
     }
 
@@ -666,12 +653,10 @@ impl ChannelLoop {
         }
         let (channel, context) = (Arc::clone(self), context.clone());
         let (closed_tx, closed_rx) = oneshot::channel();
-        self.holding(move |admitted| {
-            Box::pin(async move {
-                let closed = channel.close_thread_held(admitted, &context, thread).await?;
-                let _ = closed_tx.send(closed);
-                Ok(())
-            })
+        self.holding(async move {
+            let closed = channel.close_thread_held(&context, thread).await?;
+            let _ = closed_tx.send(closed);
+            Ok(())
         })
         .await?;
         Ok(closed_rx.await.unwrap_or(false))
@@ -686,10 +671,7 @@ impl ChannelLoop {
     /// Carries `change` out under a hold of the channel, for a channel of no session.
     async fn holding(
         &self,
-        change: impl for<'a> FnOnce(&'a Admitted<'a>) -> BoxFuture<'a, Result<()>>
-            + Send
-            + Sync
-            + 'static,
+        change: impl Future<Output = Result<()>> + Send + 'static,
     ) -> Result<()> {
         under_hold(self.runtime.procedures(), Key::Channel(self.session_id, self.id), change).await
     }
@@ -704,22 +686,21 @@ impl ChannelLoop {
 pub(crate) async fn under_hold(
     procedures: &ProcedureExecutor,
     key: Key,
-    change: impl for<'a> FnOnce(&'a Admitted<'a>) -> BoxFuture<'a, Result<()>> + Send + Sync + 'static,
+    change: impl Future<Output = Result<()>> + Send + 'static,
 ) -> Result<()> {
+    let change = sync::Mutex::new(Box::pin(change) as BoxFuture<'static, Result<()>>);
     procedures.run(Holding { key, change }).await
 }
 
-/// A change of a test under the proof of admission, holding `key` exclusively.
-struct Holding<F> {
+/// A change of a test, carried out holding `key` exclusively.
+struct Holding {
     key: Key,
-    change: F,
+    /// Behind a lock, since a procedure is `Sync` and a boxed future only `Send`.
+    change: sync::Mutex<BoxFuture<'static, Result<()>>>,
 }
 
 #[async_trait]
-impl<F> Procedure for Holding<F>
-where
-    F: for<'a> FnOnce(&'a Admitted<'a>) -> BoxFuture<'a, Result<()>> + Send + Sync + 'static,
-{
+impl Procedure for Holding {
     type Plan = ();
     type Output = ();
     type Error = Error;
@@ -728,12 +709,7 @@ where
         locks.exclusive(self.key)
     }
 
-    async fn carry_out(
-        self,
-        (): (),
-        admitted: &Admitted<'_>,
-        _: &mut Compensation,
-    ) -> Result<(), Error> {
-        (self.change)(admitted).await
+    async fn carry_out(self, (): (), _: &mut Compensation) -> Result<(), Error> {
+        self.change.into_inner().unwrap_or_else(sync::PoisonError::into_inner).await
     }
 }

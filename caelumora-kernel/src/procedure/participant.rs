@@ -7,13 +7,12 @@
 //! Taking in and letting go lock the session as opening it does, shared where it runs, exclusively
 //! where it starts it; following, which opens none, locks the running sessions shared with their
 //! participants. Each carries the change out by the building blocks of the `SessionLoop` and the
-//! `ChannelLoop`, which ask for the proof that it holds them (`Admitted`), and holds what it locked
-//! until `run` has carried the change out - an actor started and its join announced, an actor
-//! ended and its leave announced -, so that nobody takes the same participant in or lets them go
-//! meanwhile.
+//! `ChannelLoop`, and holds what it locked until `run` has carried the change out - an actor
+//! started and its join announced, an actor ended and its leave announced -, so that nobody takes
+//! the same participant in or lets them go meanwhile.
 
 use super::session::lock_to_open;
-use super::{Admitted, Compensation, Deferred, Key, Locks, Procedure};
+use super::{Compensation, Deferred, Key, Locks, Procedure};
 use crate::channel::{ChannelError, ChannelLoop, ResolvedParticipant};
 use crate::session::{SessionError, SessionLoop, SessionManager};
 use async_trait::async_trait;
@@ -115,13 +114,12 @@ impl Procedure for TakeIn {
     async fn carry_out(
         self,
         (): (),
-        admitted: &Admitted<'_>,
         log: &mut Compensation,
     ) -> Result<Arc<SessionLoop>, SessionError> {
         let Self { sessions, context, session, participant, coming_in } = self;
         let (session, entry, into) = match coming_in {
             ComingIn::Added(into) => {
-                let session = sessions.open_held(admitted, &context, session).await?;
+                let session = sessions.open_held(&context, session).await?;
                 if into.is_none() || !session.session().takes_part(participant) {
                     session.require_changing(&context).await?;
                 }
@@ -136,7 +134,7 @@ impl Procedure for TakeIn {
                 (session, Entry::Added, channel)
             }
             ComingIn::Joining(into) => {
-                let session = sessions.open_to_take_in(admitted, &context, session).await?;
+                let session = sessions.open_to_take_in(&context, session).await?;
                 let channel = match into {
                     Some(id) => Some((session.channel_to_join(id)?, HistoryAccess::All)),
                     None => None,
@@ -145,7 +143,7 @@ impl Procedure for TakeIn {
             }
         };
         let line = into.as_ref().map(|(c, history)| (c, *history, ThreadId::line(c.id())));
-        take_in(admitted, log, &session, &context, participant, entry, line).await?;
+        take_in(log, &session, &context, participant, entry, line).await?;
         Ok(session)
     }
 }
@@ -241,20 +239,15 @@ impl Procedure for LetGo {
     /// # Errors
     /// As `SessionManager::open_held`, `SessionLoop::channel_for` for the channel named, and as
     /// `let_go_from_channel` or `let_go_from_session`.
-    async fn carry_out(
-        self,
-        (): (),
-        admitted: &Admitted<'_>,
-        _: &mut Compensation,
-    ) -> Result<(), SessionError> {
+    async fn carry_out(self, (): (), _: &mut Compensation) -> Result<(), SessionError> {
         let Self { sessions, context, session, participant, from, exit } = self;
-        let session = sessions.open_held(admitted, &context, session).await?;
+        let session = sessions.open_held(&context, session).await?;
         match from {
             Some(channel) => {
                 let channel = session.channel_for(&context, channel).await?;
-                let_go_from_channel(admitted, &channel, &context, participant, exit).await
+                let_go_from_channel(&channel, &context, participant, exit).await
             }
-            None => let_go_from_session(admitted, &session, &context, participant, exit).await,
+            None => let_go_from_session(&session, &context, participant, exit).await,
         }
     }
 }
@@ -301,7 +294,6 @@ impl Entry {
 /// # Errors
 /// As `take_into_session` and `take_into_channel`.
 pub(crate) async fn take_in(
-    admitted: &Admitted<'_>,
     log: &mut Compensation,
     session: &Arc<SessionLoop>,
     context: &SecurityContext,
@@ -310,10 +302,9 @@ pub(crate) async fn take_in(
     into: Option<(&Arc<ChannelLoop>, HistoryAccess, ThreadId)>,
 ) -> Result<(), SessionError> {
     let channel = into.map(|(channel, ..)| channel);
-    let resolved =
-        take_into_session(admitted, log, session, context, participant, entry, channel).await?;
+    let resolved = take_into_session(log, session, context, participant, entry, channel).await?;
     let Some(line) = into else { return Ok(()) };
-    take_into_channel(admitted, log, context, resolved, entry, line).await
+    take_into_channel(log, context, resolved, entry, line).await
 }
 
 /// The first part of taking `participant` in (`take_in`): everything is asked of them once, each
@@ -329,7 +320,6 @@ pub(crate) async fn take_in(
 /// As `SessionLoop::newcomer`, `ChannelLoop::require_entry`, `SessionLoop::require_to_take_in`
 /// and `SessionLoop::list_participant_held`.
 pub(crate) async fn take_into_session(
-    admitted: &Admitted<'_>,
     log: &mut Compensation,
     session: &Arc<SessionLoop>,
     context: &SecurityContext,
@@ -347,11 +337,11 @@ pub(crate) async fn take_into_session(
         None => {}
     }
     session.require_to_take_in(context, &resolved, channel).await?;
-    let listed = session.list_participant_held(admitted, context, &resolved, entry).await?;
+    let listed = session.list_participant_held(context, &resolved, entry).await?;
     if let Some(before) = listed {
         let session = Arc::clone(session);
-        log.record("taking someone into a session", move |admitted| {
-            Box::pin(async move { session.undo_listing_held(admitted, participant, &before).await })
+        log.record("taking someone into a session", async move {
+            session.undo_listing_held(participant, &before).await
         });
     }
     Ok(resolved)
@@ -367,7 +357,6 @@ pub(crate) async fn take_into_session(
 /// As `ChannelLoop::history_start`, `list_participant_held` and `start_participant_held`;
 /// `ChannelError::Stopped` if the channel stopped before it started the actor.
 pub(crate) async fn take_into_channel(
-    admitted: &Admitted<'_>,
     log: &mut Compensation,
     context: &SecurityContext,
     resolved: ResolvedParticipant,
@@ -377,14 +366,14 @@ pub(crate) async fn take_into_channel(
     let participant = resolved.actor_id();
     let from = if entry.founds() { None } else { channel.history_start(history).await? };
     let storing = entry.storing(context);
-    let before = channel.list_participant_held(admitted, &storing, &resolved).await?;
+    let before = channel.list_participant_held(&storing, &resolved).await?;
     {
         let channel = Arc::clone(channel);
-        log.record("taking someone into a channel", move |admitted| {
-            Box::pin(async move { channel.undo_listing_held(admitted, participant, &before).await })
+        log.record("taking someone into a channel", async move {
+            channel.undo_listing_held(participant, &before).await
         });
     }
-    let started = channel.start_participant_held(admitted, resolved, thread, from, context).await?;
+    let started = channel.start_participant_held(resolved, thread, from, context).await?;
     if !entry.founds() && !started.carried_out().await {
         let stopped = ChannelError::Stopped { participant, channel: channel.id() };
         return Err(anyhow::Error::from(stopped).into());
@@ -412,7 +401,6 @@ pub(crate) async fn take_into_channel(
 /// As `SessionLoop::require_changing` and `require_exit`; whatever storing the session or a
 /// channel reports.
 pub async fn let_go_from_session(
-    admitted: &Admitted<'_>,
     session: &SessionLoop,
     context: &SecurityContext,
     participant: ActorId,
@@ -422,7 +410,7 @@ pub async fn let_go_from_session(
         session.require_changing(context).await?;
     }
     session.require_exit(context, participant, exit).await?;
-    session.unlist_participant_held(admitted, &exit.storing(context), participant).await?;
+    session.unlist_participant_held(&exit.storing(context), participant).await?;
     // Letting them go from the session was permitted; storing in its channels is the kernel's.
     let system = SecurityContext::system();
     let mut running = Vec::new();
@@ -431,12 +419,12 @@ pub async fn let_go_from_session(
             Some(channel_loop) => running.push(channel_loop),
             None => {
                 let unavailable =
-                    session.let_go_where_unavailable_held(admitted, context, channel, participant);
+                    session.let_go_where_unavailable_held(context, channel, participant);
                 unavailable.await?;
             }
         }
     }
-    let letting_go = running.iter().map(|c| c.let_go_held(admitted, context, &system, participant));
+    let letting_go = running.iter().map(|c| c.let_go_held(context, &system, participant));
     future::join_all(letting_go).await.into_iter().collect::<anyhow::Result<Vec<()>>>()?;
     info!(
         session = %session.id(),
@@ -456,14 +444,13 @@ pub async fn let_go_from_session(
 /// # Errors
 /// As `ChannelLoop::require_exit`; whatever storing the channel reports.
 pub async fn let_go_from_channel(
-    admitted: &Admitted<'_>,
     channel: &ChannelLoop,
     context: &SecurityContext,
     participant: ActorId,
     exit: Exit,
 ) -> Result<(), SessionError> {
     channel.require_exit(context, participant, exit).await?;
-    channel.let_go_held(admitted, context, &exit.storing(context), participant).await?;
+    channel.let_go_held(context, &exit.storing(context), participant).await?;
     Ok(())
 }
 
@@ -581,12 +568,11 @@ impl Procedure for Follow {
     async fn carry_out(
         self,
         followed: Self::Plan,
-        admitted: &Admitted<'_>,
         _: &mut Compensation,
     ) -> Result<(), SessionError> {
         for (id, agents) in followed {
             if let Some(running) = self.sessions.running(id) {
-                running.follow_agents_held(admitted, Some(&agents)).await;
+                running.follow_agents_held(Some(&agents)).await;
             }
         }
         Ok(())

@@ -4,7 +4,6 @@
 
 use super::thread::Thread;
 use super::{ActorChange, ChannelError, ChannelLoop};
-use crate::procedure::Admitted;
 use anyhow::Result;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::channel::{Channel, Opening, ThreadId, ThreadOrigin, ThreadState};
@@ -100,7 +99,6 @@ impl ChannelLoop {
     /// make none.
     pub(crate) async fn open_thread_held(
         &self,
-        _: &Admitted<'_>,
         context: &SecurityContext,
         thread: ThreadId,
         origin: ThreadOrigin,
@@ -119,12 +117,7 @@ impl ChannelLoop {
 
     /// Takes back opening `thread`, for the compensation of opening it, once its founders are
     /// taken back: closed in the name of `by`, as `run` closes a thread, and waited for.
-    pub(crate) async fn undo_opening_held(
-        &self,
-        _: &Admitted<'_>,
-        by: &SecurityContext,
-        thread: ThreadId,
-    ) {
+    pub(crate) async fn undo_opening_held(&self, by: &SecurityContext, thread: ThreadId) {
         let _ = self.request(ActorChange::Close(thread, by.clone())).carried_out().await;
     }
 
@@ -146,7 +139,6 @@ impl ChannelLoop {
     /// part in it.
     pub async fn close_thread_held(
         &self,
-        _: &Admitted<'_>,
         context: &SecurityContext,
         thread: ThreadId,
     ) -> Result<bool> {

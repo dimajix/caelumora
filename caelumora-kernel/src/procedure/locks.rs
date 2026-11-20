@@ -12,7 +12,6 @@ use super::Key;
 use crate::channel::LEAVE_GRACE;
 use std::collections::hash_map::Entry as MapEntry;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::marker::PhantomData;
 use std::pin::pin;
 use std::sync;
 use tokio::sync::Notify;
@@ -177,16 +176,6 @@ impl Table {
     }
 }
 
-/// The proof that a procedure holds its objects: what changes an object asks for it, and the
-/// `ProcedureExecutor` alone gives it out (`Locks::admitted`), for as long as the procedure holds
-/// them - defined here, so that no other module of procedures can make one. It proves that a
-/// building block is called in carrying a procedure out, not which objects the procedure locked -
-/// that would be a check in the object; which objects a procedure locks, its tests hold.
-#[derive(Debug)]
-pub struct Admitted<'p> {
-    held: PhantomData<&'p ()>,
-}
-
 /// That a procedure found an object locked and is deferred: returned by `Locks`, and passed on by
 /// `Procedure::enumerate`, whose executor then lets go of everything it holds, waits for the object
 /// and has it enumerate again.
@@ -256,11 +245,6 @@ impl<'t> Locks<'t> {
             Some((key, mode)) => Err(Deferred { key, mode }),
             None => enumerated,
         }
-    }
-
-    /// The proof that the procedure holds what it locked, for as long as it holds it.
-    pub(super) fn admitted(&self) -> Admitted<'_> {
-        Admitted { held: PhantomData }
     }
 
     /// Lets go of everything, and waits at the key `deferred` names until it is its turn there. Its

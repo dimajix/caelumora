@@ -4,12 +4,9 @@
 //!
 //! Each locks its session exclusively - opening one that runs locks it shared -, and the project
 //! where it changes whether the session is in it or deleted, and carries the change out by the
-//! building blocks of the `SessionManager` and the `SessionLoop`, which ask for the proof that it
-//! holds the session (`Admitted`).
+//! building blocks of the `SessionManager` and the `SessionLoop`.
 
-use super::{
-    all_or_nothing, Admitted, Compensation, Deferred, Key, Locks, Procedure, ProcedureExecutor,
-};
+use super::{all_or_nothing, Compensation, Deferred, Key, Locks, Procedure, ProcedureExecutor};
 use crate::session::{MoveTarget, SessionError, SessionLoop, SessionManager, SessionSpec};
 use async_trait::async_trait;
 use caelumora_domain::project::ProjectId;
@@ -76,13 +73,11 @@ impl Procedure for Create {
     async fn carry_out(
         self,
         (): (),
-        admitted: &Admitted<'_>,
         log: &mut Compensation,
     ) -> Result<Arc<SessionLoop>, SessionError> {
         let Self { sessions, context, id, template_id, spec } = self;
         record_creation(&sessions, id, log);
-        let made =
-            sessions.make_from_template(admitted, log, &context, id, template_id, spec).await;
+        let made = sessions.make_from_template(log, &context, id, template_id, spec).await;
         Ok(made?)
     }
 }
@@ -97,9 +92,7 @@ pub(crate) fn record_creation(
     log: &mut Compensation,
 ) {
     let rolled_back = Arc::clone(sessions);
-    log.record("creating the session", move |admitted| {
-        Box::pin(async move { roll_back_creation(&rolled_back, admitted, id).await })
-    });
+    log.record("creating the session", async move { roll_back_creation(&rolled_back, id).await });
 }
 
 /// Rolls back creating session `id`, not to be kept - not complete -, in the kernel's name -
@@ -107,18 +100,14 @@ pub(crate) fn record_creation(
 ///
 /// # Errors
 /// What deleting or purging it reports.
-async fn roll_back_creation(
-    sessions: &Arc<SessionManager>,
-    admitted: &Admitted<'_>,
-    id: SessionId,
-) -> anyhow::Result<()> {
+async fn roll_back_creation(sessions: &Arc<SessionManager>, id: SessionId) -> anyhow::Result<()> {
     let system = SecurityContext::system();
     let removal = Removal::now(system.caller_id);
-    all_or_nothing(admitted, "deleting a session not made", async |log: &mut Compensation| {
-        delete(admitted, log, sessions, &system, id, &removal).await
+    all_or_nothing("deleting a session not made", async |log: &mut Compensation| {
+        delete(log, sessions, &system, id, &removal).await
     })
     .await?;
-    sessions.purge_held(admitted, &system, id).await?;
+    sessions.purge_held(&system, id).await?;
     Ok(())
 }
 
@@ -158,11 +147,10 @@ impl Procedure for Open {
     async fn carry_out(
         self,
         (): (),
-        admitted: &Admitted<'_>,
         _: &mut Compensation,
     ) -> Result<Arc<SessionLoop>, SessionError> {
         let Self { sessions, context, id } = self;
-        Ok(sessions.open_held(admitted, &context, id).await?)
+        Ok(sessions.open_held(&context, id).await?)
     }
 }
 
@@ -216,14 +204,9 @@ impl Procedure for Stop {
 
     /// # Errors
     /// As `SessionManager::stop_held`.
-    async fn carry_out(
-        self,
-        (): (),
-        admitted: &Admitted<'_>,
-        _: &mut Compensation,
-    ) -> Result<bool, SessionError> {
+    async fn carry_out(self, (): (), _: &mut Compensation) -> Result<bool, SessionError> {
         let Self { sessions, context, id } = self;
-        Ok(sessions.stop_held(admitted, &context, id).await?)
+        Ok(sessions.stop_held(&context, id).await?)
     }
 }
 
@@ -255,15 +238,10 @@ impl Procedure for Delete {
 
     /// # Errors
     /// As `delete`.
-    async fn carry_out(
-        self,
-        (): (),
-        admitted: &Admitted<'_>,
-        log: &mut Compensation,
-    ) -> Result<bool, SessionError> {
+    async fn carry_out(self, (): (), log: &mut Compensation) -> Result<bool, SessionError> {
         let Self { sessions, context, id } = self;
         let removal = Removal::now(context.caller_id);
-        delete(admitted, log, &sessions, &context, id, &removal).await
+        delete(log, &sessions, &context, id, &removal).await
     }
 }
 
@@ -294,14 +272,9 @@ impl Procedure for Restore {
 
     /// # Errors
     /// As `restore`.
-    async fn carry_out(
-        self,
-        (): (),
-        admitted: &Admitted<'_>,
-        log: &mut Compensation,
-    ) -> Result<Session, SessionError> {
+    async fn carry_out(self, (): (), log: &mut Compensation) -> Result<Session, SessionError> {
         let Self { sessions, context, id } = self;
-        restore(admitted, log, &sessions, &context, id).await
+        restore(log, &sessions, &context, id).await
     }
 }
 
@@ -324,7 +297,6 @@ impl Procedure for Restore {
 /// shares the stores runs it (issue 554), `SessionError::ScopeNotEmpty` if something of its scope
 /// or its own project's is left that `context` may not delete; whatever else the stores report.
 pub(crate) async fn delete(
-    admitted: &Admitted<'_>,
     log: &mut Compensation,
     sessions: &Arc<SessionManager>,
     context: &SecurityContext,
@@ -334,27 +306,27 @@ pub(crate) async fn delete(
     let Some((session, channels, own)) = sessions.session_to_delete(context, id).await? else {
         return Ok(false);
     };
-    hold_until_done(log, sessions, id)?;
-    if !sessions.mark_session_deleted_held(admitted, context, id, removal).await? {
+    // Held against the other processes until the procedure - or its part - is done, undone too
+    // (issue 554).
+    log.keep(sessions.hold(id)?);
+    if !sessions.mark_session_deleted_held(context, id, removal).await? {
         return Ok(false);
     }
     let unmarked = Arc::clone(sessions);
-    log.record("marking the session deleted", move |admitted| {
-        Box::pin(async move {
-            let system = SecurityContext::system();
-            unmarked.unmark_session_held(admitted, &system, id).await.map(drop)
-        })
+    log.record("marking the session deleted", async move {
+        let system = SecurityContext::system();
+        unmarked.unmark_session_held(&system, id).await.map(drop)
     });
     if let Some(own) = &own {
-        sessions.mark_own_deleted_held(admitted, own.id, removal).await?;
+        sessions.mark_own_deleted_held(own.id, removal).await?;
         let (unmarked, own) = (Arc::clone(sessions), own.id);
-        log.record("marking the session's own project deleted", move |admitted| {
-            Box::pin(async move { unmarked.unmark_own_held(admitted, own).await.map(drop) })
+        log.record("marking the session's own project deleted", async move {
+            unmarked.unmark_own_held(own).await.map(drop)
         });
     }
-    sessions.delete_scope_held(admitted, context, id, own.as_ref(), removal).await?;
-    sessions.delete_participant_groups_held(admitted, id, own.as_ref(), removal).await?;
-    sessions.stop_deleted_held(admitted, id).await;
+    sessions.delete_scope_held(context, id, own.as_ref(), removal).await?;
+    sessions.delete_participant_groups_held(id, own.as_ref(), removal).await?;
+    sessions.stop_deleted_held(id).await;
     sessions.announce_deleted(&session, &channels, own.as_ref(), context);
     Ok(true)
 }
@@ -373,57 +345,35 @@ pub(crate) async fn delete(
 /// shares the stores holds it (issue 554), as `SessionManager::unmark_session_held`, or whatever
 /// the store reports as the groups of its participants or its own project are restored.
 pub(crate) async fn restore(
-    admitted: &Admitted<'_>,
     log: &mut Compensation,
     sessions: &Arc<SessionManager>,
     context: &SecurityContext,
     id: SessionId,
 ) -> Result<Session, SessionError> {
     let (removal, own) = sessions.session_to_restore(context, id).await?;
-    hold_until_done(log, sessions, id)?;
-    let session = sessions.unmark_session_held(admitted, context, id).await?;
+    // Held against the other processes until the procedure - or its part - is done, undone too
+    // (issue 554).
+    log.keep(sessions.hold(id)?);
+    let session = sessions.unmark_session_held(context, id).await?;
     let (marked, again) = (Arc::clone(sessions), removal.clone());
-    log.record("taking the session's mark away", move |admitted| {
-        Box::pin(async move {
-            let system = SecurityContext::system();
-            marked.mark_session_deleted_held(admitted, &system, id, &again).await.map(drop)
-        })
+    log.record("taking the session's mark away", async move {
+        let system = SecurityContext::system();
+        marked.mark_session_deleted_held(&system, id, &again).await.map(drop)
     });
-    sessions.restore_participant_groups_held(admitted, id, own.as_ref(), &removal).await?;
+    sessions.restore_participant_groups_held(id, own.as_ref(), &removal).await?;
     let deleted = Arc::clone(sessions);
     let (of_own, again) = (own.clone(), removal.clone());
-    log.record("restoring the groups of the session's participants", move |admitted| {
-        Box::pin(async move {
-            deleted.delete_participant_groups_held(admitted, id, of_own.as_ref(), &again).await
-        })
+    log.record("restoring the groups of the session's participants", async move {
+        deleted.delete_participant_groups_held(id, of_own.as_ref(), &again).await
     });
     // The last step that can fail: nothing after it is undone.
     let own = match own {
-        Some(own) => Some(sessions.unmark_own_held(admitted, own.id).await?),
+        Some(own) => Some(sessions.unmark_own_held(own.id).await?),
         None => None,
     };
-    sessions.restore_scope_held(admitted, context, id, own.as_ref(), &removal).await;
+    sessions.restore_scope_held(context, id, own.as_ref(), &removal).await;
     sessions.announce_restored(&session, own.as_ref(), context);
     Ok(session)
-}
-
-/// Holds session `id` for this process against the others that share the stores (issue 554,
-/// `SessionManager::hold`) until the procedure of `log` is done - undone too, if it fails: the hold
-/// is let go as its compensation is, after every step it recorded since.
-///
-/// # Errors
-/// `SessionError::RunsElsewhere` if another process holds it; whatever asking reports.
-fn hold_until_done(
-    log: &mut Compensation,
-    sessions: &SessionManager,
-    id: SessionId,
-) -> Result<(), SessionError> {
-    let held = sessions.hold(id)?;
-    log.record("holding the session", move |_| {
-        drop(held);
-        Box::pin(async { Ok(()) })
-    });
-    Ok(())
 }
 
 /// Removes the deleted session `id` for good on behalf of `context` (`SessionManager::purge_held`,
@@ -454,14 +404,9 @@ impl Procedure for Purge {
 
     /// # Errors
     /// As `SessionManager::purge_held`.
-    async fn carry_out(
-        self,
-        (): (),
-        admitted: &Admitted<'_>,
-        _: &mut Compensation,
-    ) -> Result<bool, SessionError> {
+    async fn carry_out(self, (): (), _: &mut Compensation) -> Result<bool, SessionError> {
         let Self { sessions, context, id } = self;
-        Ok(sessions.purge_held(admitted, &context, id).await?)
+        Ok(sessions.purge_held(&context, id).await?)
     }
 }
 
@@ -523,15 +468,10 @@ impl Procedure for Move {
 
     /// # Errors
     /// As `Open`, and as `move_to`.
-    async fn carry_out(
-        self,
-        (): (),
-        admitted: &Admitted<'_>,
-        log: &mut Compensation,
-    ) -> Result<(), SessionError> {
+    async fn carry_out(self, (): (), log: &mut Compensation) -> Result<(), SessionError> {
         let Self { sessions, context, id, project } = self;
-        let session = sessions.open_held(admitted, &context, id).await?;
-        move_to(admitted, log, &session, &context, project).await
+        let session = sessions.open_held(&context, id).await?;
+        move_to(log, &session, &context, project).await
     }
 }
 
@@ -548,7 +488,6 @@ impl Procedure for Move {
 /// # Errors
 /// As `SessionLoop::project_to_move_to`; whatever making, sharing or storing reports.
 pub(crate) async fn move_to(
-    admitted: &Admitted<'_>,
     log: &mut Compensation,
     session: &Arc<SessionLoop>,
     context: &SecurityContext,
@@ -560,28 +499,28 @@ pub(crate) async fn move_to(
     let left = session.load_shared_project().await?;
     match &mut target {
         MoveTarget::NewOwn(own) => {
-            session.make_own_project_held(admitted, own).await?;
+            session.make_own_project_held(own).await?;
             let (session, own) = (Arc::clone(session), own.id);
-            log.record("making a session's own project", move |admitted| {
-                Box::pin(async move { session.purge_own_project_held(admitted, own).await })
+            log.record("making a session's own project", async move {
+                session.purge_own_project_held(own).await
             });
         }
         MoveTarget::Shared(shared) => {
-            session.share_project_held(admitted, shared.id).await?;
+            session.share_project_held(shared.id).await?;
             let (session, shared) = (Arc::clone(session), shared.id);
-            log.record("sharing a project with a session's participants", move |admitted| {
-                Box::pin(async move { session.unshare_project_held(admitted, shared).await })
+            log.record("sharing a project with a session's participants", async move {
+                session.unshare_project_held(shared).await
             });
         }
         MoveTarget::Own(_) => {}
     }
     let to = target.project().id;
-    session.store_project_held(admitted, context, to).await?;
+    session.store_project_held(context, to).await?;
     if let MoveTarget::NewOwn(own) = &target {
         session.announce_own_made(own);
     }
     if let Some(left) = left {
-        if let Err(e) = session.unshare_project_held(admitted, left.id).await {
+        if let Err(e) = session.unshare_project_held(left.id).await {
             warn!(session = %session.id(), project = %left.id, "The project a session left is still shared with its participants: {e:#}");
         }
     }
@@ -624,15 +563,12 @@ impl Procedure for ShutDown {
     async fn carry_out(
         self,
         ids: Vec<SessionId>,
-        admitted: &Admitted<'_>,
         _: &mut Compensation,
     ) -> Result<(), SessionError> {
         let sessions = &self.sessions;
-        join_all(
-            ids.into_iter().map(|id| sessions.stop_running(admitted, id, SessionLoop::stop_actors)),
-        )
-        .await;
-        sessions.shut_down_commands(admitted).await;
+        join_all(ids.into_iter().map(|id| sessions.stop_running(id, SessionLoop::stop_actors)))
+            .await;
+        sessions.shut_down_commands().await;
         Ok(())
     }
 }

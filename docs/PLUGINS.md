@@ -201,13 +201,12 @@ does with its kind it offers as **extensions**, by one pattern:
     acts through the running session the work's `SessionView` gives out (`session_loop`),
     reaching the channel as a frontend does (`channel_for`). What changes a lifecycle there it
     carries out as a procedure of its own (issue 593): built of the kernel's building blocks
-    (`…_held`, which ask for the proof `Admitted`), carried out by the kernel's executor, which the
-    running session hands out (`SessionLoop::procedures`), and answering the face's error type, into
-    which it translates what the executor fails with (`From<ProcedureError>`) - the sub-agents'
-    writer (issue 558). No method of a face
-    takes a context or an identity, and what it hands out is data, not an object of the kernel - but
-    for a handle, named as one, that carries a right beyond the call: the workspace's terminal and
-    shell.
+    (`…_held`), carried out by the kernel's executor, which the running session hands out
+    (`SessionLoop::procedures`), and answering the face's error type, into which it translates what
+    the executor fails with (`From<ProcedureError>`) - the sub-agents' writer (issue 558). No method
+    of a face takes a context or an identity, and what it hands out is data, not an object of the
+    kernel - but for a handle, named as one, that carries a right beyond the call: the workspace's
+    terminal and shell.
 *   **Asked for where it is used, never kept.** A face acts in the context of the call that asked
     for it - the rights as they are at each call -, so a component asks for it again each time.
 *   **Staged, then committed.** What a turn changes of a service that keeps what a turn changes

@@ -24,7 +24,7 @@ use caelumora_kernel::error::{refusal, user_message};
 use caelumora_kernel::procedure::participant::{self, lock_letting_go, Exit};
 use caelumora_kernel::procedure::thread;
 use caelumora_kernel::procedure::{
-    Admitted, Compensation, Deferred, Key, Locks, Procedure, ProcedureError, ProcedureExecutor,
+    Compensation, Deferred, Key, Locks, Procedure, ProcedureError, ProcedureExecutor,
 };
 use caelumora_kernel::session::{SessionError, SessionLoop};
 use caelumora_kernel::view::SessionView;
@@ -142,7 +142,6 @@ impl SubAgents {
     /// let go already - an end asked again after it stopped half-way - counts as let go.
     async fn wind_up_held(
         &self,
-        admitted: &Admitted<'_>,
         session: &SessionLoop,
         channel: &ChannelLoop,
         thread: ThreadId,
@@ -150,7 +149,6 @@ impl SubAgents {
     ) -> SubAgentResult<()> {
         let context = self.context();
         let leaving = participant::let_go_from_session(
-            admitted,
             session,
             context,
             ActorId::Agent(agent),
@@ -161,7 +159,7 @@ impl SubAgents {
             Ok(()) | Err(SessionError::NotAParticipant { .. }) => {}
             Err(error) => return Err(told(error.untyped())),
         }
-        channel.close_thread_held(admitted, context, thread).await.map_err(told)?;
+        channel.close_thread_held(context, thread).await.map_err(told)?;
         Ok(())
     }
 }
@@ -233,12 +231,7 @@ impl Procedure for Starting {
         locks.shared(Key::Thread(self.session, self.channel, self.origin.thread))
     }
 
-    async fn carry_out(
-        self,
-        (): (),
-        admitted: &Admitted<'_>,
-        log: &mut Compensation,
-    ) -> SubAgentResult<ThreadId> {
+    async fn carry_out(self, (): (), log: &mut Compensation) -> SubAgentResult<ThreadId> {
         let Self { work, personality, origin, brief, channel, thread, .. } = self;
         let (session, channel_loop) = work.running().await?;
         let personality_id = work.personality(&personality).await?;
@@ -246,18 +239,15 @@ impl Procedure for Starting {
         let founder = ActorId::Agent(agent);
         {
             let work = work.clone();
-            log.record("making a sub-agent", move |_| {
-                Box::pin(async move {
-                    work.agents.delete(work.context(), agent).await?;
-                    Ok(())
-                })
+            log.record("making a sub-agent", async move {
+                work.agents.delete(work.context(), agent).await?;
+                Ok(())
             });
         }
         let context = work.context().clone();
         // Its founder's taking in and the opening, each taken back by `log` (`thread::open`).
         let founders = vec![founder];
-        let opening =
-            thread::open(admitted, log, &session, &context, channel, thread, origin, founders);
+        let opening = thread::open(log, &session, &context, channel, thread, origin, founders);
         opening.await.map_err(told)?;
         channel_loop.delegate(&context, thread, founder, brief).await.map_err(told)?;
         info!("Sub-agent {} started in thread {} by {}", agent, thread, context.caller_id);
@@ -303,17 +293,12 @@ impl Procedure for Ending {
     }
 
     /// The sub-agent asked again, holding it: one ended meanwhile by another end is none.
-    async fn carry_out(
-        self,
-        agent: Self::Plan,
-        admitted: &Admitted<'_>,
-        _: &mut Compensation,
-    ) -> SubAgentResult<()> {
+    async fn carry_out(self, agent: Self::Plan, _: &mut Compensation) -> SubAgentResult<()> {
         agent?;
         let Self { work, thread, .. } = self;
         let (session, channel) = work.running().await?;
         let agent = work.sub_agent(&channel, thread).await?;
-        work.wind_up_held(admitted, &session, &channel, thread, agent).await?;
+        work.wind_up_held(&session, &channel, thread, agent).await?;
         work.agents.delete(work.context(), agent).await.map_err(told)?;
         info!("Sub-agent {} of thread {} ended", agent, thread);
         Ok(())

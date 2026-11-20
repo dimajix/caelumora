@@ -15,7 +15,7 @@ use crate::kernel::Kernel;
 #[cfg(any(test, feature = "test-support"))]
 use crate::procedure::participant::{take_in, Entry};
 use crate::procedure::session::move_to;
-use crate::procedure::{Admitted, Compensation};
+use crate::procedure::Compensation;
 use crate::scoped::{purge_for_good, ScopeNotEmpty, ScopedEntities};
 use crate::template::{
     resolve_participants, resolve_workspace, take_in_participants, TemplateParticipants,
@@ -153,7 +153,6 @@ impl SessionManager {
     /// the stores (`hold`, issue 554), which it keeps as long as the session runs.
     async fn spawn_session(
         &self,
-        _: &Admitted<'_>,
         session: Session,
         channels: Vec<Channel>,
         hold: Option<SessionHold>,
@@ -242,7 +241,6 @@ impl SessionManager {
     /// session reports.
     pub(crate) async fn make_from_template(
         &self,
-        admitted: &Admitted<'_>,
         log: &mut Compensation,
         context: &SecurityContext,
         id: SessionId,
@@ -293,15 +291,14 @@ impl SessionManager {
         // made once the session is, so that one of its scope is made where
         // `context` may put it (issue 344).
         session.workspace = existing;
-        let session_loop = self.establish(admitted, context, session, own, channels).await?;
+        let session_loop = self.establish(context, session, own, channels).await?;
         // A channel whose components the owner cannot read is left out as a
         // session opens (issue 463), but making it is the owner's own request,
         // refused as creating a channel refuses it (`run_channel_held`).
         session_loop.require_running()?;
         let session = &session_loop;
         let participants = (users, agents);
-        self.complete(admitted, log, context, owner, &template, session, &spec, participants)
-            .await?;
+        self.complete(log, context, owner, &template, session, &spec, participants).await?;
         Ok(session_loop)
     }
 
@@ -321,11 +318,10 @@ impl SessionManager {
     /// workspace or putting the session into the project.
     #[expect(
         clippy::too_many_arguments,
-        reason = "the proof of admission came to the steps of a creation, issue 593"
+        reason = "the parts of a creation, until its procedure carries it out (issue 593, step 5r)"
     )]
     async fn complete(
         &self,
-        admitted: &Admitted<'_>,
         log: &mut Compensation,
         context: &SecurityContext,
         owner: UserId,
@@ -358,8 +354,7 @@ impl SessionManager {
                 session.attach_workspace(context, Some(workspace)).await?;
             }
             let agents = &self.agents;
-            take_in_participants(admitted, log, agents, context, template, session, participants)
-                .await?;
+            take_in_participants(log, agents, context, template, session, participants).await?;
             // Shared once the session it is shared with exists (issue 23).
             if let Some(WorkspaceChoice::Existing { id, share: Some(grant) }) = &spec.workspace {
                 let controller = self.controllers.workspace_controller(*id).await?;
@@ -367,7 +362,7 @@ impl SessionManager {
                 controller.share(context, group, *grant).await?;
             }
             if let Some(project) = spec.project {
-                move_to(admitted, log, session, context, Some(project)).await?;
+                move_to(log, session, context, Some(project)).await?;
             }
             Ok(())
         }
@@ -396,7 +391,6 @@ impl SessionManager {
     /// As `persist`; whatever starting the session reports (`spawn_session`).
     async fn establish(
         &self,
-        admitted: &Admitted<'_>,
         context: &SecurityContext,
         mut session: Session,
         mut own: Project,
@@ -414,7 +408,7 @@ impl SessionManager {
             event_bus.announce(GlobalEvent::created::<Channel>(&(id, channel.id)), channel);
         }
 
-        self.spawn_session(admitted, session, channels, hold).await
+        self.spawn_session(session, channels, hold).await
     }
 
     /// Stores the brand-new `session` with its own project `own` and its `channels`, whose creation
@@ -488,7 +482,6 @@ impl SessionManager {
     /// it; as `open_held` otherwise.
     pub(crate) async fn open_to_take_in(
         &self,
-        admitted: &Admitted<'_>,
         context: &SecurityContext,
         id: SessionId,
     ) -> Result<Arc<SessionLoop>> {
@@ -504,7 +497,7 @@ impl SessionManager {
         if !reachable {
             return Err(not_found().into());
         }
-        self.open_held(admitted, &system, id).await
+        self.open_held(&system, id).await
     }
 
     /// Session `id` for `context`, for a procedure that holds it - exclusively where it does not
@@ -518,7 +511,6 @@ impl SessionManager {
     /// 554); whatever loading or starting it reports otherwise.
     pub(crate) async fn open_held(
         &self,
-        admitted: &Admitted<'_>,
         context: &SecurityContext,
         id: SessionId,
     ) -> Result<Arc<SessionLoop>> {
@@ -527,10 +519,10 @@ impl SessionManager {
             Found::Stored(session) => {
                 let hold = self.hold(id)?;
                 let channels = self.load_channels(&session).await?;
-                let started = self.spawn_session(admitted, session, channels, hold).await?;
+                let started = self.spawn_session(session, channels, hold).await?;
                 // An agent deleted or restored while its channels were built: the follower missed
                 // it, as the session ran nowhere yet (`procedure::participant::Follow`).
-                started.follow_agents_held(admitted, None).await;
+                started.follow_agents_held(None).await;
                 Ok(started)
             }
         }
@@ -545,12 +537,7 @@ impl SessionManager {
     /// # Errors
     /// `SessionError::NotFound` if there is no such session or `context` may not read it,
     /// `StoreError::PermissionDenied` if they may read but not stop it - whether it runs or not.
-    pub(crate) async fn stop_held(
-        &self,
-        admitted: &Admitted<'_>,
-        context: &SecurityContext,
-        id: SessionId,
-    ) -> Result<bool> {
+    pub(crate) async fn stop_held(&self, context: &SecurityContext, id: SessionId) -> Result<bool> {
         let found = self.find(context, id).await?;
         let attributes = found.attributes();
         self.policies
@@ -560,7 +547,7 @@ impl SessionManager {
         if !matches!(found, Found::Running(_)) {
             return Ok(false);
         }
-        let Some(stopped) = self.stop_running(admitted, id, SessionLoop::stop_actors).await else {
+        let Some(stopped) = self.stop_running(id, SessionLoop::stop_actors).await else {
             return Ok(false);
         };
         self.end_commands_of(&stopped).await;
@@ -619,7 +606,7 @@ impl SessionManager {
     /// Ends, of the commands of every session, what does not outlive the process, as the sessions
     /// are shut down (`CommandReaper::shutdown`), for the procedure that holds them: an Open
     /// Terminal instance keeps its commands, unlike at a stop.
-    pub(crate) async fn shut_down_commands(&self, _: &Admitted<'_>) {
+    pub(crate) async fn shut_down_commands(&self) {
         self.command_reaper.shutdown().await;
     }
 
@@ -638,7 +625,6 @@ impl SessionManager {
     /// the session (issue 593). Nobody finds it running meanwhile.
     pub(crate) async fn stop_running(
         &self,
-        _: &Admitted<'_>,
         id: SessionId,
         end_actors: impl AsyncFnOnce(&SessionLoop),
     ) -> Option<Arc<SessionLoop>> {
@@ -758,7 +744,6 @@ impl SessionManager {
     /// Whatever the store reports, `StoreError::PermissionDenied` among it.
     pub(crate) async fn mark_session_deleted_held(
         &self,
-        _: &Admitted<'_>,
         context: &SecurityContext,
         id: SessionId,
         removal: &Removal,
@@ -776,7 +761,6 @@ impl SessionManager {
     /// reports.
     pub(crate) async fn unmark_session_held(
         &self,
-        _: &Admitted<'_>,
         context: &SecurityContext,
         id: SessionId,
     ) -> Result<Session> {
@@ -791,7 +775,6 @@ impl SessionManager {
     /// Whatever the store reports.
     pub(crate) async fn mark_own_deleted_held(
         &self,
-        _: &Admitted<'_>,
         own: ProjectId,
         removal: &Removal,
     ) -> Result<()> {
@@ -805,11 +788,7 @@ impl SessionManager {
     ///
     /// # Errors
     /// Whatever the store reports.
-    pub(crate) async fn unmark_own_held(
-        &self,
-        _: &Admitted<'_>,
-        own: ProjectId,
-    ) -> Result<Project> {
+    pub(crate) async fn unmark_own_held(&self, own: ProjectId) -> Result<Project> {
         Ok(self.stores.projects.restore(&SecurityContext::system(), own).await?)
     }
 
@@ -824,7 +803,6 @@ impl SessionManager {
     /// else the store reports.
     pub(crate) async fn delete_scope_held(
         &self,
-        _: &Admitted<'_>,
         context: &SecurityContext,
         id: SessionId,
         own: Option<&Project>,
@@ -842,7 +820,6 @@ impl SessionManager {
     /// deleted: the session comes back all the same.
     pub(crate) async fn restore_scope_held(
         &self,
-        _: &Admitted<'_>,
         context: &SecurityContext,
         id: SessionId,
         own: Option<&Project>,
@@ -865,7 +842,6 @@ impl SessionManager {
     /// Whatever the store reports.
     pub(crate) async fn delete_participant_groups_held(
         &self,
-        _: &Admitted<'_>,
         id: SessionId,
         own: Option<&Project>,
         removal: &Removal,
@@ -884,7 +860,6 @@ impl SessionManager {
     /// Whatever the store reports.
     pub(crate) async fn restore_participant_groups_held(
         &self,
-        _: &Admitted<'_>,
         id: SessionId,
         own: Option<&Project>,
         removal: &Removal,
@@ -896,8 +871,8 @@ impl SessionManager {
     /// Stops session `id` if it runs, as it is deleted, for a procedure that holds it exclusively:
     /// its actors leave, as those of a deleted channel do (issue 377), and the commands of its
     /// channels end (issue 254).
-    pub(crate) async fn stop_deleted_held(&self, admitted: &Admitted<'_>, id: SessionId) {
-        if let Some(stopped) = self.stop_running(admitted, id, SessionLoop::leave_actors).await {
+    pub(crate) async fn stop_deleted_held(&self, id: SessionId) {
+        if let Some(stopped) = self.stop_running(id, SessionLoop::leave_actors).await {
             self.end_commands_of(&stopped).await;
         }
     }
@@ -965,7 +940,6 @@ impl SessionManager {
     /// 554), or whatever the stores report.
     pub(crate) async fn purge_held(
         &self,
-        _: &Admitted<'_>,
         context: &SecurityContext,
         id: SessionId,
     ) -> Result<bool> {
@@ -1062,7 +1036,6 @@ impl SessionManager {
     /// `SessionError::OwnerNotAUser` if the session is not a user's; otherwise as `establish`.
     pub(crate) async fn make(
         &self,
-        admitted: &Admitted<'_>,
         log: &mut Compensation,
         context: &SecurityContext,
         mut session: Session,
@@ -1084,7 +1057,7 @@ impl SessionManager {
             .iter_mut()
             .map(|channel| (channel.id, mem::take(&mut channel.participants)))
             .collect();
-        let session_loop = self.establish(admitted, context, session, own, channels).await?;
+        let session_loop = self.establish(context, session, own, channels).await?;
         for (channel, participants) in founders {
             let channel = session_loop
                 .channel(channel)
@@ -1092,8 +1065,7 @@ impl SessionManager {
             let into = Some((&channel, HistoryAccess::None, ThreadId::line(channel.id())));
             for participant in participants {
                 let founder = participant.actor_id();
-                take_in(admitted, log, &session_loop, context, founder, Entry::Founding, into)
-                    .await?;
+                take_in(log, &session_loop, context, founder, Entry::Founding, into).await?;
             }
         }
         Ok(session_loop)
@@ -1134,9 +1106,7 @@ mod tests {
     use crate::procedure::follower::AgentFollower;
     use crate::procedure::participant::Follow;
     use crate::procedure::session::SHUTDOWN_BOUND;
-    use crate::procedure::{
-        Admitted, Compensation, Deferred, Key, Locks, Procedure, ProcedureError,
-    };
+    use crate::procedure::{Compensation, Deferred, Key, Locks, Procedure, ProcedureError};
     use crate::project::{ProjectManager, ProjectSpec};
     use crate::session::testing::*;
     use crate::session::{load_own, purge_own, SessionLoop};
@@ -1374,14 +1344,9 @@ mod tests {
                 locks.exclusive(Key::Session(self.session.id))
             }
 
-            async fn carry_out(
-                self,
-                (): (),
-                admitted: &Admitted<'_>,
-                _: &mut Compensation,
-            ) -> Result<()> {
+            async fn carry_out(self, (): (), _: &mut Compensation) -> Result<()> {
                 self.go.acquire().await?.forget();
-                self.manager.spawn_session(admitted, self.session, self.channels, None).await?;
+                self.manager.spawn_session(self.session, self.channels, None).await?;
                 Ok(())
             }
         }

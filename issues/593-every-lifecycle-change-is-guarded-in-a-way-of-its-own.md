@@ -364,6 +364,40 @@ The procedures, by step, each step reviewed and committed on its own:
      `SessionLoop::update_project` (`roll_back_project_change`);
    - projects: the deletion, restoring and purge of a shared project's sessions, which the
      `ProjectManager`'s building blocks orchestrate, move into `procedure::project`.
+
+   Halted after channels and the first two steps of sessions - moving, deleting and restoring a
+   session -, as the maintainer decided: the building blocks it made are steps of the loops and
+   managers, many only passing a call on. What is left of it - creating a session, the projects -
+   is done in the restructuring below.
+5r. The core restructured: the loops and managers keep what runs, with few orthogonal methods; what
+   is stored, asked and announced is the procedures'. Who acts enforces - a loop what it does
+   itself (`cancel`, `close_thread`, `reclassify`), a store or controller as it writes, a procedure
+   an action across objects (taking in, letting go, creating, deleting or restoring a channel or a
+   session); one place decides - the `AccessPolicy` by `Enforcement::require` for one action,
+   `Participation` for participants, `caelumora-domain` for rules of a document -, asked by
+   whoever enforces, and by a procedure ahead only where its answer must stand before another
+   object changes. In steps, each without a change of behaviour:
+   - R1: `Admitted` goes, with `Locks::admitted`; `Compensation::keep` keeps what holds a session
+     against the other processes until the procedure is done, undone too. The rule of who enforces
+     and who decides is written down.
+   - R2: resolving a participant moves from `Participation` to the `ControllerManager`
+     (`resolve_participant`, `agent_exists`), so that `Participation` only decides;
+     `require_admitted` takes the participants resolved.
+   - R3: the executor holds the kernel, weak, and hands it to the procedures it carries out
+     (`Procedure::enumerate`, `carry_out`), and a procedure holds only its parameters - each
+     procedure from the step that rewrites it on. Then the lifecycle of
+     channels (`channel::Create`, `Delete`, `Restore`, `Start`, `Reclassify`): the `SessionLoop`
+     keeps `add_channel`, `remove_channel`, `renew_unavailable` and its readers; the steps of
+     storing, listing, the groups, the scopes and announcing, and the `update_*` of the channel,
+     which only pass a call on to its controller, go.
+   - R4: participants and threads (`participant::TakeIn`, `LetGo`, `Follow`, `thread::Open`,
+     `Close`): the `ChannelLoop` keeps `add_actor`, `remove_actor`, `open_thread` and
+     `close_thread`, each enforcing what it does; every `require_…` of the loops goes, to the
+     procedures and to `channel::require_opening`, shared by `open_thread` and `thread::open`.
+   - R5: the lifecycle of sessions, creating one among it: the `SessionManager` keeps the running
+     sessions (`start`, `stop`, `hold`, `running`, `find`), the `update_*` of the session go.
+   - R6: the projects: deleting, restoring and purging a shared project move into
+     `procedure::project`; the `ProjectManager` keeps `create` and `find_or_create`.
 5d. Lifting a session's own project into a shared one (`ProjectController::lift`) is a procedure,
    `project::Lift`: it changes whether the project goes with its session's deletion, restoring and
    purge, and whether a project's deletion reaches it - as moving a session does (`session::Move`).
@@ -670,3 +704,26 @@ case; it is decided there, and may make this unnecessary.
   session against the other processes is kept until the procedure is done, undone too. As the
   maintainer decided, an own project's deletion and restoring is announced with its session's, at
   the end.
+- **2026-11-20** — The second step of the part of sessions committed. Looking back at it, the
+  maintainer found the loops still overloaded: the procedures orchestrate, but the steps they
+  orchestrate became building blocks of the `SessionLoop`, the `ChannelLoop` and the managers -
+  storing, asking the policy, deleting groups and scopes, announcing -, many of them only passing
+  a call on to a controller or a service, each asking for `Admitted`. Decided: step 5c is halted
+  after its second step of sessions, and the core is restructured first. The loops keep what
+  runs - channels, actors, threads, the history, commands and mentions - with few orthogonal
+  methods; what is stored, asked and announced moves into the procedures, which carry each action
+  as a type of its own. `Admitted` goes: what holds the objects lies around them, in the executor,
+  not in their signatures. The interface of the restructured core is to be put before the
+  maintainer first.
+- **2026-11-20** — The restructuring decided with the maintainer and recorded as step 5r, in six
+  steps. The loops keep the permission checks of what they do themselves - enforcing them is a
+  task of the core objects -, but no questions of their own: who acts enforces, one place decides
+  (`Participation` for participants, as a policy decision point, the objects and procedures as
+  enforcement points), and a procedure asks the same place ahead where the order calls for it. The
+  executor holds the kernel and hands it to the procedures, from the first step that uses it (R3);
+  `Compensation::keep` replaces the convention of holding a session by an undo that does nothing.
+- **2026-11-20** — Step R1 implemented, not committed yet: `Admitted` goes, with `Locks::admitted`
+  and the parameter of every building block that asked for it. What a procedure records to undo is
+  the future that undoes it, run only if it is undone; `Compensation::keep` keeps what holds a
+  session against the other processes until the procedure is done, undone too. The rule of who
+  enforces and who decides is in SECURITY.md.

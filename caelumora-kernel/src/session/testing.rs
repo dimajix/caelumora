@@ -21,7 +21,7 @@ use crate::procedure::session::{
     Stop,
 };
 use crate::procedure::{channel, thread};
-use crate::procedure::{Admitted, Compensation, Deferred, Key, Locks, Procedure};
+use crate::procedure::{Compensation, Deferred, Key, Locks, Procedure};
 use crate::session::{ChannelSpec, SessionError, SessionLoop, SessionManager, SessionSpec};
 use crate::testing::TestKernel;
 use anyhow::{Error, Result};
@@ -323,12 +323,11 @@ impl Procedure for Built {
     async fn carry_out(
         self,
         (): (),
-        admitted: &Admitted<'_>,
         log: &mut Compensation,
     ) -> Result<Arc<SessionLoop>, SessionError> {
         let Self { sessions, context, session, channels } = self;
         record_creation(&sessions, session.id, log);
-        Ok(sessions.make(admitted, log, &context, session, channels).await?)
+        Ok(sessions.make(log, &context, session, channels).await?)
     }
 }
 

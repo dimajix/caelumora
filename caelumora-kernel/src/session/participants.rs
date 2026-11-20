@@ -7,7 +7,6 @@ use super::{SessionError, SessionLoop};
 use crate::channel::{ChannelError, ChannelLoop, ResolvedParticipant};
 use crate::event::SubscriptionTopic;
 use crate::procedure::participant::{Entry, Exit};
-use crate::procedure::Admitted;
 use anyhow::{anyhow, Result};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::channel::Participant;
@@ -120,7 +119,6 @@ impl SessionLoop {
     /// `SessionError::CannotTakeIn` for an internal actor; what storing the session reports.
     pub(crate) async fn list_participant_held(
         &self,
-        _: &Admitted<'_>,
         context: &SecurityContext,
         resolved: &ResolvedParticipant,
         entry: Entry,
@@ -149,7 +147,6 @@ impl SessionLoop {
     /// What storing the session reports.
     pub(crate) async fn undo_listing_held(
         &self,
-        _: &Admitted<'_>,
         participant: ActorId,
         before: &Session,
     ) -> Result<()> {
@@ -200,7 +197,6 @@ impl SessionLoop {
     /// Whatever storing the session reports.
     pub(crate) async fn unlist_participant_held(
         &self,
-        _: &Admitted<'_>,
         storing: &SecurityContext,
         participant: ActorId,
     ) -> Result<()> {

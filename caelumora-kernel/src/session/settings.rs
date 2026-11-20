@@ -5,7 +5,6 @@ use super::{
     held_workspace, load_own, make_own, purge_own, require_attachable, SessionError, SessionLoop,
 };
 use crate::controller::WorkspaceController;
-use crate::procedure::Admitted;
 use crate::project;
 use anyhow::Result;
 use caelumora_domain::approval::ApprovalRule;
@@ -246,11 +245,7 @@ impl SessionLoop {
     ///
     /// # Errors
     /// Whatever the store reports.
-    pub(crate) async fn make_own_project_held(
-        &self,
-        _: &Admitted<'_>,
-        own: &mut Project,
-    ) -> Result<()> {
+    pub(crate) async fn make_own_project_held(&self, own: &mut Project) -> Result<()> {
         make_own(&self.stores, own).await?;
         Ok(())
     }
@@ -260,11 +255,7 @@ impl SessionLoop {
     ///
     /// # Errors
     /// Whatever the store reports.
-    pub(crate) async fn purge_own_project_held(
-        &self,
-        _: &Admitted<'_>,
-        own: ProjectId,
-    ) -> Result<()> {
+    pub(crate) async fn purge_own_project_held(&self, own: ProjectId) -> Result<()> {
         purge_own(&self.stores, own).await?;
         Ok(())
     }
@@ -275,11 +266,7 @@ impl SessionLoop {
     ///
     /// # Errors
     /// Whatever the project's controller reports.
-    pub(crate) async fn share_project_held(
-        &self,
-        _: &Admitted<'_>,
-        project: ProjectId,
-    ) -> Result<()> {
+    pub(crate) async fn share_project_held(&self, project: ProjectId) -> Result<()> {
         let participants = Subject::Group(GroupId::of_session(self.id));
         let controller = self.controllers.project_controller(project).await?;
         controller.share(&SecurityContext::system(), participants, Grant::Read).await?;
@@ -291,11 +278,7 @@ impl SessionLoop {
     ///
     /// # Errors
     /// Whatever the project's controller reports.
-    pub(crate) async fn unshare_project_held(
-        &self,
-        _: &Admitted<'_>,
-        project: ProjectId,
-    ) -> Result<()> {
+    pub(crate) async fn unshare_project_held(&self, project: ProjectId) -> Result<()> {
         let participants = Subject::Group(GroupId::of_session(self.id));
         let controller = self.controllers.project_controller(project).await?;
         controller.unshare(&SecurityContext::system(), participants).await?;
@@ -310,7 +293,6 @@ impl SessionLoop {
     /// Whatever storing the session reports.
     pub(crate) async fn store_project_held(
         &self,
-        _: &Admitted<'_>,
         context: &SecurityContext,
         project: ProjectId,
     ) -> Result<()> {

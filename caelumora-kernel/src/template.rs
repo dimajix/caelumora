@@ -8,7 +8,7 @@
 
 use crate::agent::{AgentManager, AgentSpec};
 use crate::procedure::participant::{take_in, Entry};
-use crate::procedure::{Admitted, Compensation};
+use crate::procedure::Compensation;
 use crate::session::{SessionError, SessionLoop};
 use crate::workspace::{WorkspaceManager, WorkspaceSpec};
 use anyhow::Result;
@@ -85,7 +85,6 @@ pub(crate) async fn resolve_participants(
 /// As `AgentManager::find_or_create`, `SessionLoop::require_changing` and
 /// `participant::take_in`; who took part before stays.
 pub(crate) async fn take_in_participants(
-    admitted: &Admitted<'_>,
     log: &mut Compensation,
     agent_manager: &AgentManager,
     context: &SecurityContext,
@@ -100,7 +99,7 @@ pub(crate) async fn take_in_participants(
         let (agent, _) = agent_manager.find_or_create(context, &spec).await?;
         let participant = ActorId::Agent(agent.id);
         session.require_changing(context).await?;
-        take_in(admitted, log, session, context, participant, Entry::Added, None).await?;
+        take_in(log, session, context, participant, Entry::Added, None).await?;
         founders.push((name, participant));
     }
     for (name, participant) in founders {
@@ -109,7 +108,7 @@ pub(crate) async fn take_in_participants(
                 .channel(channel)
                 .ok_or(SessionError::ChannelNotFound { session: session.id(), channel })?;
             let into = Some((&channel, HistoryAccess::None, ThreadId::line(channel.id())));
-            take_in(admitted, log, session, context, participant, Entry::Founding, into).await?;
+            take_in(log, session, context, participant, Entry::Founding, into).await?;
         }
     }
     Ok(())

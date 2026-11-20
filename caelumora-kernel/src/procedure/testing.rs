@@ -1,7 +1,7 @@
 //! What the tests of procedures share: a procedure that holds a key until it is let go, against
 //! which a test sees which keys another procedure locks, and how.
 
-use super::{Admitted, Compensation, Deferred, Key, Locks, Procedure, ProcedureExecutor};
+use super::{Compensation, Deferred, Key, Locks, Procedure, ProcedureExecutor};
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::Duration;
@@ -76,7 +76,7 @@ impl Procedure for Holding {
         }
     }
 
-    async fn carry_out(self, (): (), _: &Admitted<'_>, _: &mut Compensation) -> anyhow::Result<()> {
+    async fn carry_out(self, (): (), _: &mut Compensation) -> anyhow::Result<()> {
         let _ = self.held.send(());
         self.release.acquire().await?.forget();
         Ok(())

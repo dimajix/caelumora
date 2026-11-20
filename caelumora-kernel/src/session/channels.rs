@@ -6,7 +6,6 @@ use super::{
 };
 use crate::channel::ChannelLoop;
 use crate::group::keep_participants;
-use crate::procedure::Admitted;
 use crate::scoped::ScopeNotEmpty;
 use crate::view::{channel_reading, ReadingBasis};
 use anyhow::{Error, Result};
@@ -65,11 +64,7 @@ impl SessionLoop {
     /// `procedure::participant::Follow` and a session as it starts (`SessionManager::open_held`) -
     /// those of `only`, or every agent if `None`: a deleted one rests in them, a restored one runs
     /// again (`ChannelLoop::follow_agents`).
-    pub(crate) async fn follow_agents_held(
-        &self,
-        _: &Admitted<'_>,
-        only: Option<&HashSet<AgentId>>,
-    ) {
+    pub(crate) async fn follow_agents_held(&self, only: Option<&HashSet<AgentId>>) {
         for channel in self.channels() {
             channel.follow_agents(only).await;
         }
@@ -299,7 +294,6 @@ impl SessionLoop {
     /// reports.
     pub(crate) async fn store_channel_held(
         &self,
-        _: &Admitted<'_>,
         context: &SecurityContext,
         channel: &mut Channel,
     ) -> Result<()> {
@@ -313,11 +307,7 @@ impl SessionLoop {
     ///
     /// # Errors
     /// Whatever the store of groups reports.
-    pub(crate) async fn keep_channel_group_held(
-        &self,
-        _: &Admitted<'_>,
-        channel: &Channel,
-    ) -> Result<()> {
+    pub(crate) async fn keep_channel_group_held(&self, channel: &Channel) -> Result<()> {
         keep_participants(self.stores.groups.as_ref(), Group::of_channel(channel)).await?;
         Ok(())
     }
@@ -328,11 +318,7 @@ impl SessionLoop {
     ///
     /// # Errors
     /// Whatever the store reports.
-    pub(crate) async fn purge_channel_held(
-        &self,
-        _: &Admitted<'_>,
-        channel_id: ChannelId,
-    ) -> Result<()> {
+    pub(crate) async fn purge_channel_held(&self, channel_id: ChannelId) -> Result<()> {
         purge_channel_document(&self.stores, channel_id).await?;
         Ok(())
     }
@@ -346,7 +332,6 @@ impl SessionLoop {
     /// store reports.
     pub(crate) async fn list_channel_held(
         &self,
-        _: &Admitted<'_>,
         context: &SecurityContext,
         channel_id: ChannelId,
     ) -> Result<()> {
@@ -363,7 +348,6 @@ impl SessionLoop {
     /// store reports.
     pub(crate) async fn unlist_channel_held(
         &self,
-        _: &Admitted<'_>,
         context: &SecurityContext,
         channel_id: ChannelId,
     ) -> Result<()> {
@@ -379,7 +363,6 @@ impl SessionLoop {
     /// building it reports.
     pub(crate) async fn run_channel_held(
         self: &Arc<Self>,
-        _: &Admitted<'_>,
         channel: &Channel,
     ) -> Result<Arc<ChannelLoop>> {
         self.add_channel_loop(channel).await
@@ -392,7 +375,7 @@ impl SessionLoop {
     /// task never started is never to run. One that does not run (issue 463) is only taken out of
     /// the session's channels: nobody builds it again meanwhile, as building it again
     /// (`retry_unavailable_held`) holds it as deleting it does.
-    pub(crate) async fn stop_channel_held(&self, _: &Admitted<'_>, channel_id: ChannelId) {
+    pub(crate) async fn stop_channel_held(&self, channel_id: ChannelId) {
         let Some((_, ChannelEntry::Running { channel: running, task })) =
             self.channels.remove(&channel_id)
         else {
@@ -479,7 +462,7 @@ impl SessionLoop {
     /// them meanwhile (issue 590): those whose components can be read again run from now on, the
     /// others stay left out, with why they still cannot run - also one whose store failed, for the
     /// session runs already. Asked as the running session is opened, so logged at `debug!`.
-    pub(crate) async fn retry_unavailable_held(self: &Arc<Self>, _: &Admitted<'_>) {
+    pub(crate) async fn retry_unavailable_held(self: &Arc<Self>) {
         let unavailable: Vec<Arc<Channel>> = self
             .channels
             .iter()
@@ -528,7 +511,6 @@ impl SessionLoop {
     /// Whatever storing the channel reports.
     pub(crate) async fn let_go_where_unavailable_held(
         &self,
-        admitted: &Admitted<'_>,
         context: &SecurityContext,
         channel_id: ChannelId,
         participant: ActorId,
@@ -541,8 +523,7 @@ impl SessionLoop {
         }
         let held = Channel::clone(&held);
         let by = context.caller_id;
-        let channel =
-            self.let_go_where_not_running_held(admitted, held, &[participant], by).await?;
+        let channel = self.let_go_where_not_running_held(held, &[participant], by).await?;
         if let Some(mut entry) = self.channels.get_mut(&channel_id) {
             if let ChannelEntry::Unavailable { channel: held, .. } = &mut *entry {
                 *held = Arc::new(channel);
@@ -563,7 +544,6 @@ impl SessionLoop {
     /// Whatever storing the channel reports.
     pub(crate) async fn let_go_where_not_running_held(
         &self,
-        _: &Admitted<'_>,
         channel: Channel,
         participants: &[ActorId],
         by: ActorId,
@@ -619,7 +599,6 @@ impl SessionLoop {
     /// whatever else the store reports.
     pub(crate) async fn mark_channel_deleted_held(
         &self,
-        _: &Admitted<'_>,
         context: &SecurityContext,
         channel_id: ChannelId,
         removal: &Removal,
@@ -642,7 +621,6 @@ impl SessionLoop {
     /// reports.
     pub(crate) async fn unmark_channel_held(
         &self,
-        _: &Admitted<'_>,
         context: &SecurityContext,
         channel_id: ChannelId,
     ) -> Result<Channel> {
@@ -659,7 +637,6 @@ impl SessionLoop {
     /// else the stores report.
     pub(crate) async fn delete_scope_held(
         &self,
-        _: &Admitted<'_>,
         context: &SecurityContext,
         channel_id: ChannelId,
         removal: &Removal,
@@ -675,7 +652,6 @@ impl SessionLoop {
     /// restored is logged, and the channel stays restored.
     pub(crate) async fn restore_scope_held(
         &self,
-        _: &Admitted<'_>,
         context: &SecurityContext,
         channel_id: ChannelId,
         removal: &Removal,
@@ -699,7 +675,6 @@ impl SessionLoop {
     /// Whatever the store of groups reports.
     pub(crate) async fn delete_channel_group_held(
         &self,
-        _: &Admitted<'_>,
         channel_id: ChannelId,
         removal: &Removal,
     ) -> Result<()> {
@@ -717,7 +692,6 @@ impl SessionLoop {
     /// Whatever the store of groups reports.
     pub(crate) async fn restore_channel_group_held(
         &self,
-        _: &Admitted<'_>,
         channel_id: ChannelId,
         removal: &Removal,
     ) -> Result<()> {
@@ -1247,11 +1221,9 @@ mod tests {
         // manager that a procedure would reach it by.
         let stopping = Arc::clone(&session_loop);
         let key = Key::Channel(session.id, channel_id);
-        under_hold(kernel.procedures(), key, move |admitted| {
-            Box::pin(async move {
-                stopping.stop_channel_held(admitted, channel_id).await;
-                Ok(())
-            })
+        under_hold(kernel.procedures(), key, async move {
+            stopping.stop_channel_held(channel_id).await;
+            Ok(())
         })
         .await
         .unwrap();

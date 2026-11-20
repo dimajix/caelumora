@@ -21,9 +21,8 @@
 //!
 //! No procedure is carried out within another: it would wait for the keys the other holds, and so
 //! for itself; the executor refuses it (`ProcedureError::Nested`). Code procedures share is shared
-//! as functions. What changes an object asks for the proof that a procedure holds its objects
-//! (`Admitted`), which the executor alone gives out; the objects themselves know nothing of
-//! locking.
+//! as functions. What holds the objects lies around them, in the executor: the objects know
+//! nothing of locking, and nothing of it is in their signatures.
 
 pub mod channel;
 mod compensation;
@@ -40,7 +39,7 @@ pub mod thread;
 pub(crate) use compensation::all_or_nothing;
 pub use compensation::Compensation;
 pub use executor::ProcedureExecutor;
-pub use locks::{Admitted, Deferred, Locks};
+pub use locks::{Deferred, Locks};
 
 use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
@@ -123,7 +122,6 @@ pub trait Procedure: Send + Sync + 'static {
     async fn carry_out(
         self,
         plan: Self::Plan,
-        admitted: &Admitted<'_>,
         log: &mut Compensation,
     ) -> Result<Self::Output, Self::Error>;
 }

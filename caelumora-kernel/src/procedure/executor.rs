@@ -119,11 +119,9 @@ async fn carry_out<P: Procedure>(
         }
     };
     locks.settle();
-    let admitted = locks.admitted();
-    let carried_out = all_or_nothing(&admitted, name, async |log: &mut Compensation| {
-        procedure.carry_out(plan, &admitted, log).await
-    })
-    .await;
+    let carried_out =
+        all_or_nothing(name, async |log: &mut Compensation| procedure.carry_out(plan, log).await)
+            .await;
     drop(locks);
     carried_out
 }
@@ -132,13 +130,13 @@ async fn carry_out<P: Procedure>(
 mod tests {
     use super::ProcedureExecutor;
     use crate::procedure::{
-        all_or_nothing, Admitted, Compensation, Deferred, Key, Locks, Procedure, ProcedureError,
+        all_or_nothing, Compensation, Deferred, Key, Locks, Procedure, ProcedureError,
     };
     use anyhow::anyhow;
     use async_trait::async_trait;
     use caelumora_domain::channel::ChannelId;
     use caelumora_domain::session::SessionId;
-    use futures::future::BoxFuture;
+    use std::future::Future;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
@@ -202,12 +200,7 @@ mod tests {
             Ok(())
         }
 
-        async fn carry_out(
-            self,
-            _: (),
-            _: &Admitted<'_>,
-            log: &mut Compensation,
-        ) -> anyhow::Result<&'static str> {
+        async fn carry_out(self, _: (), log: &mut Compensation) -> anyhow::Result<&'static str> {
             self.log.lock().unwrap().push(format!("{} begins", self.name));
             if let Some(release) = &self.release {
                 release.acquire().await.unwrap().forget();
@@ -215,18 +208,14 @@ mod tests {
             self.log.lock().unwrap().push(format!("{} ends", self.name));
             if self.fail {
                 let first = Arc::clone(&self.log);
-                log.record("the first step", move |_| {
-                    Box::pin(async move {
-                        first.lock().unwrap().push("first undone".to_string());
-                        Ok(())
-                    })
+                log.record("the first step", async move {
+                    first.lock().unwrap().push("first undone".to_string());
+                    Ok(())
                 });
                 let second = Arc::clone(&self.log);
-                log.record("the second step", move |_| {
-                    Box::pin(async move {
-                        second.lock().unwrap().push("second undone".to_string());
-                        anyhow::bail!("it stays")
-                    })
+                log.record("the second step", async move {
+                    second.lock().unwrap().push("second undone".to_string());
+                    anyhow::bail!("it stays")
                 });
                 anyhow::bail!("{} fails", self.name);
             }
@@ -425,12 +414,7 @@ mod tests {
                 locks.exclusive(self.1)
             }
 
-            async fn carry_out(
-                self,
-                _: (),
-                _: &Admitted<'_>,
-                _: &mut Compensation,
-            ) -> anyhow::Result<()> {
+            async fn carry_out(self, _: (), _: &mut Compensation) -> anyhow::Result<()> {
                 let log = Arc::new(Mutex::new(Vec::new()));
                 let inner = Probe::new("inner", &log).exclusive(self.1);
                 self.0.run(inner).await.map(drop)
@@ -479,6 +463,56 @@ mod tests {
         assert!(!executor.table.knows(key), "let go");
     }
 
+    /// What a procedure keeps is let go once it is done: after every step it recorded is undone if
+    /// it fails, with what it recorded if it does not.
+    #[tokio::test]
+    async fn what_a_procedure_keeps_is_let_go_after_its_steps_are_undone() {
+        /// What a procedure keeps: tells `log` as it is let go.
+        struct Kept(Arc<Mutex<Vec<String>>>);
+
+        impl Drop for Kept {
+            fn drop(&mut self) {
+                self.0.lock().unwrap().push("let go".to_string());
+            }
+        }
+
+        /// Keeps a `Kept`, then records a step, then fails if told to.
+        struct Keeping(Arc<Mutex<Vec<String>>>, bool);
+
+        #[async_trait]
+        impl Procedure for Keeping {
+            type Plan = ();
+            type Output = ();
+            type Error = anyhow::Error;
+
+            async fn enumerate(&self, _: &mut Locks<'_>) -> Result<(), Deferred> {
+                Ok(())
+            }
+
+            async fn carry_out(self, _: (), log: &mut Compensation) -> anyhow::Result<()> {
+                log.keep(Kept(Arc::clone(&self.0)));
+                let undone = Arc::clone(&self.0);
+                log.record("the step", async move {
+                    undone.lock().unwrap().push("undone".to_string());
+                    Ok(())
+                });
+                self.0.lock().unwrap().push("done".to_string());
+                match self.1 {
+                    true => Err(anyhow!("it fails")),
+                    false => Ok(()),
+                }
+            }
+        }
+
+        let executor = ProcedureExecutor::new();
+        let failed = Arc::new(Mutex::new(Vec::new()));
+        executor.run(Keeping(Arc::clone(&failed), true)).await.expect_err("it fails");
+        assert_eq!(*failed.lock().unwrap(), vec!["done", "undone", "let go"]);
+        let done = Arc::new(Mutex::new(Vec::new()));
+        executor.run(Keeping(Arc::clone(&done), false)).await.unwrap();
+        assert_eq!(*done.lock().unwrap(), vec!["done", "let go"]);
+    }
+
     /// A part carried out all or nothing is undone at once if it fails, and only it; one that is
     /// done is kept, whatever becomes of the procedure.
     #[tokio::test]
@@ -489,14 +523,11 @@ mod tests {
         fn undoing(
             log: &Arc<Mutex<Vec<String>>>,
             entry: &'static str,
-        ) -> impl for<'a> FnOnce(&'a Admitted<'a>) -> BoxFuture<'a, anyhow::Result<()>> + Send
-        {
+        ) -> impl Future<Output = anyhow::Result<()>> + Send + 'static {
             let log = Arc::clone(log);
-            move |_| {
-                Box::pin(async move {
-                    log.lock().unwrap().push(entry.to_string());
-                    Ok(())
-                })
+            async move {
+                log.lock().unwrap().push(entry.to_string());
+                Ok(())
             }
         }
 
@@ -510,19 +541,14 @@ mod tests {
                 Ok(())
             }
 
-            async fn carry_out(
-                self,
-                _: (),
-                admitted: &Admitted<'_>,
-                log: &mut Compensation,
-            ) -> anyhow::Result<()> {
+            async fn carry_out(self, _: (), log: &mut Compensation) -> anyhow::Result<()> {
                 log.record("the procedure's step", undoing(&self.0, "the procedure's undone"));
-                all_or_nothing(admitted, "a part done", async |part: &mut Compensation| {
+                all_or_nothing("a part done", async |part: &mut Compensation| {
                     part.record("the part's step", undoing(&self.0, "the part done undone"));
                     Ok::<_, anyhow::Error>(())
                 })
                 .await?;
-                let failed = all_or_nothing(admitted, "a part failing", async |part| {
+                let failed = all_or_nothing("a part failing", async |part| {
                     part.record("the part's step", undoing(&self.0, "the part failing undone"));
                     Err::<(), _>(anyhow!("the part fails"))
                 })

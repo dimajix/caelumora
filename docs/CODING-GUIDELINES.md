@@ -254,9 +254,9 @@ Its methods are named by the verbs of the lifecycle, without the kind - the mana
 shared project's - is a procedure's (issue 593): each verb a type named so in the module
 `procedure` of the kind (`procedure::session::Open`, `procedure::project::Delete`), which an entry
 point makes and the kernel's `ProcedureExecutor` carries out. Its manager then offers the building
-blocks the procedures carry the change out by, each asking for the proof that the procedure holds
-what it changes (`Admitted`), and named `…_held` where it is the verb the procedure carries out
-(`SessionManager::purge_held`).
+blocks the procedures carry the change out by, named `…_held` where it is the verb the procedure
+carries out (`SessionManager::purge_held`); what holds the objects lies around them, in the
+executor, not in their signatures.
 
 The verbs on one entity, found by its id, answer what is not there - or not the caller's to see -
 alike: `delete` and `purge` answer `false`, since for whoever wants it gone it is gone (how a REST

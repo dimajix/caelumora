@@ -6,12 +6,12 @@ use super::{store_error, ProjectError, ProjectResult, ProjectSpec};
 use crate::error::is_forbidden;
 use crate::event::EventBus;
 use crate::group::{keep_participants, GroupManager};
+use crate::procedure::all_or_nothing;
 #[cfg(any(test, feature = "test-support"))]
 use crate::procedure::project::{Delete, Purge, Restore};
 use crate::procedure::session::{delete as delete_session, restore as restore_session};
 #[cfg(any(test, feature = "test-support"))]
 use crate::procedure::ProcedureExecutor;
-use crate::procedure::{all_or_nothing, Admitted};
 use crate::scoped::{found_or_made, purge_for_good, ScopeNotEmpty, ScopedEntities};
 use crate::session::{SessionError, SessionManager};
 use caelumora_domain::actor::ActorId;
@@ -135,7 +135,6 @@ impl ProjectManager {
     /// project as it is; or whatever the store reports, `PermissionDenied` included.
     pub(crate) async fn delete_held(
         &self,
-        admitted: &Admitted<'_>,
         ctx: &SecurityContext,
         id: ProjectId,
     ) -> ProjectResult<bool> {
@@ -155,7 +154,7 @@ impl ProjectManager {
         let deleted = async {
             let mut left = Vec::new();
             let sessions = self.sessions_in(id).await?;
-            let kept = self.delete_sessions(admitted, ctx, &sessions, &removal).await?;
+            let kept = self.delete_sessions(ctx, &sessions, &removal).await?;
             if kept > 0 {
                 left.push((Session::KIND, kept));
             }
@@ -190,7 +189,6 @@ impl ProjectManager {
     /// own, or whatever else the store reports - `NameTaken` among it.
     pub(crate) async fn restore_held(
         &self,
-        admitted: &Admitted<'_>,
         ctx: &SecurityContext,
         id: ProjectId,
     ) -> ProjectResult<Project> {
@@ -221,8 +219,8 @@ impl ProjectManager {
             .await?
             .items
         {
-            let restored = all_or_nothing(admitted, "restoring a session", async |log| {
-                restore_session(admitted, log, &self.sessions, ctx, session.id).await
+            let restored = all_or_nothing("restoring a session", async |log| {
+                restore_session(log, &self.sessions, ctx, session.id).await
             });
             if let Err(e) = restored.await {
                 info!(project = %id, session = %session.id, "A session of a restored project stays deleted: {e}");
@@ -250,7 +248,6 @@ impl ProjectManager {
     /// failed, or whatever the store reports.
     pub(crate) async fn purge_held(
         &self,
-        admitted: &Admitted<'_>,
         ctx: &SecurityContext,
         id: ProjectId,
     ) -> ProjectResult<bool> {
@@ -263,7 +260,7 @@ impl ProjectManager {
             return Err(ProjectError::InvalidScope);
         }
         let purged = purge_behind(self.stores.projects.as_ref(), ctx, id, async |project| {
-            self.remove_behind(admitted, project).await
+            self.remove_behind(project).await
         })
         .await?;
         if purged {
@@ -278,10 +275,10 @@ impl ProjectManager {
     ///
     /// # Errors
     /// `Session` if purging a session failed, or whatever the store reports.
-    async fn remove_behind(&self, admitted: &Admitted<'_>, project: &Project) -> ProjectResult<()> {
+    async fn remove_behind(&self, project: &Project) -> ProjectResult<()> {
         let system = SecurityContext::system();
         for Deleted { entity: session, .. } in self.deleted_sessions_in(project.id).await? {
-            let purged = self.sessions.purge_held(admitted, &system, session.id).await;
+            let purged = self.sessions.purge_held(&system, session.id).await;
             purged.map_err(ProjectError::Session)?;
         }
         self.scoped.purge_lying_in(slice::from_ref(&project.holds())).await?;
@@ -317,15 +314,14 @@ impl ProjectManager {
     /// `Session` if deleting one failed otherwise; what was deleted before stays deleted.
     async fn delete_sessions(
         &self,
-        admitted: &Admitted<'_>,
         ctx: &SecurityContext,
         sessions: &[Session],
         removal: &Removal,
     ) -> ProjectResult<usize> {
         let mut kept = 0;
         for session in sessions {
-            let deleted = all_or_nothing(admitted, "deleting a session", async |log| {
-                delete_session(admitted, log, &self.sessions, ctx, session.id, removal).await
+            let deleted = all_or_nothing("deleting a session", async |log| {
+                delete_session(log, &self.sessions, ctx, session.id, removal).await
             });
             match deleted.await {
                 Ok(true) => {}

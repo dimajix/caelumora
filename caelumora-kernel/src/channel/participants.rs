@@ -6,7 +6,6 @@ use super::{
     ResolvedParticipant, LEAVE_GRACE,
 };
 use crate::procedure::participant::{Entry, Exit};
-use crate::procedure::Admitted;
 use anyhow::{Error, Result};
 use caelumora_api::actor::Actor;
 use caelumora_domain::actor::ActorId;
@@ -42,7 +41,6 @@ impl ChannelLoop {
     /// `StoreError` if `storing` may not change it.
     pub(crate) async fn list_participant_held(
         &self,
-        _: &Admitted<'_>,
         storing: &SecurityContext,
         resolved: &ResolvedParticipant,
     ) -> Result<Channel> {
@@ -116,7 +114,6 @@ impl ChannelLoop {
     /// What storing the channel reports.
     pub(crate) async fn undo_listing_held(
         &self,
-        _: &Admitted<'_>,
         participant: ActorId,
         before: &Channel,
     ) -> Result<()> {
@@ -206,7 +203,6 @@ impl ChannelLoop {
     /// What storing the channel reports - a `StoreError` if `storing` may not change it.
     pub(crate) async fn let_go_held(
         &self,
-        _: &Admitted<'_>,
         context: &SecurityContext,
         storing: &SecurityContext,
         participant: ActorId,
@@ -325,7 +321,6 @@ impl ChannelLoop {
     /// As `start_participant`.
     pub(crate) async fn start_participant_held(
         &self,
-        _: &Admitted<'_>,
         resolved: ResolvedParticipant,
         thread: ThreadId,
         from: Option<Position>,

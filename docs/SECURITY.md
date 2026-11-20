@@ -478,6 +478,18 @@ asks what, in whose name and by which reason is mapped, check by check, in
     `ConfidentialityQuestions::require_*`, offering with `AccessQuestions::may_*` and
     `ConfidentialityQuestions::may_*`.
 
+Who enforces is who acts; one place decides (issue 593). What an object does itself it enforces
+itself, in the method that does it: a channel its `cancel`, closing a thread, reclassifying. An
+operation across objects - taking someone in, letting them go, creating, deleting or restoring a
+channel or a session - is a procedure's, and the procedure enforces it, in the order of the rules
+above; a store or a controller enforces as it writes (rule 1). None of them holds the decision:
+whoever enforces asks the place that decides - the `AccessPolicy` by `Enforcement::require` for one
+action, `Participation` for participants (who may run, take part, act for whom), `caelumora-domain`
+for the rules of a document - and turns a refusal into its own error. A procedure that must know
+an answer before it changes another object asks the same place ahead, and the object asks again as
+it acts. The questions of their own the loops still ask for the procedures (`require_…`) go in the
+steps of issue 593's restructuring.
+
 One enforcing site turns a refusal into an outcome of its own rather than an error: the
 `ToolExecutor`, which answers a call refused by the policy as forbidden. It asks as every act does,
 so that the refusal is logged alike. `ChannelLoop::reclassify_held` asks `may_publish` of the old

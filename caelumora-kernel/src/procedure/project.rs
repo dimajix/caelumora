@@ -6,7 +6,7 @@
 //! locked: putting a session into a project locks the project shared (`session::Move`), so that
 //! none comes in meanwhile.
 
-use super::{Admitted, Compensation, Deferred, Key, Locks, Procedure};
+use super::{Compensation, Deferred, Key, Locks, Procedure};
 use crate::project::{ProjectError, ProjectManager};
 use async_trait::async_trait;
 use caelumora_domain::project::{Project, ProjectId};
@@ -47,11 +47,10 @@ impl Procedure for Delete {
     async fn carry_out(
         self,
         read: Result<(), ProjectError>,
-        admitted: &Admitted<'_>,
         _: &mut Compensation,
     ) -> Result<bool, ProjectError> {
         read?;
-        self.projects.delete_held(admitted, &self.context, self.id).await
+        self.projects.delete_held(&self.context, self.id).await
     }
 }
 
@@ -86,11 +85,10 @@ impl Procedure for Restore {
     async fn carry_out(
         self,
         read: Result<(), ProjectError>,
-        admitted: &Admitted<'_>,
         _: &mut Compensation,
     ) -> Result<Project, ProjectError> {
         read?;
-        self.projects.restore_held(admitted, &self.context, self.id).await
+        self.projects.restore_held(&self.context, self.id).await
     }
 }
 
@@ -126,11 +124,10 @@ impl Procedure for Purge {
     async fn carry_out(
         self,
         read: Result<(), ProjectError>,
-        admitted: &Admitted<'_>,
         _: &mut Compensation,
     ) -> Result<bool, ProjectError> {
         read?;
-        self.projects.purge_held(admitted, &self.context, self.id).await
+        self.projects.purge_held(&self.context, self.id).await
     }
 }
 

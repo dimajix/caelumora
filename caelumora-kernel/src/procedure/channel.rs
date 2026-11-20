@@ -5,16 +5,16 @@
 //! Each locks the channels it changes exclusively (`Key::Channel`) and the participants it takes in
 //! or lets go; each but building again, which opens no session, locks its session as opening it
 //! does - shared where it runs, exclusively where it starts it. Each carries the change out by the
-//! building blocks of the `SessionLoop` and the `ChannelLoop`, which ask for the proof that it
-//! holds them (`Admitted`): asked first by the objects' own questions, which store nothing, then
-//! one step after the other, each that can be set back undone by its compensation if a later one
-//! fails - not what deleting a channel deleted of its scope, nor whom restoring it let go. Whoever
-//! takes someone into a channel or lets them go holds it shared (`participant`), so that neither
-//! crosses a channel being made, deleted, restored, built again or reclassified.
+//! building blocks of the `SessionLoop` and the `ChannelLoop`: asked first by the objects' own
+//! questions, which store nothing, then one step after the other, each that can be set back undone
+//! by its compensation if a later one fails - not what deleting a channel deleted of its scope, nor
+//! whom restoring it let go. Whoever takes someone into a channel or lets them go holds it shared
+//! (`participant`), so that neither crosses a channel being made, deleted, restored, built again or
+//! reclassified.
 
 use super::participant::{take_in, Entry};
 use super::session::lock_to_open;
-use super::{Admitted, Compensation, Deferred, Key, Locks, Procedure};
+use super::{Compensation, Deferred, Key, Locks, Procedure};
 use crate::channel::ChannelLoop;
 use crate::session::{ChannelRun, ChannelSpec, SessionError, SessionManager};
 use async_trait::async_trait;
@@ -87,43 +87,36 @@ impl Procedure for Create {
     async fn carry_out(
         self,
         (): (),
-        admitted: &Admitted<'_>,
         log: &mut Compensation,
     ) -> Result<Arc<ChannelLoop>, SessionError> {
         let Self { sessions, context, session, id, spec } = self;
-        let session = sessions.open_held(admitted, &context, session).await?;
+        let session = sessions.open_held(&context, session).await?;
         let (mut document, founders) = session.channel_asked_for(&context, id, spec).await?;
-        session.store_channel_held(admitted, &context, &mut document).await?;
+        session.store_channel_held(&context, &mut document).await?;
         {
             let session = Arc::clone(&session);
-            log.record("storing a channel", move |admitted| {
-                Box::pin(async move { session.purge_channel_held(admitted, id).await })
-            });
+            log.record("storing a channel", async move { session.purge_channel_held(id).await });
         }
-        session.keep_channel_group_held(admitted, &document).await?;
-        session.list_channel_held(admitted, &context, id).await?;
+        session.keep_channel_group_held(&document).await?;
+        session.list_channel_held(&context, id).await?;
         {
             // Its creation was permitted: taken back in the kernel's name.
             let session = Arc::clone(&session);
-            log.record("listing a channel", move |admitted| {
-                Box::pin(async move {
-                    session.unlist_channel_held(admitted, &SecurityContext::system(), id).await
-                })
+            log.record("listing a channel", async move {
+                session.unlist_channel_held(&SecurityContext::system(), id).await
             });
         }
-        let channel = session.run_channel_held(admitted, &document).await?;
+        let channel = session.run_channel_held(&document).await?;
         {
             let session = Arc::clone(&session);
-            log.record("starting a channel", move |admitted| {
-                Box::pin(async move {
-                    session.stop_channel_held(admitted, id).await;
-                    Ok(())
-                })
+            log.record("starting a channel", async move {
+                session.stop_channel_held(id).await;
+                Ok(())
             });
         }
         let into = Some((&channel, HistoryAccess::None, ThreadId::line(channel.id())));
         for founder in founders {
-            take_in(admitted, log, &session, &context, founder, Entry::Founding, into).await?;
+            take_in(log, &session, &context, founder, Entry::Founding, into).await?;
         }
         session.announce_created(&channel);
         Ok(channel)
@@ -175,41 +168,32 @@ impl Procedure for Delete {
     /// As `SessionManager::open_held`, `SessionLoop::channel_to_delete` and the building blocks
     /// that unlist and mark it and delete its scope and group - `SessionError::ScopeNotEmpty` if
     /// something of its scope is left that `context` may not delete.
-    async fn carry_out(
-        self,
-        (): (),
-        admitted: &Admitted<'_>,
-        log: &mut Compensation,
-    ) -> Result<bool, SessionError> {
+    async fn carry_out(self, (): (), log: &mut Compensation) -> Result<bool, SessionError> {
         let Self { sessions, context, session, channel: id } = self;
-        let session = sessions.open_held(admitted, &context, session).await?;
+        let session = sessions.open_held(&context, session).await?;
         let Some(channel) = session.channel_to_delete(&context, id).await? else {
             return Ok(false);
         };
-        session.unlist_channel_held(admitted, &context, id).await?;
+        session.unlist_channel_held(&context, id).await?;
         {
             // Its deletion was permitted: put back in the kernel's name.
             let session = Arc::clone(&session);
-            log.record("taking a channel off its session's list", move |admitted| {
-                Box::pin(async move {
-                    session.list_channel_held(admitted, &SecurityContext::system(), id).await
-                })
+            log.record("taking a channel off its session's list", async move {
+                session.list_channel_held(&SecurityContext::system(), id).await
             });
         }
         let removal = Removal::now(context.caller_id);
-        session.mark_channel_deleted_held(admitted, &context, id, &removal).await?;
+        session.mark_channel_deleted_held(&context, id, &removal).await?;
         {
             let session = Arc::clone(&session);
-            log.record("marking a channel deleted", move |admitted| {
-                Box::pin(async move {
-                    let system = SecurityContext::system();
-                    session.unmark_channel_held(admitted, &system, id).await.map(drop)
-                })
+            log.record("marking a channel deleted", async move {
+                let system = SecurityContext::system();
+                session.unmark_channel_held(&system, id).await.map(drop)
             });
         }
-        session.delete_scope_held(admitted, &context, id, &removal).await?;
-        session.delete_channel_group_held(admitted, id, &removal).await?;
-        session.stop_channel_held(admitted, id).await;
+        session.delete_scope_held(&context, id, &removal).await?;
+        session.delete_channel_group_held(id, &removal).await?;
+        session.stop_channel_held(id).await;
         session.announce_deleted(&channel, &context);
         Ok(true)
     }
@@ -277,47 +261,39 @@ impl Procedure for Restore {
     async fn carry_out(
         self,
         read: Result<(), SessionError>,
-        admitted: &Admitted<'_>,
         log: &mut Compensation,
     ) -> Result<Arc<ChannelLoop>, SessionError> {
         read?;
         let Self { sessions, context, session, channel: id } = self;
-        let session = sessions.open_held(admitted, &context, session).await?;
+        let session = sessions.open_held(&context, session).await?;
         let (Deleted { removal, .. }, gone) = session.channel_to_restore(&context, id).await?;
-        let document = session.unmark_channel_held(admitted, &context, id).await?;
+        let document = session.unmark_channel_held(&context, id).await?;
         {
             // Its restoring was permitted: deleted again in the kernel's name.
             let (session, removal) = (Arc::clone(&session), removal.clone());
-            log.record("taking a channel's mark away", move |admitted| {
-                Box::pin(async move {
-                    let system = SecurityContext::system();
-                    session.mark_channel_deleted_held(admitted, &system, id, &removal).await
-                })
+            log.record("taking a channel's mark away", async move {
+                let system = SecurityContext::system();
+                session.mark_channel_deleted_held(&system, id, &removal).await
             });
         }
-        session.restore_channel_group_held(admitted, id, &removal).await?;
+        session.restore_channel_group_held(id, &removal).await?;
         {
             let (session, removal) = (Arc::clone(&session), removal.clone());
-            log.record("restoring a channel's group", move |admitted| {
-                Box::pin(
-                    async move { session.delete_channel_group_held(admitted, id, &removal).await },
-                )
+            log.record("restoring a channel's group", async move {
+                session.delete_channel_group_held(id, &removal).await
             });
         }
-        let document = session
-            .let_go_where_not_running_held(admitted, document, &gone, ActorId::System)
-            .await?;
-        session.list_channel_held(admitted, &context, id).await?;
+        let document =
+            session.let_go_where_not_running_held(document, &gone, ActorId::System).await?;
+        session.list_channel_held(&context, id).await?;
         {
             let session = Arc::clone(&session);
-            log.record("listing a channel", move |admitted| {
-                Box::pin(async move {
-                    session.unlist_channel_held(admitted, &SecurityContext::system(), id).await
-                })
+            log.record("listing a channel", async move {
+                session.unlist_channel_held(&SecurityContext::system(), id).await
             });
         }
-        let channel = session.run_channel_held(admitted, &document).await?;
-        session.restore_scope_held(admitted, &context, id, &removal).await;
+        let channel = session.run_channel_held(&document).await?;
+        session.restore_scope_held(&context, id, &removal).await;
         session.announce_restored(&document, &context);
         Ok(channel)
     }
@@ -360,14 +336,9 @@ impl Procedure for Start {
         Ok(!left_out.is_empty())
     }
 
-    async fn carry_out(
-        self,
-        any: bool,
-        admitted: &Admitted<'_>,
-        _: &mut Compensation,
-    ) -> Result<(), SessionError> {
+    async fn carry_out(self, any: bool, _: &mut Compensation) -> Result<(), SessionError> {
         if let (true, Some(running)) = (any, self.sessions.running(self.session)) {
-            running.retry_unavailable_held(admitted).await;
+            running.retry_unavailable_held().await;
         }
         Ok(())
     }
@@ -413,16 +384,11 @@ impl Procedure for Reclassify {
     /// # Errors
     /// As `SessionManager::open_held`, `SessionLoop::channel_for` and
     /// `ChannelLoop::reclassify_held`.
-    async fn carry_out(
-        self,
-        (): (),
-        admitted: &Admitted<'_>,
-        _: &mut Compensation,
-    ) -> Result<(), SessionError> {
+    async fn carry_out(self, (): (), _: &mut Compensation) -> Result<(), SessionError> {
         let Self { sessions, context, session, channel, classification } = self;
-        let session = sessions.open_held(admitted, &context, session).await?;
+        let session = sessions.open_held(&context, session).await?;
         let channel = session.channel_for(&context, channel).await?;
-        Ok(channel.reclassify_held(admitted, &context, classification).await?)
+        Ok(channel.reclassify_held(&context, classification).await?)
     }
 }
 

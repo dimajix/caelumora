@@ -6,13 +6,12 @@
 //! exclusively. Whoever lets someone go holds the thread they take part in shared, until they have
 //! left (`participant::LetGo`), so that a thread is closed only once whoever left it has left. Both
 //! open the session as opening it does, and carry the change out by the building blocks of the
-//! `SessionLoop` and the `ChannelLoop`, which ask for the proof that they hold them (`Admitted`) -
-//! as a plugin's procedures may, which open or close a thread within a change of their own (issue
-//! 558's sub-agents).
+//! `SessionLoop` and the `ChannelLoop` - as a plugin's procedures may, which open or close a
+//! thread within a change of their own (issue 558's sub-agents).
 
 use super::participant::{take_into_channel, take_into_session, Entry};
 use super::session::lock_to_open;
-use super::{Admitted, Compensation, Deferred, Key, Locks, Procedure};
+use super::{Compensation, Deferred, Key, Locks, Procedure};
 use crate::channel::ChannelError;
 use crate::session::{SessionError, SessionLoop, SessionManager};
 use async_trait::async_trait;
@@ -72,15 +71,10 @@ impl Procedure for Open {
 
     /// # Errors
     /// As `SessionManager::open_held` and `open`.
-    async fn carry_out(
-        self,
-        (): (),
-        admitted: &Admitted<'_>,
-        log: &mut Compensation,
-    ) -> Result<ThreadId, SessionError> {
+    async fn carry_out(self, (): (), log: &mut Compensation) -> Result<ThreadId, SessionError> {
         let Self { sessions, context, session, channel, thread, origin, founders } = self;
-        let session = sessions.open_held(admitted, &context, session).await?;
-        open(admitted, log, &session, &context, channel, thread, origin, founders).await?;
+        let session = sessions.open_held(&context, session).await?;
+        open(log, &session, &context, channel, thread, origin, founders).await?;
         Ok(thread)
     }
 }
@@ -101,9 +95,7 @@ impl Procedure for Open {
 /// `ChannelLoop::require_opening`; `ChannelError::AlreadyParticipant` for a founder the channel
 /// lists; as `participant::take_into_session`, `ChannelLoop::open_thread_held` and
 /// `participant::take_into_channel` otherwise.
-#[expect(clippy::too_many_arguments, reason = "what opening a thread is asked for, each its own")]
 pub async fn open(
-    admitted: &Admitted<'_>,
     log: &mut Compensation,
     session: &Arc<SessionLoop>,
     context: &SecurityContext,
@@ -128,23 +120,19 @@ pub async fn open(
     let into = Some(&channel);
     let mut asked = Vec::with_capacity(founders.len());
     for founder in founders {
-        asked.push(
-            take_into_session(admitted, log, session, context, founder, founding, into).await?,
-        );
+        asked.push(take_into_session(log, session, context, founder, founding, into).await?);
     }
-    channel.open_thread_held(admitted, context, thread, origin).await?;
+    channel.open_thread_held(context, thread, origin).await?;
     {
         let (channel, context) = (Arc::clone(&channel), context.clone());
-        log.record("opening a thread", move |admitted| {
-            Box::pin(async move {
-                channel.undo_opening_held(admitted, &context, thread).await;
-                Ok(())
-            })
+        log.record("opening a thread", async move {
+            channel.undo_opening_held(&context, thread).await;
+            Ok(())
         });
     }
     let line = (&channel, HistoryAccess::None, thread);
     for founder in asked {
-        take_into_channel(admitted, log, context, founder, founding, line).await?;
+        take_into_channel(log, context, founder, founding, line).await?;
     }
     Ok(())
 }
@@ -188,16 +176,11 @@ impl Procedure for Close {
     /// # Errors
     /// As `SessionManager::open_held`, `SessionLoop::channel_for` and
     /// `ChannelLoop::close_thread_held`.
-    async fn carry_out(
-        self,
-        (): (),
-        admitted: &Admitted<'_>,
-        _: &mut Compensation,
-    ) -> Result<bool, SessionError> {
+    async fn carry_out(self, (): (), _: &mut Compensation) -> Result<bool, SessionError> {
         let Self { sessions, context, session, channel, thread } = self;
-        let session = sessions.open_held(admitted, &context, session).await?;
+        let session = sessions.open_held(&context, session).await?;
         let channel = session.channel_for(&context, channel).await?;
-        Ok(channel.close_thread_held(admitted, &context, thread).await?)
+        Ok(channel.close_thread_held(&context, thread).await?)
     }
 }
 
