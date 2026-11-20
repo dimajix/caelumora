@@ -575,22 +575,22 @@ impl ChannelLoop {
         .await
     }
 
-    /// Gives the channel `classification` on behalf of `context`, as `channel::Reclassify` does.
+    /// Gives the channel `classification` on behalf of `context` by the procedure that does it
+    /// (`channel::Reclassify`), as an entry point does.
     ///
     /// # Errors
-    /// As `ChannelLoop::reclassify_held`.
-    pub async fn reclassify(
+    /// As `ChannelLoop::reclassify`.
+    pub async fn reclassify_by_procedure(
         self: &Arc<Self>,
         context: &SecurityContext,
         classification: Classification,
     ) -> Result<()> {
-        if let Some((sessions, session)) = self.of_session() {
-            let reclassifying =
-                Reclassify::new(&sessions, context, session.id(), self.id, classification);
+        if let Some((_, session)) = self.of_session() {
+            let reclassifying = Reclassify::new(context, session.id(), self.id, classification);
             return session.procedures().run(reclassifying).await.map_err(SessionError::untyped);
         }
         let (channel, context) = (Arc::clone(self), context.clone());
-        self.holding(async move { channel.reclassify_held(&context, classification).await }).await
+        self.holding(async move { channel.reclassify(&context, classification).await }).await
     }
 
     /// Adds `participant` to the channel on behalf of `context`, seeing as much of its history as
@@ -705,11 +705,11 @@ impl Procedure for Holding {
     type Output = ();
     type Error = Error;
 
-    async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<(), Deferred> {
+    async fn enumerate(&self, _: &Kernel, locks: &mut Locks<'_>) -> Result<(), Deferred> {
         locks.exclusive(self.key)
     }
 
-    async fn carry_out(self, (): (), _: &mut Compensation) -> Result<(), Error> {
+    async fn carry_out(self, (): (), _: &Kernel, _: &mut Compensation) -> Result<(), Error> {
         self.change.into_inner().unwrap_or_else(sync::PoisonError::into_inner).await
     }
 }

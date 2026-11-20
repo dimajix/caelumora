@@ -294,7 +294,7 @@ impl SessionManager {
         let session_loop = self.establish(context, session, own, channels).await?;
         // A channel whose components the owner cannot read is left out as a
         // session opens (issue 463), but making it is the owner's own request,
-        // refused as creating a channel refuses it (`run_channel_held`).
+        // refused as creating a channel refuses it (`SessionLoop::add_channel`).
         session_loop.require_running()?;
         let session = &session_loop;
         let participants = (users, agents);
@@ -1340,11 +1340,11 @@ mod tests {
             type Output = ();
             type Error = anyhow::Error;
 
-            async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<(), Deferred> {
+            async fn enumerate(&self, _: &Kernel, locks: &mut Locks<'_>) -> Result<(), Deferred> {
                 locks.exclusive(Key::Session(self.session.id))
             }
 
-            async fn carry_out(self, (): (), _: &mut Compensation) -> Result<()> {
+            async fn carry_out(self, (): (), _: &Kernel, _: &mut Compensation) -> Result<()> {
                 self.go.acquire().await?.forget();
                 self.manager.spawn_session(self.session, self.channels, None).await?;
                 Ok(())

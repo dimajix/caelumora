@@ -54,9 +54,7 @@ impl ChannelCommand for CreateCommand {
         Name::new(name).map_err(|e| invalid(e.to_string()))?;
         let issuer = context.issuer.security_context();
         context
-            .carry_out(|sessions, session| {
-                Create::new(sessions, &issuer, session, ChannelSpec::new(name))
-            })
+            .carry_out(|_, session| Create::new(&issuer, session, ChannelSpec::new(name)))
             .await
             .map_err(|e| command_error(CREATE_COMMAND_NAME, &e))?;
         Ok(CommandOutput::private(format!("Created the channel {name}; you take part in it.")))

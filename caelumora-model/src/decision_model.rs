@@ -65,7 +65,7 @@ mod tests {
     use std::sync::Arc;
 
     /// The kernel of a test that offers the decision models `models`.
-    fn offering(models: Value) -> Kernel {
+    fn offering(models: Value) -> Arc<Kernel> {
         kernel_of(configuring(json!({ DECISION: models }))).unwrap()
     }
 

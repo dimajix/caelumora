@@ -13,6 +13,7 @@ use super::participant::{take_into_channel, take_into_session, Entry};
 use super::session::lock_to_open;
 use super::{Compensation, Deferred, Key, Locks, Procedure};
 use crate::channel::ChannelError;
+use crate::kernel::Kernel;
 use crate::session::{SessionError, SessionLoop, SessionManager};
 use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
@@ -59,8 +60,8 @@ impl Procedure for Open {
     type Output = ThreadId;
     type Error = SessionError;
 
-    async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<(), Deferred> {
-        lock_to_open(&self.sessions, locks, self.session)?;
+    async fn enumerate(&self, kernel: &Kernel, locks: &mut Locks<'_>) -> Result<(), Deferred> {
+        lock_to_open(kernel, locks, self.session)?;
         locks.exclusive(Key::Thread(self.session, self.channel, self.thread))?;
         locks.shared(Key::Thread(self.session, self.channel, self.origin.thread))?;
         for founder in &self.founders {
@@ -71,7 +72,12 @@ impl Procedure for Open {
 
     /// # Errors
     /// As `SessionManager::open_held` and `open`.
-    async fn carry_out(self, (): (), log: &mut Compensation) -> Result<ThreadId, SessionError> {
+    async fn carry_out(
+        self,
+        (): (),
+        _: &Kernel,
+        log: &mut Compensation,
+    ) -> Result<ThreadId, SessionError> {
         let Self { sessions, context, session, channel, thread, origin, founders } = self;
         let session = sessions.open_held(&context, session).await?;
         open(log, &session, &context, channel, thread, origin, founders).await?;
@@ -168,15 +174,20 @@ impl Procedure for Close {
     type Output = bool;
     type Error = SessionError;
 
-    async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<(), Deferred> {
-        lock_to_open(&self.sessions, locks, self.session)?;
+    async fn enumerate(&self, kernel: &Kernel, locks: &mut Locks<'_>) -> Result<(), Deferred> {
+        lock_to_open(kernel, locks, self.session)?;
         locks.exclusive(Key::Thread(self.session, self.channel, self.thread))
     }
 
     /// # Errors
     /// As `SessionManager::open_held`, `SessionLoop::channel_for` and
     /// `ChannelLoop::close_thread_held`.
-    async fn carry_out(self, (): (), _: &mut Compensation) -> Result<bool, SessionError> {
+    async fn carry_out(
+        self,
+        (): (),
+        _: &Kernel,
+        _: &mut Compensation,
+    ) -> Result<bool, SessionError> {
         let Self { sessions, context, session, channel, thread } = self;
         let session = sessions.open_held(&context, session).await?;
         let channel = session.channel_for(&context, channel).await?;

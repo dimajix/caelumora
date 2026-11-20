@@ -387,9 +387,15 @@ The procedures, by step, each step reviewed and committed on its own:
      (`Procedure::enumerate`, `carry_out`), and a procedure holds only its parameters - each
      procedure from the step that rewrites it on. Then the lifecycle of
      channels (`channel::Create`, `Delete`, `Restore`, `Start`, `Reclassify`): the `SessionLoop`
-     keeps `add_channel`, `remove_channel`, `renew_unavailable` and its readers; the steps of
+     keeps `add_channel`, `remove_channel`, `hold_unavailable` and its readers; the steps of
      storing, listing, the groups, the scopes and announcing, and the `update_*` of the channel,
      which only pass a call on to its controller, go.
+   - R3b: whoever makes a change announces it, in the method that makes it; no procedure
+     announces anything. The lifecycle of a document - created, marked deleted, its mark taken
+     away - is written and announced by its controller (`ChannelController`, `SessionController`,
+     `ProjectController`), as a controller announces every other change it writes; an undo is a
+     change too, and announces what balances what it undoes - a failed procedure shows what
+     happened, its states in between among it.
    - R4: participants and threads (`participant::TakeIn`, `LetGo`, `Follow`, `thread::Open`,
      `Close`): the `ChannelLoop` keeps `add_actor`, `remove_actor`, `open_thread` and
      `close_thread`, each enforcing what it does; every `require_…` of the loops goes, to the
@@ -737,3 +743,18 @@ case; it is decided there, and may make this unnecessary.
   participant that cannot be resolved - an agent whose personality is gone - is reported before a
   refusal of one named earlier; before, each was resolved and asked in turn. Whether an agent may
   take part by where it lies is a decision of `Participation`'s (`require_in_scope`).
+- **2026-11-20** — Step R2 committed. Step R3 implemented, not committed yet: the executor holds
+  the kernel, weak, made with it (`KernelBuilder::build` answers an `Arc<Kernel>`, built cyclic),
+  and hands it to `Procedure::enumerate` and `carry_out` as a reference - what an undo needs it
+  holds itself, so that it shows what it touches; `ProcedureError::Gone` once the kernel is. The
+  procedures of channels hold only their parameters and carry the change out by the stores, the
+  session's controller (`SessionLoop::controller`) and the loop, which keeps `add_channel`,
+  `remove_channel` and `hold_unavailable` - in place of the `renew_unavailable` planned, as building
+  a channel again that still cannot run holds it anew - of the channel's building blocks; the
+  questions, the steps of storing, listing, the groups and the scopes, and the announcements go into
+  `procedure::channel`. The `ChannelLoop` hands out its controller (`ChannelLoop::controller`,
+  `ChannelController` public as `SessionController` is), through which the channel's attributes
+  are changed - its `update_*` go -, and keeps `reclassify`, which enforces what it does; the
+  procedure only holds the channel. The tests' way to reclassify by the procedure is
+  `reclassify_by_procedure`. Decided with the maintainer as a step of its own after R3 (R3b):
+  whoever makes a change announces it, a failed procedure showing its states in between.

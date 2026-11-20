@@ -1698,7 +1698,8 @@ async fn a_rule_of_a_place_outweighs_a_persons_rule() {
     let alice = World::as_user(world.alice);
     let hers = world.kernel.controller_manager().user_controller(world.alice).await.unwrap();
     hers.add_approval_rule(&alice, sleeping(RuleDecision::Allow, Reach::Everywhere)).await.unwrap();
-    main.update_approval_rules(&alice, vec![sleeping(RuleDecision::Ask, Reach::Everywhere)])
+    main.controller()
+        .update_approval_rules(&alice, vec![sleeping(RuleDecision::Ask, Reach::Everywhere)])
         .await
         .expect("her channel");
 
@@ -2569,7 +2570,7 @@ async fn tool_result(main: &ChannelLoop) -> String {
 #[tokio::test]
 async fn an_agent_reads_of_another_channel_what_the_policy_lets_it_copy() {
     let (world, session, main) = with_a_reader_of(|world| world.alice, false).await;
-    main.reclassify(&World::as_user(world.alice), Classification::PUBLIC)
+    main.reclassify_by_procedure(&World::as_user(world.alice), Classification::PUBLIC)
         .await
         .expect("hers to lower");
     let asked =
@@ -3210,9 +3211,12 @@ async fn an_external_agent_whose_answers_no_longer_enter_its_lowered_channel_is_
     let hermes = world.agent("hermes", world.alice, &remote).await;
     let session = world.shared_session(&[hermes], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
-    main.reclassify(&World::as_user(world.alice), Classification::general(Confidentiality::Public))
-        .await
-        .expect("hers to lower");
+    main.reclassify_by_procedure(
+        &World::as_user(world.alice),
+        Classification::general(Confidentiality::Public),
+    )
+    .await
+    .expect("hers to lower");
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let mut events = main.user_actor(world.bob).expect("he takes part").watch();
 
@@ -3275,7 +3279,7 @@ async fn lowering_a_channel_gives_up_an_external_agents_task_as_whoever_asked_be
 
     let (failed, asked) = world
         .asked(async {
-            main.reclassify(
+            main.reclassify_by_procedure(
                 &World::as_user(world.alice),
                 Classification::general(Confidentiality::Public),
             )

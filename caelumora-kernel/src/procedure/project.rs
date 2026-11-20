@@ -7,6 +7,7 @@
 //! none comes in meanwhile.
 
 use super::{Compensation, Deferred, Key, Locks, Procedure};
+use crate::kernel::Kernel;
 use crate::project::{ProjectError, ProjectManager};
 use async_trait::async_trait;
 use caelumora_domain::project::{Project, ProjectId};
@@ -35,7 +36,7 @@ impl Procedure for Delete {
     type Output = bool;
     type Error = ProjectError;
 
-    async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<Self::Plan, Deferred> {
+    async fn enumerate(&self, _: &Kernel, locks: &mut Locks<'_>) -> Result<Self::Plan, Deferred> {
         locks.exclusive(Key::Project(self.id))?;
         let sessions = self.projects.sessions_in(self.id).await;
         let ids = sessions.map(|sessions| sessions.iter().map(|session| session.id).collect());
@@ -47,6 +48,7 @@ impl Procedure for Delete {
     async fn carry_out(
         self,
         read: Result<(), ProjectError>,
+        _: &Kernel,
         _: &mut Compensation,
     ) -> Result<bool, ProjectError> {
         read?;
@@ -75,7 +77,7 @@ impl Procedure for Restore {
     type Output = Project;
     type Error = ProjectError;
 
-    async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<Self::Plan, Deferred> {
+    async fn enumerate(&self, _: &Kernel, locks: &mut Locks<'_>) -> Result<Self::Plan, Deferred> {
         locks.exclusive(Key::Project(self.id))?;
         lock_deleted_sessions(&self.projects, locks, self.id).await
     }
@@ -85,6 +87,7 @@ impl Procedure for Restore {
     async fn carry_out(
         self,
         read: Result<(), ProjectError>,
+        _: &Kernel,
         _: &mut Compensation,
     ) -> Result<Project, ProjectError> {
         read?;
@@ -114,7 +117,7 @@ impl Procedure for Purge {
     type Output = bool;
     type Error = ProjectError;
 
-    async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<Self::Plan, Deferred> {
+    async fn enumerate(&self, _: &Kernel, locks: &mut Locks<'_>) -> Result<Self::Plan, Deferred> {
         locks.exclusive(Key::Project(self.id))?;
         lock_deleted_sessions(&self.projects, locks, self.id).await
     }
@@ -124,6 +127,7 @@ impl Procedure for Purge {
     async fn carry_out(
         self,
         read: Result<(), ProjectError>,
+        _: &Kernel,
         _: &mut Compensation,
     ) -> Result<bool, ProjectError> {
         read?;

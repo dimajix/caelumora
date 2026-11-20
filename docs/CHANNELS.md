@@ -92,11 +92,14 @@ place, and one zone in a session keeps the times read from another of its channe
 ### Creating and deleting channels
 
 Channels can be created in, deleted from and restored to a session, which is started where it does
-not run (`procedure::channel::Create`, `Delete`, `Restore`). Each asks first, by the session's own
-questions that store nothing (`SessionLoop::channel_asked_for`, `channel_to_delete`,
-`channel_to_restore`), then carries the change out one building block after the other, each that can
-be set back undone by its compensation if a later one fails - not what deleting a channel deleted of
-its scope, nor whom restoring it let go. Each is stored first, and only then is the running session
+not run (`procedure::channel::Create`, `Delete`, `Restore`). Each asks first, in the order of issue
+304 - creating what the request asks for, then `CreateChannel`, then the founders' admission;
+deleting whether the caller reaches the channel, then `DeleteChannel`; restoring `ReadDeleted`, then
+`Restore`, then whether its participants may take part again -, then carries the change out one step
+after the other - by the stores, the session's controller (`SessionLoop::controller`) and the
+session's loop, which runs the channels (`add_channel`, `remove_channel`) -, each that can be set
+back undone by its compensation if a later one fails - not what deleting a channel deleted of its
+scope, nor whom restoring it let go. Each is stored first, and only then is the running session
 changed and the change announced:
 
 *   **Creating** stores the channel (`CreateChannel`) and adds it to the session, which asks
@@ -1244,7 +1247,7 @@ everything in the channel shares:
     back would keep a stopped channel alive.
 
 A session exists before its channels: `SessionLoop::new` makes it, and then builds each channel as
-one created later is built (`add_channel_loop`), so that a channel has its session from the start.
+one created later is built (`add_channel`), so that a channel has its session from the start.
 
 The `ChannelRuntime` is the only source of `ParticipantRuntime`s, so every actor belongs to exactly
 one channel. A `ParticipantRuntime` is made for one participant and hands out only what concerns it:

@@ -274,7 +274,7 @@ async fn the_tool_is_offered_where_the_channel_uses_a_workspace() {
     drop(turn);
 
     let alice = World::as_user(world.alice);
-    session.channels()[0].update_uses_workspace(&alice, false).await.unwrap();
+    session.channels()[0].controller().update_uses_workspace(&alice, false).await.unwrap();
     let mut state = AgentChannelState::default();
     let turn = agent_testing::turn(&session, helper, world.alice, &mut state);
     assert_eq!(
@@ -428,7 +428,7 @@ async fn new_artifacts_go_to_the_storage_the_section_names_or_the_one_there_is()
     let world = world().await;
     assert!(manager(&world).is_configured(), "kept, the one there is");
 
-    fn built(names: &[&str], section: Value) -> Result<Kernel, String> {
+    fn built(names: &[&str], section: Value) -> Result<Arc<Kernel>, String> {
         let storage = names
             .iter()
             .map(|name| (name.to_string(), BackendConfig::new("local", json!({ "root": name }))))
@@ -453,7 +453,7 @@ async fn new_artifacts_go_to_the_storage_the_section_names_or_the_one_there_is()
         .try_build()
         .map_err(|e| format!("{e:#}"))
     }
-    let configured = |kernel: Kernel| {
+    let configured = |kernel: Arc<Kernel>| {
         kernel.services().get::<ArtifactManager>().is_some_and(|manager| manager.is_configured())
     };
     assert!(!configured(built(&[], json!({})).unwrap()), "no storage unless configured");

@@ -1,93 +1,14 @@
-//! Changing a channel: its name, language, description, use of the workspace, approval rules and
-//! classification.
+//! Reclassifying a channel: what it asks, and what a new classification changes of what runs.
 
 use super::{ChannelActor, ChannelError, ChannelLoop};
 use anyhow::Result;
 use caelumora_domain::actor::{ActorId, EventContext};
-use caelumora_domain::approval::ApprovalRule;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_security::confidentiality::ConfidentialityQuestions;
 use caelumora_security::{ActionType, Reclassified, SecurityContext};
 use tracing::info;
 
 impl ChannelLoop {
-    /// Renames the channel on behalf of `context`: stored first, which is
-    /// where the permission is checked (`UpdateChannel`, issue 70).
-    ///
-    /// # Errors
-    /// `StoreError::Invalid` if `new_name` is no name,
-    /// `StoreError::PermissionDenied` if `context` may not change the
-    /// channel, or whatever else storing it reports.
-    pub async fn update_name(&self, context: &SecurityContext, new_name: &str) -> Result<()> {
-        Ok(self.channel.update_name(context, new_name).await?)
-    }
-
-    /// Has the channel's conversation held in `language`, or in none in
-    /// particular, on behalf of `context` (issue 56): stored first, which is
-    /// where the permission is checked (`UpdateChannel`), like a new name.
-    /// Its agents are told from their next turn on; nothing said before is
-    /// translated.
-    ///
-    /// # Errors
-    /// `StoreError::Invalid` if `language` is no language tag,
-    /// `StoreError::PermissionDenied` if `context` may not change the
-    /// channel, or whatever else storing it reports.
-    pub async fn update_language(
-        &self,
-        context: &SecurityContext,
-        language: Option<&str>,
-    ) -> Result<()> {
-        Ok(self.channel.update_language(context, language).await?)
-    }
-
-    /// Says what the channel is for (issue 245) on behalf of `context`:
-    /// stored first, which is where the permission is checked
-    /// (`UpdateChannel`), like a new name. Its agents are told from their
-    /// next turn on.
-    ///
-    /// # Errors
-    /// `StoreError::Validation` if `summary` or `briefing` is too long or
-    /// holds what it may not, `StoreError::PermissionDenied` if `context`
-    /// may not change the channel, or whatever else storing it reports.
-    pub async fn update_description(
-        &self,
-        context: &SecurityContext,
-        summary: Option<&str>,
-        briefing: Option<&str>,
-    ) -> Result<()> {
-        Ok(self.channel.update_description(context, summary, briefing).await?)
-    }
-
-    /// Sets whether the channel's participants work on the workspace of its
-    /// session here (issue 251) on behalf of `context`: stored first, which
-    /// is where the permission is checked (`UpdateChannel`). It permits
-    /// nothing the classifications refuse; it takes effect with the next
-    /// use.
-    ///
-    /// # Errors
-    /// `StoreError::PermissionDenied` if `context` may not change the
-    /// channel, or whatever else storing it reports.
-    pub async fn update_uses_workspace(&self, context: &SecurityContext, uses: bool) -> Result<()> {
-        Ok(self.channel.update_uses_workspace(context, uses).await?)
-    }
-
-    /// Sets what the channel restricts of the tool calls made in it (issue
-    /// 13) on behalf of `context`: stored first, which is where the
-    /// permission is checked (`UpdateChannel`). Its agents' next calls are
-    /// decided by them.
-    ///
-    /// # Errors
-    /// `StoreError::Validation` if a rule does not only ask or deny,
-    /// `StoreError::PermissionDenied` if `context` may not change the
-    /// channel, or whatever else storing it reports.
-    pub async fn update_approval_rules(
-        &self,
-        context: &SecurityContext,
-        rules: Vec<ApprovalRule>,
-    ) -> Result<()> {
-        Ok(self.channel.update_approval_rules(context, rules).await?)
-    }
-
     /// Reclassifies the channel as `classification` on behalf of `context`
     /// (issue 133): asked as `ActionType::Reclassify` - its owner's -, the
     /// classification checked as one that can be given at all, then stored
@@ -112,7 +33,7 @@ impl ChannelLoop {
     /// channel, `ClassificationRefused` if `classification` names
     /// compartments that are not configured, `NotCleared` if it is raised
     /// above a participant; whatever storing it reports.
-    pub(crate) async fn reclassify_held(
+    pub(crate) async fn reclassify(
         &self,
         context: &SecurityContext,
         classification: Classification,
@@ -179,21 +100,16 @@ mod tests {
         let (session, ctx, _) = running_session_of_a_user(&manager).await;
         let side = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
 
-        let refused = side.update_name(&ctx, "Main").await.expect_err("the session has a main");
-        assert!(
-            matches!(
-                refused.downcast_ref::<StoreError>(),
-                Some(StoreError::NameTaken { entity: "channel" })
-            ),
-            "{refused}"
-        );
+        let refused =
+            side.controller().update_name(&ctx, "Main").await.expect_err("the session has a main");
+        assert!(matches!(refused, StoreError::NameTaken { entity: "channel" }), "{refused}");
         assert_eq!(side.name().as_str(), "side", "unchanged");
         assert_eq!(
             kernel.entity_stores().channels.get(&ctx, side.id()).await.unwrap().name.as_str(),
             "side",
             "also as stored"
         );
-        side.update_name(&ctx, "Side").await.expect("its own name, written otherwise");
+        side.controller().update_name(&ctx, "Side").await.expect("its own name, written otherwise");
         assert_eq!(side.name().as_str(), "Side");
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
@@ -280,10 +196,10 @@ mod tests {
 
         let lowered = classified(Confidentiality::Internal, &["hr"]);
         assert!(
-            hr.reclassify(&bob_ctx, lowered.clone()).await.is_err(),
+            hr.reclassify_by_procedure(&bob_ctx, lowered.clone()).await.is_err(),
             "only the owner reclassifies the channel"
         );
-        hr.reclassify(&alice_ctx, lowered.clone()).await.expect("the owner lowers it");
+        hr.reclassify_by_procedure(&alice_ctx, lowered.clone()).await.expect("the owner lowers it");
         assert_eq!(hr.classification(), lowered);
         assert_eq!(
             kernel.entity_stores().channels.get(&alice_ctx, hr.id()).await.unwrap().classification,
@@ -312,12 +228,15 @@ mod tests {
         let running = create(&manager, &as_user(alice), session).await.unwrap();
         let main = running.channel_named("main").unwrap();
 
-        let refused =
-            main.update_name(&as_user(bob), "bobs").await.expect_err("a contributor may not");
-        assert!(is_forbidden(&refused), "{refused}");
+        let refused = main
+            .controller()
+            .update_name(&as_user(bob), "bobs")
+            .await
+            .expect_err("a contributor may not");
+        assert!(is_forbidden(&refused.into()), "refused");
         assert_eq!(main.name(), "main", "unchanged");
 
-        main.update_name(&as_user(alice), "lobby").await.expect("the owner may");
+        main.controller().update_name(&as_user(alice), "lobby").await.expect("the owner may");
         assert_eq!(main.name(), "lobby");
         assert_eq!(
             stores.channels.get(&as_user(alice), main.id()).await.unwrap().name,

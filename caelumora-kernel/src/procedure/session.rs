@@ -7,6 +7,7 @@
 //! building blocks of the `SessionManager` and the `SessionLoop`.
 
 use super::{all_or_nothing, Compensation, Deferred, Key, Locks, Procedure, ProcedureExecutor};
+use crate::kernel::Kernel;
 use crate::session::{MoveTarget, SessionError, SessionLoop, SessionManager, SessionSpec};
 use async_trait::async_trait;
 use caelumora_domain::project::ProjectId;
@@ -61,7 +62,7 @@ impl Procedure for Create {
     type Output = Arc<SessionLoop>;
     type Error = SessionError;
 
-    async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<(), Deferred> {
+    async fn enumerate(&self, _: &Kernel, locks: &mut Locks<'_>) -> Result<(), Deferred> {
         locks.exclusive(Key::Session(self.id))?;
         // The project it is put into, which must not go meanwhile.
         if let Some(project) = self.spec.project {
@@ -73,6 +74,7 @@ impl Procedure for Create {
     async fn carry_out(
         self,
         (): (),
+        _: &Kernel,
         log: &mut Compensation,
     ) -> Result<Arc<SessionLoop>, SessionError> {
         let Self { sessions, context, id, template_id, spec } = self;
@@ -136,8 +138,8 @@ impl Procedure for Open {
     type Output = Arc<SessionLoop>;
     type Error = SessionError;
 
-    async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<(), Deferred> {
-        lock_to_open(&self.sessions, locks, self.id)
+    async fn enumerate(&self, kernel: &Kernel, locks: &mut Locks<'_>) -> Result<(), Deferred> {
+        lock_to_open(kernel, locks, self.id)
     }
 
     /// # Errors
@@ -147,6 +149,7 @@ impl Procedure for Open {
     async fn carry_out(
         self,
         (): (),
+        _: &Kernel,
         _: &mut Compensation,
     ) -> Result<Arc<SessionLoop>, SessionError> {
         let Self { sessions, context, id } = self;
@@ -161,14 +164,15 @@ impl Procedure for Open {
 /// # Errors
 /// `Deferred` if it is held otherwise.
 pub(super) fn lock_to_open(
-    sessions: &SessionManager,
+    kernel: &Kernel,
     locks: &mut Locks<'_>,
     id: SessionId,
 ) -> Result<(), Deferred> {
     let key = Key::Session(id);
-    if sessions.running(id).is_some() {
+    let runs = || kernel.sessions().is_some_and(|sessions| sessions.running(id).is_some());
+    if runs() {
         locks.shared(key)?;
-        if sessions.running(id).is_some() {
+        if runs() {
             return Ok(());
         }
     }
@@ -198,13 +202,18 @@ impl Procedure for Stop {
     type Output = bool;
     type Error = SessionError;
 
-    async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<(), Deferred> {
+    async fn enumerate(&self, _: &Kernel, locks: &mut Locks<'_>) -> Result<(), Deferred> {
         locks.exclusive(Key::Session(self.id))
     }
 
     /// # Errors
     /// As `SessionManager::stop_held`.
-    async fn carry_out(self, (): (), _: &mut Compensation) -> Result<bool, SessionError> {
+    async fn carry_out(
+        self,
+        (): (),
+        _: &Kernel,
+        _: &mut Compensation,
+    ) -> Result<bool, SessionError> {
         let Self { sessions, context, id } = self;
         Ok(sessions.stop_held(&context, id).await?)
     }
@@ -232,13 +241,18 @@ impl Procedure for Delete {
     type Output = bool;
     type Error = SessionError;
 
-    async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<(), Deferred> {
+    async fn enumerate(&self, _: &Kernel, locks: &mut Locks<'_>) -> Result<(), Deferred> {
         lock_with_its_project(&self.sessions, locks, self.id).await
     }
 
     /// # Errors
     /// As `delete`.
-    async fn carry_out(self, (): (), log: &mut Compensation) -> Result<bool, SessionError> {
+    async fn carry_out(
+        self,
+        (): (),
+        _: &Kernel,
+        log: &mut Compensation,
+    ) -> Result<bool, SessionError> {
         let Self { sessions, context, id } = self;
         let removal = Removal::now(context.caller_id);
         delete(log, &sessions, &context, id, &removal).await
@@ -266,13 +280,18 @@ impl Procedure for Restore {
     type Output = Session;
     type Error = SessionError;
 
-    async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<(), Deferred> {
+    async fn enumerate(&self, _: &Kernel, locks: &mut Locks<'_>) -> Result<(), Deferred> {
         lock_with_its_project(&self.sessions, locks, self.id).await
     }
 
     /// # Errors
     /// As `restore`.
-    async fn carry_out(self, (): (), log: &mut Compensation) -> Result<Session, SessionError> {
+    async fn carry_out(
+        self,
+        (): (),
+        _: &Kernel,
+        log: &mut Compensation,
+    ) -> Result<Session, SessionError> {
         let Self { sessions, context, id } = self;
         restore(log, &sessions, &context, id).await
     }
@@ -398,13 +417,18 @@ impl Procedure for Purge {
     type Output = bool;
     type Error = SessionError;
 
-    async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<(), Deferred> {
+    async fn enumerate(&self, _: &Kernel, locks: &mut Locks<'_>) -> Result<(), Deferred> {
         lock_with_its_project(&self.sessions, locks, self.id).await
     }
 
     /// # Errors
     /// As `SessionManager::purge_held`.
-    async fn carry_out(self, (): (), _: &mut Compensation) -> Result<bool, SessionError> {
+    async fn carry_out(
+        self,
+        (): (),
+        _: &Kernel,
+        _: &mut Compensation,
+    ) -> Result<bool, SessionError> {
         let Self { sessions, context, id } = self;
         Ok(sessions.purge_held(&context, id).await?)
     }
@@ -458,7 +482,7 @@ impl Procedure for Move {
     type Output = ();
     type Error = SessionError;
 
-    async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<(), Deferred> {
+    async fn enumerate(&self, _: &Kernel, locks: &mut Locks<'_>) -> Result<(), Deferred> {
         locks.exclusive(Key::Session(self.id))?;
         if let Some(project) = self.project {
             locks.shared(Key::Project(project))?;
@@ -468,7 +492,12 @@ impl Procedure for Move {
 
     /// # Errors
     /// As `Open`, and as `move_to`.
-    async fn carry_out(self, (): (), log: &mut Compensation) -> Result<(), SessionError> {
+    async fn carry_out(
+        self,
+        (): (),
+        _: &Kernel,
+        log: &mut Compensation,
+    ) -> Result<(), SessionError> {
         let Self { sessions, context, id, project } = self;
         let session = sessions.open_held(&context, id).await?;
         move_to(log, &session, &context, project).await
@@ -552,7 +581,11 @@ impl Procedure for ShutDown {
 
     /// Every session that runs: none starts meanwhile, as the executor admits nothing any more and
     /// waited for what was under way.
-    async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<Vec<SessionId>, Deferred> {
+    async fn enumerate(
+        &self,
+        _: &Kernel,
+        locks: &mut Locks<'_>,
+    ) -> Result<Vec<SessionId>, Deferred> {
         let ids = self.sessions.running_ids();
         for id in &ids {
             locks.exclusive(Key::Session(*id))?;
@@ -563,6 +596,7 @@ impl Procedure for ShutDown {
     async fn carry_out(
         self,
         ids: Vec<SessionId>,
+        _: &Kernel,
         _: &mut Compensation,
     ) -> Result<(), SessionError> {
         let sessions = &self.sessions;

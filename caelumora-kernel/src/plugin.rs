@@ -265,7 +265,7 @@ mod tests {
     }
 
     /// The kernel with `plugin` alone, configured as `config` says, or why it could not be built.
-    fn built(config: AppConfig, plugin: &dyn Plugin) -> Result<Kernel> {
+    fn built(config: AppConfig, plugin: &dyn Plugin) -> Result<Arc<Kernel>> {
         TestKernel { config, plugins: vec![plugin], ..Default::default() }.try_build()
     }
 

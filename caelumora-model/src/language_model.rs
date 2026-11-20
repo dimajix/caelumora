@@ -131,7 +131,7 @@ mod tests {
 
     /// The kernel of a test that offers the language models `models`, each answering with its
     /// `answer`, and the variants of the texts `prompts`.
-    fn offering(models: &[(&str, Value)], prompts: &[(&str, PathBuf)]) -> Kernel {
+    fn offering(models: &[(&str, Value)], prompts: &[(&str, PathBuf)]) -> Arc<Kernel> {
         let models: BTreeMap<&str, BackendConfig> = models
             .iter()
             .map(|(name, params)| (*name, BackendConfig::new(ANSWERING, params.clone())))

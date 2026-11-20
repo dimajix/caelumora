@@ -780,14 +780,16 @@ in [ARCHITECTURE.md](ARCHITECTURE.md#managers-and-controllers).
     announced - to who reached the document as it was classified and as it is - and logged, once, by
     the controller. What a controller does besides - a group that follows the participants, an event
     of its own, the checks of a workspace, which is changed as stored rather than as live - it does
-    between the steps of a `Writing`, the change under way. A running session's and a channel's loop
-    only forward to their controller what does no more than that. The `UserController` holds no
-    `LiveDocument`: the user's record belongs to the system and is only kept current, and their
-    profile is created with its first change and announced as it stands, to its user and the kernel
-    alone. The `WorkspaceController` also holds the storage its workspace lies in and the
-    confidentiality policy, which a new classification is asked of. The `PersonalityController` is
-    no writer at all (issue 406): personalities are changed in the store, and it only holds the one
-    copy every running agent of a personality answers from (see below).
+    between the steps of a `Writing`, the change under way. A running channel's loop hands its
+    controller out (`ChannelLoop::controller`), through which its attributes are changed; a running
+    session's loop still forwards to its controller what does no more than that (issue 593). The
+    `UserController` holds no `LiveDocument`: the user's record belongs to the system and is only
+    kept current, and their profile is created with its first change and announced as it stands,
+    to its user and the kernel alone. The `WorkspaceController` also holds the storage its
+    workspace lies in and the confidentiality policy, which a new classification is asked of. The
+    `PersonalityController` is no writer at all (issue 406): personalities are changed in the
+    store, and it only holds the one copy every running agent of a personality answers from (see
+    below).
 
 ### Session-owned and per-instance controllers
 

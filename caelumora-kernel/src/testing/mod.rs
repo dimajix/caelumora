@@ -309,14 +309,14 @@ impl Default for TestKernel<'_> {
 impl TestKernel<'_> {
     /// The kernel, for a test that it is built in.
     pub fn build(self) -> Arc<Kernel> {
-        Arc::new(self.try_build().expect("the kernel of a test is built"))
+        self.try_build().expect("the kernel of a test is built")
     }
 
     /// The kernel, or why it could not be built - for a test of that.
     ///
     /// # Errors
     /// As `KernelBuilder::new`, `plugin`, `library` and `build`.
-    pub fn try_build(self) -> Result<Kernel> {
+    pub fn try_build(self) -> Result<Arc<Kernel>> {
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&self.access_policy)));
         let mut builder = KernelBuilder::new(
             self.store,

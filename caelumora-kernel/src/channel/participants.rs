@@ -767,7 +767,10 @@ mod tests {
             .await
             .expect("both are cleared for internal");
         let raising = team
-            .reclassify(&alice_ctx, Classification::general(Confidentiality::Confidential))
+            .reclassify_by_procedure(
+                &alice_ctx,
+                Classification::general(Confidentiality::Confidential),
+            )
             .await
             .expect_err("above bob");
         assert!(

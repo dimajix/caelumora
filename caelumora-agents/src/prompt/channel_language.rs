@@ -215,14 +215,14 @@ mod tests {
         assert_eq!(prompt.classification, Some(Classification::PUBLIC));
 
         let running = session_loop.channel(channel.id).expect("the channel runs");
-        running.update_language(&system, Some("fr")).await.unwrap();
+        running.controller().update_language(&system, Some("fr")).await.unwrap();
         let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
         assert!(prompt.text.contains("\"fr\""), "the language as it is now: {}", prompt.text);
 
         session_loop.update_language(&system, Some("it")).await.unwrap();
         let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
         assert!(prompt.text.contains("\"fr\""), "its own before the session's: {}", prompt.text);
-        running.update_language(&system, None).await.unwrap();
+        running.controller().update_language(&system, None).await.unwrap();
         let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
         assert!(
             prompt.text.contains("\"it\""),

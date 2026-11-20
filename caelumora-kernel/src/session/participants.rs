@@ -402,7 +402,7 @@ mod tests {
         let OutOfService { session, unavailable, .. } = out_of_service(&world).await;
         let executor = Arc::clone(world.kernel.procedures());
         let held = Held::key(&executor, Key::Channel(session.id(), unavailable), false).await;
-        let starting = Start::left_out(&world.manager, session.id());
+        let starting = Start::left_out(session.id());
         waits_for(held, &executor, starting).await.expect("built again once it is let go");
         world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
     }

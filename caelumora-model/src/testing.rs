@@ -181,7 +181,7 @@ pub(super) fn configuring(section: Value) -> AppConfig {
 ///
 /// # Errors
 /// What keeps the kernel from being built.
-pub(super) fn kernel_of(config: AppConfig) -> Result<Kernel> {
+pub(super) fn kernel_of(config: AppConfig) -> Result<Arc<Kernel>> {
     TestKernel { config, plugins: vec![&ModelPlugin, &TestModels], ..Default::default() }
         .try_build()
 }

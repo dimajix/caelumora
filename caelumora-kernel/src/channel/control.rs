@@ -32,7 +32,7 @@ impl ChannelLoop {
     }
 
     /// Ends the current turn of every actor taking part in `thread`, or in every thread if `None`,
-    /// and keeps the thread quiet: what `cancel` does once permitted, and `reclassify_held` as a
+    /// and keeps the thread quiet: what `cancel` does once permitted, and `reclassify` as a
     /// consequence of lowering the channel.
     pub(super) fn cancel_actors(&self, thread: Option<ThreadId>) {
         for held in self.threads_in(thread) {

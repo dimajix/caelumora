@@ -460,8 +460,10 @@ What changes an entity is split by what it changes:
     kinds, and those of the plugins (`SkillManager`, `ArtifactManager`). The lifecycles of
     sessions and shared projects, which touch several objects, are procedures (below), carried out
     by the building blocks of the `SessionManager` and the `ProjectManager` - made by the program
-    beside the `SessionManager`, which it holds. A channel's is its session's (`SessionLoop`); a
-    session's own project is made, deleted, restored and purged with the session.
+    beside the `SessionManager`, which it holds. A channel's are procedures too
+    (`procedure::channel`), carried out by the stores, the session's controller and the session's
+    loop, which runs its channels; a session's own project is made, deleted, restored and purged
+    with the session.
 *   **What it is - its attributes - is its controller's**, where it has one: a name, a description,
     rules, participants. Sessions, channels, agents, users, workspaces and projects have one, as
     running sessions hold them live; the controller stores a change and announces it, so that the
@@ -481,20 +483,22 @@ a plugin's writer, the follower of the agents' deletion and restoring
 it, as what it asks for, and the kernel's `ProcedureExecutor` carries it out in a task of its own;
 who reaches the session from within it finds the executor and the `SessionManager` there
 (`SessionLoop::procedures`, `sessions`), the latter known to the kernel weakly, since it holds the
-kernel (`Kernel::sessions`, issue 601). It locks what it finds from the top down, by a key that
-names the object's path (`Key`), each key's parents shared with it: exclusively what it changes,
-shared what has to stay as it is. An object it finds locked defers it: it lets go of everything,
-waits for that object and enumerates again, so that nothing waits while it holds anything and no
-order of locks is needed; who waits at an object admits nobody after them. Holding its objects, it
-checks the state it finds and the permissions, once, and carries the change out by the building
-blocks of the objects, which know nothing of locking - what holds them lies around them, in the
-executor -; how to undo each step it records, and the executor undoes it if a later step fails
-(`Compensation`). No procedure is carried out within another - it would wait for itself -, and the
-executor refuses it. A procedure that a channel's `run` carries a step out for holds its objects
-until `run` answers. The REST server, as it opens a session for a request, has its channels left out
-as it started built again by a procedure of its own (`procedure::channel::Start`). A plugin writes
-procedures of its own, of the kernel's building blocks, as the sub-agents' start and end are (issue
-558).
+kernel (`Kernel::sessions`, issue 601). The executor holds the kernel weakly as well, made with it,
+and hands it to the procedure it carries out: a procedure holds only what it was asked for, and
+reaches the services of the kernel as it is carried out. It locks what it finds from the top down,
+by a key that names the object's path (`Key`), each key's parents shared with it: exclusively what
+it changes, shared what has to stay as it is. An object it finds locked defers it: it lets go of
+everything, waits for that object and enumerates again, so that nothing waits while it holds
+anything and no order of locks is needed; who waits at an object admits nobody after them. Holding
+its objects, it checks the state it finds and the permissions, once, and carries the change out by
+the building blocks of the objects, which know nothing of locking - what holds them lies around
+them, in the executor -; how to undo each step it records, and the executor undoes it if a later
+step fails (`Compensation`). No procedure is carried out within another - it would wait for
+itself -, and the executor refuses it. A procedure that a channel's `run` carries a step out for
+holds its objects until `run` answers. The REST server, as it opens a session for a request, has its
+channels left out as it started built again by a procedure of its own (`procedure::channel::Start`).
+A plugin writes procedures of its own, of the kernel's building blocks, as the sub-agents' start and
+end are (issue 558).
 
 An attachment is no entity: it is part of its message, read and taken back with it. The lifecycle
 of its content is the `AttachmentManager`'s: kept as it is uploaded for a message - or copied, as an

@@ -4,10 +4,11 @@
 use super::compensation::{all_or_nothing, Compensation};
 use super::locks::{Holder, Locks, ProcedureId, Table};
 use super::{Procedure, ProcedureError};
+use crate::kernel::Kernel;
 use std::any;
 use std::sync;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 use tokio::sync::oneshot;
 use tokio::time;
@@ -31,16 +32,19 @@ pub struct ProcedureExecutor {
     tasks: TaskTracker,
     /// Whether it admits procedures; no longer once it shuts down.
     admitting: sync::Mutex<bool>,
+    /// The kernel it hands the procedures it carries out, which holds it.
+    kernel: Weak<Kernel>,
 }
 
 impl ProcedureExecutor {
-    /// An executor that holds nothing yet.
-    pub(crate) fn new() -> Self {
+    /// An executor of `kernel`, which holds it, holding nothing yet.
+    pub(crate) fn new(kernel: Weak<Kernel>) -> Self {
         Self {
             table: Arc::default(),
             next: AtomicU64::new(0),
             tasks: TaskTracker::new(),
             admitting: sync::Mutex::new(true),
+            kernel,
         }
     }
 
@@ -49,8 +53,8 @@ impl ProcedureExecutor {
     ///
     /// # Errors
     /// What the procedure fails with; `ProcedureError::Nested` if asked for in carrying out
-    /// another, `ShuttingDown` once the executor shuts down, `Ended` if its task ended without an
-    /// answer.
+    /// another, `ShuttingDown` once the executor shuts down, `Gone` once its kernel is, `Ended` if
+    /// its task ended without an answer.
     pub async fn run<P: Procedure>(&self, procedure: P) -> Result<P::Output, P::Error> {
         if let Ok(outer) = CARRYING_OUT.try_with(|outer| *outer) {
             error!(
@@ -66,10 +70,11 @@ impl ProcedureExecutor {
             if !*admitting {
                 return Err(ProcedureError::ShuttingDown.into());
             }
+            let kernel = self.kernel()?;
             let table = Arc::clone(&self.table);
             let id = self.next_id();
             self.tasks.spawn(CARRYING_OUT.scope(id, async move {
-                let _ = answer.send(carry_out(&table, id, procedure).await);
+                let _ = answer.send(carry_out(&table, &kernel, id, procedure).await);
             }));
         }
         answered.await.unwrap_or_else(|_| {
@@ -91,9 +96,18 @@ impl ProcedureExecutor {
         let id = self.next_id();
         let ending = async {
             self.tasks.wait().await;
-            CARRYING_OUT.scope(id, carry_out(&self.table, id, last)).await
+            let kernel = self.kernel()?;
+            CARRYING_OUT.scope(id, carry_out(&self.table, &kernel, id, last)).await
         };
         time::timeout(within, ending).await.ok()
+    }
+
+    /// The kernel, for a procedure to be carried out in.
+    ///
+    /// # Errors
+    /// `ProcedureError::Gone` once it is gone.
+    fn kernel(&self) -> Result<Arc<Kernel>, ProcedureError> {
+        self.kernel.upgrade().ok_or(ProcedureError::Gone)
     }
 
     fn next_id(&self) -> ProcedureId {
@@ -101,27 +115,29 @@ impl ProcedureExecutor {
     }
 }
 
-/// Carries `procedure`, of `id`, out: enumerates it until it holds what it found without a
-/// conflict, waiting at each conflict holding nothing; then carries it out, undoing what it
-/// recorded if it fails, and lets go of everything.
+/// Carries `procedure`, of `id`, out in `kernel`: enumerates it until it holds what it found
+/// without a conflict, waiting at each conflict holding nothing; then carries it out, undoing what
+/// it recorded if it fails, and lets go of everything.
 async fn carry_out<P: Procedure>(
     table: &Table,
+    kernel: &Kernel,
     id: ProcedureId,
     procedure: P,
 ) -> Result<P::Output, P::Error> {
     let name = any::type_name::<P>();
     let mut locks = Locks::new(table, Holder { id, name });
     let plan = loop {
-        let enumerated = procedure.enumerate(&mut locks).await;
+        let enumerated = procedure.enumerate(kernel, &mut locks).await;
         match locks.checked(enumerated) {
             Ok(plan) => break plan,
             Err(deferred) => locks.wait_for(deferred).await,
         }
     };
     locks.settle();
-    let carried_out =
-        all_or_nothing(name, async |log: &mut Compensation| procedure.carry_out(plan, log).await)
-            .await;
+    let carried_out = all_or_nothing(name, async |log: &mut Compensation| {
+        procedure.carry_out(plan, kernel, log).await
+    })
+    .await;
     drop(locks);
     carried_out
 }
@@ -129,9 +145,11 @@ async fn carry_out<P: Procedure>(
 #[cfg(test)]
 mod tests {
     use super::ProcedureExecutor;
+    use crate::kernel::Kernel;
     use crate::procedure::{
         all_or_nothing, Compensation, Deferred, Key, Locks, Procedure, ProcedureError,
     };
+    use crate::session::testing::test_kernel;
     use anyhow::anyhow;
     use async_trait::async_trait;
     use caelumora_domain::channel::ChannelId;
@@ -189,7 +207,7 @@ mod tests {
         type Output = &'static str;
         type Error = anyhow::Error;
 
-        async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<(), Deferred> {
+        async fn enumerate(&self, _: &Kernel, locks: &mut Locks<'_>) -> Result<(), Deferred> {
             self.enumerated.fetch_add(1, Ordering::SeqCst);
             for (key, exclusive) in &self.keys {
                 match exclusive {
@@ -200,7 +218,12 @@ mod tests {
             Ok(())
         }
 
-        async fn carry_out(self, _: (), log: &mut Compensation) -> anyhow::Result<&'static str> {
+        async fn carry_out(
+            self,
+            _: (),
+            _: &Kernel,
+            log: &mut Compensation,
+        ) -> anyhow::Result<&'static str> {
             self.log.lock().unwrap().push(format!("{} begins", self.name));
             if let Some(release) = &self.release {
                 release.acquire().await.unwrap().forget();
@@ -234,6 +257,13 @@ mod tests {
         .unwrap_or_else(|_| panic!("{entry:?} never came: {:?}", log.lock().unwrap()));
     }
 
+    /// A kernel of its own and its executor, the kernel held for as long as the test needs it.
+    fn executor() -> (Arc<Kernel>, Arc<ProcedureExecutor>) {
+        let kernel = test_kernel();
+        let executor = Arc::clone(kernel.procedures());
+        (kernel, executor)
+    }
+
     fn session() -> Key {
         Key::Session(SessionId::new())
     }
@@ -246,7 +276,7 @@ mod tests {
     /// Two that change one object take turns: the second begins once the first has ended.
     #[tokio::test]
     async fn two_that_lock_one_key_exclusively_take_turns() {
-        let executor = Arc::new(ProcedureExecutor::new());
+        let (_kernel, executor) = executor();
         let log = Arc::new(Mutex::new(Vec::new()));
         let key = session();
         let release = Arc::new(Semaphore::new(0));
@@ -275,7 +305,7 @@ mod tests {
     /// Two that only need an object to stay as it is hold it side by side.
     #[tokio::test]
     async fn two_that_lock_one_key_shared_hold_it_side_by_side() {
-        let executor = Arc::new(ProcedureExecutor::new());
+        let (_kernel, executor) = executor();
         let log = Arc::new(Mutex::new(Vec::new()));
         let key = session();
         let release = Arc::new(Semaphore::new(0));
@@ -297,7 +327,7 @@ mod tests {
     /// of it, and a channel locked keeps out whoever changes its session.
     #[tokio::test]
     async fn a_key_locks_its_parents_shared() {
-        let executor = Arc::new(ProcedureExecutor::new());
+        let (_kernel, executor) = executor();
         let log = Arc::new(Mutex::new(Vec::new()));
         let session = session();
         let channel = channel_of(session);
@@ -337,7 +367,7 @@ mod tests {
     /// is not starved by a stream of those that only read.
     #[tokio::test]
     async fn one_that_waits_at_a_key_keeps_out_whoever_comes_after_it() {
-        let executor = Arc::new(ProcedureExecutor::new());
+        let (_kernel, executor) = executor();
         let log = Arc::new(Mutex::new(Vec::new()));
         let key = session();
         let release = Arc::new(Semaphore::new(0));
@@ -373,7 +403,7 @@ mod tests {
     /// enumerates anew once it goes on - since what it found may have changed meanwhile.
     #[tokio::test]
     async fn one_deferred_lets_go_of_what_it_held_and_enumerates_anew() {
-        let executor = Arc::new(ProcedureExecutor::new());
+        let (_kernel, executor) = executor();
         let log = Arc::new(Mutex::new(Vec::new()));
         let (one, two) = (session(), session());
         let release = Arc::new(Semaphore::new(0));
@@ -410,18 +440,23 @@ mod tests {
             type Output = ();
             type Error = anyhow::Error;
 
-            async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<(), Deferred> {
+            async fn enumerate(&self, _: &Kernel, locks: &mut Locks<'_>) -> Result<(), Deferred> {
                 locks.exclusive(self.1)
             }
 
-            async fn carry_out(self, _: (), _: &mut Compensation) -> anyhow::Result<()> {
+            async fn carry_out(
+                self,
+                _: (),
+                _: &Kernel,
+                _: &mut Compensation,
+            ) -> anyhow::Result<()> {
                 let log = Arc::new(Mutex::new(Vec::new()));
                 let inner = Probe::new("inner", &log).exclusive(self.1);
                 self.0.run(inner).await.map(drop)
             }
         }
 
-        let executor = Arc::new(ProcedureExecutor::new());
+        let (_kernel, executor) = executor();
         let error = executor
             .run(Outer(Arc::clone(&executor), session()))
             .await
@@ -432,7 +467,7 @@ mod tests {
     /// A procedure goes on in its own task when its caller gives up waiting for it.
     #[tokio::test]
     async fn a_caller_giving_up_does_not_cut_a_procedure_off() {
-        let executor = Arc::new(ProcedureExecutor::new());
+        let (_kernel, executor) = executor();
         let log = Arc::new(Mutex::new(Vec::new()));
         let release = Arc::new(Semaphore::new(0));
         let probe = Probe::new("given up", &log).exclusive(session()).held_until(&release);
@@ -450,7 +485,7 @@ mod tests {
     /// and the rest undone all the same. Its keys are let go.
     #[tokio::test]
     async fn what_a_procedure_that_fails_did_is_undone_the_last_first() {
-        let executor = ProcedureExecutor::new();
+        let (_kernel, executor) = executor();
         let log = Arc::new(Mutex::new(Vec::new()));
         let key = session();
         let failing = Probe { fail: true, ..Probe::new("failing", &log).exclusive(key) };
@@ -485,11 +520,16 @@ mod tests {
             type Output = ();
             type Error = anyhow::Error;
 
-            async fn enumerate(&self, _: &mut Locks<'_>) -> Result<(), Deferred> {
+            async fn enumerate(&self, _: &Kernel, _: &mut Locks<'_>) -> Result<(), Deferred> {
                 Ok(())
             }
 
-            async fn carry_out(self, _: (), log: &mut Compensation) -> anyhow::Result<()> {
+            async fn carry_out(
+                self,
+                _: (),
+                _: &Kernel,
+                log: &mut Compensation,
+            ) -> anyhow::Result<()> {
                 log.keep(Kept(Arc::clone(&self.0)));
                 let undone = Arc::clone(&self.0);
                 log.record("the step", async move {
@@ -504,7 +544,7 @@ mod tests {
             }
         }
 
-        let executor = ProcedureExecutor::new();
+        let (_kernel, executor) = executor();
         let failed = Arc::new(Mutex::new(Vec::new()));
         executor.run(Keeping(Arc::clone(&failed), true)).await.expect_err("it fails");
         assert_eq!(*failed.lock().unwrap(), vec!["done", "undone", "let go"]);
@@ -537,11 +577,16 @@ mod tests {
             type Output = ();
             type Error = anyhow::Error;
 
-            async fn enumerate(&self, _: &mut Locks<'_>) -> Result<(), Deferred> {
+            async fn enumerate(&self, _: &Kernel, _: &mut Locks<'_>) -> Result<(), Deferred> {
                 Ok(())
             }
 
-            async fn carry_out(self, _: (), log: &mut Compensation) -> anyhow::Result<()> {
+            async fn carry_out(
+                self,
+                _: (),
+                _: &Kernel,
+                log: &mut Compensation,
+            ) -> anyhow::Result<()> {
                 log.record("the procedure's step", undoing(&self.0, "the procedure's undone"));
                 all_or_nothing("a part done", async |part: &mut Compensation| {
                     part.record("the part's step", undoing(&self.0, "the part done undone"));
@@ -558,7 +603,7 @@ mod tests {
             }
         }
 
-        let executor = ProcedureExecutor::new();
+        let (_kernel, executor) = executor();
         let log = Arc::new(Mutex::new(Vec::new()));
         let error = executor.run(Parted(Arc::clone(&log))).await.expect_err("its part fails");
         assert_eq!(error.to_string(), "the part fails");
@@ -572,7 +617,7 @@ mod tests {
     /// then carries out the last.
     #[tokio::test]
     async fn shutting_down_waits_for_what_is_under_way_and_admits_nothing_new() {
-        let executor = Arc::new(ProcedureExecutor::new());
+        let (_kernel, executor) = executor();
         let log = Arc::new(Mutex::new(Vec::new()));
         let release = Arc::new(Semaphore::new(0));
         let under_way = Probe::new("under way", &log).exclusive(session()).held_until(&release);

@@ -84,7 +84,7 @@ pub(super) async fn restore_channel(
     user: AuthenticatedUser,
 ) -> Result<Json<ChannelResponse>, ApiError> {
     let context = user.security_context();
-    let restoring = Restore::new(&state.session_manager, &context, session_id, channel_id);
+    let restoring = Restore::new(&context, session_id, channel_id);
     state.procedures.run(restoring).await?;
     Ok(Json(channel_response(&state, &user, session_id, channel_id).await?))
 }
@@ -114,7 +114,7 @@ pub(super) async fn create_channel(
     if let Some(uses) = payload.uses_workspace {
         spec.uses_workspace = uses;
     }
-    let creating = Create::new(&state.session_manager, &context, session_id, spec);
+    let creating = Create::new(&context, session_id, spec);
     let channel = state.procedures.run(creating).await?;
     Ok(Json(channel_response(&state, &user, session_id, channel.id()).await?))
 }
@@ -126,7 +126,7 @@ pub(super) async fn delete_channel(
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
     let context = user.security_context();
-    let deleting = Delete::new(&state.session_manager, &context, session_id, channel_id);
+    let deleting = Delete::new(&context, session_id, channel_id);
     match state.procedures.run(deleting).await? {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found(
@@ -596,8 +596,7 @@ pub(super) async fn reclassify_channel(
     Json(classification): Json<Classification>,
 ) -> Result<Json<ChannelResponse>, ApiError> {
     let context = user.security_context();
-    let reclassifying =
-        Reclassify::new(&state.session_manager, &context, session_id, channel_id, classification);
+    let reclassifying = Reclassify::new(&context, session_id, channel_id, classification);
     state.procedures.run(reclassifying).await?;
     Ok(Json(channel_response(&state, &user, session_id, channel_id).await?))
 }
@@ -613,7 +612,9 @@ pub(super) async fn set_channel_language(
     Json(language): Json<Option<String>>,
 ) -> Result<Json<ChannelResponse>, ApiError> {
     let (_, channel) = open_channel(&state, &user, session_id, channel_id).await?;
-    channel.update_language(&user.security_context(), language.as_deref()).await?;
+    let context = user.security_context();
+    let changing = channel.controller().update_language(&context, language.as_deref());
+    changing.await.map_err(anyhow::Error::from)?;
     Ok(Json(channel_response(&state, &user, session_id, channel_id).await?))
 }
 
@@ -630,9 +631,10 @@ pub(super) async fn update_channel_approval_rules(
 ) -> Result<Json<ChannelResponse>, ApiError> {
     let (_, channel) = open_channel(&state, &user, session_id, channel_id).await?;
     channel
+        .controller()
         .update_approval_rules(&user.security_context(), rules)
         .await
-        .map_err(|e| change_error(e, "invalid_rule"))?;
+        .map_err(|e| change_error(e.into(), "invalid_rule"))?;
     Ok(Json(channel_response(&state, &user, session_id, channel_id).await?))
 }
 
@@ -648,12 +650,14 @@ pub(super) async fn update_channel_description(
 ) -> Result<Json<ChannelResponse>, ApiError> {
     let (_, channel) = open_channel(&state, &user, session_id, channel_id).await?;
     channel
+        .controller()
         .update_description(
             &user.security_context(),
             payload.summary.as_deref(),
             payload.briefing.as_deref(),
         )
-        .await?;
+        .await
+        .map_err(anyhow::Error::from)?;
     Ok(Json(channel_response(&state, &user, session_id, channel_id).await?))
 }
 

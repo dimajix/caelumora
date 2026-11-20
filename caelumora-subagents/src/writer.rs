@@ -21,6 +21,7 @@ use caelumora_domain::value::name::Name;
 use caelumora_kernel::agent::{AgentError, AgentManager, AgentSpec};
 use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::error::{refusal, user_message};
+use caelumora_kernel::kernel::Kernel;
 use caelumora_kernel::procedure::participant::{self, lock_letting_go, Exit};
 use caelumora_kernel::procedure::thread;
 use caelumora_kernel::procedure::{
@@ -226,12 +227,17 @@ impl Procedure for Starting {
     type Output = ThreadId;
     type Error = SubAgentError;
 
-    async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<(), Deferred> {
+    async fn enumerate(&self, _: &Kernel, locks: &mut Locks<'_>) -> Result<(), Deferred> {
         locks.exclusive(Key::Thread(self.session, self.channel, self.thread))?;
         locks.shared(Key::Thread(self.session, self.channel, self.origin.thread))
     }
 
-    async fn carry_out(self, (): (), log: &mut Compensation) -> SubAgentResult<ThreadId> {
+    async fn carry_out(
+        self,
+        (): (),
+        _: &Kernel,
+        log: &mut Compensation,
+    ) -> SubAgentResult<ThreadId> {
         let Self { work, personality, origin, brief, channel, thread, .. } = self;
         let (session, channel_loop) = work.running().await?;
         let personality_id = work.personality(&personality).await?;
@@ -274,7 +280,7 @@ impl Procedure for Ending {
     type Output = ();
     type Error = SubAgentError;
 
-    async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<Self::Plan, Deferred> {
+    async fn enumerate(&self, _: &Kernel, locks: &mut Locks<'_>) -> Result<Self::Plan, Deferred> {
         let Some(session) = self.work.session.session_loop() else {
             return Ok(Err(SubAgentError::Failed("its session does not run".to_string())));
         };
@@ -293,7 +299,12 @@ impl Procedure for Ending {
     }
 
     /// The sub-agent asked again, holding it: one ended meanwhile by another end is none.
-    async fn carry_out(self, agent: Self::Plan, _: &mut Compensation) -> SubAgentResult<()> {
+    async fn carry_out(
+        self,
+        agent: Self::Plan,
+        _: &Kernel,
+        _: &mut Compensation,
+    ) -> SubAgentResult<()> {
         agent?;
         let Self { work, thread, .. } = self;
         let (session, channel) = work.running().await?;

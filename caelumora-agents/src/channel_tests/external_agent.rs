@@ -1198,7 +1198,7 @@ async fn an_external_agent_removed_while_it_answers_cancels_its_task_and_gives_i
 }
 
 /// What a deleted channel does with its actors before it aborts its
-/// task (`SessionLoop::stop_channel_held`, issue 187): an external agent
+/// task (`SessionLoop::remove_channel`, issue 187): an external agent
 /// has cancelled the remote task it followed by the time `leave_actors`
 /// returns, and every actor - the approver too - ended by itself.
 #[tokio::test]
@@ -1879,7 +1879,7 @@ async fn lowering_the_channel_gives_up_an_external_agents_answer_under_way() {
     time::sleep(Duration::from_millis(50)).await;
 
     channel
-        .reclassify(&context, Classification::general(Confidentiality::Public))
+        .reclassify_by_procedure(&context, Classification::general(Confidentiality::Public))
         .await
         .expect("permitted");
     let told = turn_given_up(&mut events, agent).await;

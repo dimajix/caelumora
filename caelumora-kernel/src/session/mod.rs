@@ -8,6 +8,7 @@ mod spec;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 
+pub(crate) use channels::unavailable_components;
 pub(crate) use manager::Found;
 pub use manager::SessionManager;
 pub(crate) use settings::MoveTarget;
@@ -15,13 +16,12 @@ pub use spec::{ChannelSpec, SessionSpec};
 
 use crate::channel::{ChannelLoop, Participation};
 use crate::command::CommandExecutor;
-use crate::component::ComponentRegistry;
 use crate::controller::{ControllerManager, SessionController, WorkspaceController};
 use crate::event::{EventBus, EventSubscription, Following, SubscriptionTopic};
-use crate::group::{keep_participants, GroupManager};
+use crate::group::keep_participants;
 use crate::kernel::{ChannelRuntime, Kernel};
 use crate::procedure::{ProcedureError, ProcedureExecutor};
-use crate::scoped::{purge_for_good, ScopeNotEmpty, ScopedEntities};
+use crate::scoped::{purge_for_good, ScopeNotEmpty};
 use crate::view::{Viewer, Views};
 use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Result};
@@ -170,7 +170,7 @@ impl From<anyhow::Error> for SessionError {
 /// Nothing if a channel may be given `classification` at all - it names
 /// only configured compartments (issues 133, 304) - checked before anything
 /// is stored.
-fn require_classification(
+pub(crate) fn require_classification(
     policy: &dyn ConfidentialityPolicy,
     classification: &Classification,
 ) -> Result<()> {
@@ -240,17 +240,10 @@ pub struct SessionLoop {
     controllers: Arc<ControllerManager>,
     /// What a workspace attached to it is reached by.
     workspaces: Arc<WorkspaceManager>,
-    /// What judges the components of the channels made in it.
-    components: Arc<ComponentRegistry>,
     /// Who it may take in, and who may take part in its channels (issue
     /// 356).
     participation: Arc<Participation>,
     events: Arc<EventBus>,
-    /// What goes with a channel deleted or restored (issue 178).
-    scoped: Arc<ScopedEntities>,
-    /// What deletes and restores the group of a channel's participants with
-    /// it (issue 348).
-    groups: Arc<GroupManager>,
     /// The user commands of every channel of the session.
     commands: Arc<CommandExecutor>,
     /// The session's channels, and which of them run (issues 116, 463). A
@@ -277,7 +270,10 @@ pub struct SessionLoop {
 /// its participants: marked deleted first if it is not - a channel of a session being purged, which
 /// is hidden with the session, or one whose creation failed - since only what was deleted is purged
 /// (issue 164).
-async fn purge_channel_document(stores: &EntityStores, channel_id: ChannelId) -> StoreResult<bool> {
+pub(crate) async fn purge_channel_document(
+    stores: &EntityStores,
+    channel_id: ChannelId,
+) -> StoreResult<bool> {
     purge_for_good(stores.groups.as_ref(), GroupId::of_channel(channel_id)).await?;
     purge_for_good(stores.channels.as_ref(), channel_id).await
 }
@@ -410,11 +406,8 @@ impl SessionLoop {
             stores: kernel.entity_stores().clone(),
             controllers: Arc::clone(kernel.controller_manager()),
             workspaces: Arc::clone(kernel.workspace_manager()),
-            components: Arc::clone(kernel.component_registry()),
             participation: Arc::clone(kernel.participation()),
             events: Arc::clone(kernel.event_bus()),
-            scoped: Arc::clone(kernel.scoped_entities()),
-            groups: Arc::clone(kernel.group_manager()),
             kernel,
             commands,
             channels: DashMap::new(),
@@ -437,6 +430,12 @@ impl SessionLoop {
 
     pub fn id(&self) -> SessionId {
         self.session_controller.id()
+    }
+
+    /// The session's controller: its document live, through which it is changed and stored, each
+    /// change asked by the store as it is stored.
+    pub(crate) fn controller(&self) -> &Arc<SessionController> {
+        &self.session_controller
     }
 
     /// The session as it is now: a snapshot, to be read or handed on to an operation - not to be
@@ -536,7 +535,7 @@ impl SessionLoop {
 
     /// Starts the channel `id` in `join_set` - unless it was deleted while
     /// it waited to be started. The entry stays locked while its task is
-    /// set, so that `stop_channel_held` either finds the task or no channel.
+    /// set, so that `remove_channel` either finds the task or no channel.
     fn start_channel(&self, id: ChannelId, join_set: &mut JoinSet<()>) {
         let Some(mut entry) = self.channels.get_mut(&id) else { return };
         let ChannelEntry::Running { channel, task } = &mut *entry else { return };

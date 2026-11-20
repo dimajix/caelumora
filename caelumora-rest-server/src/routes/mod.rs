@@ -58,7 +58,7 @@ pub async fn ensure_session(
     let opening = Open::new(&state.session_manager, &user.security_context(), session_id);
     let session = state.procedures.run(opening).await?;
     // Its channels left out as it started built again, where they can be now (issue 463).
-    state.procedures.run(Start::left_out(&state.session_manager, session_id)).await?;
+    state.procedures.run(Start::left_out(session_id)).await?;
     Ok(session)
 }
 

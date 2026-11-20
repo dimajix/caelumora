@@ -552,6 +552,13 @@ impl ChannelLoop {
         self.channel.load().security_attributes.clone()
     }
 
+    /// The channel's controller: its document live, through which it is changed and stored - its
+    /// name, language, description, use of the workspace and rules of approval, each asked by the
+    /// store as it is stored.
+    pub fn controller(&self) -> &Arc<ChannelController> {
+        &self.channel
+    }
+
     /// The channel as it is now: a snapshot, to be read or handed on to an operation - not to be
     /// kept, since it does not follow later changes.
     pub fn channel(&self) -> Arc<Channel> {

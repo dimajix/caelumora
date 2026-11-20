@@ -492,7 +492,7 @@ steps of issue 593's restructuring.
 
 One enforcing site turns a refusal into an outcome of its own rather than an error: the
 `ToolExecutor`, which answers a call refused by the policy as forbidden. It asks as every act does,
-so that the refusal is logged alike. `ChannelLoop::reclassify_held` asks `may_publish` of the old
+so that the refusal is logged alike. `ChannelLoop::reclassify` asks `may_publish` of the old
 classification into the new one to learn whether the channel was lowered: a question, not a
 permission, and the same one an agent asks at its next step, so that both agree on what was lowered.
 

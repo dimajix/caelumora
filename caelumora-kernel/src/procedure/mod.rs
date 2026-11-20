@@ -41,6 +41,7 @@ pub use compensation::Compensation;
 pub use executor::ProcedureExecutor;
 pub use locks::{Deferred, Locks};
 
+use crate::kernel::Kernel;
 use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::channel::{ChannelId, ThreadId};
@@ -111,17 +112,22 @@ pub trait Procedure: Send + Sync + 'static {
     /// What it fails with - and what the executor fails with.
     type Error: From<ProcedureError> + Send + 'static;
 
-    /// Finds from the top down what it would change and locks it as it finds it; reads and locks,
-    /// nothing else. Called again after every conflict, which defers it.
-    async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<Self::Plan, Deferred>;
+    /// Finds from the top down in `kernel` what it would change and locks it as it finds it; reads
+    /// and locks, nothing else. Called again after every conflict, which defers it.
+    async fn enumerate(
+        &self,
+        kernel: &Kernel,
+        locks: &mut Locks<'_>,
+    ) -> Result<Self::Plan, Deferred>;
 
     /// Holding its objects, checks the state it finds - permissions too - and carries the change
-    /// out or refuses it, recording in `log` how to undo each step. One that panics is not undone:
-    /// its locks are let go and its caller is answered `ProcedureError::Ended`, but what it did
-    /// stays - which is why no procedure unwraps.
+    /// out by the services of `kernel` or refuses it, recording in `log` how to undo each step.
+    /// One that panics is not undone: its locks are let go and its caller is answered
+    /// `ProcedureError::Ended`, but what it did stays - which is why no procedure unwraps.
     async fn carry_out(
         self,
         plan: Self::Plan,
+        kernel: &Kernel,
         log: &mut Compensation,
     ) -> Result<Self::Output, Self::Error>;
 }
@@ -135,6 +141,10 @@ pub enum ProcedureError {
     /// The executor admits no procedure any more: the process is ending.
     #[error("Caelumora is shutting down: nothing is started or changed any more")]
     ShuttingDown,
+    /// The kernel it is carried out in is gone, or the session manager it reaches the sessions by:
+    /// the process is ending.
+    #[error("Caelumora is ending: its kernel or its session manager is gone")]
+    Gone,
     /// Its task ended without an answer; the log tells why.
     #[error("The procedure ended without an answer")]
     Ended,

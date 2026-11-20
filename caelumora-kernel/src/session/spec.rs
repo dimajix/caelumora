@@ -30,7 +30,7 @@ pub struct SessionSpec {
 }
 
 /// What a new channel should be (issue 09), as it was asked: its name and
-/// language are made from it by `SessionLoop::channel_asked_for` (issue 248).
+/// language are made from it by `procedure::channel::Create` (issue 248).
 #[derive(Debug, Clone)]
 pub struct ChannelSpec {
     pub name: String,

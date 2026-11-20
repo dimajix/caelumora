@@ -274,6 +274,7 @@ mod tests {
         assert_eq!(offered.len(), tool.tools().len(), "every tool: {offered:?}");
 
         world.session.channels()[0]
+            .controller()
             .update_uses_workspace(&SecurityContext::system(), false)
             .await
             .unwrap();

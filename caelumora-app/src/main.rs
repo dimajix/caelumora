@@ -92,7 +92,7 @@ async fn main() -> Result<()> {
     for library in libraries() {
         builder.library(library.as_ref())?;
     }
-    let kernel = Arc::new(builder.build()?);
+    let kernel = builder.build()?;
     let session_manager = SessionManager::new(Arc::clone(&kernel));
     // Whether the agents of the running sessions exist, followed as long as the server runs.
     let _agents_followed = AgentFollower::spawn(&session_manager);
@@ -359,7 +359,7 @@ mod tests {
     /// component defaults, on which the example seed's models build (issue 445), its variants of
     /// the texts, which they are given (issue 57), and the workflows its image models run (issues
     /// 512, 525) - read from where the program runs, the root of the sources.
-    fn kernel(store: &Persistence) -> Kernel {
+    fn kernel(store: &Persistence) -> Arc<Kernel> {
         let config = AppConfig::load(example("config.yaml")).unwrap();
         let root = root();
         let prompts =
@@ -388,7 +388,7 @@ mod tests {
 
     /// The kernel of the program, with its plugins and its libraries, over `store`, as `config`
     /// configures it.
-    fn kernel_of(store: &Persistence, config: &AppConfig) -> Kernel {
+    fn kernel_of(store: &Persistence, config: &AppConfig) -> Arc<Kernel> {
         let config = &with_local_model(config.clone());
         let access_policy = Arc::new(AllowAllPolicy::new());
         let secrets =

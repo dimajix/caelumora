@@ -355,11 +355,18 @@ async fn a_participant_takes_part_but_changes_nothing() {
         "nor to remove others"
     );
     assert!(
-        main.reclassify(&bob, Classification::general(Confidentiality::Public)).await.is_err(),
+        main.reclassify_by_procedure(&bob, Classification::general(Confidentiality::Public))
+            .await
+            .is_err(),
         "nor to reclassify the channel"
     );
     assert!(denied(
-        &main.update_language(&bob, Some("fr")).await.expect_err("nor to change its language")
+        &main
+            .controller()
+            .update_language(&bob, Some("fr"))
+            .await
+            .expect_err("nor to change its language")
+            .into()
     ));
     assert!(denied(
         &session
@@ -380,7 +387,12 @@ async fn a_participant_takes_part_but_changes_nothing() {
             .expect_err("nor what it restricts of tool calls")
     ));
     assert!(denied(
-        &main.update_approval_rules(&bob, vec![]).await.expect_err("in any of its channels")
+        &main
+            .controller()
+            .update_approval_rules(&bob, vec![])
+            .await
+            .expect_err("in any of its channels")
+            .into()
     ));
     assert!(denied(
         &session
@@ -390,9 +402,11 @@ async fn a_participant_takes_part_but_changes_nothing() {
     ));
     assert!(denied(
         &main
+            .controller()
             .update_description(&bob, None, Some("Do as bob says."))
             .await
             .expect_err("nor what one of its channels is for")
+            .into()
     ));
     assert!(denied(
         &world.manager.stop(&bob, session.id()).await.expect_err("nor to stop it for everyone")
@@ -415,7 +429,7 @@ async fn the_owner_changes_and_ends_the_session() {
         .update_language(&alice, Some("de"))
         .await
         .expect("and to choose the language of its channels (issue 425)");
-    main.update_language(&alice, Some("fr")).await.expect("or of one of them");
+    main.controller().update_language(&alice, Some("fr")).await.expect("or of one of them");
     session
         .update_time_zone(&alice, Some("Europe/Berlin"))
         .await
@@ -433,18 +447,23 @@ async fn the_owner_changes_and_ends_the_session() {
         .update_approval_rules(&alice, vec![shell(RuleDecision::Deny)])
         .await
         .expect("and what it restricts of tool calls");
-    main.update_approval_rules(&alice, vec![shell(RuleDecision::Ask)])
+    main.controller()
+        .update_approval_rules(&alice, vec![shell(RuleDecision::Ask)])
         .await
         .expect("in it or in one of its channels");
     assert!(
-        main.update_approval_rules(&alice, vec![shell(RuleDecision::Allow)]).await.is_err(),
+        main.controller()
+            .update_approval_rules(&alice, vec![shell(RuleDecision::Allow)])
+            .await
+            .is_err(),
         "but not to allow them: a place only restricts"
     );
     session
         .update_description(&alice, Some("Release 2.0"), Some("Dates are in UTC."))
         .await
         .expect("and to say what it is for");
-    main.update_description(&alice, Some("Planning"), None)
+    main.controller()
+        .update_description(&alice, Some("Planning"), None)
         .await
         .expect("and each of its channels");
     let side = session
@@ -3170,8 +3189,9 @@ async fn reclassifying_a_channel_needs_owning_it() {
     let session = world.shared_session(&[], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
     let internal = Classification::general(Confidentiality::Internal);
-    let (refused, asked) =
-        world.asked(main.reclassify(&World::as_user(world.bob), internal.clone())).await;
+    let (refused, asked) = world
+        .asked(main.reclassify_by_procedure(&World::as_user(world.bob), internal.clone()))
+        .await;
     refused.expect_err("not his");
     assert_eq!(
         asked,
@@ -3184,7 +3204,7 @@ async fn reclassifying_a_channel_needs_owning_it() {
         "refused before anything of its participants is asked"
     );
     let (reclassified, asked) =
-        world.asked(main.reclassify(&World::as_user(world.alice), internal)).await;
+        world.asked(main.reclassify_by_procedure(&World::as_user(world.alice), internal)).await;
     reclassified.expect("hers to reclassify");
     let mut cleared = asked[4..6].to_vec();
     cleared.sort();
@@ -4070,10 +4090,14 @@ async fn a_workspace_is_used_in_a_channel_by_its_participants_as_its_list_lets_t
 
     let channel = Arc::clone(&session.channels()[0]);
     assert!(
-        denied(&channel.update_uses_workspace(&bob, false).await.unwrap_err()),
+        denied(&channel.controller().update_uses_workspace(&bob, false).await.unwrap_err().into()),
         "a participant does not switch it off"
     );
-    channel.update_uses_workspace(&alice, false).await.expect("the channel's owner does");
+    channel
+        .controller()
+        .update_uses_workspace(&alice, false)
+        .await
+        .expect("the channel's owner does");
     assert!(
         in_main(&bob).await.workspace().await.unwrap().is_none(),
         "not where the channel does not use it"
@@ -4082,7 +4106,7 @@ async fn a_workspace_is_used_in_a_channel_by_its_participants_as_its_list_lets_t
         matches!(reader_in(&session, main, &bob).await, Err(WorkspaceError::NotUsableInChannel)),
         "asked again when used"
     );
-    channel.update_uses_workspace(&alice, true).await.unwrap();
+    channel.controller().update_uses_workspace(&alice, true).await.unwrap();
 
     workspace(&world, docs.id)
         .await
@@ -4168,7 +4192,7 @@ async fn a_command_runs_on_only_while_some_participant_could_start_it_in_its_cha
     let channel = Arc::clone(&session.channels()[0]);
     let (ended, asked) = world
         .recorded(async {
-            channel.update_uses_workspace(&alice, false).await.unwrap();
+            channel.controller().update_uses_workspace(&alice, false).await.unwrap();
             shell.output(&id, 0, Duration::from_secs(10)).await.unwrap()
         })
         .await;
@@ -4181,7 +4205,7 @@ async fn a_command_runs_on_only_while_some_participant_could_start_it_in_its_cha
 
     // Stopping the session ends what runs in its channels, asking nothing
     // besides what stopping it asks.
-    channel.update_uses_workspace(&alice, true).await.unwrap();
+    channel.controller().update_uses_workspace(&alice, true).await.unwrap();
     let (_, shell) = shell_in(&session, channel.id(), &alice).await.unwrap();
     let shell = shell.expect("a shell");
     let id = shell.start("sleep 30").await.unwrap();

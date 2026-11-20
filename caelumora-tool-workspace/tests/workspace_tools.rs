@@ -238,7 +238,7 @@ async fn an_agent_is_offered_the_workspace_tools_its_list_lets_it_call_in_its_ch
         (11, None),
         "every one where it grants changing: {changing:?}"
     );
-    main.update_uses_workspace(&alice, false).await.unwrap();
+    main.controller().update_uses_workspace(&alice, false).await.unwrap();
     assert_eq!(
         offered().await,
         (Vec::new(), Some("there is no workspace you can use in this channel".to_string())),

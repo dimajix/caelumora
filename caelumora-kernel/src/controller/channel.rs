@@ -24,7 +24,7 @@ use tracing::error;
 /// permission is checked, on the channel's own attributes - and only then taken over live and
 /// announced.
 #[derive(Debug)]
-pub(crate) struct ChannelController {
+pub struct ChannelController {
     channel: LiveDocument<Channel>,
     groups: Arc<dyn EntityStore<Group>>,
 }
@@ -65,11 +65,7 @@ impl ChannelController {
     /// `StoreError::Invalid` if `new_name` is no name, otherwise whatever
     /// the store reports, `StoreError::PermissionDenied` included; the
     /// channel is then unchanged.
-    pub(crate) async fn update_name(
-        &self,
-        ctx: &SecurityContext,
-        new_name: &str,
-    ) -> StoreResult<()> {
+    pub async fn update_name(&self, ctx: &SecurityContext, new_name: &str) -> StoreResult<()> {
         let event = ChannelUpdateEvent::NameChanged(new_name.to_string());
         self.update(ctx, &event).await
     }
@@ -91,13 +87,14 @@ impl ChannelController {
     }
 
     /// Has the channel's conversation held in `language` - or in none in
-    /// particular - on behalf of `ctx` (`UpdateChannel`, issue 56).
+    /// particular - on behalf of `ctx` (`UpdateChannel`, issue 56). Its agents are told from their
+    /// next turn on; nothing said before is translated.
     ///
     /// # Errors
     /// `StoreError::Invalid` if `language` is no language tag, otherwise
     /// whatever the store reports, `StoreError::PermissionDenied` included;
     /// the channel is then unchanged.
-    pub(crate) async fn update_language(
+    pub async fn update_language(
         &self,
         ctx: &SecurityContext,
         language: Option<&str>,
@@ -107,12 +104,13 @@ impl ChannelController {
     }
 
     /// Sets whether the channel uses the workspace of its session (issue
-    /// 251) on behalf of `ctx` (`UpdateChannel`).
+    /// 251) on behalf of `ctx` (`UpdateChannel`). It permits nothing the classifications refuse; it
+    /// takes effect with the next use.
     ///
     /// # Errors
     /// Whatever the store reports, `StoreError::PermissionDenied`
     /// included; the channel is then unchanged.
-    pub(crate) async fn update_uses_workspace(
+    pub async fn update_uses_workspace(
         &self,
         ctx: &SecurityContext,
         uses: bool,
@@ -128,7 +126,7 @@ impl ChannelController {
     /// `StoreError::Validation` if a rule does not only ask or deny
     /// (`ApprovalRule::check_restricting`), otherwise whatever the store
     /// reports; the channel is then unchanged.
-    pub(crate) async fn update_approval_rules(
+    pub async fn update_approval_rules(
         &self,
         ctx: &SecurityContext,
         rules: Vec<ApprovalRule>,
@@ -236,7 +234,7 @@ impl ChannelController {
     /// # Errors
     /// `StoreError::Invalid` if one does not fit (`Channel::describe`),
     /// otherwise whatever the store reports; the channel is then unchanged.
-    pub(crate) async fn update_description(
+    pub async fn update_description(
         &self,
         ctx: &SecurityContext,
         summary: Option<&str>,

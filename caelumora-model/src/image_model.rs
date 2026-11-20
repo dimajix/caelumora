@@ -65,7 +65,7 @@ mod tests {
 
     /// The kernel of a test that offers the image models `models`, each drawing with its
     /// parameters.
-    fn offering(models: Value) -> Kernel {
+    fn offering(models: Value) -> Arc<Kernel> {
         kernel_of(configuring(json!({ IMAGE: models }))).unwrap()
     }
 

@@ -250,7 +250,7 @@ async fn main() -> Result<()> {
     for library in libraries(log) {
         builder.library(library.as_ref())?;
     }
-    let kernel = Arc::new(builder.build()?);
+    let kernel = builder.build()?;
     kernel.seed(&config.seed).await?;
 
     // Whom the terminal acts for: the user the providers know by that name,

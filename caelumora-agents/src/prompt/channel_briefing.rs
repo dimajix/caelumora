@@ -273,10 +273,11 @@ mod tests {
 
         let running = session_loop.channel(channel.id).expect("the channel runs");
         running
+            .controller()
             .update_description(&system, Some("Planning"), Some("Dates are in UTC."))
             .await
             .unwrap();
-        running.update_name(&system, "planning").await.unwrap();
+        running.controller().update_name(&system, "planning").await.unwrap();
         let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
         let ours = prompt.text.find("[About this session]").unwrap();
         let its = prompt.text.find("[About this channel]").unwrap();

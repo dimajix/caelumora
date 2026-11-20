@@ -195,7 +195,7 @@ impl SessionManager {
         let opened = procedures.run(Open::new(self, context, id)).await;
         let opened = opened.map_err(SessionError::untyped)?;
         // Its channels left out as it started built again, as the REST server has them (issue 463).
-        let starting = channel::Start::left_out(self, id);
+        let starting = channel::Start::left_out(id);
         procedures.run(starting).await.map_err(SessionError::untyped)?;
         Ok(opened)
     }
@@ -316,13 +316,14 @@ impl Procedure for Built {
     type Output = Arc<SessionLoop>;
     type Error = SessionError;
 
-    async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<(), Deferred> {
+    async fn enumerate(&self, _: &Kernel, locks: &mut Locks<'_>) -> Result<(), Deferred> {
         locks.exclusive(Key::Session(self.session.id))
     }
 
     async fn carry_out(
         self,
         (): (),
+        _: &Kernel,
         log: &mut Compensation,
     ) -> Result<Arc<SessionLoop>, SessionError> {
         let Self { sessions, context, session, channels } = self;
@@ -651,7 +652,7 @@ impl SessionLoop {
         context: &SecurityContext,
         spec: ChannelSpec,
     ) -> Result<Arc<ChannelLoop>> {
-        let creating = channel::Create::new(&self.manager()?, context, self.id(), spec);
+        let creating = channel::Create::new(context, self.id(), spec);
         self.procedures().run(creating).await.map_err(SessionError::untyped)
     }
 
@@ -660,7 +661,7 @@ impl SessionLoop {
     /// # Errors
     /// As `channel::Delete`.
     pub async fn delete_channel(&self, context: &SecurityContext, id: ChannelId) -> Result<bool> {
-        let deleting = channel::Delete::new(&self.manager()?, context, self.id(), id);
+        let deleting = channel::Delete::new(context, self.id(), id);
         self.procedures().run(deleting).await.map_err(SessionError::untyped)
     }
 
@@ -673,7 +674,7 @@ impl SessionLoop {
         context: &SecurityContext,
         id: ChannelId,
     ) -> Result<Arc<ChannelLoop>> {
-        let restoring = channel::Restore::new(&self.manager()?, context, self.id(), id);
+        let restoring = channel::Restore::new(context, self.id(), id);
         self.procedures().run(restoring).await.map_err(SessionError::untyped)
     }
 

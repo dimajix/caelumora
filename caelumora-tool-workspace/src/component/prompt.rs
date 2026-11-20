@@ -146,6 +146,7 @@ mod tests {
         assert_eq!(prompt.classification.as_ref(), Some(&world.workspace.classification));
 
         world.session.channels()[0]
+            .controller()
             .update_uses_workspace(&SecurityContext::system(), false)
             .await
             .unwrap();

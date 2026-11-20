@@ -2387,7 +2387,7 @@ async fn lowering_the_channel_gives_up_a_running_turn() {
     .expect("the tool ran");
 
     let public = Classification::general(Confidentiality::Public);
-    channel.reclassify(&context, public.clone()).await.expect("permitted");
+    channel.reclassify_by_procedure(&context, public.clone()).await.expect("permitted");
 
     // The model call is interrupted, and the turn given up rather than
     // taken over: the users are told, nothing of it is in the history.
@@ -2446,7 +2446,7 @@ async fn lowering_the_channel_ends_a_turn_waiting_for_approval_at_once() {
     settled(&helper, ActorState::WaitingForUser).await;
 
     channel
-        .reclassify(&context, Classification::general(Confidentiality::Public))
+        .reclassify_by_procedure(&context, Classification::general(Confidentiality::Public))
         .await
         .expect("permitted");
 
@@ -2468,7 +2468,10 @@ async fn raising_the_channel_lets_a_running_turn_go_on() {
 
     stuck
         .channel
-        .reclassify(&stuck.context, Classification::general(Confidentiality::Confidential))
+        .reclassify_by_procedure(
+            &stuck.context,
+            Classification::general(Confidentiality::Confidential),
+        )
         .await
         .expect("permitted");
 
@@ -2569,6 +2572,7 @@ async fn a_rule_of_the_channel_asks_for_a_call_its_tool_would_run() {
     .unwrap();
     built
         .0
+        .controller()
         .update_approval_rules(&SecurityContext::system(), vec![ask])
         .await
         .expect("the system may");
@@ -3123,6 +3127,7 @@ async fn a_call_with_invalid_arguments_is_answered_without_asking_anyone() {
     .unwrap();
     built
         .0
+        .controller()
         .update_approval_rules(&SecurityContext::system(), vec![ask])
         .await
         .expect("the system may");

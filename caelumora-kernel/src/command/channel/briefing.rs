@@ -38,8 +38,9 @@ impl Command for BriefingCommand {
 #[async_trait]
 impl ChannelCommand for BriefingCommand {
     /// Runs `/channel briefing` with `args`: the briefing of the channel the command is issued in,
-    /// its summary kept (`ChannelLoop::update_description`, which asks `UpdateChannel`); an empty
-    /// `args` removes it. Its agents are told from their next turn on. Only the issuer is answered.
+    /// its summary kept (`ChannelController::update_description`, which asks `UpdateChannel`); an
+    /// empty `args` removes it. Its agents are told from their next turn on. Only the issuer is
+    /// answered.
     async fn execute(
         &self,
         args: &str,
@@ -56,9 +57,10 @@ impl ChannelCommand for BriefingCommand {
         let summary = channel.summary.as_ref().map(|summary| summary.as_str());
         context
             .channel
+            .controller()
             .update_description(&context.issuer.security_context(), summary, briefing)
             .await
-            .map_err(|e| command_error(BRIEFING_COMMAND_NAME, &e))?;
+            .map_err(|e| command_error(BRIEFING_COMMAND_NAME, &e.into()))?;
         Ok(CommandOutput::private(match briefing {
             Some(_) => "The briefing of this channel is set.",
             None => "The briefing of this channel is removed.",

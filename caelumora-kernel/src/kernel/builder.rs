@@ -56,7 +56,7 @@ use std::fmt;
 use std::future::Future;
 use std::mem;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 /// What builds the `Kernel` (issue 323): the kernel's services and managers, made first - their
 /// backends by `Backends`, the kernel's and the plugins' (issue 324) -, what the plugins register
@@ -669,7 +669,7 @@ impl KernelBuilder {
     /// `ComponentError` if `component_defaults` cannot replace a default
     /// (see `ComponentRegistry::set_defaults`) - the process does not start
     /// then.
-    pub fn build(mut self) -> Result<Kernel> {
+    pub fn build(mut self) -> Result<Arc<Kernel>> {
         self.plugin_sections.all_claimed()?;
         self.library_sections.all_claimed()?;
         self.component_registry.registered_once()?;
@@ -714,7 +714,7 @@ impl KernelBuilder {
         let scope_members = kernel_members.into_iter().chain(self.scope_members).collect();
         let scoped = Arc::new(ScopedEntities::new(scope_members));
         let participation = Arc::new(Participation::new(&self.policies));
-        Ok(Kernel {
+        Ok(Arc::new_cyclic(|kernel| Kernel {
             policies: self.policies,
             state_store: self.persistence.state_store(),
             history_store: self.persistence.history_store(),
@@ -741,9 +741,9 @@ impl KernelBuilder {
             extensions: self.extensions,
             prompts,
             seed_sections: self.seed_sections,
-            procedures: Arc::new(ProcedureExecutor::new()),
+            procedures: Arc::new(ProcedureExecutor::new(Weak::clone(kernel))),
             sessions: Default::default(),
-        })
+        }))
     }
 }
 

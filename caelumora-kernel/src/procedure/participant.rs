@@ -14,6 +14,7 @@
 use super::session::lock_to_open;
 use super::{Compensation, Deferred, Key, Locks, Procedure};
 use crate::channel::{ChannelError, ChannelLoop, ResolvedParticipant};
+use crate::kernel::Kernel;
 use crate::session::{SessionError, SessionLoop, SessionManager};
 use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
@@ -89,8 +90,8 @@ impl Procedure for TakeIn {
     type Output = Arc<SessionLoop>;
     type Error = SessionError;
 
-    async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<(), Deferred> {
-        lock_to_open(&self.sessions, locks, self.session)?;
+    async fn enumerate(&self, kernel: &Kernel, locks: &mut Locks<'_>) -> Result<(), Deferred> {
+        lock_to_open(kernel, locks, self.session)?;
         locks.exclusive(Key::Participant(self.session, self.participant))?;
         let channel = match self.coming_in {
             ComingIn::Added(into) => into.map(|(channel, _)| channel),
@@ -114,6 +115,7 @@ impl Procedure for TakeIn {
     async fn carry_out(
         self,
         (): (),
+        _: &Kernel,
         log: &mut Compensation,
     ) -> Result<Arc<SessionLoop>, SessionError> {
         let Self { sessions, context, session, participant, coming_in } = self;
@@ -230,8 +232,8 @@ impl Procedure for LetGo {
 
     /// A session it starts is locked exclusively, its channels with it; one that runs as letting
     /// go needs it (`lock_letting_go`).
-    async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<(), Deferred> {
-        lock_to_open(&self.sessions, locks, self.session)?;
+    async fn enumerate(&self, kernel: &Kernel, locks: &mut Locks<'_>) -> Result<(), Deferred> {
+        lock_to_open(kernel, locks, self.session)?;
         let running = self.sessions.running(self.session);
         lock_letting_go(locks, running.as_deref(), self.session, self.participant, self.from).await
     }
@@ -239,7 +241,7 @@ impl Procedure for LetGo {
     /// # Errors
     /// As `SessionManager::open_held`, `SessionLoop::channel_for` for the channel named, and as
     /// `let_go_from_channel` or `let_go_from_session`.
-    async fn carry_out(self, (): (), _: &mut Compensation) -> Result<(), SessionError> {
+    async fn carry_out(self, (): (), _: &Kernel, _: &mut Compensation) -> Result<(), SessionError> {
         let Self { sessions, context, session, participant, from, exit } = self;
         let session = sessions.open_held(&context, session).await?;
         match from {
@@ -525,7 +527,7 @@ impl Procedure for Follow {
     type Output = ();
     type Error = SessionError;
 
-    async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<Self::Plan, Deferred> {
+    async fn enumerate(&self, _: &Kernel, locks: &mut Locks<'_>) -> Result<Self::Plan, Deferred> {
         let ids = match self.followed {
             Followed::Session(session) => vec![session],
             Followed::Agent(_) => self.sessions.running_ids(),
@@ -568,6 +570,7 @@ impl Procedure for Follow {
     async fn carry_out(
         self,
         followed: Self::Plan,
+        _: &Kernel,
         _: &mut Compensation,
     ) -> Result<(), SessionError> {
         for (id, agents) in followed {

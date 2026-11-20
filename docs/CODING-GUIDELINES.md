@@ -423,7 +423,10 @@ A type takes the services it works with - the `AccessPolicy`, the stores, the ev
     reaches all of them. Several services that go together travel as a small context holding exactly
     those - `ComponentContext`, `Views` - never as one that holds everything again. A scoped runtime
     such as `ParticipantRuntime` is such a context; it does not hand out the `Kernel` behind it, so
-    that its users cannot reach past it (issue 359).
+    that its users cannot reach past it (issue 359). A procedure is the exception: it holds only
+    what it was asked for and is handed the `Kernel` as it is carried out (issue 593) - one action
+    across objects, whose services are those the kernel has; what it records to undo holds what
+    that undo touches, not the kernel.
 *   **The policies travel as a pair.** A type that asks both the `AccessPolicy` and the
     `ConfidentialityPolicy` holds them as one `Policies` (`caelumora-security`) and is made with
     `&Policies`, as a manager is made with `&EntityStores`, and a function that asks both takes

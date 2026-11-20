@@ -177,7 +177,7 @@ Some rules hold across the endpoints:
 *   **What a client offers it reads from flags** (`can_change`, `can_retry`, `can_cancel`,
     `can_read_context`, ...) the views decide for the user, not from rules of its own.
 
-Renaming a channel (`ChannelLoop::update_name`) has no endpoint yet.
+Renaming a channel (`ChannelController::update_name`) has no endpoint yet.
 
 When the REST API changes, `caelumora-web-ui` has to change with it: its types in `src/types` mirror
 those of `caelumora-rest-api`.

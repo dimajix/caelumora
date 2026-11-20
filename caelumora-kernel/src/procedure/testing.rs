@@ -2,6 +2,7 @@
 //! which a test sees which keys another procedure locks, and how.
 
 use super::{Compensation, Deferred, Key, Locks, Procedure, ProcedureExecutor};
+use crate::kernel::Kernel;
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::Duration;
@@ -69,14 +70,14 @@ impl Procedure for Holding {
     type Output = ();
     type Error = anyhow::Error;
 
-    async fn enumerate(&self, locks: &mut Locks<'_>) -> Result<(), Deferred> {
+    async fn enumerate(&self, _: &Kernel, locks: &mut Locks<'_>) -> Result<(), Deferred> {
         match self.exclusive {
             true => locks.exclusive(self.key),
             false => locks.shared(self.key),
         }
     }
 
-    async fn carry_out(self, (): (), _: &mut Compensation) -> anyhow::Result<()> {
+    async fn carry_out(self, (): (), _: &Kernel, _: &mut Compensation) -> anyhow::Result<()> {
         let _ = self.held.send(());
         self.release.acquire().await?.forget();
         Ok(())
