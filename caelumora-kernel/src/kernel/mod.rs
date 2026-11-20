@@ -44,6 +44,7 @@ use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use crate::group::GroupManager;
 use crate::procedure::ProcedureExecutor;
+use crate::project::ProjectManager;
 use crate::scoped::ScopedEntities;
 use crate::seed::{self, SeedSection};
 use crate::session::SessionManager;
@@ -110,6 +111,8 @@ pub struct Kernel {
     attachments: Arc<AttachmentManager>,
     /// The one writer of teams (issue 286).
     groups: Arc<GroupManager>,
+    /// The one that makes shared projects and holds their lifecycle (issue 467).
+    projects: Arc<ProjectManager>,
     /// The one owner of agents' lifecycle (issue 314).
     agents: Arc<AgentManager>,
     /// The one owner of what of an actor outlives its run (issue 386).
@@ -304,6 +307,12 @@ impl Kernel {
     /// 348).
     pub fn group_manager(&self) -> &Arc<GroupManager> {
         &self.groups
+    }
+
+    /// The one that makes shared projects and holds their lifecycle, by which the procedures of a
+    /// project delete, restore and purge them (issues 467, 593).
+    pub fn project_manager(&self) -> &Arc<ProjectManager> {
+        &self.projects
     }
 
     /// The one owner of agents' lifecycle (issue 314).

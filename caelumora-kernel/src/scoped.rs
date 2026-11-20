@@ -3,8 +3,8 @@
 //! channels - are deleted with the session, restored with it and purged with it, a workspace with
 //! its place (issue 251); those of a channel's scope are deleted and restored with the channel; the
 //! artifacts of a project's scope, with their content (issue 271), go with the project - with the
-//! session whose own it is (issue 467). `SessionManager`, `SessionLoop` and `ProjectManager` are
-//! the callers, through `ScopedEntities`. The group of the participants of a session or channel
+//! session whose own it is (issue 467). The procedures of sessions, channels and projects are the
+//! callers, through `ScopedEntities`. The group of the participants of a session or channel
 //! lies in its scope too, but is not among it: it belongs to the session or channel itself, which
 //! deletes and restores it with its own mark (issue 348, `GroupManager::delete_participants`).
 //!

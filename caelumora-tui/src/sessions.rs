@@ -420,7 +420,6 @@ pub(crate) mod testing {
     use caelumora_domain::user::testing::make_user;
     use caelumora_domain::workspace::WorkspaceId;
     use caelumora_kernel::kernel::Kernel;
-    use caelumora_kernel::project::ProjectManager;
     use caelumora_kernel::session::SessionManager;
     use caelumora_kernel::testing::TestKernel;
     use caelumora_kernel::view::Viewer;
@@ -476,8 +475,7 @@ pub(crate) mod testing {
         let owner =
             SecurityContext::new(ActorId::User(user.id), Default::default(), Default::default());
         let manager = SessionManager::new(Arc::clone(&kernel));
-        let projects = ProjectManager::new(Arc::clone(&manager));
-        let place = place_of(&kernel, &projects, &owner, user.id, directory.path()).await.unwrap();
+        let place = place_of(&kernel, &owner, user.id, directory.path()).await.unwrap();
         let sessions = sessions_of(&kernel, &manager, &owner, Some(place)).await;
         InDirectory { sessions, manager, kernel, owner, directory }
     }

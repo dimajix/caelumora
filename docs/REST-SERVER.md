@@ -12,7 +12,7 @@ frontend built on it is described in [WEB-UI.md](WEB-UI.md), the policy behind t
 
 | File | Holds |
 |---|---|
-| `state.rs` | `AppState`: the `Auth`, the `Kernel`, the `SessionManager`, the `ProjectManager` and the `ProcedureExecutor` every handler reaches |
+| `state.rs` | `AppState`: the `Auth`, the `Kernel`, the `SessionManager` and the `ProcedureExecutor` every handler reaches |
 | `auth.rs` | Login, logout, renewal, and the middleware `require_auth` and `require_stream_auth` |
 | `routes/` | The handlers, by resource, and `routes::api`, the router of all of them and of the plugins' routes |
 | `plugin.rs` | `RestPlugin`, a plugin that serves routes of its own |

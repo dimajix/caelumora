@@ -566,7 +566,6 @@ fn api_of(world: &World) -> Router {
         auth,
         kernel: Arc::clone(&world.kernel),
         session_manager: Arc::clone(&world.manager),
-        project_manager: Arc::clone(&world.projects),
         procedures: Arc::clone(world.kernel.procedures()),
         compartments: Default::default(),
         shutdown: Default::default(),
@@ -1377,7 +1376,8 @@ async fn an_artifact_of_a_shared_project_outlives_the_session_it_was_published_i
     let world = world().await;
     let (alice, carol) = (World::as_user(world.alice), World::as_user(world.carol));
     let project = world
-        .projects
+        .kernel
+        .project_manager()
         .create(&alice, ProjectSpec::new("report", Scope::UserScope { user_id: world.alice }))
         .await
         .unwrap();
@@ -1451,7 +1451,8 @@ async fn publishing_into_a_project_needs_reading_it() {
     let world = world().await;
     let alice = World::as_user(world.alice);
     let carols = world
-        .projects
+        .kernel
+        .project_manager()
         .create(
             &World::as_user(world.carol),
             ProjectSpec::new("hers", Scope::UserScope { user_id: world.carol }),

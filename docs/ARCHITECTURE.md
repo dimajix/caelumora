@@ -461,8 +461,9 @@ What changes an entity is split by what it changes:
     sessions and shared projects, which touch several objects, are procedures (below): a session's
     carried out by the `SessionManager` - the register of the sessions that run, which it starts
     and stops, holding the lifecycles of sessions, their channels and their own projects -, the
-    session's loop and the services of the kernel; a shared project's by the building blocks of the
-    `ProjectManager` - made by the program beside the `SessionManager`, which it holds. A
+    session's loop and the services of the kernel; a shared project's by the lifecycle the
+    `ProjectManager` holds - the kernel's, which makes shared projects - and, for the sessions in
+    it, the procedures of a session. A
     channel's are procedures too (`procedure::channel`), carried out by the session's controller,
     the session's loop, which runs its channels, and the `SessionManager`, the manager of the
     channels of its sessions; a session's own project is made, deleted, restored and purged with

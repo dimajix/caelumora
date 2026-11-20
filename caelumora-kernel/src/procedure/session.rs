@@ -857,7 +857,7 @@ impl Procedure for Purge {
 /// Removes the deleted session `id` for good on behalf of `context` (issue 164), for a procedure
 /// that holds it exclusively, as deleting and restoring it do, so that a purge never meets it half
 /// deleted or half restored - and the project it lies in, as purging a project purges the sessions
-/// in it (`ProjectManager`). In the order of every purge of what has something behind it
+/// in it (`procedure::project::Purge`). In the order of every purge of what has something behind it
 /// (`Lifecycle::purge`): its purge begun, then - in the kernel's name, since the purge was
 /// permitted - what lies behind it (`remove_behind`), then its document. Only what was deleted is
 /// purged; the store asks `Purge`. A step that fails leaves the session deleted, its purge begun,
@@ -1291,7 +1291,7 @@ mod tests {
     use crate::procedure::participant::Follow;
     use crate::procedure::testing::{waits_for, Held};
     use crate::procedure::{Compensation, Deferred, Key, Locks, Procedure, ProcedureError};
-    use crate::project::{ProjectManager, ProjectSpec};
+    use crate::project::ProjectSpec;
     use crate::session::testing::*;
     use crate::session::SessionLoop;
     use crate::session::{SessionError, SessionManager, SessionSpec};
@@ -1354,7 +1354,7 @@ mod tests {
     /// A shared project of alice's.
     async fn project_of_alice(world: &World) -> ProjectId {
         let spec = ProjectSpec::new("report", Scope::UserScope { user_id: world.alice });
-        world.projects.create(&World::as_user(world.alice), spec).await.unwrap().id
+        world.kernel.project_manager().create(&World::as_user(world.alice), spec).await.unwrap().id
     }
 
     /// Opening a session that runs holds it shared, beside others that read it; opening one that
@@ -2318,7 +2318,9 @@ mod tests {
             SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
         let session = create(&manager, &ctx, make_session("moving", owner)).await.unwrap();
         let own = session.session().project;
-        let project = ProjectManager::new(Arc::clone(&manager))
+        let project = manager
+            .kernel()
+            .project_manager()
             .create(&ctx, ProjectSpec::new("report", Scope::UserScope { user_id: owner }))
             .await
             .unwrap();
@@ -2356,7 +2358,9 @@ mod tests {
         let ctx =
             SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
         let session = create(&manager, &ctx, make_session("moving", owner)).await.unwrap();
-        let project = ProjectManager::new(Arc::clone(&manager))
+        let project = manager
+            .kernel()
+            .project_manager()
             .create(&ctx, ProjectSpec::new("report", Scope::UserScope { user_id: owner }))
             .await
             .unwrap();

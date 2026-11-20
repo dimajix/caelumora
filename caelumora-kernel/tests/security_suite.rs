@@ -53,6 +53,7 @@ use caelumora_kernel::command::SHELL_KIND;
 use caelumora_kernel::component::BUNDLE_REF_KIND;
 use caelumora_kernel::event::{EventSubscription, SubscriptionTopic};
 use caelumora_kernel::group::{GroupError, GroupSpec};
+use caelumora_kernel::procedure::project;
 use caelumora_kernel::project::{ProjectError, ProjectSpec};
 use caelumora_kernel::scoped::ScopeNotEmpty;
 use caelumora_kernel::session::testing::{create, ended};
@@ -2178,10 +2179,11 @@ async fn a_session_s_own_project_is_read_by_its_participants_and_goes_with_it() 
 #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
 async fn a_project_is_its_owners_and_read_by_its_members() {
     let world = World::new().await;
+    let procedures = world.kernel.procedures();
     let alice = World::as_user(world.alice);
     let bob = World::as_user(world.bob);
     let carol = World::as_user(world.carol);
-    let projects = &world.projects;
+    let projects = world.kernel.project_manager();
     let mine = Scope::UserScope { user_id: world.alice };
     let project = projects
         .create(
@@ -2291,14 +2293,15 @@ async fn a_project_is_its_owners_and_read_by_its_members() {
         "and changes nothing: {refused:?}"
     );
 
-    assert!(world.projects.delete(&alice, project.id).await.unwrap());
-    let refused = world.projects.restore(&carol, project.id).await;
+    assert!(procedures.run(project::Delete::new(&alice, project.id)).await.unwrap());
+    let refused = procedures.run(project::Restore::new(&carol, project.id)).await;
     assert!(
         matches!(refused, Err(ProjectError::NotFound(_))),
         "deleted, it is hers alone to restore: {refused:?}"
     );
-    assert!(!world.projects.purge(&carol, project.id).await.unwrap(), "or to purge");
-    let (restored, asked) = world.asked(world.projects.restore(&alice, project.id)).await;
+    assert!(!procedures.run(project::Purge::new(&carol, project.id)).await.unwrap(), "or to purge");
+    let (restored, asked) =
+        world.asked(procedures.run(project::Restore::new(&alice, project.id))).await;
     restored.expect("she restores it");
     // Hers alone: who hears it restored is asked as the bus delivers it, whenever that is.
     let hers: Vec<_> = asked.into_iter().filter(|line| line.starts_with("alice:")).collect();
@@ -2322,12 +2325,12 @@ async fn a_project_another_may_not_read_keeps_its_name_from_being_found_or_made(
     let world = World::new().await;
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
     let spec = ProjectSpec::new("handbook", Scope::GlobalScope);
-    let (hers, made) = world.projects.find_or_create(&alice, &spec).await.unwrap();
+    let (hers, made) = world.kernel.project_manager().find_or_create(&alice, &spec).await.unwrap();
     assert!(made, "made where there was none");
-    let (again, made) = world.projects.find_or_create(&alice, &spec).await.unwrap();
+    let (again, made) = world.kernel.project_manager().find_or_create(&alice, &spec).await.unwrap();
     assert_eq!((again.id, made), (hers.id, false), "found again by its maker");
 
-    let refused = world.projects.find_or_create(&bob, &spec).await;
+    let refused = world.kernel.project_manager().find_or_create(&bob, &spec).await;
     assert!(
         matches!(refused, Err(ProjectError::Store(StoreError::NameTaken { .. }))),
         "hers, which he may not read: {refused:?}"
@@ -2337,7 +2340,7 @@ async fn a_project_another_may_not_read_keeps_its_name_from_being_found_or_made(
     assert_eq!(found.id, hers.id, "and no second");
 
     let own = ProjectSpec::new(Project::OWN, Scope::SessionScope { session_id: SessionId::new() });
-    let refused = world.projects.find_or_create(&alice, &own).await;
+    let refused = world.kernel.project_manager().find_or_create(&alice, &own).await;
     assert!(matches!(refused, Err(ProjectError::InvalidScope)), "not a session's: {refused:?}");
 }
 
@@ -2354,7 +2357,8 @@ async fn a_project_is_seen_by_who_reads_it() {
     let carol = World::as_user(world.carol);
     let views = |ctx: &SecurityContext| world.manager.views(Viewer::new(ctx.clone()));
     let project = world
-        .projects
+        .kernel
+        .project_manager()
         .create(&alice, ProjectSpec::new("report", Scope::UserScope { user_id: world.alice }))
         .await
         .unwrap();
@@ -2438,7 +2442,7 @@ async fn a_project_is_seen_by_who_reads_it() {
         "its members and its participants, both called by the session"
     );
 
-    world.projects.delete(&alice, project.id).await.unwrap();
+    world.kernel.procedures().run(project::Delete::new(&alice, project.id)).await.unwrap();
     assert!(world.manager.delete(&alice, session.id()).await.unwrap());
     let deleted: Vec<ProjectId> =
         views(&alice).deleted_projects().await.unwrap().iter().map(|d| d.id).collect();
@@ -2460,12 +2464,14 @@ async fn a_session_is_put_into_a_project_by_who_may_change_it_and_read_the_proje
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
     let own = session.session().project;
     let project = world
-        .projects
+        .kernel
+        .project_manager()
         .create(&alice, ProjectSpec::new("report", Scope::UserScope { user_id: world.alice }))
         .await
         .unwrap();
     let carols = world
-        .projects
+        .kernel
+        .project_manager()
         .create(
             &World::as_user(world.carol),
             ProjectSpec::new("hers", Scope::UserScope { user_id: world.carol }),
@@ -2580,15 +2586,20 @@ async fn lifting_a_sessions_own_project_makes_it_shared_with_the_session_in_it()
 #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
 async fn deleting_a_project_deletes_its_sessions_and_what_lies_in_it_as_far_as_the_deleter_may() {
     let world = World::new().await;
+    let procedures = world.kernel.procedures();
     let session = world.shared_session(&[], &[]).await;
     let alice = World::as_user(world.alice);
     let own = session.session().project;
     assert!(
-        matches!(world.projects.delete(&alice, own).await, Err(ProjectError::InvalidScope)),
+        matches!(
+            procedures.run(project::Delete::new(&alice, own)).await,
+            Err(ProjectError::InvalidScope)
+        ),
         "a session's own goes with its session"
     );
     let project = world
-        .projects
+        .kernel
+        .project_manager()
         .create(&alice, ProjectSpec::new("report", Scope::UserScope { user_id: world.alice }))
         .await
         .unwrap();
@@ -2601,8 +2612,10 @@ async fn deleting_a_project_deletes_its_sessions_and_what_lies_in_it_as_far_as_t
     let stores = world.kernel.entity_stores();
     stores.component_bundles.create(&World::system(), &mut bobs).await.unwrap();
 
-    let refused =
-        world.projects.delete(&alice, project.id).await.expect_err("bob's bundle is left");
+    let refused = procedures
+        .run(project::Delete::new(&alice, project.id))
+        .await
+        .expect_err("bob's bundle is left");
     assert!(
         matches!(&refused, ProjectError::ScopeNotEmpty(ScopeNotEmpty { holder, left }) if *holder == project.holds() && *left == [(ComponentBundle::KIND, 1)]),
         "{refused:?}"
@@ -2636,8 +2649,10 @@ async fn deleting_a_project_deletes_its_sessions_and_what_lies_in_it_as_far_as_t
         .update_project(&bob, his.id(), Some(project.id))
         .await
         .expect("a member puts his session into it");
-    let refused =
-        world.projects.delete(&alice, project.id).await.expect_err("bob's session is left");
+    let refused = procedures
+        .run(project::Delete::new(&alice, project.id))
+        .await
+        .expect_err("bob's session is left");
     assert!(
         matches!(&refused, ProjectError::ScopeNotEmpty(ScopeNotEmpty { left, .. }) if *left == [(Session::KIND, 1)]),
         "{refused:?}"
@@ -2645,7 +2660,7 @@ async fn deleting_a_project_deletes_its_sessions_and_what_lies_in_it_as_far_as_t
     world.manager.restore(&alice, session.id()).await.expect("hers restored by hand");
     world.manager.update_project(&bob, his.id(), None).await.expect("bob takes his out");
     assert!(
-        world.projects.delete(&alice, project.id).await.unwrap(),
+        procedures.run(project::Delete::new(&alice, project.id)).await.unwrap(),
         "nothing of anybody else's is left"
     );
     assert!(
@@ -2670,14 +2685,17 @@ async fn deleting_a_project_deletes_its_sessions_and_what_lies_in_it_as_far_as_t
         stores.projects.get(&World::system(), own).await.is_err(),
         "with the session's own project"
     );
-    world.projects.restore(&alice, project.id).await.expect("restored");
+    procedures.run(project::Restore::new(&alice, project.id)).await.expect("restored");
     assert!(stores.sessions.get(&World::system(), session.id()).await.is_ok(), "with its session");
     assert!(
         stores.projects.get(&World::system(), own).await.is_ok(),
         "and the session's own project"
     );
-    assert!(world.projects.delete(&alice, project.id).await.unwrap());
-    assert!(world.projects.purge(&World::system(), project.id).await.unwrap(), "purged");
+    assert!(procedures.run(project::Delete::new(&alice, project.id)).await.unwrap());
+    assert!(
+        procedures.run(project::Purge::new(&World::system(), project.id)).await.unwrap(),
+        "purged"
+    );
     assert!(
         stores.sessions.get_deleted(&World::system(), session.id()).await.is_err(),
         "with its session"
@@ -3329,18 +3347,21 @@ async fn a_session_another_process_holds_is_told_of_only_to_who_sees_it() {
 #[tokio::test]
 async fn purging_a_project_is_not_its_owners() {
     let world = World::new().await;
+    let procedures = world.kernel.procedures();
     let (alice, system) = (World::as_user(world.alice), World::system());
     let stores = world.kernel.entity_stores();
     let session = world.shared_session(&[], &[]).await;
     let project = world
-        .projects
+        .kernel
+        .project_manager()
         .create(&alice, ProjectSpec::new("report", Scope::UserScope { user_id: world.alice }))
         .await
         .unwrap();
     world.manager.update_project(&alice, session.id(), Some(project.id)).await.unwrap();
-    world.projects.delete(&alice, project.id).await.unwrap();
+    procedures.run(project::Delete::new(&alice, project.id)).await.unwrap();
 
-    let (refused, asked) = world.asked(world.projects.purge(&alice, project.id)).await;
+    let (refused, asked) =
+        world.asked(procedures.run(project::Purge::new(&alice, project.id))).await;
     assert!(refused.is_err());
     assert_eq!(
         asked,

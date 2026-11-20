@@ -64,7 +64,8 @@ pub(super) async fn create_project(
         )
     })?;
     let made = state
-        .project_manager
+        .kernel
+        .project_manager()
         .create(
             &user.security_context(),
             ProjectSpec {
@@ -165,7 +166,7 @@ pub(super) async fn delete_project(
     Path(project_id): Path<ProjectId>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let deleting = Delete::new(&state.project_manager, &user.security_context(), project_id);
+    let deleting = Delete::new(&user.security_context(), project_id);
     match state.procedures.run(deleting).await? {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found(
@@ -182,7 +183,7 @@ pub(super) async fn restore_project(
     Path(project_id): Path<ProjectId>,
     user: AuthenticatedUser,
 ) -> Result<Json<ProjectResponse>, ApiError> {
-    let restoring = Restore::new(&state.project_manager, &user.security_context(), project_id);
+    let restoring = Restore::new(&user.security_context(), project_id);
     state.procedures.run(restoring).await?;
     Ok(Json(readable(&state, &user, project_id).await?))
 }
@@ -194,7 +195,7 @@ pub(super) async fn purge_project(
     Path(project_id): Path<ProjectId>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let purging = Purge::new(&state.project_manager, &user.security_context(), project_id);
+    let purging = Purge::new(&user.security_context(), project_id);
     match state.procedures.run(purging).await? {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found(

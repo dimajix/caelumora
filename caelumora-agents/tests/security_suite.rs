@@ -3438,12 +3438,14 @@ async fn a_session_is_made_in_a_project_as_it_is_put_into_one() {
     let template = world.template(Some(world.alice), &[], "helper", &plain).await;
     let (alice, carol) = (World::as_user(world.alice), World::as_user(world.carol));
     let project = world
-        .projects
+        .kernel
+        .project_manager()
         .create(&alice, ProjectSpec::new("report", Scope::UserScope { user_id: world.alice }))
         .await
         .unwrap();
     let carols = world
-        .projects
+        .kernel
+        .project_manager()
         .create(&carol, ProjectSpec::new("hers", Scope::UserScope { user_id: world.carol }))
         .await
         .unwrap();

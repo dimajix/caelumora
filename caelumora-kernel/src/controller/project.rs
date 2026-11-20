@@ -21,9 +21,9 @@ use tracing::error;
 
 /// The live project in this instance (issue 467), shared by everything that uses it - the
 /// sessions that lie in it, a description a running system reads: the one writer of what it is -
-/// its name, its description, its members, its access list and where it lies. Making, deleting,
-/// restoring and purging it are the `ProjectManager`'s, or, for a session's own, the
-/// `SessionManager`'s.
+/// its name, its description, its members, its access list and where it lies. Making it is the
+/// `ProjectManager`'s, deleting, restoring and purging it the procedures of a project
+/// (`procedure::project`); a session's own goes with its session.
 ///
 /// Every change reaches the project first as the views reach it - by the store, in the caller's
 /// name -, so that whoever does not reach it learns nothing else of it, and is applied to it as

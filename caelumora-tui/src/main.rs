@@ -35,7 +35,6 @@ use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_kernel::plugin::Plugin;
 use caelumora_kernel::procedure::follower::AgentFollower;
 use caelumora_kernel::procedure::session;
-use caelumora_kernel::project::ProjectManager;
 use caelumora_kernel::session::{SessionLoop, SessionManager};
 use caelumora_kernel::user_provider::Credential;
 use caelumora_kernel::view::{Viewer, Views};
@@ -274,10 +273,9 @@ async fn main() -> Result<()> {
     let session_manager = SessionManager::new(Arc::clone(&kernel));
     // Whether the agents of the running sessions exist, followed as long as the terminal runs.
     let _agents_followed = AgentFollower::spawn(&session_manager);
-    let projects = ProjectManager::new(Arc::clone(&session_manager));
     // Where the program was started, its project and workspace, if it works there.
     let place = match config.workspaces.storage.contains_key(HERE) {
-        true => Some(place_of(&kernel, &projects, &security, owner, &here).await?),
+        true => Some(place_of(&kernel, &security, owner, &here).await?),
         false => None,
     };
     let views = session_manager.views(Viewer::new(security));

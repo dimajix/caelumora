@@ -20,6 +20,7 @@ use crate::group::GroupManager;
 use crate::library::ForLibrary;
 use crate::plugin::Plugin;
 use crate::procedure::ProcedureExecutor;
+use crate::project::ProjectManager;
 use crate::scoped::{ScopeHolders, ScopeMember, ScopedEntities, ScopedKind, Unowned};
 use crate::seed::SeedSection;
 use crate::terminal::TerminalProvider;
@@ -714,6 +715,11 @@ impl KernelBuilder {
         let scope_members = kernel_members.into_iter().chain(self.scope_members).collect();
         let scoped = Arc::new(ScopedEntities::new(scope_members));
         let participation = Arc::new(Participation::new(&self.policies));
+        let projects = Arc::new(ProjectManager::new(
+            &self.entity_stores,
+            Arc::clone(&self.event_bus),
+            Arc::clone(&self.groups),
+        ));
         Ok(Arc::new_cyclic(|kernel| Kernel {
             policies: self.policies,
             state_store: self.persistence.state_store(),
@@ -734,6 +740,7 @@ impl KernelBuilder {
             command_reaper: self.command_reaper,
             attachments: self.attachments,
             groups: self.groups,
+            projects,
             agents,
             actors: Arc::new(ActorManager::new()),
             scoped,

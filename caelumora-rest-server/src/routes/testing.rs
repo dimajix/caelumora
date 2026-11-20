@@ -13,7 +13,6 @@ use caelumora_domain::session::testing::make_session;
 use caelumora_domain::session::SessionId;
 use caelumora_domain::user::UserId;
 use caelumora_kernel::event::EventBus;
-use caelumora_kernel::project::ProjectManager;
 use caelumora_kernel::session::testing::create;
 use caelumora_kernel::session::SessionManager;
 use caelumora_kernel::testing::TestKernel;
@@ -51,13 +50,11 @@ pub(super) fn state_with(config: AppConfig) -> Arc<AppState> {
     // No follower of the agents (`AgentFollower`): what the server's tests ask follows no agent's
     // deletion, and the state the server is given holds none - the server program does.
     let session_manager = SessionManager::new(Arc::clone(&kernel));
-    let project_manager = Arc::new(ProjectManager::new(Arc::clone(&session_manager)));
     Arc::new(AppState {
         auth,
         procedures: Arc::clone(kernel.procedures()),
         kernel,
         session_manager,
-        project_manager,
         compartments: Default::default(),
         shutdown: Default::default(),
     })

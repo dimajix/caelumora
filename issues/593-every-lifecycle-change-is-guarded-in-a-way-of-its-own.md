@@ -904,3 +904,20 @@ case; it is decided there, and may make this unnecessary.
   constructor `Create::from_template`; creating a channel takes back the group of its participants
   as storing a session does (`record_discarding_group`); CODING-GUIDELINES.md names the undo that
   holds the kernel, as it repeats procedures that are handed it.
+- **2026-11-20** — Step R5c committed. Step R6 implemented, not committed yet: deleting, restoring
+  and purging a shared project are carried out by its procedures (`project::Delete`, `Restore`,
+  `Purge`), which hold only their parameters, by the lifecycle the `ProjectManager` holds
+  (`ProjectManager::lifecycle`); the manager keeps making a project (`create`, `find_or_create`).
+  It no longer holds the `SessionManager` - nothing it does touches a session -, and so is the
+  kernel's, as the managers of the other kinds are (`Kernel::project_manager`): the programs and
+  the REST server no longer make it. Marking a project deleted and restoring its members' group
+  record their compensations, in place of the undo written by hand. The tests' verbs of a project
+  go: they run the procedures. With them goes the rule of the `…_held` names in
+  CODING-GUIDELINES.md: the procedures of a lifecycle carry the change out themselves, by the
+  lifecycle the manager holds. That the `SessionManager` holds a second `Lifecycle<Project>` for
+  the sessions' own projects is decided with lifting a project (5d).
+  Reviewed with fresh eyes: restoring a project reads the sessions deleted with it before anything
+  is restored, so that restoring the project is the last step that can fail - a listing that
+  failed after it would have taken its members' group away from a project restored; `World` no
+  longer holds the `ProjectManager` beside the kernel that does; the tests name the procedures of
+  a project by their module (`project::Delete`).

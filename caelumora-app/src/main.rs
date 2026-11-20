@@ -23,7 +23,6 @@ use caelumora_kernel::plugin::Plugin;
 use caelumora_kernel::procedure::follower::AgentFollower;
 use caelumora_kernel::procedure::session;
 use caelumora_kernel::procedure::ProcedureExecutor;
-use caelumora_kernel::project::ProjectManager;
 use caelumora_kernel::session::SessionManager;
 use caelumora_logging::{init, LogTarget};
 use caelumora_memory::library::MemoryLibrary;
@@ -123,7 +122,6 @@ async fn main() -> Result<()> {
         procedures: Arc::clone(kernel.procedures()),
         kernel,
         session_manager: Arc::clone(&session_manager),
-        project_manager: Arc::new(ProjectManager::new(Arc::clone(&session_manager))),
         compartments: Arc::new(config.compartments.clone()),
         shutdown: shutdown.clone(),
     });

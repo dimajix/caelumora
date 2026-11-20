@@ -291,8 +291,8 @@ impl SessionManager {
         Views::new(&self.kernel, Arc::<SessionManager>::clone(self), viewer)
     }
 
-    /// The kernel it starts its sessions in - for what is made beside it, as the `ProjectManager`
-    /// is.
+    /// The kernel it starts its sessions in - for an undo that repeats procedures, and so holds it
+    /// (`procedure::session::record_creation`).
     pub(crate) fn kernel(&self) -> &Arc<Kernel> {
         &self.kernel
     }

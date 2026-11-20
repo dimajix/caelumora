@@ -240,9 +240,9 @@ it the Rust files a commit adds or changes.
 ### A module's manager
 
 A manager is the one owner of the lifecycle of a kind - it makes, deletes, restores and purges it:
-`AgentManager`, `WorkspaceManager`, `GroupManager`, `ControllerManager`, `UserManager`; the
-`ProjectManager` offers the building blocks of a lifecycle that is procedures', the `SessionManager`
-what runs and the lifecycles the procedures carry the change out by (below). It lives in its
+`AgentManager`, `WorkspaceManager`, `GroupManager`, `ControllerManager`, `UserManager`; of a
+lifecycle that is procedures', the `ProjectManager` and the `SessionManager` keep what makes and
+what runs, and the lifecycles the procedures carry the change out by (below). It lives in its
 module's `manager.rs`, declared `mod manager;` and exported from `mod.rs` with `pub use
 manager::XyzManager;`, so that it is imported by its module's path
 (`crate::workspace::WorkspaceManager`). `mod.rs` holds the module's description, its error type,
@@ -254,12 +254,11 @@ Its methods are named by the verbs of the lifecycle, without the kind - the mana
 (`AgentManager::delete`; issue 354). A lifecycle that touches several objects - a session's, a
 shared project's - is a procedure's (issue 593): each verb a type named so in the module `procedure`
 of the kind (`procedure::session::Open`, `procedure::project::Delete`), which an entry point makes
-and the kernel's `ProcedureExecutor` carries out. Its manager then offers the building blocks the
-procedures carry the change out by, named `…_held` where it is the verb the procedure carries out
-(`ProjectManager::purge_held`); what holds the objects lies around them, in the executor, not in
-their signatures. Where the procedures carry the change out themselves - a session's
-(`procedure::session`) -, the manager keeps what runs and the lifecycles it holds
-(`SessionManager::start`, `session_lifecycle`).
+and the kernel's `ProcedureExecutor` carries out. The procedures carry the change out themselves,
+by the `Lifecycle` the manager holds (`ProjectManager::lifecycle`,
+`SessionManager::session_lifecycle`), which knows nothing of what holds the objects: that is the
+executor's. The manager keeps what makes the kind and what runs (`ProjectManager::create`,
+`SessionManager::start`).
 
 The verbs on one entity, found by its id, answer what is not there - or not the caller's to see -
 alike: `delete` and `purge` answer `false`, since for whoever wants it gone it is gone (how a REST
@@ -643,10 +642,9 @@ a cut is wrong: it is a [finding](../AGENTS.md#findings), and the visibility is 
     the nearest `testing` module above the type that reaches what the method needs, the crate's
     own included (`impl ChannelLoop` in `channel::testing`, with `actor_of`; `impl Turn` in
     `caelumora_agents::testing`); only where none does, beside the type, after its own `impl`
-    (`EventSubscription`, `UserActor`, the verbs of `ProjectManager` the tests carry out as
-    procedures, whose module has no `testing` that reaches the executor). No single method of the
-    type's own `impl` is guarded for tests: who reads the type sees its API apart from what only
-    tests are given, and nothing widens it outside the guard.
+    (`EventSubscription`, `UserActor`). No single method of the type's own `impl` is guarded for
+    tests: who reads the type sees its API apart from what only tests are given, and nothing widens
+    it outside the guard.
 *   **Documents in tests:** a test that needs a document of the domain starts from what the
     `testing` module of its kind makes - `make_personality`, `make_session`, `make_user`,
     `make_template`, `make_channel`, `make_message` - and writes beside it only what it differs in

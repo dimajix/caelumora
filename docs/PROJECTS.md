@@ -74,12 +74,11 @@ with the session in it and every artifact published so far. No artifact is kept 
 
 ## Lifecycle
 
-The `ProjectManager` makes shared projects (`caelumora-kernel/src/project`), and finds one by its
-name or makes it (`find_or_create`), for the terminal program; deleting, restoring and purging one
-are procedures (`procedure::project`, issue 593), which hold the project and the sessions in it and
-carry the change out by its building blocks. It is made by the program beside the `SessionManager`,
-which it holds, since deleting a project deletes the sessions in it, as a session is deleted - it
-stops what runs. Deleting a project deletes its sessions as deleting one does
+The `ProjectManager`, the kernel's (`Kernel::project_manager`), makes shared projects
+(`caelumora-kernel/src/project`), finds one by its name or makes it (`find_or_create`), for the
+terminal program, and holds their `Lifecycle`; deleting, restoring and purging one are procedures
+(`procedure::project`, issue 593), which hold the project and the sessions in it and carry the
+change out by that lifecycle. Deleting a project deletes its sessions as deleting one does
 (`procedure::session::delete`) and what lies in its scope through `ScopedEntities`, in the deleter's
 name: a session or anything else left that they may not delete keeps the project (`ScopeNotEmpty`),
 and what they could delete stays deleted. Restoring brings back what went with it, as far as the
