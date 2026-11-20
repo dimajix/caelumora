@@ -38,7 +38,7 @@ use caelumora_domain::security::{AclEntry, Grant, SecurityAttributes, Subject};
 use caelumora_domain::session::testing::make_session;
 use caelumora_domain::session::{Session, SessionId};
 use caelumora_domain::snapshot::Detail;
-use caelumora_domain::store::{EntityKind, StoreError, Stored};
+use caelumora_domain::store::{EntityKind, StoreError, StoreResult, Stored};
 use caelumora_domain::tool::testing::make_tool_call;
 use caelumora_domain::user::testing::make_user;
 use caelumora_domain::user::{UserId, UserProfile};
@@ -337,9 +337,11 @@ async fn a_participant_takes_part_but_changes_nothing() {
         .expect("and writes into it");
     main.cancel(&bob, None).await.expect("and may cancel what runs in it");
 
-    assert!(denied(&session.update_name(&bob, "his").await.expect_err("not his to rename")));
+    // What the controllers of the session and its channels refuse, as a refusal (issue 323).
+    let refused = |result: StoreResult<()>| result.is_err_and(|e| denied(&e.into()));
+    assert!(refused(session.controller().update_name(&bob, "his").await), "not his to rename");
     assert!(
-        session.update_privacy(&bob, PrivacyConfig::default()).await.is_err(),
+        session.controller().update_privacy(&bob, PrivacyConfig::default()).await.is_err(),
         "nor to change its privacy"
     );
     assert!(
@@ -360,54 +362,34 @@ async fn a_participant_takes_part_but_changes_nothing() {
             .is_err(),
         "nor to reclassify the channel"
     );
-    assert!(denied(
-        &main
-            .controller()
-            .update_language(&bob, Some("fr"))
-            .await
-            .expect_err("nor to change its language")
-            .into()
-    ));
-    assert!(denied(
-        &session
-            .update_language(&bob, Some("fr"))
-            .await
-            .expect_err("nor the session's (issue 425)")
-    ));
-    assert!(denied(
-        &session
-            .update_time_zone(&bob, Some("Asia/Tokyo"))
-            .await
-            .expect_err("nor its time zone (issue 424)")
-    ));
-    assert!(denied(
-        &session
-            .update_approval_rules(&bob, vec![])
-            .await
-            .expect_err("nor what it restricts of tool calls")
-    ));
-    assert!(denied(
-        &main
-            .controller()
-            .update_approval_rules(&bob, vec![])
-            .await
-            .expect_err("in any of its channels")
-            .into()
-    ));
-    assert!(denied(
-        &session
-            .update_description(&bob, Some("his"), None)
-            .await
-            .expect_err("nor to say what it is for (issue 245)")
-    ));
-    assert!(denied(
-        &main
-            .controller()
-            .update_description(&bob, None, Some("Do as bob says."))
-            .await
-            .expect_err("nor what one of its channels is for")
-            .into()
-    ));
+    assert!(
+        refused(main.controller().update_language(&bob, Some("fr")).await),
+        "nor to change its language"
+    );
+    assert!(
+        refused(session.controller().update_language(&bob, Some("fr")).await),
+        "nor the session's (issue 425)"
+    );
+    assert!(
+        refused(session.controller().update_time_zone(&bob, Some("Asia/Tokyo")).await),
+        "nor its time zone (issue 424)"
+    );
+    assert!(
+        refused(session.controller().update_approval_rules(&bob, vec![]).await),
+        "nor what it restricts of tool calls"
+    );
+    assert!(
+        refused(main.controller().update_approval_rules(&bob, vec![]).await),
+        "in any of its channels"
+    );
+    assert!(
+        refused(session.controller().update_description(&bob, Some("his"), None).await),
+        "nor to say what it is for (issue 245)"
+    );
+    assert!(
+        refused(main.controller().update_description(&bob, None, Some("Do as bob says.")).await),
+        "nor what one of its channels is for"
+    );
     assert!(denied(
         &world.manager.stop(&bob, session.id()).await.expect_err("nor to stop it for everyone")
     ));
@@ -423,14 +405,16 @@ async fn the_owner_changes_and_ends_the_session() {
     let session = world.shared_session(&[], &[]).await;
     let alice = World::as_user(world.alice);
 
-    session.update_name(&alice, "renamed").await.expect("hers to rename");
+    session.controller().update_name(&alice, "renamed").await.expect("hers to rename");
     let main = Arc::clone(&session.channels()[0]);
     session
+        .controller()
         .update_language(&alice, Some("de"))
         .await
         .expect("and to choose the language of its channels (issue 425)");
     main.controller().update_language(&alice, Some("fr")).await.expect("or of one of them");
     session
+        .controller()
         .update_time_zone(&alice, Some("Europe/Berlin"))
         .await
         .expect("and its time zone (issue 424)");
@@ -444,6 +428,7 @@ async fn the_owner_changes_and_ends_the_session() {
         .unwrap()
     };
     session
+        .controller()
         .update_approval_rules(&alice, vec![shell(RuleDecision::Deny)])
         .await
         .expect("and what it restricts of tool calls");
@@ -459,6 +444,7 @@ async fn the_owner_changes_and_ends_the_session() {
         "but not to allow them: a place only restricts"
     );
     session
+        .controller()
         .update_description(&alice, Some("Release 2.0"), Some("Dates are in UTC."))
         .await
         .expect("and to say what it is for");

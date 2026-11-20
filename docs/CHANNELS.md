@@ -176,9 +176,14 @@ an agent but not yet taken in leaves the agent idle, so it waits for the next ac
 ### One writer per document
 
 Each document has one writer, which holds a lock while it changes and stores it: the
-`SessionController` for the session, the `ChannelController` for its channel. A change - a new
-name, say - is stored first, where it may still be refused, and only then taken over and announced.
-The controllers are described in [STORAGE.md](STORAGE.md#controllers).
+`SessionController` for the session, the `ChannelController` for its channel. A change - a new name,
+say - is stored first, where it may still be refused, and only then taken over and announced. The
+running session and channel hand their controllers out (`SessionLoop::controller`,
+`ChannelLoop::controller`), through which their attributes are changed - name, language, time zone,
+privacy, rules of approval, description, whether a channel uses the workspace; what changes the
+channels of a session, its participants, its project or its workspace is the kernel's alone, written
+by the procedures and the session (issue 593). The controllers are described in
+[STORAGE.md](STORAGE.md#controllers).
 
 ## Channels
 

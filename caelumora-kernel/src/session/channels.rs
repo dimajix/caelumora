@@ -463,7 +463,7 @@ mod tests {
         };
         assert_eq!(held_in(&following).await, (None, None), "neither holds one");
 
-        session.update_language(&ctx, Some("de")).await.expect("the owner changes it");
+        session.controller().update_language(&ctx, Some("de")).await.expect("the owner changes it");
         assert_eq!(
             held_in(&following).await,
             (None, language("de")),
@@ -477,11 +477,11 @@ mod tests {
         let stored = kernel.entity_stores().sessions.get(&ctx, session.id()).await.unwrap();
         assert_eq!(stored.language, language("de"), "stored, not only in memory");
         assert!(
-            session.update_language(&ctx, Some("no language")).await.is_err(),
+            session.controller().update_language(&ctx, Some("no language")).await.is_err(),
             "no language tag"
         );
 
-        session.update_language(&ctx, None).await.expect("taken back");
+        session.controller().update_language(&ctx, None).await.expect("taken back");
         assert_eq!(held_in(&following).await, (None, None));
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
@@ -508,7 +508,11 @@ mod tests {
             "UTC where it names none (issue 424)"
         );
 
-        session.update_time_zone(&ctx, Some("Europe/Berlin")).await.expect("the owner changes it");
+        session
+            .controller()
+            .update_time_zone(&ctx, Some("Europe/Berlin"))
+            .await
+            .expect("the owner changes it");
         assert_eq!(
             (session.session().effective_time_zone(), shown().await),
             (berlin, Some(berlin))
@@ -516,10 +520,10 @@ mod tests {
         let stored = kernel.entity_stores().sessions.get(&ctx, session.id()).await.unwrap();
         assert_eq!(stored.time_zone, Some(berlin), "stored, not only in memory");
         assert!(
-            session.update_time_zone(&ctx, Some("Europe/Atlantis")).await.is_err(),
+            session.controller().update_time_zone(&ctx, Some("Europe/Atlantis")).await.is_err(),
             "no time zone"
         );
-        session.update_time_zone(&ctx, None).await.expect("taken back");
+        session.controller().update_time_zone(&ctx, None).await.expect("taken back");
         assert_eq!(session.session().effective_time_zone(), TimeZone::UTC);
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }

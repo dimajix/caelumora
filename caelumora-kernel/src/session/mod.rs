@@ -1,8 +1,7 @@
-//! A running session: `SessionLoop`, how it is built and runs its channels.
+//! A running session: `SessionLoop`, how it is built, runs its channels and holds its workspace.
 
 mod channels;
 mod manager;
-mod settings;
 mod spec;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
@@ -10,7 +9,6 @@ pub mod testing;
 pub(crate) use channels::unavailable_components;
 pub(crate) use manager::Found;
 pub use manager::SessionManager;
-pub(crate) use settings::MoveTarget;
 pub use spec::{ChannelSpec, SessionSpec};
 
 use crate::channel::ChannelLoop;
@@ -31,24 +29,26 @@ use caelumora_domain::agent::{Agent, AgentUpdateEvent};
 use caelumora_domain::channel::{self, Channel, ChannelId, Participant};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::event::{Announcing, GlobalEvent};
+use caelumora_domain::group::GroupId;
 use caelumora_domain::privacy::SessionPrivacy;
-use caelumora_domain::project::{Project, ProjectId};
+use caelumora_domain::project::ProjectId;
 use caelumora_domain::scope::Scope;
+use caelumora_domain::security::{Grant, Subject};
 use caelumora_domain::session::{Session, SessionId};
-use caelumora_domain::store::{StoreError, StoreResult, StoreResultExt};
+use caelumora_domain::store::{StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_domain::template::SessionTemplateId;
 use caelumora_domain::user::{User, UserUpdateEvent};
 use caelumora_domain::value::name::Name;
 use caelumora_domain::workspace::WorkspaceId;
 use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions};
-use caelumora_security::{Policies, SecurityContext};
-use caelumora_store::EntityStores;
+use caelumora_security::{ActionType, Enforcement, Policies, SecurityContext};
 use dashmap::DashMap;
 use std::convert::Infallible;
 use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::{AbortHandle, JoinSet};
+use tracing::info;
 
 /// A request for a channel that cannot be met as asked (issue 09). The
 /// messages are meant for users (see `crate::error::user_message`).
@@ -231,7 +231,6 @@ pub struct SessionLoop {
     /// The services it works with, taken from `kernel` once (issue
     /// 229).
     policies: Policies,
-    stores: EntityStores,
     controllers: Arc<ControllerManager>,
     /// What a workspace attached to it is reached by.
     workspaces: Arc<WorkspaceManager>,
@@ -256,19 +255,6 @@ pub struct SessionLoop {
     /// What the participants it takes in are followed by on `subscription` (issue 590), from
     /// wherever it takes them in.
     following: Following,
-}
-
-/// The own project of session `id`, if it is there: the one in its scope, found by its name
-/// (`Project::own_name`) in the kernel's name - none once it was lifted (issue 467).
-///
-/// # Errors
-/// Whatever the store reports.
-async fn load_own(stores: &EntityStores, id: SessionId) -> StoreResult<Option<Project>> {
-    stores
-        .projects
-        .find_by_name(&SecurityContext::system(), &Project::own_name(id))
-        .await
-        .optional()
 }
 
 /// Asks whether `context` may attach the workspace `id` to the session `session_id` (issue 253):
@@ -354,7 +340,6 @@ impl SessionLoop {
             session_controller,
             workspace: ArcSwapOption::new(workspace),
             policies: kernel.policies().clone(),
-            stores: kernel.entity_stores().clone(),
             controllers: Arc::clone(kernel.controller_manager()),
             workspaces: Arc::clone(kernel.workspace_manager()),
             events: Arc::clone(kernel.event_bus()),
@@ -383,8 +368,10 @@ impl SessionLoop {
     }
 
     /// The session's controller: its document live, through which it is changed and stored, each
-    /// change asked by the store as it is stored.
-    pub(crate) fn controller(&self) -> &Arc<SessionController> {
+    /// change asked by the store as it is stored - its name, language, time zone, privacy, rules of
+    /// approval and description; what changes its channels, its participants, its project or its
+    /// workspace is the crate's, written by the procedures and the session.
+    pub fn controller(&self) -> &Arc<SessionController> {
         &self.session_controller
     }
 
@@ -520,6 +507,71 @@ impl SessionLoop {
             }
         }
     }
+
+    /// Attaches `workspace` to the session, or with `None` takes the one
+    /// attached away (issue 253), on behalf of `context`. Whoever may change
+    /// the session asks first (`UpdateSession`); to attach one, it must be
+    /// theirs to share (`GetWorkspace`, `UpdateWorkspace` - its owner,
+    /// issue 251, decision 12) and lie where this session may use it - not
+    /// in another session's scope. Taking it away shares nothing and asks
+    /// no more. Its channels use it as their classifications and switches
+    /// let them, from their next use - and as its access list lets each
+    /// participant (issue 23): attaching shares nothing by itself, unless `share`
+    /// says how far the session's participants may use it, which adds an entry
+    /// for them. Taking it away leaves the list as it is: it is the
+    /// workspace's, and its owner's to change.
+    ///
+    /// # Errors
+    /// `StoreError::PermissionDenied` if `context` may not change the session; what
+    /// `require_attachable` reports of the workspace - `WorkspaceError::NotFound` if there is none
+    /// they may read or are cleared for, `WorkspaceError::Store(StoreError::PermissionDenied)` if
+    /// it is not theirs to attach, `SessionError::WorkspaceOutOfScope` -; or whatever else storing
+    /// reports.
+    pub async fn update_workspace(
+        &self,
+        context: &SecurityContext,
+        workspace: Option<WorkspaceId>,
+        share: Option<Grant>,
+    ) -> Result<()> {
+        let session = self.session();
+        self.policies
+            .access_policy()
+            .require(
+                context,
+                ActionType::update(Session::KIND, &session.security_attributes),
+                StoreError::PermissionDenied,
+            )
+            .await?;
+        if let Some(id) = workspace {
+            require_attachable(&self.workspaces, context, id, self.id).await?;
+        }
+        let held = self.attach_workspace(context, workspace).await?;
+        if let (Some(controller), Some(grant)) = (held, share) {
+            controller.share(context, Subject::Group(GroupId::of_session(self.id)), grant).await?;
+        }
+        info!(session = %self.id, workspace = ?workspace, by = %context.caller_id, "Session's workspace changed");
+        Ok(())
+    }
+
+    /// Attaches `workspace` to the session on behalf of `context`, or with
+    /// `None` takes the one attached away, and holds it live (issue 344):
+    /// stored as changing the session, without asking whether it may be
+    /// attached - its caller asked that (`update_workspace`), or found or made
+    /// it for the session as it made the session (`SessionManager`).
+    /// Returns the workspace as it is held.
+    ///
+    /// # Errors
+    /// Whatever storing the session or reading the workspace reports.
+    pub(crate) async fn attach_workspace(
+        &self,
+        context: &SecurityContext,
+        workspace: Option<WorkspaceId>,
+    ) -> Result<Option<Arc<WorkspaceController>>> {
+        self.session_controller.update_workspace(context, workspace).await?;
+        let held = held_workspace(&self.controllers, self.id, workspace).await?;
+        self.workspace.store(held.clone());
+        Ok(held)
+    }
 }
 
 /// The participant `global_event` announces renamed, with its new name (issue 585); `None` if it
@@ -540,10 +592,10 @@ fn renamed(global_event: &GlobalEvent) -> Option<(ActorId, Name)> {
 
 #[cfg(test)]
 mod tests {
-
     use crate::kernel::Kernel;
     use crate::session::testing::*;
     use crate::session::SessionManager;
+    use crate::view::Viewer;
     use caelumora_api::actor::Actor;
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::testing::make_personality;
@@ -551,8 +603,14 @@ mod tests {
     use caelumora_domain::channel::HistoryAccess;
     use caelumora_domain::event::GlobalEvent;
     use caelumora_domain::security::SecurityAttributes;
+    use caelumora_domain::security::{Grant, Subject};
+    use caelumora_domain::session::testing::make_session;
+    use caelumora_domain::session::Session;
+    use caelumora_domain::store::StoreError;
+    use caelumora_domain::user::testing::make_user;
     use caelumora_domain::user::{User, UserUpdateEvent};
     use caelumora_security::SecurityContext;
+    use caelumora_store::testing::record_users;
     use caelumora_store::testing::stored_agent;
     use std::sync::Arc;
     use std::time::Duration;
@@ -669,6 +727,68 @@ mod tests {
             }
         };
         assert!(time::timeout(Duration::from_secs(2), mentioned).await.is_ok(), "by its new name");
+        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn only_the_owner_changes_a_sessions_privacy_and_everyone_in_it_sees_it() {
+        use caelumora_domain::privacy::PrivacyConfig;
+        use caelumora_domain::session::SessionUpdateEvent;
+        use caelumora_domain::user::UserId;
+
+        let (_, manager) = owned_kernel(Default::default());
+        let kernel = Arc::clone(manager.kernel());
+        let (alice, bob) = (make_user("alice"), make_user("bob"));
+        let as_user = |id: UserId| {
+            SecurityContext::new(ActorId::User(id), Default::default(), Default::default())
+        };
+        let mut session = make_session("hers", alice.id);
+        session.security_attributes = session
+            .security_attributes
+            .clone()
+            .granting(Subject::Actor(ActorId::User(bob.id)), Grant::Read);
+        session.participants =
+            record_users(manager.kernel().entity_stores(), &[&alice, &bob]).await;
+        let session = create(&manager, &as_user(alice.id), session).await.unwrap();
+        let mut events = kernel.event_bus().subscribe_all();
+
+        let refused = session
+            .controller()
+            .update_privacy(&as_user(bob.id), PrivacyConfig::SharedAudience)
+            .await
+            .expect_err("a participant may not");
+        assert!(matches!(refused, StoreError::PermissionDenied(_)), "{refused}");
+        assert_eq!(session.privacy().policy, PrivacyConfig::Private, "unchanged");
+
+        session
+            .controller()
+            .update_privacy(&as_user(alice.id), PrivacyConfig::SharedAudience)
+            .await
+            .expect("the owner may");
+        assert_eq!(session.privacy().policy, PrivacyConfig::SharedAudience);
+        let stored = kernel
+            .entity_stores()
+            .sessions
+            .get(&SecurityContext::system(), session.id())
+            .await
+            .unwrap();
+        assert_eq!(stored.privacy, PrivacyConfig::SharedAudience, "stored");
+        let shared = |event: &GlobalEvent| {
+            let about = event.about::<Session>().filter(|(id, _)| *id == session.id());
+            let update = about.and_then(|(_, change)| change.update::<SessionUpdateEvent>());
+            matches!(
+                update,
+                Some(SessionUpdateEvent::PrivacyChanged(PrivacyConfig::SharedAudience))
+            )
+        };
+        assert!(events.drain().await.iter().any(shared), "announced");
+        let for_bob =
+            manager.views(Viewer::new(as_user(bob.id))).session(session.id()).await.unwrap();
+        assert_eq!(
+            for_bob.privacy().policy,
+            PrivacyConfig::SharedAudience,
+            "shown to everyone who takes part"
+        );
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
 }

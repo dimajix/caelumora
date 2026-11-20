@@ -2,9 +2,7 @@
 //! create, start, stop, delete, restore and purge them, which the procedures of a session carry
 //! out (`procedure::session`, issue 593).
 
-use super::{
-    load_own, require_attachable, require_classification, SessionError, SessionLoop, SessionSpec,
-};
+use super::{require_attachable, require_classification, SessionError, SessionLoop, SessionSpec};
 use crate::attachment::AttachmentManager;
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
@@ -369,7 +367,7 @@ impl SessionManager {
                 controller.share(context, group, *grant).await?;
             }
             if let Some(project) = spec.project {
-                move_to(log, self, session, context, Some(project)).await?;
+                move_to(log, &self.kernel, self, session, context, Some(project)).await?;
             }
             Ok(())
         }
@@ -682,7 +680,7 @@ impl SessionManager {
                 StoreError::PermissionDenied,
             )
             .await?;
-        let own = load_own(&self.stores, id).await?;
+        let own = self.load_own(id).await?;
         Ok(Some((session, own)))
     }
 
@@ -792,6 +790,16 @@ impl SessionManager {
     ) -> Result<()> {
         self.own_lifecycle.delete(&SecurityContext::system(), own, removal).await?;
         Ok(())
+    }
+
+    /// The own project of session `id`, if it is there: the one in its scope, found by its name
+    /// (`Project::own_name`) in the kernel's name - none once it was lifted (issue 467).
+    ///
+    /// # Errors
+    /// Whatever the store reports.
+    pub(crate) async fn load_own(&self, id: SessionId) -> StoreResult<Option<Project>> {
+        let system = SecurityContext::system();
+        self.stores.projects.find_by_name(&system, &Project::own_name(id)).await.optional()
     }
 
     /// Makes `own`, a session's own project, with the group of its members, in the kernel's name
@@ -1151,7 +1159,7 @@ mod tests {
     use crate::procedure::{Compensation, Deferred, Key, Locks, Procedure, ProcedureError};
     use crate::project::{ProjectManager, ProjectSpec};
     use crate::session::testing::*;
-    use crate::session::{load_own, SessionLoop};
+    use crate::session::SessionLoop;
     use crate::session::{SessionError, SessionManager, SessionSpec};
     use crate::testing::TestKernel;
     use crate::view::Viewer;
@@ -2142,7 +2150,6 @@ mod tests {
     #[tokio::test]
     async fn a_session_that_cannot_be_taken_into_a_new_own_leaves_none_behind() {
         let (kernel, passing) = failing_kernel(Session::KIND);
-        let stores = kernel.entity_stores().clone();
         let mut events = kernel.event_bus().subscribe_all();
         let manager = SessionManager::new(kernel);
         let owner = UserId::new();
@@ -2155,7 +2162,7 @@ mod tests {
             .unwrap();
         manager.update_project(&ctx, session.id(), Some(project.id)).await.unwrap();
         // Its own gone, as lifting it takes it out of the session's scope.
-        let own = load_own(&stores, session.id()).await.unwrap().expect("its own");
+        let own = manager.load_own(session.id()).await.unwrap().expect("its own");
         manager.purge_own_held(own.id).await.unwrap();
 
         events.drain().await;
@@ -2165,7 +2172,7 @@ mod tests {
             .await
             .expect_err("the session cannot be stored");
         assert_eq!(session.session().project, project.id, "it lies where it lay");
-        let made = load_own(&stores, session.id()).await.unwrap();
+        let made = manager.load_own(session.id()).await.unwrap();
         assert!(made.is_none(), "the own made for it is purged: {made:?}");
         // Announced as made, and as taken back, as it happened (issue 593).
         let changes: Vec<_> = events

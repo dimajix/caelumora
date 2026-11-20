@@ -846,3 +846,20 @@ case; it is decided there, and may make this unnecessary.
   three copies of a publisher that records what is announced, in the tests of the controllers of
   users and sessions and of the user provider, are one (`testing::Announced`), which these tests
   use too.
+- **2026-11-20** — The small step committed. R5, decided with the maintainer in three steps - the
+  session's attributes and its moving, the `SessionManager` as the register of the running
+  sessions, creating a session -, its first implemented, not committed yet: the running session
+  hands out its controller (`SessionLoop::controller`, public now), through which its attributes
+  are changed - its `update_*` that only passed a call on go -, and what of it the controller
+  writes that only the kernel may change - its channels, its project, its workspace - is the
+  crate's (`SessionController::add_channel`, `remove_channel`, `update_project`,
+  `update_workspace`). Attaching a workspace stays the session's (`SessionLoop::update_workspace`),
+  which asks whether it may be attached and holds it live. Moving a session is `move_to`'s alone:
+  where it goes, sharing the project with its participants and storing it there, in place of the
+  session's building blocks (`project_to_move_to`, `share_project_held` and the others), and
+  `session/settings.rs` goes.
+  Reviewed with fresh eyes: finding a session's own project is the `SessionManager`'s
+  (`load_own`), as making and purging it are; `SessionController::new` is the crate's, as
+  `ChannelController::new` is, so that nobody outside makes a second writer of a session's
+  document; what the session's `update_*` said of their effect - an agent told from its next turn
+  on, a privacy that lets go only what is said from then on - is said by the controller's.

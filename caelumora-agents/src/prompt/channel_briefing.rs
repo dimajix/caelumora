@@ -289,8 +289,8 @@ mod tests {
             prompt.text
         );
 
-        session_loop.update_description(&system, None, None).await.unwrap();
-        session_loop.update_name(&system, "release").await.unwrap();
+        session_loop.controller().update_description(&system, None, None).await.unwrap();
+        session_loop.controller().update_name(&system, "release").await.unwrap();
         let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
         assert!(
             prompt.text.contains("This session is called \"release\" and has the id")

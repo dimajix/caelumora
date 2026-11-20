@@ -4,17 +4,23 @@
 //!
 //! Each locks its session exclusively - opening one that runs locks it shared -, and the project
 //! where it changes whether the session is in it or deleted, and carries the change out by the
-//! building blocks of the `SessionManager` and the `SessionLoop`.
+//! building blocks of the `SessionManager` and the `SessionLoop`, and by the controllers of the
+//! session and its project (`move_to`).
 
 use super::{all_or_nothing, Compensation, Deferred, Key, Locks, Procedure, ProcedureExecutor};
 use crate::kernel::Kernel;
-use crate::session::{MoveTarget, SessionError, SessionLoop, SessionManager, SessionSpec};
+use crate::project;
+use crate::session::{SessionError, SessionLoop, SessionManager, SessionSpec};
 use async_trait::async_trait;
-use caelumora_domain::project::ProjectId;
+use caelumora_domain::group::GroupId;
+use caelumora_domain::project::{Project, ProjectId};
 use caelumora_domain::removal::Removal;
+use caelumora_domain::scope::Scope;
+use caelumora_domain::security::{Grant, Subject};
 use caelumora_domain::session::{Session, SessionId};
+use caelumora_domain::store::{StoreError, StoreResultExt, Stored};
 use caelumora_domain::template::SessionTemplateId;
-use caelumora_security::SecurityContext;
+use caelumora_security::{ActionType, Enforcement, SecurityContext};
 use futures::future::join_all;
 use std::sync::Arc;
 use std::time::Duration;
@@ -499,39 +505,46 @@ impl Procedure for Move {
     async fn carry_out(
         self,
         (): (),
-        _: &Kernel,
+        kernel: &Kernel,
         log: &mut Compensation,
     ) -> Result<(), SessionError> {
         let Self { sessions, context, id, project } = self;
         let session = sessions.open_held(&context, id).await?;
-        move_to(log, &sessions, &session, &context, project).await
+        move_to(log, kernel, &sessions, &session, &context, project).await
     }
 }
 
 /// Puts `session` into the shared project `project` on behalf of `context`, or with `None` takes it
 /// out into its own (issue 467), for a procedure that holds the session exclusively and the project
 /// it goes to shared - `Move`, and the creation of a session (issue 593). Asked first
-/// (`SessionLoop::project_to_move_to`); nothing where it lies already. The project it goes to is
-/// shared with its participants for reading, or its new own made, before the session is stored as
-/// lying there, so that it never lies where its participants read nothing - taken back by `log` if
-/// storing it fails, a new own marked deleted again, announced so as it was announced made, and
-/// purged -; then the shared project it left has the entry of its participants taken away, in the
-/// kernel's name - what cannot be is logged. Nothing moves:
-/// what went to the project before stays there, only what comes now goes to the other.
+/// (`project_to_move_to`); nothing where it lies already. The project it goes to is shared with its
+/// participants for reading, or its new own made, before the session is stored as lying there
+/// (`SessionController::update_project`, which asks `UpdateSession`), so that it never lies where
+/// its participants read nothing - taken back by `log` if storing it fails, a new own marked
+/// deleted again, announced so as it was announced made, and purged -; then the shared project it
+/// left has the entry of its participants taken away, in the kernel's name - what cannot be is
+/// logged. Nothing moves: what went to the project before stays there, only what comes now goes to
+/// the other.
 ///
 /// # Errors
-/// As `SessionLoop::project_to_move_to`; whatever making, sharing or storing reports.
+/// As `project_to_move_to`; whatever making, sharing or storing reports.
 pub(crate) async fn move_to(
     log: &mut Compensation,
+    kernel: &Kernel,
     sessions: &Arc<SessionManager>,
     session: &Arc<SessionLoop>,
     context: &SecurityContext,
     project: Option<ProjectId>,
 ) -> Result<(), SessionError> {
-    let Some(mut target) = session.project_to_move_to(context, project).await? else {
+    let found = project_to_move_to(kernel, sessions, session, context, project).await?;
+    let Some(mut target) = found else {
         return Ok(());
     };
-    let left = session.load_shared_project().await?;
+    let controllers = kernel.controller_manager();
+    let system = SecurityContext::system();
+    let lying_in = session.session().project;
+    let left = kernel.entity_stores().projects.get(&system, lying_in).await.optional()?;
+    let left = left.filter(|left| !left.is_own());
     match &mut target {
         MoveTarget::NewOwn(own) => {
             sessions.make_own_held(own).await?;
@@ -541,23 +554,99 @@ pub(crate) async fn move_to(
             });
         }
         MoveTarget::Shared(shared) => {
-            session.share_project_held(shared.id).await?;
-            let (session, shared) = (Arc::clone(session), shared.id);
+            let participants = Subject::Group(GroupId::of_session(session.id()));
+            let controller = controllers.project_controller(shared.id).await?;
+            let sharing = controller.share(&system, participants, Grant::Read);
+            sharing.await.map_err(anyhow::Error::from)?;
             log.record("sharing a project with a session's participants", async move {
-                session.unshare_project_held(shared).await
+                Ok(controller.unshare(&SecurityContext::system(), participants).await?)
             });
         }
         MoveTarget::Own(_) => {}
     }
     let to = target.project().id;
-    session.store_project_held(context, to).await?;
+    session.controller().update_project(context, to).await?;
     if let Some(left) = left {
-        if let Err(e) = session.unshare_project_held(left.id).await {
+        let participants = Subject::Group(GroupId::of_session(session.id()));
+        let unsharing = async {
+            let controller = controllers.project_controller(left.id).await?;
+            Ok::<_, anyhow::Error>(controller.unshare(&system, participants).await?)
+        };
+        if let Err(e) = unsharing.await {
             warn!(session = %session.id(), project = %left.id, "The project a session left is still shared with its participants: {e:#}");
         }
     }
     info!(session = %session.id(), project = %to, by = %context.caller_id, "Session's project changed");
     Ok(())
+}
+
+/// The project a session is to be moved into (`project_to_move_to`): what moving it there does
+/// besides storing it as lying there differs by it.
+#[derive(Debug)]
+enum MoveTarget {
+    /// A shared project, shared with the session's participants for reading first.
+    Shared(Project),
+    /// Its own, which its participants read already.
+    Own(Project),
+    /// A new own project, made first - the one in its scope was lifted (issue 467).
+    NewOwn(Project),
+}
+
+impl MoveTarget {
+    /// The project it names.
+    fn project(&self) -> &Project {
+        match self {
+            MoveTarget::Shared(project)
+            | MoveTarget::Own(project)
+            | MoveTarget::NewOwn(project) => project,
+        }
+    }
+}
+
+/// The project `session` is to be put into on behalf of `context` - the shared project `project`,
+/// or with `None` its own (issue 467): the one in its scope, or a new one if that was lifted -,
+/// once it is asked whether `context` may change the session (`UpdateSession`) and reach the
+/// project (`GetProject`); `None` where it lies already. Stores nothing.
+///
+/// # Errors
+/// `StoreError::PermissionDenied` if `context` may not change the session,
+/// `ProjectError::NotFound` if there is no project they may read,
+/// `SessionError::ProjectOutOfScope` for another session's own, `SessionError::OwnerNotAUser` if a
+/// new own is needed and the session is no user's; whatever reading reports.
+async fn project_to_move_to(
+    kernel: &Kernel,
+    sessions: &SessionManager,
+    session: &SessionLoop,
+    context: &SecurityContext,
+    project: Option<ProjectId>,
+) -> anyhow::Result<Option<MoveTarget>> {
+    let document = session.session();
+    let changing = ActionType::update(Session::KIND, &document.security_attributes);
+    kernel.access_policy().require(context, changing, StoreError::PermissionDenied).await?;
+    let stores = kernel.entity_stores();
+    let target = match project {
+        Some(id) => {
+            let target =
+                stores.projects.get(context, id).await.map_err(project::store_error(id))?;
+            let theirs = Scope::SessionScope { session_id: session.id() };
+            match target {
+                own if own.is_own() && own.name.scope != theirs => {
+                    return Err(SessionError::ProjectOutOfScope(id).into());
+                }
+                own if own.is_own() => MoveTarget::Own(own),
+                shared => MoveTarget::Shared(shared),
+            }
+        }
+        None => match sessions.load_own(session.id()).await? {
+            Some(own) => MoveTarget::Own(own),
+            None => MoveTarget::NewOwn(
+                document
+                    .new_own_project()
+                    .ok_or(SessionError::OwnerNotAUser(document.security_attributes.owner_id))?,
+            ),
+        },
+    };
+    Ok((target.project().id != document.project).then_some(target))
 }
 
 /// Stops every session that runs as the process ends (issue 297), as `Stop` stops one, all at

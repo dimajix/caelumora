@@ -1713,6 +1713,7 @@ async fn a_rule_of_a_place_outweighs_a_persons_rule() {
     let hers = world.kernel.controller_manager().user_controller(world.alice).await.unwrap();
     hers.add_approval_rule(&alice, sleeping(RuleDecision::Allow, Reach::Everywhere)).await.unwrap();
     session
+        .controller()
         .update_approval_rules(&alice, vec![sleeping(RuleDecision::Deny, Reach::Everywhere)])
         .await
         .expect("her session");
@@ -1784,6 +1785,7 @@ async fn a_rule_that_denies_a_command_asks_for_a_line_it_cannot_judge() {
     let (world, session, main, _) = with_a_command_to_approve("ls && rm x").await;
     let alice = World::as_user(world.alice);
     session
+        .controller()
         .update_approval_rules(&alice, vec![commands(&["rm"], RuleDecision::Deny)])
         .await
         .expect("her session");
@@ -1798,6 +1800,7 @@ async fn a_rule_that_denies_a_command_asks_for_a_line_it_cannot_judge() {
     let hers = world.kernel.controller_manager().user_controller(world.alice).await.unwrap();
     hers.add_approval_rule(&alice, every_command.clone()).await.unwrap();
     session
+        .controller()
         .update_approval_rules(&alice, vec![commands(&["rm"], RuleDecision::Deny)])
         .await
         .expect("her session");

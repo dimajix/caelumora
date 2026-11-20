@@ -167,7 +167,9 @@ pub(super) async fn rename_session(
 ) -> Result<Json<SessionResponse>, ApiError> {
     let session_loop = ensure_session(&state, &user, session_id).await?;
 
-    session_loop.update_name(&user.security_context(), &payload.name).await?;
+    let context = user.security_context();
+    let renaming = session_loop.controller().update_name(&context, &payload.name);
+    renaming.await.map_err(anyhow::Error::from)?;
 
     Ok(Json(listed(&state, &user, session_id).await?))
 }
@@ -185,7 +187,9 @@ pub(super) async fn set_session_language(
 ) -> Result<Json<SessionSnapshot>, ApiError> {
     let session_loop = ensure_session(&state, &user, session_id).await?;
 
-    session_loop.update_language(&user.security_context(), language.as_deref()).await?;
+    let context = user.security_context();
+    let changing = session_loop.controller().update_language(&context, language.as_deref());
+    changing.await.map_err(anyhow::Error::from)?;
 
     Ok(Json(session_response(&state, &user, session_id).await?))
 }
@@ -203,7 +207,9 @@ pub(super) async fn set_session_time_zone(
 ) -> Result<Json<SessionSnapshot>, ApiError> {
     let session_loop = ensure_session(&state, &user, session_id).await?;
 
-    session_loop.update_time_zone(&user.security_context(), time_zone.as_deref()).await?;
+    let context = user.security_context();
+    let changing = session_loop.controller().update_time_zone(&context, time_zone.as_deref());
+    changing.await.map_err(anyhow::Error::from)?;
 
     Ok(Json(session_response(&state, &user, session_id).await?))
 }
@@ -218,7 +224,9 @@ pub(super) async fn update_session_privacy(
 ) -> Result<Json<SessionSnapshot>, ApiError> {
     let session_loop = ensure_session(&state, &user, session_id).await?;
 
-    session_loop.update_privacy(&user.security_context(), payload.privacy).await?;
+    let context = user.security_context();
+    let changing = session_loop.controller().update_privacy(&context, payload.privacy);
+    changing.await.map_err(anyhow::Error::from)?;
 
     Ok(Json(session_response(&state, &user, session_id).await?))
 }
@@ -237,9 +245,10 @@ pub(super) async fn update_session_approval_rules(
     let session_loop = ensure_session(&state, &user, session_id).await?;
 
     session_loop
+        .controller()
         .update_approval_rules(&user.security_context(), rules)
         .await
-        .map_err(|e| change_error(e, "invalid_rule"))?;
+        .map_err(|e| change_error(e.into(), "invalid_rule"))?;
 
     Ok(Json(session_response(&state, &user, session_id).await?))
 }
@@ -257,12 +266,14 @@ pub(super) async fn update_session_description(
     let session_loop = ensure_session(&state, &user, session_id).await?;
 
     session_loop
+        .controller()
         .update_description(
             &user.security_context(),
             payload.summary.as_deref(),
             payload.briefing.as_deref(),
         )
-        .await?;
+        .await
+        .map_err(anyhow::Error::from)?;
 
     Ok(Json(session_response(&state, &user, session_id).await?))
 }

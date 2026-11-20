@@ -31,7 +31,7 @@ pub struct SessionController {
 }
 
 impl SessionController {
-    pub fn new(
+    pub(crate) fn new(
         session: Session,
         event_publisher: Arc<dyn EventPublisher>,
         stores: &EntityStores,
@@ -70,7 +70,9 @@ impl SessionController {
 
     /// Has the channels of the session that hold no language of their own
     /// held in `language` - or in none in particular - on behalf of `ctx`
-    /// (`UpdateSession`, issue 425), as [`Self::update`] does.
+    /// (`UpdateSession`, issue 425), as [`Self::update`] does. The agents of
+    /// those channels are told from their next turn on; nothing said before
+    /// is translated.
     ///
     /// # Errors
     /// `StoreError::Invalid` if `language` is no language tag, otherwise see
@@ -85,7 +87,8 @@ impl SessionController {
 
     /// Has the session held in the time zone `time_zone` - or in UTC - on
     /// behalf of `ctx` (`UpdateSession`, issue 424), as [`Self::update`]
-    /// does.
+    /// does. Its agents' models are given the times of messages in it from
+    /// their next turn on.
     ///
     /// # Errors
     /// `StoreError::Invalid` if `time_zone` is no time zone, otherwise see
@@ -99,7 +102,9 @@ impl SessionController {
     }
 
     /// Changes the session's privacy policy on behalf of `ctx` (issue 134),
-    /// as [`Self::update`] does.
+    /// as [`Self::update`] does. What was remembered before keeps the privacy
+    /// it was said under: a wider policy lets go only what is said from now
+    /// on, a narrower one takes back what it let go.
     ///
     /// # Errors
     /// See [`Self::update`].
@@ -154,7 +159,7 @@ impl SessionController {
     ///
     /// # Errors
     /// See [`Self::update`].
-    pub async fn update_workspace(
+    pub(crate) async fn update_workspace(
         &self,
         ctx: &SecurityContext,
         workspace: Option<WorkspaceId>,
@@ -168,7 +173,7 @@ impl SessionController {
     ///
     /// # Errors
     /// See [`Self::update`].
-    pub async fn update_project(
+    pub(crate) async fn update_project(
         &self,
         ctx: &SecurityContext,
         project: ProjectId,
@@ -274,7 +279,11 @@ impl SessionController {
     /// # Errors
     /// Whatever the store reports, `StoreError::PermissionDenied` included;
     /// the session is then unchanged.
-    pub async fn add_channel(&self, ctx: &SecurityContext, channel: ChannelId) -> StoreResult<()> {
+    pub(crate) async fn add_channel(
+        &self,
+        ctx: &SecurityContext,
+        channel: ChannelId,
+    ) -> StoreResult<()> {
         let mut writing = self.session.write().await;
         writing
             .change(ctx, |session| {
@@ -292,7 +301,7 @@ impl SessionController {
     /// # Errors
     /// `StoreError::NotFound` if the session has no such channel; whatever
     /// the store reports otherwise. The session is then unchanged.
-    pub async fn remove_channel(
+    pub(crate) async fn remove_channel(
         &self,
         ctx: &SecurityContext,
         channel_id: ChannelId,

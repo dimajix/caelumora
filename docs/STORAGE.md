@@ -780,9 +780,9 @@ in [ARCHITECTURE.md](ARCHITECTURE.md#managers-and-controllers).
     announced - to who reached the document as it was classified and as it is - and logged, once, by
     the controller. What a controller does besides - a group that follows the participants, an event
     of its own, the checks of a workspace, which is changed as stored rather than as live - it does
-    between the steps of a `Writing`, the change under way. A running channel's loop hands its
-    controller out (`ChannelLoop::controller`), through which its attributes are changed; a running
-    session's loop still forwards to its controller what does no more than that (issue 593). The
+    between the steps of a `Writing`, the change under way. A running channel's and session's loop
+    hands its controller out (`ChannelLoop::controller`, `SessionLoop::controller`), through which
+    their attributes are changed (issue 593). The
     `UserController` holds no `LiveDocument`: the user's record belongs to the system and is only
     kept current, and their profile is created with its first change and announced as it stands,
     to its user and the kernel alone. The `WorkspaceController` also holds the storage its
