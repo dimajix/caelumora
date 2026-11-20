@@ -1,16 +1,17 @@
-//! The procedures of a shared project's lifecycle (issue 593): deleting, restoring and purging it,
-//! with the sessions that lie in it and what lies in its scope, by the lifecycle the
-//! `ProjectManager` holds.
+//! The procedures of a project's lifecycle (issue 593): deleting, restoring and purging a shared
+//! one, with the sessions that lie in it and what lies in its scope, by the lifecycle the
+//! `ProjectManager` holds, and lifting a session's own into a shared one.
 //!
 //! Each locks the project exclusively, and then each session that lies in it - those that run and
 //! are stored for a deletion, those deleted for a restoring or a purge -, read once the project is
 //! locked: putting a session into a project locks the project shared (`session::Move`), so that
-//! none comes in meanwhile.
+//! none comes in meanwhile. Lifting a session's own locks the session whose own it is instead,
+//! wherever that session lies, since moving it locks no project it leaves.
 
 use super::session::{
     delete as delete_session, purge as purge_session, restore as restore_session,
 };
-use super::{all_or_nothing, Compensation, Deferred, Key, Locks, Procedure};
+use super::{all_or_nothing, sessions_of, Compensation, Deferred, Key, Locks, Procedure};
 use crate::error::is_forbidden;
 use crate::kernel::Kernel;
 use crate::project::{store_error, ProjectError, ProjectResult};
@@ -21,6 +22,7 @@ use caelumora_domain::group::GroupId;
 use caelumora_domain::project::{Project, ProjectId};
 use caelumora_domain::query::{Filter, Query};
 use caelumora_domain::removal::Removal;
+use caelumora_domain::scope::Scope;
 use caelumora_domain::session::{Session, SessionField, SessionId};
 use caelumora_domain::store::{StoreError, StoreResultExt, Stored};
 use caelumora_security::{ActionType, Enforcement, SecurityContext};
@@ -275,6 +277,76 @@ impl Procedure for Purge {
     }
 }
 
+/// Lifts the own project `id` of a session into `scope` - its owner's or the global one - under
+/// `name`, on behalf of `context` (issue 467): a shared project then, with all that lies in it, the
+/// session included, which no longer takes it along (`ProjectController::lift`). Locks the project
+/// exclusively, against the procedures of its session, which lock the project the session lies in
+/// shared, and the session whose own it is exclusively, as moving it does, which locks only the
+/// project it goes to - and holds that session against the other processes that share the stores,
+/// as deleting it does (issue 554): neither meets it half lifted, nor takes it along once it is
+/// shared.
+pub struct Lift {
+    context: SecurityContext,
+    id: ProjectId,
+    name: String,
+    scope: Scope,
+}
+
+impl Lift {
+    /// Lifts project `id` into `scope` under `name` on behalf of `context`.
+    pub fn new(context: &SecurityContext, id: ProjectId, name: &str, scope: Scope) -> Self {
+        Self { context: context.clone(), id, name: name.to_string(), scope }
+    }
+}
+
+#[async_trait]
+impl Procedure for Lift {
+    /// The session whose own it is, if it is one; what reading it failed at.
+    type Plan = ProjectResult<Option<SessionId>>;
+    type Output = ();
+    type Error = ProjectError;
+
+    async fn enumerate(
+        &self,
+        kernel: &Kernel,
+        locks: &mut Locks<'_>,
+    ) -> Result<Self::Plan, Deferred> {
+        locks.exclusive(Key::Project(self.id))?;
+        // Read in the kernel's name, once it is locked: whether the caller reaches it is the
+        // controller's to ask, as it lifts it.
+        let store = kernel.project_manager().lifecycle().store();
+        let project = match store.get(&SecurityContext::system(), self.id).await {
+            Ok(project) => project,
+            Err(error) => return Ok(Err(store_error(self.id)(error))),
+        };
+        let Scope::SessionScope { session_id } = project.name.scope else {
+            return Ok(Ok(None));
+        };
+        locks.exclusive(Key::Session(session_id))?;
+        Ok(Ok(Some(session_id)))
+    }
+
+    /// # Errors
+    /// `NotFound` if there is no such project or the caller does not reach it; `Session` -
+    /// `SessionError::RunsElsewhere` - if another process holds its session; otherwise as
+    /// `ProjectController::lift` - `InvalidScope`, `PermissionDenied`, `Validation`, `NameTaken`.
+    async fn carry_out(
+        self,
+        read: ProjectResult<Option<SessionId>>,
+        kernel: &Kernel,
+        log: &mut Compensation,
+    ) -> ProjectResult<()> {
+        let Self { context, id, name, scope } = self;
+        if let Some(session_id) = read? {
+            let untyped = |e: SessionError| ProjectError::Session(e.untyped());
+            let sessions = sessions_of(kernel).map_err(untyped)?;
+            log.keep(sessions.hold(session_id).map_err(ProjectError::Session)?);
+        }
+        let found = kernel.controller_manager().project_controller(id).await;
+        found.map_err(store_error(id))?.lift(&context, &name, scope).await
+    }
+}
+
 /// Deletes `sessions` on behalf of `context`, each whole or not at all
 /// (`procedure::session::delete` as one part, `all_or_nothing`), as a project they lie in is
 /// deleted, marked with `removal`, its mark; answers how many are left - not the caller's to read
@@ -376,11 +448,13 @@ fn lock_sessions(
 
 #[cfg(test)]
 mod tests {
-    use super::{Delete, Purge, Restore};
+    use super::{Delete, Lift, Purge, Restore};
     use crate::procedure::testing::{waits_for, Held};
     use crate::procedure::Key;
+    use crate::project::ProjectError;
     use crate::project::ProjectSpec;
-    use crate::session::testing::{create, failing_kernel};
+    use crate::session::testing::{create, failing_kernel, shared_kernel};
+    use crate::session::SessionError;
     use crate::session::SessionManager;
     use crate::testing::World;
     use caelumora_domain::actor::ActorId;
@@ -422,6 +496,54 @@ mod tests {
         let held = Held::key(&executor, Key::Session(id), true).await;
         let purging = Purge::new(&World::system(), project);
         assert!(waits_for(held, &executor, purging).await.unwrap(), "purged once let go");
+    }
+
+    /// Lifting a session's own project holds the project and the session: neither the procedures
+    /// of the session, which hold the project it lies in, nor moving it meet it half lifted.
+    #[tokio::test]
+    async fn lifting_a_project_holds_it_and_its_session() {
+        let world = World::new().await;
+        let executor = Arc::clone(world.kernel.procedures());
+        let alice = World::as_user(world.alice);
+        let session = world.shared_session(&[], &[]).await;
+        let own = session.session().project;
+        let mine = Scope::UserScope { user_id: world.alice };
+
+        let held = Held::key(&executor, Key::Project(own), false).await;
+        let lifting = Lift::new(&alice, own, "results", mine.clone());
+        waits_for(held, &executor, lifting).await.expect("lifted once the project is let go");
+
+        world.manager.update_project(&alice, session.id(), None).await.unwrap();
+        let anew = session.session().project;
+        let held = Held::key(&executor, Key::Session(session.id()), false).await;
+        let lifting = Lift::new(&alice, anew, "more results", mine);
+        waits_for(held, &executor, lifting).await.expect("lifted once the session is let go");
+    }
+
+    /// Issue 554: a session's own project whose session another process that shares the stores
+    /// holds is not lifted - that process may be deleting the session with it -, and is once the
+    /// session is let go.
+    #[tokio::test]
+    async fn a_project_whose_session_another_process_holds_is_not_lifted() {
+        let (kernel, locks) = shared_kernel();
+        let executor = Arc::clone(kernel.procedures());
+        let manager = SessionManager::new(kernel);
+        let owner = UserId::new();
+        let ctx =
+            SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
+        let session = create(&manager, &ctx, make_session("held", owner)).await.unwrap();
+        let (id, own) = (session.id(), session.session().project);
+        assert!(manager.stop(&ctx, id).await.unwrap());
+        let mine = Scope::UserScope { user_id: owner };
+
+        locks.elsewhere.lock().unwrap().insert(id);
+        let refused = executor.run(Lift::new(&ctx, own, "results", mine.clone())).await;
+        assert!(
+            matches!(&refused, Err(ProjectError::Session(e)) if matches!(e.downcast_ref(), Some(SessionError::RunsElsewhere(it)) if *it == id)),
+            "left to the other: {refused:?}"
+        );
+        locks.elsewhere.lock().unwrap().remove(&id);
+        executor.run(Lift::new(&ctx, own, "results", mine)).await.expect("lifted once let go");
     }
 
     /// Issue 469: a project whose members' group cannot come back stays deleted, marked as it was,

@@ -141,7 +141,7 @@ impl SubAgents {
     /// Lets `agent`, the sub-agent of `thread`, go from the session and closes `thread`, for a
     /// procedure that holds them - in this order, since closing waits for nobody to take part. One
     /// let go already - an end asked again after it stopped half-way - counts as let go.
-    async fn wind_up_held(
+    async fn wind_up(
         &self,
         kernel: &Kernel,
         session: &SessionLoop,
@@ -312,7 +312,7 @@ impl Procedure for Ending {
         let Self { work, thread, .. } = self;
         let (session, channel) = work.running().await?;
         let agent = work.sub_agent(&channel, thread).await?;
-        work.wind_up_held(kernel, &session, &channel, thread, agent).await?;
+        work.wind_up(kernel, &session, &channel, thread, agent).await?;
         work.agents.delete(work.context(), agent).await.map_err(told)?;
         info!("Sub-agent {} of thread {} ended", agent, thread);
         Ok(())

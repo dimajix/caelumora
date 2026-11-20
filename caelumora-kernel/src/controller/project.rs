@@ -220,14 +220,20 @@ impl ProjectController {
     /// session included, which no longer takes it along.
     ///
     /// Reached first, so that who does not reach it learns nothing of it, and refused as stored
-    /// under the lock of its writing, so that it is lifted once.
+    /// under the lock of its writing, so that it is lifted once - for a procedure that holds it and
+    /// its session (`procedure::project::Lift`).
     ///
     /// # Errors
     /// `NotFound` if the caller does not reach it; `InvalidScope` for a project that is shared
     /// already or a scope a shared project does not lie in; otherwise as [`Self::update`] -
     /// `StoreError::Validation` for the name `own` or another user's scope, `NameTaken` where the
     /// name is taken.
-    pub async fn lift(&self, ctx: &SecurityContext, name: &str, scope: Scope) -> ProjectResult<()> {
+    pub(crate) async fn lift(
+        &self,
+        ctx: &SecurityContext,
+        name: &str,
+        scope: Scope,
+    ) -> ProjectResult<()> {
         let mut writing = self.project.write().await;
         let project = writing.reached(ctx).await.map_err(store_error(self.id()))?;
         if !project.is_own() || !matches!(scope, Scope::GlobalScope | Scope::UserScope { .. }) {

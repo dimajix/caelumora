@@ -933,3 +933,21 @@ case; it is decided there, and may make this unnecessary.
   Reviewed with fresh eyes: the doc comments of the `SessionManager`, the session's procedures and
   `Kernel::project_manager` and PROJECTS.md say which manager holds the own projects now; what the
   moved methods' doc comments claimed of `discard_own` and `purge_own` is corrected.
+- **2026-11-20** — Step 5d-1 committed. Step 5d-2 implemented, not committed yet: lifting a
+  session's own project is a procedure, `project::Lift`, which locks the project exclusively -
+  against the procedures of its session, which lock the project the session lies in shared - and
+  the session whose own it is, read from the project once it is locked, as moving the session
+  does, which locks only the project it goes to; the project's controller carries the change out
+  (`ProjectController::lift`, now the crate's). Before, lifting it took none of these locks, so
+  that deleting, restoring or purging the session, or moving it, could take a project lifted
+  meanwhile for its own. A test holds that lifting waits for both. With it, the last name of the
+  `…_held` rule CODING-GUIDELINES.md dropped is renamed (`wind_up`, of the sub-agents), and the
+  `SessionManager` reads the sessions through their lifecycle, in place of holding the stores, and
+  says in one sentence what it is.
+  Reviewed with fresh eyes: the suite asks lifting a project that does not exist, answered as one
+  the caller does not read; the module's docs say why lifting locks the session whose own it is -
+  wherever it lies, since moving it locks no project it leaves -; PROJECTS.md and STORAGE.md name
+  lifting among the procedures of a project and what it holds.
+  As the maintainer decided, lifting holds the session whose own it is against the other processes
+  that share the stores too, as deleting it does (`SessionManager::hold`, issue 554); a test holds
+  that it is refused while another holds the session.

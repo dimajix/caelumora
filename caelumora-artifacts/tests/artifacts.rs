@@ -56,6 +56,7 @@ use caelumora_kernel::event::{EventBus, EventSubscription, SubscriptionTopic};
 use caelumora_kernel::group::GroupSpec;
 use caelumora_kernel::kernel::Kernel;
 use caelumora_kernel::plugin::Plugin;
+use caelumora_kernel::procedure::project;
 use caelumora_kernel::project::ProjectSpec;
 use caelumora_kernel::scoped::ScopeNotEmpty;
 use caelumora_kernel::session::{ChannelSpec, SessionError, SessionLoop};
@@ -1335,15 +1336,9 @@ async fn an_artifact_of_a_lifted_project_drops_its_channel_once_the_session_is_p
     let (artifact, _) =
         publish(&world, &alice, session_id, main, &at, "report.md", None).await.unwrap();
     let project = session.session().project;
-    world
-        .kernel
-        .controller_manager()
-        .project_controller(project)
-        .await
-        .unwrap()
-        .lift(&alice, "reports", Scope::UserScope { user_id: world.alice })
-        .await
-        .expect("kept as hers");
+    let lifting =
+        project::Lift::new(&alice, project, "reports", Scope::UserScope { user_id: world.alice });
+    world.kernel.procedures().run(lifting).await.expect("kept as hers");
     let read_by = |group| AclEntry { subject: Subject::Group(group), grant: Grant::Read };
     let channel = read_by(GroupId::of_channel(main));
     let members = read_by(GroupId::of_project(project));

@@ -57,8 +57,11 @@ other. The session keeps its workspace and its agents; what it finds by name doe
 nothing is found from a project's scope yet.
 
 **Keeping is lifting.** The owner of a session's own project keeps it by lifting it into their scope
-or the global one under a name of its own (`ProjectController::lift`): it is a shared project then,
-with the session in it and every artifact published so far. No artifact is kept by itself.
+or the global one under a name of its own (`procedure::project::Lift`, which the project's
+controller carries out): it is a shared project then, with the session in it and every artifact
+published so far. No artifact is kept by itself. Lifting it holds the project and the session, so
+that the session's procedures and moving it never meet it half lifted: once lifted, it no longer
+goes with the session, and deleting a project reaches it.
 
 ## Who reads what
 
@@ -79,13 +82,14 @@ The `ProjectManager`, the kernel's (`Kernel::project_manager`), makes shared pro
 terminal program, finds, makes and purges the own projects of sessions, and holds the one
 `Lifecycle` of every project, which the procedures of a session reach through it; deleting,
 restoring and purging a shared one are procedures (`procedure::project`, issue 593), which hold the
-project and the sessions in it and carry the change out by that lifecycle. Deleting a project
-deletes its sessions as deleting one does (`procedure::session::delete`) and what lies in its scope
-through `ScopedEntities`, in the deleter's name: a session or anything else left that they may not
-delete keeps the project (`ScopeNotEmpty`), and what they could delete stays deleted. Restoring
-brings back what went with it, as far as the restorer may; a session in a deleted project is not
-restored alone. Purging purges all of it, the artifacts' content included. A session's own project
-goes with its session alone.
+project and the sessions in it and carry the change out by that lifecycle, and so is lifting a
+session's own, which holds the project and that session. Deleting a project deletes its sessions as
+deleting one does (`procedure::session::delete`) and what lies in its scope through
+`ScopedEntities`, in the deleter's name: a session or anything else left that they may not delete
+keeps the project (`ScopeNotEmpty`), and what they could delete stays deleted. Restoring brings back
+what went with it, as far as the restorer may; a session in a deleted project is not restored alone.
+Purging purges all of it, the artifacts' content included. A session's own project goes with its
+session alone.
 
 ## Not done yet
 

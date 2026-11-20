@@ -16,7 +16,7 @@ use caelumora_domain::project::ProjectId;
 use caelumora_domain::session::SessionId;
 use caelumora_domain::user::UserId;
 use caelumora_kernel::controller::ProjectController;
-use caelumora_kernel::procedure::project::{Delete, Purge, Restore};
+use caelumora_kernel::procedure::project::{Delete, Lift, Purge, Restore};
 use caelumora_kernel::procedure::session::Move;
 use caelumora_kernel::project::ProjectSpec;
 use caelumora_rest_api::access::AccessEntry;
@@ -152,10 +152,8 @@ pub(super) async fn lift_project(
             "A project is lifted into its owner's scope or the global one",
         )
     })?;
-    controller(&state, project_id)
-        .await?
-        .lift(&user.security_context(), &request.name, scope)
-        .await?;
+    let lifting = Lift::new(&user.security_context(), project_id, &request.name, scope);
+    state.procedures.run(lifting).await?;
     Ok(Json(readable(&state, &user, project_id).await?))
 }
 

@@ -18,11 +18,12 @@ use caelumora_domain::session::{Session, SessionId};
 use caelumora_domain::store::{StoreResult, Stored};
 use caelumora_security::{ActionType, Enforcement, Policies, SecurityContext};
 use caelumora_store::sessions::{SessionHold, SessionLocks};
-use caelumora_store::EntityStores;
 use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 
+/// The sessions of the process: the register of those that run here, which it starts, holds and
+/// stops, and the lifecycles of sessions and their channels.
 pub struct SessionManager {
     sessions: DashMap<SessionId, Arc<SessionLoop>>,
     handles: DashMap<SessionId, JoinHandle<()>>,
@@ -36,7 +37,6 @@ pub struct SessionManager {
     /// The services it works with, taken from `kernel` once (issue
     /// 229).
     policies: Policies,
-    stores: EntityStores,
     events: Arc<EventBus>,
     /// What purges the group of the participants of a channel with it (issue 348).
     groups: Arc<GroupManager>,
@@ -86,7 +86,6 @@ impl SessionManager {
             locks: kernel.session_locks().map(Arc::clone),
             holds: DashMap::new(),
             policies: kernel.policies().clone(),
-            stores: kernel.entity_stores().clone(),
             events: Arc::clone(kernel.event_bus()),
             groups: Arc::clone(kernel.group_manager()),
             session_lifecycle: Lifecycle::new(&stores.sessions, Arc::clone(&events)),
@@ -167,7 +166,7 @@ impl SessionManager {
                 Ok(Found::Running(session_loop))
             }
             None => Ok(Found::Stored(
-                self.stores.sessions.get(context, id).await.map_err(store_error(id))?,
+                self.session_lifecycle.store().get(context, id).await.map_err(store_error(id))?,
             )),
         }
     }

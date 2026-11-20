@@ -469,10 +469,11 @@ does (`procedure::session`, issue 593), so that a purge never meets it half dele
 restored - within one process, and against the others that share the store by the session's hold
 (`SessionLocks`, see [Several instances](#several-instances)). Deleting, restoring and purging a
 project hold the project and the sessions that lie in it exclusively (`procedure::project`), since
-each goes through the project's sessions, its scope and its group. What the kernel removes for good
-that is not marked - the channels of a session being purged, a document whose creation failed - it
-marks first, in its own name. The state of what was deleted stays in the `StateStore` until it is
-purged (see [Deleting state](#deleting-state)).
+each goes through the project's sessions, its scope and its group; lifting a session's own holds the
+project and that session. What the kernel removes for good that is not marked - the channels of a
+session being purged, a document whose creation failed - it marks first, in its own name. The state
+of what was deleted stays in the `StateStore` until it is purged (see
+[Deleting state](#deleting-state)).
 
 ### Demo data
 

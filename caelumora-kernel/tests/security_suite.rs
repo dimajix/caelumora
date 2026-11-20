@@ -2533,38 +2533,45 @@ async fn lifting_a_sessions_own_project_makes_it_shared_with_the_session_in_it()
     let session = world.shared_session(&[], &[]).await;
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
     let own = session.session().project;
-    let controller = world.kernel.controller_manager().project_controller(own).await.unwrap();
+    let procedures = world.kernel.procedures();
+    let lift = |ctx: &SecurityContext, name: &str, scope| {
+        procedures.run(project::Lift::new(ctx, own, name, scope))
+    };
     let mine = Scope::UserScope { user_id: world.alice };
     let projects = &world.kernel.entity_stores().projects;
 
-    let refused =
-        controller.lift(&World::as_user(world.carol), "results", Scope::GlobalScope).await;
+    let refused = lift(&World::as_user(world.carol), "results", Scope::GlobalScope).await;
     assert!(
         matches!(refused, Err(ProjectError::NotFound(_))),
         "who does not read it learns nothing of it: {refused:?}"
     );
-    let refused = controller.lift(&bob, "results", Scope::UserScope { user_id: world.bob }).await;
+    let unknown = project::Lift::new(&alice, ProjectId::new(), "results", mine.clone());
+    let refused = procedures.run(unknown).await;
+    assert!(
+        matches!(refused, Err(ProjectError::NotFound(_))),
+        "answered as one not read: {refused:?}"
+    );
+    let refused = lift(&bob, "results", Scope::UserScope { user_id: world.bob }).await;
     assert!(
         matches!(refused, Err(ProjectError::Store(StoreError::PermissionDenied(_)))),
         "bob reads it, but it is not his: {refused:?}"
     );
-    let refused = controller.lift(&alice, Project::OWN, mine.clone()).await;
+    let refused = lift(&alice, Project::OWN, mine.clone()).await;
     assert!(
         matches!(refused, Err(ProjectError::Store(StoreError::Validation(_)))),
         "named anew: {refused:?}"
     );
-    let refused = controller
-        .lift(&alice, "results", Scope::SessionScope { session_id: SessionId::new() })
-        .await;
+    let refused =
+        lift(&alice, "results", Scope::SessionScope { session_id: SessionId::new() }).await;
     assert!(
         matches!(refused, Err(ProjectError::InvalidScope)),
         "not into another session's scope: {refused:?}"
     );
-    controller.lift(&alice, "results", mine.clone()).await.expect("hers to lift");
+    lift(&alice, "results", mine.clone()).await.expect("hers to lift");
     let lifted = projects.get(&bob, own).await.expect("its participants read it still");
     assert_eq!(lifted.name.scope, mine, "in her scope");
     assert_eq!(session.session().project, own, "the session lies in it");
-    let refused = controller.lift(&alice, "again", Scope::GlobalScope).await;
+    let refused = lift(&alice, "again", Scope::GlobalScope).await;
     assert!(matches!(refused, Err(ProjectError::InvalidScope)), "lifted once: {refused:?}");
 
     world.manager.update_project(&alice, session.id(), None).await.expect("taken out");
