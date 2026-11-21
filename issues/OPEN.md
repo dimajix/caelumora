@@ -17,7 +17,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 |---|---|---|---|---|
 | [381](381-inactive-channels-held-in-memory.md) | open | medium | feature | A channel nobody has spoken in for days keeps its loop, its actors and their states in memory until its session is stopped, and nothing notices that it is idle. Part of epic [378](378-resource-management-epic.md). |
 | [382](382-agents-held-without-a-session.md) | open | medium | feature | An agent stays loaded with its memory while nothing uses it, and what still holds it once its sessions are unloaded has not been checked. Part of epic [378](378-resource-management-epic.md). |
-| [602](602-an-actor-takes-part-in-one-thread-of-its-channel-alone.md) | open | medium | feature | Every actor of a channel - an agent's, a user's - takes part in exactly one of its threads (issue 557), so an agent of the line cannot take part in a thread a person opens at a message of the line, a user writes only in the thread they take part in, and a nudge of someone in another thread asks nobody - though 557 decided one actor per agent and channel, with a head of its transcript per thread. |
+| [602](602-an-actor-takes-part-in-one-thread-of-its-channel-alone.md) | in progress | medium | feature | Every actor of a channel - an agent's, a user's - takes part in exactly one of its threads (issue 557), so an agent of the line cannot take part in a thread a person opens at a message of the line, a user writes only in the thread they take part in, and a nudge of someone in another thread asks nobody - though 557 decided one actor per agent and channel, with a head of its transcript per thread. |
 
 ## Identity and access management
 

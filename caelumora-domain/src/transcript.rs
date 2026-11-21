@@ -733,7 +733,6 @@ mod tests {
         let recorded = digest::prompt("recorded under another scheme");
         let mut stored = serde_json::to_value(&context).unwrap();
         stored["entries"][1]["digest"] = Value::String(recorded.to_string());
-        stored["entries"][0]["active_child"] = Value::String(recorded.to_string());
         stored["head"] = Value::String(recorded.to_string());
         let loaded: Transcript = serde_json::from_value(stored).unwrap();
         assert_eq!(loaded.digest(), Some(recorded));

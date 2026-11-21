@@ -1,6 +1,6 @@
 # 394 — `Chain` remembers the branch last taken from every entry, for a switch nothing makes
 
-**Status:** rejected
+**Status:** done
 **Area:** Code structure
 **Epic:** [391](391-history-and-transcript-review-epic.md)
 **Summary:** `Chain` remembers the branch last taken from every entry and the stores take in nodes changed in their place, for a switch between branches that nothing makes since 08 was rejected.
@@ -73,3 +73,16 @@ old message need.
   no caller outside the tests of `chain.rs`; `start_anew` moves the head to the root and remembers
   nothing. What *Considerations* says of option A was put too strongly in one point: removing the
   field would have needed no stored data deleted, since `Node` ignores a field it does not know.
+- **2026-11-21** — Decided anew by the maintainer, as *A - Remove it*: threads
+  ([557](557-a-conversation-cannot-go-on-two-ways-at-once.md),
+  [602](602-an-actor-takes-part-in-one-thread-of-its-channel-alone.md)) take the place of branches
+  to switch between, each with a head of its own; should a viable model of branching be found, the
+  memory comes back with it. Done on the branch of 602, as the step before its new transcript:
+  `Node` lost `active_child`, `Chain` lost `newest_child`, `leaf_from`, `children`, `seq_of` and
+  `at`; `move_head` only moves; `changes` tells the nodes added and the head. `kept_chain::fits` and
+  `place` became `new_nodes`, which the three stores take in alone: a node before the end is there
+  already and stays as it is, and Postgres inserts without writing over. One point differs from
+  option A: `Chain::apply` and `new_nodes` still accept a node that is there already, leaving it as
+  it is, since replaying the journal of the JSON store onto a newer snapshot is idempotent by it,
+  and a put whose holder did not learn it had succeeded sends its nodes again. STORAGE.md says that
+  each node is written once; AGENT-TURN.md needed no change.

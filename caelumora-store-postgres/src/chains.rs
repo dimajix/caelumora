@@ -1,7 +1,7 @@
 //! A chain a state holds, as the Postgres store keeps it (issues 379, 380):
 //! a row per node in the table of its kind, by its position (`seq`) - every
-//! branch, a node changed in its place written over -, and its head in a
-//! table of its own. A put writes both in the transaction of the state, so
+//! branch, each node written once (issue 394) -, and its head in a table of
+//! its own. A put writes both in the transaction of the state, so
 //! that no node is there past what its head was written with.
 
 use crate::connection::sql;
@@ -9,7 +9,7 @@ use caelumora_domain::chain::{Chain, Node, Position, Stored};
 use caelumora_domain::digest::Digest;
 use caelumora_domain::message::MessageId;
 use caelumora_domain::store::{StoreError, StoreResult};
-use caelumora_store::kept_chain::{fits, follow_back, followed};
+use caelumora_store::kept_chain::{follow_back, followed, new_nodes};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::Value;
@@ -68,13 +68,12 @@ impl<E: Entry> Chains<E> {
         named.join(" AND ")
     }
 
-    /// Writes `changes` - what the holder's chain added, or changed in its
-    /// place, since it was stored - into the chain `key` names, which `name`
-    /// names where it fails: the nodes, then the head. Returns the nodes
-    /// added.
+    /// Writes `changes` - what the holder's chain added since it was
+    /// stored - into the chain `key` names, which `name` names where it
+    /// fails: the nodes, then the head. Returns the nodes added.
     ///
     /// # Errors
-    /// If they do not fit what is kept (`fits`), or cannot be written.
+    /// If they do not fit what is kept (`new_nodes`), or cannot be written.
     pub(crate) async fn append(
         &self,
         conn: &mut PgConnection,
@@ -83,9 +82,9 @@ impl<E: Entry> Chains<E> {
         changes: Stored<E>,
     ) -> StoreResult<Vec<Node<E>>> {
         let end = self.end(conn, key, name).await?;
-        fits(end, &changes.entries)
+        let added = new_nodes(end, changes.entries)
             .map_err(|e| StoreError::Backend(format!("what {name} added does not fit: {e}")))?;
-        self.write_nodes(conn, key, name, &changes.entries).await?;
+        self.write_nodes(conn, key, name, &added).await?;
         let columns = self.key.join(", ");
         let values: Vec<String> = (1..=self.key.len()).map(|at| format!("${at}")).collect();
         let upsert = format!(
@@ -101,10 +100,10 @@ impl<E: Entry> Chains<E> {
             .execute(&mut *conn)
             .await
             .map_err(failed(name))?;
-        Ok(changes.entries.into_iter().filter(|node| node.seq >= end).collect())
+        Ok(added)
     }
 
-    /// Writes `nodes` in their places, over what is there.
+    /// Writes `nodes`, each new, after the last.
     async fn write_nodes(
         &self,
         conn: &mut PgConnection,
@@ -123,10 +122,9 @@ impl<E: Entry> Chains<E> {
             true => format!("${first}::bigint[], ${}::text[], ${}::jsonb[]", first + 1, first + 2),
             false => format!("${first}::bigint[], ${}::jsonb[]", first + 1),
         };
-        let upsert = format!(
-            "INSERT INTO {nodes} ({columns}, seq{about}, node) SELECT {keys}, seq{about}, node FROM UNNEST({given}) AS given(seq{about}, node) \
-             ON CONFLICT ({columns}, seq) DO UPDATE SET {set}node = EXCLUDED.node",
-            nodes = self.nodes, keys = keys.join(", "), set = if self.by_message { "message_id = EXCLUDED.message_id, " } else { "" },
+        let insert = format!(
+            "INSERT INTO {nodes} ({columns}, seq{about}, node) SELECT {keys}, seq{about}, node FROM UNNEST({given}) AS given(seq{about}, node)",
+            nodes = self.nodes, keys = keys.join(", "),
         );
         let seqs: Vec<i64> = nodes.iter().map(|node| seq(node.seq)).collect();
         let rows = nodes
@@ -134,7 +132,7 @@ impl<E: Entry> Chains<E> {
             .map(serde_json::to_value)
             .collect::<Result<Vec<Value>, _>>()
             .map_err(|e| StoreError::Backend(format!("{name} cannot be written: {e}")))?;
-        let mut query = sqlx::query(sql(upsert));
+        let mut query = sqlx::query(sql(insert));
         for value in key {
             query = query.bind(value);
         }

@@ -31,6 +31,7 @@ use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::PromptAt;
 use caelumora_domain::define_id;
 use caelumora_domain::digest;
+use caelumora_domain::digest::Digest;
 use caelumora_domain::external_agent::ConversationId;
 use caelumora_domain::group::{Group, GroupId};
 use caelumora_domain::history::testing::items_of;
@@ -1724,8 +1725,8 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
 /// A transcript kept apart from its state (issue 380): written by the put,
 /// loaded from where the state holds it, every branch read by the
 /// `TranscriptStore` - a path to a digest, a message as it stands on its
-/// branch, which messages it holds -, a digest there twice, and gone with
-/// the state.
+/// branch, which messages it holds -, nodes sent again taken in once, a
+/// digest there twice, and gone with the state.
 pub async fn transcript_store_behaves(states: &dyn StateStore, transcripts: &dyn TranscriptStore) {
     use caelumora_domain::message::testing::{id, make_message};
     let (channel, agent) = (ChannelId::new(), AgentId::new());
@@ -1747,8 +1748,18 @@ pub async fn transcript_store_behaves(states: &dyn StateStore, transcripts: &dyn
         .modify(Message { content: Some("changed".to_string()), ..make_message(id(1)) }));
     let first = state.transcript.start_anew().expect("a branch");
     state.transcript.push(make_message(id(301)));
+    let mut sent_again = state.clone();
     states.put_agent_channel_state(agent, channel, &mut state).await.expect("put");
     assert!(state.transcript.changes().is_none(), "the transcript is marked stored");
+    // A holder that did not learn its put had succeeded sends the same nodes
+    // again: they are there already, and stay as they are (issue 394).
+    states.put_agent_channel_state(agent, channel, &mut sent_again).await.expect("sent again");
+    let kept = states.get_agent_channel_state(agent, channel).await.expect("get");
+    assert_eq!(
+        (kept.transcript.end(), kept.transcript.all_entries().len()),
+        (state.transcript.end(), state.transcript.all_entries().len()),
+        "nothing taken in twice"
+    );
 
     let expected =
         seqs(state.transcript.prefix(&first).map(|path| path.into_iter().cloned().collect()));
@@ -1809,6 +1820,19 @@ pub async fn transcript_store_behaves(states: &dyn StateStore, transcripts: &dyn
         "the newest"
     );
 
+    transcripts_go_with_their_states(states, transcripts, agent, channel, root).await;
+}
+
+/// The transcript of `agent` in `channel`, which holds the entry `root`: gone with the channel's
+/// state, and with the agent's states.
+async fn transcripts_go_with_their_states(
+    states: &dyn StateStore,
+    transcripts: &dyn TranscriptStore,
+    agent: AgentId,
+    channel: ChannelId,
+    root: Digest,
+) {
+    use caelumora_domain::message::testing::{id, make_message};
     let mut other = AgentChannelState::default();
     other.transcript.push(make_message(id(1)));
     states.put_agent_channel_state(agent, ChannelId::new(), &mut other).await.expect("put");

@@ -1,6 +1,6 @@
 # 602 — An actor takes part in one thread of its channel alone
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** medium
 **Area:** Sessions and channels
@@ -93,6 +93,8 @@ of that thread (557, *What is of a thread*), so taking someone into a further th
 
 ### Steps, by the author - not decided
 
+Their order was decided on 2026-11-21, with a step before them (*Decided on 2026-11-21*, below D7).
+
 1. **Restructuring, without a change of behaviour: `AgentChannelState` splits.** The part of a
    thread becomes a type of its own, one entry for the agent's one thread:
 
@@ -172,7 +174,8 @@ be read for what a fork across chains asks of them.
 
 #### Proposal: one tree, a head per thread (2026-11-21, not decided)
 
-Worked out with the maintainer; it takes the place of the recommendation above.
+Worked out with the maintainer; it takes the place of the recommendation above. Decided on
+2026-11-21 (*Decided on 2026-11-21*, below).
 
 **What reading the code showed.** A chain per thread does not leave the readers of a transcript as
 they are. `Transcript::compact`, `Transcript::carried_parts`, `AgentChannelState::retried` and the
@@ -251,6 +254,118 @@ step 1, which changes what is stored already.
 `active_child`, where a switch to a branch goes on, is needed at all once every thread has a head
 of its own and answering again moves one back.
 
+#### Decided on 2026-11-21
+
+D7 is decided as proposed: one tree, a head per thread. Read in the code before deciding, and
+correcting the proposal where it says otherwise:
+
+- **No reader goes beyond the active path.** Outside tests, nothing reads `Chain::all_entries`,
+  `from`, `at`, `leaf_from` or `children` of a transcript; the head moves only in
+  `Transcript::start_anew`; answering again takes messages back (`Transcript::revoke`) and moves no
+  head.
+- **Every place that appends knows its thread**: in a turn the thread of its `Work`
+  (`event_context.thread_id`), in taking in the thread of the envelope. What happens in the whole
+  channel goes on every branch, and a change of a message on every branch that holds it.
+- **The position of a predecessor** helps loading a thread, whose head has a position; `path`
+  still looks for its first node backwards by its digest, so for the history and the notes it
+  gains little.
+- **Postgres** has the primary key `(agent_id, channel_id, seq)` on `transcript_entries`: a position
+  is read by an index.
+
+Decided with it, by the maintainer:
+
+- **A - a reader names its thread as a parameter** of every method that reads or extends a
+  thread's branch. A handle per thread (`branch(thread)`) was weighed and not taken: it only
+  bundles a reference and a thread.
+- **B - the heads are stored in the chain's head record** (`head.json`, the table `transcripts`),
+  so that a crash leaves what it leaves today; the stores of chains are given a head of their own
+  per kind of chain.
+- **C - the position of a predecessor comes later**, once threads run side by side or loading is
+  measured to be slow: it changes the stored form of every chain. Until then a thread is loaded
+  backwards from the position of its head to its root.
+- **D - the branch memory of `Chain` goes first**, as a step of its own: issue
+  [394](394-chain-branch-memory.md), decided anew - threads take the place of branches to switch
+  between. With it a node never changes once stored.
+
+The interface of the transcript, agreed:
+
+```rust
+/// What an agent's model is given of its channel: a tree of entries with a head for every thread
+/// the agent takes part in (issues 380, 557, 602), each thread's branch the path from its root up
+/// to its head.
+pub struct Transcript { .. }
+
+impl Transcript {
+    /// The digest of the branch of `thread`, `None` while it is empty.
+    pub fn digest(&self, thread: ThreadId) -> Option<Digest>;
+    /// The entries of the branch of `thread`, from its root up to its head.
+    pub fn entries(&self, thread: ThreadId)
+        -> impl DoubleEndedIterator<Item = &Node<TranscriptEntry>> + ExactSizeIterator + Clone;
+    /// The last entry of the branch of `thread`.
+    pub fn last(&self, thread: ThreadId) -> Option<&Node<TranscriptEntry>>;
+    /// The messages of the branch of `thread` as they stand.
+    pub fn messages(&self, thread: ThreadId) -> Vec<Message>;
+    /// The parts of prompt components on the branch of `thread` a compaction carries over.
+    pub fn carried_parts(&self, thread: ThreadId) -> HashSet<Digest>;
+    /// The path from its root up to the entry `digest`, on whichever branch it holds it.
+    pub fn prefix(&self, digest: &Digest) -> Option<Vec<&Node<TranscriptEntry>>>;
+
+    /// Appends `message` to the branch of `thread`; returns the digest before it.
+    pub fn push(&mut self, thread: ThreadId, message: Message) -> Option<Digest>;
+    /// Appends `message` to the branch of `thread`, given to read as `source`.
+    pub fn give(&mut self, thread: ThreadId, message: Message, source: Option<GivenSource>)
+        -> Option<Digest>;
+    /// Appends `entry` to the branch of `thread`.
+    pub fn record(&mut self, thread: ThreadId, entry: TranscriptEntry) -> Option<Digest>;
+    /// Begins the branch of `thread` anew at a root of its own; returns its digest before.
+    pub fn start_anew(&mut self, thread: ThreadId) -> Option<Digest>;
+    /// Begins the branch of `thread` anew as a compaction does.
+    pub fn compact(&mut self, thread: ThreadId, replacement: Vec<(Message, Option<GivenSource>)>,
+        keep_from: Option<Digest>) -> Option<HashMap<Digest, Option<Digest>>>;
+
+    /// Records `modified` on every branch that holds its message; whether one did.
+    pub fn modify(&mut self, modified: Message) -> bool;
+    /// Whether a branch holds the message `modified` changes.
+    pub fn takes(&self, modified: &Message) -> bool;
+    /// Records the message `id` as taken back at `at` on every branch that holds it.
+    pub fn revoke(&mut self, id: MessageId, at: DateTime<Utc>) -> bool;
+    /// Records the message `id` as reclassified on every branch that holds it.
+    pub fn reclassify(&mut self, id: MessageId, classification: Classification) -> bool;
+
+    /// The position the next entry is given, on whichever branch.
+    pub fn end(&self) -> Position;
+    /// The entries added since it was last stored - those no head reaches any more among them -
+    /// and the head of every thread; `None` if nothing changed.
+    pub fn changes(&self) -> Option<StoredTranscript>;
+    /// Marks what `changes` told as stored.
+    pub fn mark_stored(&mut self);
+    /// Lets go of the entries no head reaches, of those stored alone.
+    pub fn keep_window(&mut self);
+    /// The transcript as a store loaded it: the branch of every thread from its root, and the
+    /// position after the last entry stored.
+    pub fn loaded(end: Position, branches: BTreeMap<ThreadId, Vec<Node<TranscriptEntry>>>)
+        -> Result<Self, String>;
+}
+
+/// A transcript as it is stored, and what it tells a store since it was last stored: the entries
+/// added, on whichever branch, and the head of every thread with an entry, by its position.
+pub struct StoredTranscript {
+    pub entries: Vec<Node<TranscriptEntry>>,
+    pub heads: BTreeMap<ThreadId, Position>,
+}
+```
+
+Letting go stays a step of its own after a put (`keep_window`): every position given has to reach
+the store, which takes no gap (`new_nodes`), and the history's `ContextRef`s name entries that no
+head reaches any more - an old branch after a compaction, an external agent's call before. Around
+the type, `AgentChannelState::transcript_from` and its change go, `ContextResolver::of` is given the
+thread, and a store loads a transcript whole, without a position (`load_transcript(agent,
+channel)`); `TranscriptStore` stays as it is.
+
+The steps, in their order: **D**, the branch memory removed (394); **1a**, the transcript a type of
+its own, with one thread; **1b**, `AgentChannelState` split (step 1 above); **2** and **3** as
+above. The position of a predecessor (C) is no step yet.
+
 ### Further points
 
 - **After 593.** Step 3 changes the lifecycle procedures 593 builds - letting someone go holds the
@@ -298,3 +413,7 @@ of its own and answering again moves one back.
   Recorded under *Further points*: 593 is done, so step 3 waits for nothing, and where opening a
   thread moved; and that a turn waiting for a person blocks the agent in every thread, which joins
   *To decide*.
+- **2026-11-21** — Decided by the maintainer: D7 as proposed, and A to D with the interface of the
+  transcript (*Decided on 2026-11-21*), which corrects what the proposal said of the position of a
+  predecessor and of Postgres. Issue 394 decided anew and done as step D: `Chain` no longer
+  remembers the branch last taken, and a node never changes once stored.

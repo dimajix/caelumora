@@ -153,7 +153,7 @@ over one pool.
     kept apart - the chain, the items derived from it, what was given -, and marks the state stored
     once the transaction is committed; so a crash leaves nothing to repair.
 *   **A chain a row per node** (`chains`), every branch, by its position: `history_entries` and
-    `transcript_entries`, a node changed in its place written over, the heads in `histories` and
+    `transcript_entries`, each node written once, the heads in `histories` and
     `transcripts`. A chain is read backwards in batches where the domain's rules follow it back - a
     path to a digest, the answer of a turn.
 

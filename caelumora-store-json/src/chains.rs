@@ -8,7 +8,7 @@ use super::{read_json_opt, to_backend_error, write_json_atomic};
 use caelumora_domain::chain::{Chain, Node, Position, Stored};
 use caelumora_domain::digest::Digest;
 use caelumora_domain::store::{StoreError, StoreResult};
-use caelumora_store::kept_chain::{fits, follow_back, followed, place};
+use caelumora_store::kept_chain::{follow_back, followed, new_nodes};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -79,13 +79,12 @@ pub(super) async fn read_chain<E: DeserializeOwned>(
     Ok(nodes)
 }
 
-/// Writes `changes` - what the holder's chain added, or changed in its
-/// place, since it was stored - into the chain `key` names, kept in `dir`:
-/// the segments, then the head. Returns where the chain stands now, and the
-/// nodes added.
+/// Writes `changes` - what the holder's chain added since it was stored -
+/// into the chain `key` names, kept in `dir`: the segments, then the head.
+/// Returns where the chain stands now, and the nodes added.
 ///
 /// # Errors
-/// If they do not fit (`fits`), or cannot be written.
+/// If they do not fit (`new_nodes`), or cannot be written.
 pub(super) async fn append<E>(
     dir: &Path,
     key: impl Display,
@@ -96,22 +95,17 @@ where
 {
     fs::create_dir_all(dir).await.map_err(to_backend_error)?;
     let head = read_head(dir).await?;
-    let end = fits(head.end, &changes.entries)
+    let added = new_nodes(head.end, changes.entries)
         .map_err(|e| StoreError::Backend(format!("what {key} added does not fit: {e}")))?;
-    let mut added = Vec::new();
+    let end = head.end.after(added.len() as u64);
     let mut by_segment: BTreeMap<Position, Vec<Node<E>>> = BTreeMap::new();
-    for node in changes.entries {
-        if node.seq >= head.end {
-            added.push(node.clone());
-        }
-        by_segment.entry(segment_of(node.seq)).or_default().push(node);
+    for node in &added {
+        by_segment.entry(segment_of(node.seq)).or_default().push(node.clone());
     }
     for (from, nodes) in by_segment {
         let mut stored = read_segment(dir, from).await?;
         stored.retain(|node| node.seq < head.end);
-        for node in nodes {
-            place(&mut stored, from, node);
-        }
+        stored.extend(nodes);
         debug!("Writing the entries of {} from position {}", key, from);
         write_json_atomic(&segment_path(dir, from), &stored).await?;
     }

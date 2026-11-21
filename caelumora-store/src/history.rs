@@ -562,7 +562,7 @@ mod tests {
             Some(3),
             "the index is made anew when it is read"
         );
-        let node = history.at(Position::new(0)).unwrap().clone();
+        let node = history.from(Position::new(0)).next().unwrap().clone();
         items.push(&node);
         assert_eq!(items.newest_before(Position::MAX).count(), 3, "an item is added once");
     }

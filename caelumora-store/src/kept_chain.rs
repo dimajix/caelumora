@@ -9,16 +9,18 @@
 use caelumora_domain::chain::{Chain, Node, Position, Stored};
 use caelumora_domain::digest::Digest;
 
-/// Whether the nodes of `entries` - what a chain added, or changed in its
-/// place, since it was stored - fit what a store keeps of it up to the
-/// position `end`: each is there already, or comes right after the last.
-/// Returns the position after the last when they are taken in.
+/// The nodes of `entries` - what a chain added since it was stored - that a
+/// store keeping it up to the position `end` takes in: those from `end` on,
+/// each right after the last. A node before `end` is there already - stored
+/// by a put its holder did not learn had succeeded - and stays as it is,
+/// since a node never changes once stored (issue 394).
 ///
 /// # Errors
 /// If a node lies past the one after the last.
-pub fn fits<E>(end: Position, entries: &[Node<E>]) -> Result<Position, String> {
+pub fn new_nodes<E>(end: Position, entries: Vec<Node<E>>) -> Result<Vec<Node<E>>, String> {
+    let added: Vec<Node<E>> = entries.into_iter().filter(|node| node.seq >= end).collect();
     let mut next = end;
-    for node in entries.iter().filter(|node| node.seq >= end) {
+    for node in &added {
         if node.seq != next {
             return Err(format!(
                 "an entry at position {} after the one after the last, {}",
@@ -27,22 +29,7 @@ pub fn fits<E>(end: Position, entries: &[Node<E>]) -> Result<Position, String> {
         }
         next = next.next();
     }
-    Ok(next)
-}
-
-/// Puts `node`, which fits (`fits`), into `nodes` - the nodes a store keeps
-/// from the position `from` on -: in its place, the branch last taken from
-/// it, if it is there; after the last otherwise.
-pub fn place<E>(nodes: &mut Vec<Node<E>>, from: Position, node: Node<E>) {
-    match node
-        .seq
-        .since(from)
-        .and_then(|at| usize::try_from(at).ok())
-        .filter(|&at| at < nodes.len())
-    {
-        Some(at) => nodes[at] = node,
-        None => nodes.push(node),
-    }
+    Ok(added)
 }
 
 /// Follows the path to an entry back through `older` - nodes of a chain,
@@ -100,16 +87,14 @@ impl<E> Default for KeptChain<E> {
 }
 
 impl<E: Clone> KeptChain<E> {
-    /// Takes in `changes`, what the holder's chain added or changed in its
-    /// place since it was stored, whole or not at all.
+    /// Takes in `changes`, what the holder's chain added since it was
+    /// stored, whole or not at all.
     ///
     /// # Errors
-    /// If they do not fit (`fits`).
+    /// If they do not fit (`new_nodes`).
     pub(crate) fn append(&mut self, changes: Stored<E>) -> Result<(), String> {
-        fits(self.end(), &changes.entries)?;
-        for node in changes.entries {
-            place(&mut self.nodes, Position::START, node);
-        }
+        let added = new_nodes(self.end(), changes.entries)?;
+        self.nodes.extend(added);
         self.head = changes.head;
         Ok(())
     }
@@ -174,7 +159,14 @@ mod tests {
             entries: vec![node(1, "b"), node(2, "a")],
             head: Some(digest::prompt("a")),
         })
-        .expect("in its place, and a digest again");
+        .expect("one there already, and a digest again");
+        kept.append(Stored { entries: vec![node(2, "x")], head: Some(digest::prompt("a")) })
+            .expect("there already");
+        assert_eq!(
+            kept.from(Position::new(2)).iter().map(|n| n.entry.as_str()).collect::<Vec<_>>(),
+            ["a"],
+            "a node stored stays as it is"
+        );
         assert_eq!(kept.end().get(), 3);
         assert_eq!(
             kept.from(Position::new(1)).iter().map(|n| n.entry.as_str()).collect::<Vec<_>>(),

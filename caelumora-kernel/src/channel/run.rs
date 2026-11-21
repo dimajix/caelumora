@@ -3438,7 +3438,9 @@ mod tests {
         let (said_at, asked_at) = channel
             .reading_history(|history| {
                 let at = |position: Option<Position>| {
-                    position.and_then(|seq| history.at(seq)).map(|node| node.entry.entry.clone())
+                    position
+                        .and_then(|seq| history.from(seq).next())
+                        .map(|node| node.entry.entry.clone())
                 };
                 (at(delivered.context.position), at(asked.context.position))
             })
