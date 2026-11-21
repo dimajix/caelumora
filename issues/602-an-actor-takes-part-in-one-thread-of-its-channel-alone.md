@@ -170,6 +170,87 @@ and later unloading stay per thread without a change of the chain's model of pos
 cost lies in one place. Before deciding, `AgentChannelState::compact` and `ContextResolver` are to
 be read for what a fork across chains asks of them.
 
+#### Proposal: one tree, a head per thread (2026-11-21, not decided)
+
+Worked out with the maintainer; it takes the place of the recommendation above.
+
+**What reading the code showed.** A chain per thread does not leave the readers of a transcript as
+they are. `Transcript::compact`, `Transcript::carried_parts`, `AgentChannelState::retried` and the
+`ContextResolver` of a state read the active path from its root (`Transcript::entries`); the chain
+of a forked thread lacks its origin's prefix until its first compaction, so every one of them would
+read across two chains, and across more with nested threads. What the author held against one
+chain lies not in its model but in how a `Chain` is held in memory: a range of positions from
+`base` on, every branch in it.
+
+A `Chain` is a tree already: an entry follows the one it names by its digest, a compaction begins a
+branch at a root of its own, and the old branch stays. A person opens a thread after A3, and the
+line is compacted later:
+
+```
+A1-A2-A3-A4-A5          the line's old branch
+         └-B1-B2-...    thread B, forked after A3
+A5'-A6-A7-...           the line after the compaction, from a root of its own
+```
+
+B's path, A1-A2-A3-B1-B2, lies in the one tree, whole; a compaction of B reads it as it reads the
+line's today.
+
+**The transcript is a tree of the conversation with several threads.** A type of its own, not a
+`Chain` - the history, notes and memory keep `Chain`, which needs neither several heads nor paths
+in place of a range -, with the same nodes and the same stored form. It holds:
+
+- the position the next entry is given - the one counter, shared by every thread;
+- a head per thread, by `ThreadId`;
+- in memory the paths those heads reach, each from its root: a thread's window. What no head
+  reaches is let go, and a thread is unloaded by letting go of its head;
+- what was added since it was stored.
+
+Every entry is appended through it, naming its thread (`push(thread, message)`), so that positions
+are given in one place; a reader is given the path of its thread and reads it as it reads
+`entries()` today. `AgentThreadState` (step 1) holds the turn, `processing_state`, how full the
+context is, later the `RemoteState` - no part of the transcript. `transcript_from` goes.
+
+**Stored.** The nodes stay as they are, by position, in a tree; a thread is no key of the store.
+
+- `Node` keeps the position of the entry it follows beside its digest. It is covered by no digest.
+  `Node` is generic, so the history, notes and memory gain it as well, and their `path` with it.
+- The stored head becomes a head per thread, each with its position; the chain's end stays.
+- Writing stays as it is: the nodes, then the heads, so that no head names a position past the end.
+
+**Loading a thread** follows its path from its head back to its root, by the position of each
+entry's predecessor, and reads only what the path touches; the threads of an agent are loaded
+together, what they share read once. In the JSON store a position `p` lies in the segment from
+`p - p % SEGMENT`, at its index from there; a segment is read whole. So the line reads no more than
+`load` reads today - every segment from `transcript_from` on -, and an old thread as many segments
+as its path touches, however far the line went on. A segment full of other threads' large entries
+is read with them: the size of the segments is the lever, and an index per thread waits until it
+is measured to matter. In Postgres the path is read by the positions of the predecessors instead of
+in batches backwards; whether an index on the chain's key and `seq` exists was not checked. Today
+both stores search a path backwards by digest (`follow_back`) - through everything added since.
+
+**Positions** stay what they are: given once, without a gap, checked by the store (`fits`), with
+one writer, the agent's actor in the channel. The new counter replaces `base` plus the number of
+nodes held, which only a range has. Two threads giving the same position are refused by the store,
+not stored. `Chain::push_with` does not add an entry whose digest it holds, but moves the head onto
+it; the transcript does so over every path it holds, else the same digest is stored twice - which
+the store bears ("the store keeps both", `kept_chain.rs`).
+
+**Why not a chain per thread** beside the readers above: a digest names its path on whichever
+branch, so `TranscriptStore::path`, `message` and `in_transcript` - the context panel, what was not
+passed on - stay as they are; with a chain per thread every `ContextRef` would need its thread, or
+the store would search every chain. Only loading a window names a thread. The history already lives
+so: one sequence of positions across every thread of a channel, a thread found through its entries
+(`Filter::in_thread`), with no key per thread in the store.
+
+**What it costs.** A type of its own for the transcript; a field of `Node`, so the stored chains of
+every kind are converted or deleted; a head per thread in the stored form. D7 is decided before
+step 1, which changes what is stored already.
+
+**Open.** Which readers read more than the active path from memory - `Chain::all_entries`,
+`Chain::from`, `Node::active_child` - and go to the store instead or go; and whether
+`active_child`, where a switch to a branch goes on, is needed at all once every thread has a head
+of its own and answering again moves one back.
+
 ### Further points
 
 - **After 593.** Step 3 changes the lifecycle procedures 593 builds - letting someone go holds the
@@ -178,6 +259,18 @@ be read for what a fork across chains asks of them.
   (557, *What is still hard*).
 - **Stored data**: the agents' states and transcripts are kept per thread from step 1 on; what is
   stored has to be converted or deleted.
+- **593 is done** (2026-11-21), so step 3 waits for nothing: taking someone into a further thread
+  and letting them go from one are procedures beside `participant::take_into_channel`
+  (`caelumora-kernel/src/procedure/participant.rs`). Opening a thread moved with it: the refusal
+  of a founder who takes part already, `ChannelError::AlreadyParticipant`, is in
+  `procedure/thread.rs` (`open`), no longer in `session/threads.rs`, which is gone.
+- **A turn that waits blocks every thread.** With one turn at a time, an agent whose turn in one
+  thread waits for a person (`ActorState::WaitingForUser`: an approval, a question) answers in no
+  other thread until it is answered. 557 decided one turn at a time but does not say what a
+  waiting turn means for the others. It concerns the first user at once: a side question whose
+  turn waits for an approval silences the agent in the line as well. Two ways: it is accepted, and
+  shown - 557 has the web UI show where an agent is answering -; or a turn that waits does not
+  count as the one under way and is set aside until it is answered, which reopens 557's decision.
 
 ## To decide
 
@@ -186,6 +279,7 @@ be read for what a fork across chains asks of them.
 - The cut of the first user above, and the steps.
 - Whether a nudge across threads is fixed before this issue - by routing it with the moderator of
   the thread of whom it asks -, or with step 3.
+- What a turn that waits for a person in one thread means for the agent's other threads.
 
 ## Done when
 
@@ -198,3 +292,9 @@ be read for what a fork across chains asks of them.
 
 - **2026-11-19** — Opened from 557's step 3, which 557 named and left without an issue, and from a
   nudge across threads found while reading how threads are routed.
+- **2026-11-21** — Proposed for D7, with the maintainer: one tree, a head per thread, the transcript
+  a type of its own that gives every position, a node keeping the position of its predecessor, and
+  a thread loaded by following its path (*Proposal: one tree, a head per thread*); not decided.
+  Recorded under *Further points*: 593 is done, so step 3 waits for nothing, and where opening a
+  thread moved; and that a turn waiting for a person blocks the agent in every thread, which joins
+  *To decide*.
