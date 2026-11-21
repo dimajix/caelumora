@@ -458,27 +458,22 @@ What changes an entity is split by what it changes:
 *   **Its lifecycle is its manager's** - making it, deleting, restoring and purging it, with what
     lies in its scope: the `AgentManager`'s, `GroupManager`'s and `WorkspaceManager`'s for their
     kinds, and those of the plugins (`SkillManager`, `ArtifactManager`). The lifecycles of
-    sessions and shared projects, which touch several objects, are procedures (below): a session's
-    carried out by the `SessionManager` - the register of the sessions that run, which it starts
-    and stops, holding the lifecycles of sessions and their channels -, the `ProjectManager` for
-    their own projects, the session's loop and the services of the kernel; a shared project's by
-    the lifecycle the `ProjectManager` holds - the kernel's, which makes every project - and, for
-    the sessions in it, the procedures of a session. A
-    channel's are procedures too (`procedure::channel`), carried out by the session's controller,
-    the session's loop, which runs its channels, and the `SessionManager`, the manager of the
-    channels of its sessions; a session's own project is made, deleted, restored and purged with
-    the session. Making a
-    document, marking it deleted, taking its mark away and purging it are one `Lifecycle` for each
-    kind, which its manager holds - the `SessionManager` one for sessions and their channels, the
-    `GroupManager` one for groups - and the controllers of sessions, channels and projects one as
-    well, by which the groups of participants follow them -, the `ProjectManager` one for projects,
-    shared ones and the own projects of sessions,
-    the `AgentManager`, `WorkspaceManager` and the plugins' managers one for their kinds, by which
-    what lies in a scope goes with its holder too (`ScopeMember::lifecycle`, issue 593) -, each
-    change but a purge announced at the document's address
-    (`Stored::address`). The group of a document's participants or members is made or restored
-    before the document, so that they hear it made or restored - but for a new shared project,
-    which has no members yet, and whose creation is asked of first.
+    sessions, their channels and shared projects, which touch several objects, are procedures
+    (below), carried out by the building blocks of what they touch: the `SessionManager`, the
+    register of the sessions that run, which it starts and stops; the session's loop, which runs
+    its channels; the controllers of sessions, channels and projects; and the `ProjectManager`, the
+    kernel's, which makes every project and finds, makes and purges the own projects of sessions. A
+    session's own project is made, deleted, restored and purged with the session.
+    Making a document, marking it deleted, taking its mark away and purging it are one `Lifecycle`
+    for each kind, which its manager holds - the `SessionManager` one for sessions and one for their
+    channels, the `ProjectManager` one for every project, the `GroupManager` one for groups, which
+    the controllers of sessions, channels and projects hold as well, so that the groups of
+    participants follow them, and the `AgentManager`, the `WorkspaceManager` and the plugins'
+    managers one for their kinds, by which what lies in a scope goes with its holder too
+    (`ScopeMember::lifecycle`, issue 593) -; each change but a purge is announced at the document's
+    address (`Stored::address`). The group of a document's participants or members is made or
+    restored before the document, so that they hear it made or restored - but for a new shared
+    project, which has no members yet, and whose creation is asked of first.
 *   **Whoever makes a change announces it**, in the method that makes it: a manager what it
     makes, deletes and restores (`Lifecycle`), a controller what it writes, a running session or
     channel what it starts, stops and lets in. No procedure announces anything. An undo is a
@@ -494,31 +489,45 @@ What changes an entity is split by what it changes:
 
 A **procedure** is one change of a lifecycle across the objects it touches (issue
 [593](../issues/593-every-lifecycle-change-is-guarded-in-a-way-of-its-own.md)): a session created,
-opened, stopped, deleted, restored, purged or put into another project, a shared project deleted,
-restored or purged, someone taken into a session or let go from it, an agent's deletion or restoring
-followed in its channels, a channel created, deleted, restored, built again or reclassified, a
-thread opened or closed. An entry point - a REST handler, the terminal, a command run in a channel,
-a plugin's writer, the follower of the agents' deletion and restoring
-(`procedure::follower::AgentFollower`, which a program starts beside its `SessionManager`) - makes
-it, as what it asks for, and the kernel's `ProcedureExecutor` carries it out in a task of its own;
-who reaches the session from within it finds the executor there (`SessionLoop::procedures`). The
-procedures reach the running sessions by the `SessionManager`, which the kernel knows weakly, since
-it holds the kernel (`Kernel::sessions`, issue 601). The executor holds the kernel weakly as well,
-made with it, and hands it to the procedure it carries out: a procedure holds only what it was asked
-for, and reaches the services of the kernel as it is carried out. It locks what it finds from the
-top down, by a key that names the object's path (`Key`), each key's parents shared with it:
-exclusively what it changes, shared what has to stay as it is. An object it finds locked defers it:
-it lets go of everything, waits for that object and enumerates again, so that nothing waits while it
-holds anything and no order of locks is needed; who waits at an object admits nobody after them.
-Holding its objects, it checks the state it finds and the permissions, once, and carries the change
-out by the building blocks of the objects, which know nothing of locking - what holds them lies
-around them, in the executor -; how to undo each step it records, and the executor undoes it if a
-later step fails (`Compensation`). No procedure is carried out within another - it would wait for
-itself -, and the executor refuses it. A procedure that a channel's `run` carries a step out for
-holds its objects until `run` answers. The REST server, as it opens a session for a request, has its
-channels left out as it started built again by a procedure of its own (`procedure::channel::Start`).
-A plugin writes procedures of its own, of the kernel's building blocks, as the sub-agents' start and
-end are (issue 558).
+opened, stopped, deleted, restored, purged or put into another project, its own project lifted into
+a shared one, a shared project deleted, restored or purged, someone taken into a session or let go
+from it, an agent's deletion or restoring followed in its channels, a channel created, deleted,
+restored, built again or reclassified, a thread opened or closed. An entry point - a REST handler,
+the terminal, a command run in a channel, a plugin's writer, the follower of the agents' deletion
+and restoring (`procedure::follower::AgentFollower`, which a program starts beside its
+`SessionManager`) - makes it, as what it asks for, and the kernel's `ProcedureExecutor` carries it
+out in a task of its own; who reaches the session from within it finds the executor there
+(`SessionLoop::procedures`). The procedures reach the running sessions by the `SessionManager`,
+which the kernel knows weakly, since it holds the kernel (`Kernel::sessions`, issue 601). The
+executor holds the kernel weakly as well, made with it, and hands it to the procedure it carries
+out: a procedure holds only what it was asked for, and reaches the services of the kernel as it is
+carried out. It locks what it finds from the top down, by a key that names the object's path
+(`Key`), each key's parents shared with it: exclusively what it changes, shared what has to stay as
+it is. An object it finds locked defers it: it lets go of everything, waits for that object and
+enumerates again, so that nothing waits while it holds anything and no order of locks is needed; who
+waits at an object admits nobody after them. Holding its objects, it checks the state it finds and
+the permissions, once, and carries the change out by the building blocks of the objects, which know
+nothing of locking - what holds them lies around them, in the executor -; how to undo each step it
+records, and the executor undoes it if a later step fails (`Compensation`). No procedure is carried
+out within another - it would wait for itself -, and the executor refuses it. A procedure that a
+channel's `run` carries a step out for holds its objects until `run` answers. The REST server, as it
+opens a session for a request, has its channels left out as it started built again by a procedure of
+its own (`procedure::channel::Start`). A plugin writes procedures of its own, of the kernel's
+building blocks, as the sub-agents' start and end are (issue 558).
+
+Beside the procedures, guards stay where no procedure reaches. The executor locks within one
+process: where several share the stores, a session is held against the others as well
+(`SessionManager::hold`, issue 554) - by a procedure that deletes, restores or purges it, or lifts
+its own project, until it is done, and by one that starts it for as long as it runs here. The
+managers of a kind put what they make or restore into a scope without a procedure, since their
+lifecycle changes one object: they ask the holder of the scope before they make something and once
+it is written, and once they restored it (`ScopeHolders`, issue 458), so that nothing is left in the
+scope of a holder deleted meanwhile. A writer writes on the revision it read (issue 492), which
+keeps apart two changes of one document that no procedure orders - an attribute its controller
+changes. And what guards no lifecycle is no procedure: the ordinary flow of a channel's `run` - what
+is said, cancelling, waking, delegating into an open thread, an actor that ends by itself -, and the
+handles of a channel's participants, built under a lock of their own
+(`ChannelLoop::building_mentions`).
 
 An attachment is no entity: it is part of its message, read and taken back with it. The lifecycle
 of its content is the `AttachmentManager`'s: kept as it is uploaded for a message - or copied, as an

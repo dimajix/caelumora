@@ -4,12 +4,13 @@ This document is the map of every place where the kernel asks a permission quest
 asks, in whose name, what, which concept decides it, by which of the five reasons it is asked, and
 where the same question is asked again on the way. It records what the code does at the end of issue
 [304](../issues/304-review-of-the-permission-concept.md) (2026-10-11), redone from the code, and
-brought up to date by issues [312](../issues/312-order-and-reach-not-everywhere.md) and
-[322](../issues/322-clearance-decided-outside-the-store.md). The rules it is measured against - the
-three decisions, the order, the five reasons to ask - are in
-[SECURITY.md](SECURITY.md#where-permission-checks-go) and [CONFIDENTIALITY.md](CONFIDENTIALITY.md);
-what each action is expected to ask is asserted by the security suite
-(`caelumora-kernel/tests/security_suite.rs`, issue 198; an agent's actions in
+brought up to date by issues [312](../issues/312-order-and-reach-not-everywhere.md),
+[322](../issues/322-clearance-decided-outside-the-store.md) and
+[593](../issues/593-every-lifecycle-change-is-guarded-in-a-way-of-its-own.md), by which an action
+across objects is a procedure's. The rules it is measured against - the three decisions, the order,
+the five reasons to ask - are in [SECURITY.md](SECURITY.md#where-permission-checks-go) and
+[CONFIDENTIALITY.md](CONFIDENTIALITY.md); what each action is expected to ask is asserted by the
+security suite (`caelumora-kernel/tests/security_suite.rs`, issue 198; an agent's actions in
 `caelumora-agents/tests/security_suite.rs`, issue 370). A new action, or a change to what one asks,
 changes this map as it changes the suite.
 
@@ -63,8 +64,9 @@ error what was refused (`Refused`, see [SECURITY.md](SECURITY.md)). The flow is 
 | Layer | Asks | Form | Refusal |
 |---|---|---|---|
 | **Store** (`caelumora-store/src/access.rs`), rule 1 and reach | `Get*` on every read; `List*`, then the admission of `Get*` (`ReadDeleted` for what was deleted) handed to the storage and the verb per item as a filter; `Create*` with the new attributes; `Get*` then `Update*`/`Delete*` on the stored ones; `ReadDeleted` then `Restore`/`Purge` - always Read before the verb; after the Read, for what is classified, `cleared_for` (issue 322) | `require`, `require_cleared_for`; `may_reach` as the list filter | `NotFound` for what may not be read or is not cleared for, `PermissionDenied` for what may not be changed, `Ok(false)` for what cannot be deleted |
-| **Managers** (`SessionManager`, `SessionLoop`, `AgentManager`, `WorkspaceManager`, `ProjectController`, `ArtifactManager`, `AttachmentManager`, `SkillManager`, `GroupManager`, `SecretManager`), rules 2 and 4 | their verb before they act, where they act before they store; the flow of what they keep or make | `require`, `require_*` | the manager's error |
-| **Channel loop** (`ChannelLoop`), rules 2 and 3 | what changes the channel, who is admitted, and what enters it (`admission`) | `require`, `require_*` | `ChannelError::Forbidden`, `NotCleared`; `EventRejected` to the sender |
+| **Procedures** (`caelumora-kernel/src/procedure`, a plugin's own; issue 593), rules 2 and 4 | an action across objects - the lifecycle of a session, a channel or a shared project, taking someone in or letting them go, opening or closing a thread -, once, under the locks, first in carrying it out, before anything is asked of others; ahead only what must stand before another object changes, which that object asks again as it acts (`channel::require_opening`) | `require`, `require_*`, `Participation` | the procedure's error |
+| **Managers** (`SessionLoop`, `AgentManager`, `WorkspaceManager`, `ProjectController`, `ArtifactManager`, `AttachmentManager`, `SkillManager`, `GroupManager`, `SecretManager`), rules 2 and 4 | their verb before they act, where they act before they store; the flow of what they keep or make | `require`, `require_*` | the manager's error |
+| **Channel loop** (`ChannelLoop`), rules 2, 3 and 4 | what changes the channel, who is admitted, and what enters it (`admission`) | `require`, `require_*` | `ChannelError::Forbidden`, `NotCleared`; `EventRejected` to the sender |
 | **Owners of acts** (`ToolExecutor` - asking the kernel through the agent's runtime, issue 516 -, `CommandExecutor`, the approver, components on what they keep - asking it the same way), rule 4 | the act's own question, once | `require` | the act's own answer: a forbidden result, an answer refused (`EventRefused`, issue 567) |
 | **Views** (`caelumora-kernel/src/view`), rule 5 and reach | reaching (concept 4) and the flags of a snapshot | `may_*`; `require` for reading a participant's tools, components and context | `*NotFound`, a flag false, `Forbidden` |
 | **Filters** (event bus, command lists, store lists), rule 5 | the read question per item | `check` | silently left out |

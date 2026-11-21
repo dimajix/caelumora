@@ -75,6 +75,13 @@ against this list, rule by rule, before it is reported (the self-review of
 *   An operation of a manager or a controller takes a channel by its coordinates or its document,
     never by a view or a loop; a loop acts on no other resource for its callers
     ([Running objects and their entities](#running-objects-and-their-entities)).
+*   A change of a lifecycle that touches several objects - of a session, a channel or a shared
+    project, someone taken in or let go, a thread opened or closed - is a procedure, which an entry
+    point makes and the kernel's `ProcedureExecutor` carries out; the objects keep building blocks
+    that neither lock nor check, undo or announce across objects - but for the guards that stay
+    beside the procedures -, and no procedure announces anything or carries out another
+    ([A module's manager](#a-modules-manager);
+    [ARCHITECTURE.md](ARCHITECTURE.md#managers-and-controllers)).
 *   Rust code is laid out by rustfmt: `cargo fmt --all --check` passes
     ([Comments and documentation](#comments-and-documentation)).
 *   `cargo clippy --workspace --all-targets` stays silent
@@ -250,8 +257,8 @@ what its parts share, and its exports, so that the manager's methods and tests d
 Test helpers the module offers to other modules' tests are its `testing.rs` (issue 364).
 
 Its methods are named by the verbs of the lifecycle, without the kind - the manager names it:
-`create`, `delete`, `restore` and `purge`, and for what runs, `open` and `stop`
-(`AgentManager::delete`; issue 354). A lifecycle that touches several objects - a session's, a
+`create`, `delete`, `restore` and `purge`, and for what runs, `start` (`AgentManager::delete`,
+`SessionManager::start`; issue 354). A lifecycle that touches several objects - a session's, a
 shared project's - is a procedure's (issue 593): each verb a type named so in the module `procedure`
 of the kind (`procedure::session::Open`, `procedure::project::Delete`), which an entry point makes
 and the kernel's `ProcedureExecutor` carries out. The procedures carry the change out themselves,

@@ -33,12 +33,11 @@ hand, not with the session. Purging is done in the kernel's name.
 A session or a channel runs on while it is deleted, and runs on if its deletion fails; nothing is
 put into its scope meanwhile (issue 458). Whoever puts something into a scope - makes it, restores
 it, publishes it - asks `ScopeHolders` (`scoped`) that the holder of the scope is there and not
-deleted, before writing and once written: the holder is marked before its scope is deleted - a
-session's own project with the session -, so what was put there before goes with it, who asks
-afterwards is refused, and what was written in between -
-after the deletion went through the scope - is taken back, purged or marked deleted again with the
-mark it carried. A channel's session is asked as well, since a channel is not marked with its
-session.
+deleted, once it is written - and before as well where it is made or published -: the holder is
+marked before its scope is deleted - a session's own project with the session -, so what was put
+there before goes with it, who asks afterwards is refused, and what was written in between - after
+the deletion went through the scope - is taken back, purged or marked deleted again with the mark it
+carried. A channel's session is asked as well, since a channel is not marked with its session.
 
 Each kind that may lie in a scope is a `ScopeMember` (issue 323), and `ScopedEntities` goes through
 them in the order they were registered; what is done with them is the same for every kind, and a
@@ -692,10 +691,10 @@ and the `ConfidentialityPolicy`. It is given a participant resolved - a `Resolve
 a document names resolved by the controllers into what its actor is built from, and the place it
 takes part in (`ResolvedParticipant::resolve`), which asks nothing -, and answers whether it may
 run, join or leave, lie where it may and is cleared for the channel, each a question of its own that
-whoever needs it asks in its order. The session and channel loops ask it - the procedures through
-them, until they ask it themselves (issue 593, step 5r): when a channel is created, restored or
-built, when someone is taken in or leaves or an agent comes back, and when a channel is
-reclassified.
+whoever needs it asks in its order. The procedures ask it, under their locks, when someone is taken
+in or leaves and when a channel is created or restored (issue 593); the channel's loop asks whether
+a participant may run as it builds a channel or an agent comes back, and whether every participant
+is cleared as the channel is reclassified.
 
 ### Taking someone into the session
 

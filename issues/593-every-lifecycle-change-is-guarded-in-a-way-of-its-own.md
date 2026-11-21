@@ -1,6 +1,6 @@
 # 593 — Every change of a lifecycle is guarded in a way of its own
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** high
 **Area:** Code structure
@@ -968,3 +968,22 @@ case; it is decided there, and may make this unnecessary.
   and that what an actor sends as it ends is in the channel once ending returns. The proof of
   admission the starts within the channel were to take in this step went with `Admitted` in step
   R1: there is no proof left to take.
+- **2026-11-21** — Step 5e committed. Step 6, the documents, done: ARCHITECTURE.md describes the
+  lifecycles of sessions, their channels and shared projects as procedures carried out by the
+  building blocks of what they touch, lifting a session's own project among them, and names the
+  guards that stay beside them and why - the hold of a session against the other processes that
+  share the stores (issue 554), since the executor locks within one process, kept until the
+  procedure is done, or for as long as a session it started runs; the check of the holder of a
+  scope (`ScopeHolders`, issue 458), since the managers of a kind put what they make or restore
+  into a scope without a procedure; the revision a writer writes on (issue 492), for the attributes
+  no procedure orders; and the handles of a channel's participants (`building_mentions`), which
+  guard no lifecycle. PERMISSION-CHECKS.md has the procedures as a layer of its own, which enforces
+  an action across objects, and no longer counts the `SessionManager` among the managers that ask
+  before they act; the checklist of CODING-GUIDELINES.md has the rule that a change of a lifecycle
+  across objects is a procedure, and a manager's verbs for what runs are `start`. CHANNELS.md says
+  who asks `Participation` now - the procedures, and the channel's loop for what it does itself -,
+  and that restoring asks the holder of a scope once restored only.
+  Reviewed with fresh eyes: the claims about the holds and `ScopeHolders` were corrected against
+  the code, and the layers of PERMISSION-CHECKS.md count the rules as its map does. With it, what
+  *Done when* asks is done; a channel that rests is left to issue
+  [381](381-inactive-channels-held-in-memory.md), as recorded above.
