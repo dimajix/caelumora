@@ -8,6 +8,7 @@
 //! the part kept is what is given again, as whoever first gave it; whose the replacement is and how
 //! it is classified follows from what it replaces.
 
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::KnowledgeSource;
 use caelumora_domain::digest::Digest;
@@ -18,10 +19,10 @@ use caelumora_domain::transcript::{
 use caelumora_domain::work::TurnId;
 use std::collections::{HashMap, HashSet};
 
-/// An entry of the active path of a transcript, as a compaction reads it: its digest, what it holds
-/// of what can be given again - knowledge of an entity read whole (`KnowledgeSource::read_whole`),
-/// given to the agent or read or written by a tool of its, as the model sees it
-/// (`knowledge_as_seen_whole`) -, and its message as it stands, if it holds one.
+/// An entry of the branch of a thread in a transcript, as a compaction reads it: its digest, what
+/// it holds of what can be given again - knowledge of an entity read whole
+/// (`KnowledgeSource::read_whole`), given to the agent or read or written by a tool of its, as the
+/// model sees it (`knowledge_as_seen_whole`) -, and its message as it stands, if it holds one.
 type Entry = (Digest, Vec<KnowledgeSource>, Option<Message>);
 
 /// An agent's transcript cut for a compaction: the part replaced, without the prompt parts carried
@@ -39,30 +40,31 @@ pub(crate) struct Cut {
 }
 
 impl Cut {
-    /// `transcript`'s active path cut so that at most `keep` tokens are kept as they stand, its
-    /// entries standing in the context at `positions` (`Situation::token_positions`); `under_way`
-    /// is the turn under way. The oldest cut allowed behind which at most `keep` tokens stand, the
-    /// prompt parts carried over counted with them; the newest allowed if none is. `None` if there
-    /// is none, or nothing before it to replace.
+    /// The branch of `thread` in `transcript` cut so that at most `keep` tokens are kept as they
+    /// stand, its entries standing in the context at `positions` (`Situation::token_positions`);
+    /// `under_way` is the turn under way. The oldest cut allowed behind which at most `keep`
+    /// tokens stand, the prompt parts carried over counted with them; the newest allowed if none
+    /// is. `None` if there is none, or nothing before it to replace.
     pub(crate) fn of(
         transcript: &Transcript,
+        thread: ThreadId,
         positions: &[u64],
         keep: u64,
         under_way: TurnId,
     ) -> Option<Self> {
-        let whole = kept_whole(transcript.entries().map(|node| &node.entry));
-        let carried = transcript.carried_parts();
+        let whole = kept_whole(transcript.entries(thread).map(|node| &node.entry));
+        let carried = transcript.carried_parts(thread);
         // What can be given again as the model sees it: not what a turn given up as `Lowered`
         // read, which it does not see (issue 538).
         let mut known: HashMap<Digest, Vec<KnowledgeSource>> =
-            knowledge_as_seen_whole(transcript.entries())
+            knowledge_as_seen_whole(transcript.entries(thread))
                 .into_iter()
                 .map(|(node, known)| {
                     let whole = known.into_iter().filter(|k| k.read_whole().is_some());
                     (node.digest, whole.collect())
                 })
                 .collect();
-        let mut path: Vec<Entry> = as_they_stand(transcript.entries())
+        let mut path: Vec<Entry> = as_they_stand(transcript.entries(thread))
             .map(|(node, message)| {
                 (node.digest, known.remove(&node.digest).unwrap_or_default(), message)
             })
@@ -390,13 +392,21 @@ mod tests {
         let internal = Classification::general(Confidentiality::Internal);
         let mut transcript = Transcript::default();
         transcript.give(
+            ThreadId::default(),
             message("[Rules]", MessageRole::System, None, internal),
             Some(GivenSource::Part("rules".to_string())),
         );
-        transcript.push(message("u1", MessageRole::User, None, Classification::PUBLIC));
-        transcript.push(message("u2", MessageRole::User, None, Classification::PUBLIC));
+        transcript.push(
+            ThreadId::default(),
+            message("u1", MessageRole::User, None, Classification::PUBLIC),
+        );
+        transcript.push(
+            ThreadId::default(),
+            message("u2", MessageRole::User, None, Classification::PUBLIC),
+        );
 
-        let cut = Cut::of(&transcript, &[0, 10, 20, 30], 10, TurnId::new()).expect("cut");
+        let cut = Cut::of(&transcript, ThreadId::default(), &[0, 10, 20, 30], 10, TurnId::new())
+            .expect("cut");
         assert_eq!(
             (cut.messages_replaced(), cut.messages_kept()),
             (1, 2),
@@ -434,14 +444,26 @@ mod tests {
             given(agent, "Helper", release_notes),
             given(agent, "Helper", review),
         ] {
-            transcript.give(gift, source);
+            transcript.give(ThreadId::default(), gift, source);
         }
-        transcript.push(message("u1", MessageRole::User, None, Classification::PUBLIC));
+        transcript.push(
+            ThreadId::default(),
+            message("u1", MessageRole::User, None, Classification::PUBLIC),
+        );
         let (gift, source) = given(agent, "Helper", review);
-        transcript.give(gift, source);
-        transcript.push(message("u2", MessageRole::User, None, Classification::PUBLIC));
+        transcript.give(ThreadId::default(), gift, source);
+        transcript.push(
+            ThreadId::default(),
+            message("u2", MessageRole::User, None, Classification::PUBLIC),
+        );
 
-        let cut = Cut::of(&transcript, &[0, 10, 20, 30, 40, 50, 60], 20, TurnId::new());
+        let cut = Cut::of(
+            &transcript,
+            ThreadId::default(),
+            &[0, 10, 20, 30, 40, 50, 60],
+            20,
+            TurnId::new(),
+        );
         let wanted = cut.as_ref().expect("cut").wanted();
         let wanted: Vec<_> = wanted
             .iter()
@@ -473,11 +495,16 @@ mod tests {
         let first: Vec<_> = gifts[..2].iter().map(|(gift, _)| gift.id).collect();
         let mut transcript = Transcript::default();
         for (gift, source) in gifts {
-            transcript.give(gift, source);
+            transcript.give(ThreadId::default(), gift, source);
         }
-        transcript.push(message("u1", MessageRole::User, None, Classification::PUBLIC));
+        transcript.push(
+            ThreadId::default(),
+            message("u1", MessageRole::User, None, Classification::PUBLIC),
+        );
 
-        let cut = Cut::of(&transcript, &[0, 10, 20, 30, 40], 10, TurnId::new()).expect("cut");
+        let cut =
+            Cut::of(&transcript, ThreadId::default(), &[0, 10, 20, 30, 40], 10, TurnId::new())
+                .expect("cut");
         let wanted: Vec<_> = cut
             .wanted()
             .iter()
@@ -515,21 +542,26 @@ mod tests {
         for (id, sender_name, back) in [(release_notes, "alice", true), (review, "alice", false)] {
             let (gift, source) = given(id, sender_name);
             taken_back.extend(back.then_some(gift.id));
-            transcript.give(gift, source);
+            transcript.give(ThreadId::default(), gift, source);
         }
-        transcript.push(said("u1"));
-        transcript.push(said("u2"));
+        transcript.push(ThreadId::default(), said("u1"));
+        transcript.push(ThreadId::default(), said("u2"));
         let (gift, source) = given(review, "Helper");
         taken_back.push(gift.id);
-        transcript.give(gift, source);
-        transcript.push(said("u3"));
+        transcript.give(ThreadId::default(), gift, source);
+        transcript.push(ThreadId::default(), said("u3"));
         for id in taken_back {
             assert!(transcript.revoke(id, Utc::now()));
         }
 
         let positions = [0, 10, 20, 30, 40, 50, 60, 60, 60];
-        let cut = Cut::of(&transcript, &positions, 30, TurnId::new()).expect("cut");
-        assert_eq!(cut.keep_from(), Some(transcript.entries().nth(3).unwrap().digest), "before u2");
+        let cut =
+            Cut::of(&transcript, ThreadId::default(), &positions, 30, TurnId::new()).expect("cut");
+        assert_eq!(
+            cut.keep_from(),
+            Some(transcript.entries(ThreadId::default()).nth(3).unwrap().digest),
+            "before u2"
+        );
         let wanted: Vec<_> = cut
             .wanted()
             .iter()
@@ -558,37 +590,47 @@ mod tests {
         let said = |text| message(text, MessageRole::User, None, Classification::PUBLIC);
         let mut transcript = Transcript::default();
         let (first, source) = gift(None);
-        transcript.give(first, source);
-        transcript.push(said("u1"));
+        transcript.give(ThreadId::default(), first, source);
+        transcript.push(ThreadId::default(), said("u1"));
         let (hidden, source) = gift(Some(lowered));
-        transcript.give(hidden, source);
+        transcript.give(ThreadId::default(), hidden, source);
         let reason = GivenUpReason::Lowered { channel: Classification::PUBLIC };
-        transcript.record(TranscriptEntry::TurnGivenUp {
-            turn_id: lowered,
-            reason,
-            at: Utc::now(),
-        });
-        transcript.push(said("u2"));
+        transcript.record(
+            ThreadId::default(),
+            TranscriptEntry::TurnGivenUp { turn_id: lowered, reason, at: Utc::now() },
+        );
+        transcript.push(ThreadId::default(), said("u2"));
 
-        let cut = Cut::of(&transcript, &[0, 10, 20, 30, 30, 40], 35, TurnId::new()).expect("cut");
-        assert_eq!(cut.keep_from(), Some(transcript.entries().nth(1).unwrap().digest), "before u1");
+        let cut =
+            Cut::of(&transcript, ThreadId::default(), &[0, 10, 20, 30, 30, 40], 35, TurnId::new())
+                .expect("cut");
+        assert_eq!(
+            cut.keep_from(),
+            Some(transcript.entries(ThreadId::default()).nth(1).unwrap().digest),
+            "before u1"
+        );
         let wanted: Vec<_> =
             cut.wanted().iter().map(|(k, _)| k.about::<Workspace>().map(|(id, _)| id)).collect();
         assert_eq!(wanted, [Some(skill)], "given again");
 
         let mut transcript = Transcript::default();
         let (hidden, source) = gift(Some(lowered));
-        transcript.give(hidden, source);
+        transcript.give(ThreadId::default(), hidden, source);
         let reason = GivenUpReason::Lowered { channel: Classification::PUBLIC };
-        transcript.record(TranscriptEntry::TurnGivenUp {
-            turn_id: lowered,
-            reason,
-            at: Utc::now(),
-        });
-        transcript.push(said("u1"));
-        transcript.push(said("u2"));
-        let cut = Cut::of(&transcript, &[0, 10, 10, 20, 30], 15, TurnId::new()).expect("cut");
-        assert_eq!(cut.keep_from(), Some(transcript.entries().nth(3).unwrap().digest), "before u2");
+        transcript.record(
+            ThreadId::default(),
+            TranscriptEntry::TurnGivenUp { turn_id: lowered, reason, at: Utc::now() },
+        );
+        transcript.push(ThreadId::default(), said("u1"));
+        transcript.push(ThreadId::default(), said("u2"));
+        let cut =
+            Cut::of(&transcript, ThreadId::default(), &[0, 10, 10, 20, 30], 15, TurnId::new())
+                .expect("cut");
+        assert_eq!(
+            cut.keep_from(),
+            Some(transcript.entries(ThreadId::default()).nth(3).unwrap().digest),
+            "before u2"
+        );
         assert!(cut.wanted().is_empty(), "in the part replaced, nor is it given again");
     }
 
@@ -629,12 +671,20 @@ mod tests {
         let mut transcript = Transcript::default();
         let first = results(vec![listing, file("docs/plan.md", "one"), file("a.txt", "one")]);
         let first_id = first.id;
-        transcript.push(first);
-        transcript.push(message("u1", MessageRole::User, None, Classification::PUBLIC));
-        transcript.push(results(vec![file("a.txt", "two")]));
-        transcript.push(message("u2", MessageRole::User, None, Classification::PUBLIC));
+        transcript.push(ThreadId::default(), first);
+        transcript.push(
+            ThreadId::default(),
+            message("u1", MessageRole::User, None, Classification::PUBLIC),
+        );
+        transcript.push(ThreadId::default(), results(vec![file("a.txt", "two")]));
+        transcript.push(
+            ThreadId::default(),
+            message("u2", MessageRole::User, None, Classification::PUBLIC),
+        );
 
-        let cut = Cut::of(&transcript, &[0, 10, 20, 30, 40], 20, TurnId::new()).expect("cut");
+        let cut =
+            Cut::of(&transcript, ThreadId::default(), &[0, 10, 20, 30, 40], 20, TurnId::new())
+                .expect("cut");
         let wanted: Vec<_> =
             cut.wanted().iter().map(|(k, m)| (k.place().map(str::to_string), m.id)).collect();
         assert_eq!(

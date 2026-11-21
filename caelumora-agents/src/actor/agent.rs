@@ -146,7 +146,8 @@ impl AgentActor {
         output: &dyn EventSender,
     ) -> Result<()> {
         let (_, work) = self.body.work_for(request);
-        let turn_id = state.begin_turn(work.given_as(self.body.profile));
+        let turn_id =
+            state.begin_turn(self.body.runtime.thread_id(), work.given_as(self.body.profile));
         self.body.control.begin_turn(turn_id);
         let mut turn = self.turn_under_way(state)?;
         // Judged for whoever asked, in the channel as the turn begins.
@@ -335,16 +336,15 @@ impl AgentActor {
         }
     }
 
-    /// Answers the `RetryRequested` in `request` (issues 234, 235), in its
-    /// context continued in the agent's name. The turn `given_up_for` it
-    /// can be answered again, its answer being gone already; another turn
-    /// is over (`Ended`); a message can be if it is the agent's last answer
-    /// (`AgentChannelState::retried`). If it can, the agent says so with
-    /// `RetryAccepted`, takes back what the retry replaces - in its
-    /// transcript, and announced with `MessageRevoked`, since its channel's
-    /// history holds every message it said (issue 417) - and returns
-    /// `true`: a turn is to begin, given the transcript as it stands.
-    /// Otherwise it says why with `RetryRefused`.
+    /// Answers the `RetryRequested` in `request` (issues 234, 235), in its context continued in the
+    /// agent's name, on the branch of the one thread the agent takes part in, whatever thread the
+    /// request names (issue 602). The turn `given_up_for` it can be answered again, its answer
+    /// being gone already; another turn is over (`Ended`); a message can be if it is the agent's
+    /// last answer (`AgentChannelState::retried`). If it can, the agent says so with
+    /// `RetryAccepted`, takes back what the retry replaces - in its transcript, and announced with
+    /// `MessageRevoked`, since its channel's history holds every message it said (issue 417) - and
+    /// returns `true`: a turn is to begin, given the transcript as it stands. Otherwise it says why
+    /// with `RetryRefused`.
     async fn retry(
         &self,
         state: &mut AgentChannelState,
@@ -358,8 +358,12 @@ impl AgentActor {
             RetryTarget::Turn(turn) if Some(turn) == given_up_for => Ok(Vec::new()),
             // Its last turn given up: answered anew after it, nothing taken
             // back (issue 259).
-            RetryTarget::Turn(turn) => state.answers_again_after(turn).map(|()| Vec::new()),
-            RetryTarget::Message(message) => state.retried(message, self.id()),
+            RetryTarget::Turn(turn) => {
+                state.answers_again_after(self.body.runtime.thread_id(), turn).map(|()| Vec::new())
+            }
+            RetryTarget::Message(message) => {
+                state.retried(self.body.runtime.thread_id(), message, self.id())
+            }
         };
         let taken_back = match can {
             Ok(taken_back) => taken_back,
@@ -1282,6 +1286,7 @@ impl Actor for AgentActor {
 mod tests {
     use super::*;
     use caelumora_domain::agent::AgentId;
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::confidentiality::Confidentiality;
     use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
     use caelumora_domain::message::MessageId;
@@ -1319,12 +1324,10 @@ mod tests {
         let agent = AgentId::new();
         let channel = Classification::general(Confidentiality::Confidential);
         let mut agent_channel_state = AgentChannelState::default();
-        agent_channel_state.begin_turn(Work::new(
-            Default::default(),
-            None,
-            channel.clone(),
-            Default::default(),
-        ));
+        agent_channel_state.begin_turn(
+            ThreadId::default(),
+            Work::new(Default::default(), None, channel.clone(), Default::default()),
+        );
         agent_channel_state.offer_tools(vec![ToolSet::new(
             "tools",
             "some tools",
@@ -1387,12 +1390,15 @@ mod tests {
                          calls: &[&str],
                          complete: bool| {
             let mut agent_channel_state = AgentChannelState::default();
-            agent_channel_state.begin_turn(Work::new(
-                Default::default(),
-                None,
-                Classification::CHANNEL_DEFAULT,
-                Default::default(),
-            ));
+            agent_channel_state.begin_turn(
+                ThreadId::default(),
+                Work::new(
+                    Default::default(),
+                    None,
+                    Classification::CHANNEL_DEFAULT,
+                    Default::default(),
+                ),
+            );
             agent_channel_state.offer_tools(vec![ToolSet::new("tools", "some tools", tools)]);
             let mut turn = Turn::under_way(agent, &mut agent_channel_state);
             if private_knowledge {

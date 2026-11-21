@@ -71,6 +71,13 @@ impl<'a> Situation<'a> {
         self.work.event_context.thread_id
     }
 
+    /// The thread whose branch of the agent's transcript the work reads and extends (issue 602):
+    /// the one thread the agent takes part in (`ActorRuntime::thread_id`), whatever thread the
+    /// envelope it answers names (`thread_id`).
+    pub fn branch_thread_id(&self) -> ThreadId {
+        self.runtime.thread_id()
+    }
+
     /// Why the work was asked for (issue 439): the reason of the request
     /// to respond it answers, `None` if no request began it.
     pub fn asked(&self) -> Option<RequestReason> {
@@ -151,11 +158,9 @@ impl<'a> Situation<'a> {
     /// # Errors
     /// `PromptError` if a text it is given cannot be had.
     pub fn token_positions(&self) -> Result<Option<(Vec<u64>, bool)>, PromptError> {
-        ContextResolver::of(self.agent_channel_state, self.runtime.prompts()).token_positions(
-            &self.work.context,
-            self.work.turn_id,
-            ActorId::Agent(self.agent_id),
-        )
+        let thread = self.branch_thread_id();
+        ContextResolver::of(self.agent_channel_state, thread, self.runtime.prompts())
+            .token_positions(&self.work.context, self.work.turn_id, ActorId::Agent(self.agent_id))
     }
 
     /// How the agent's model is given its context (issue 135): what a

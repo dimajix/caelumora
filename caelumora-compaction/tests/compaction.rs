@@ -18,6 +18,7 @@ use caelumora_compaction::component::COMPACTION_KIND;
 use caelumora_compaction::library::CompactionLibrary;
 use caelumora_domain::actor::ActorEvent;
 use caelumora_domain::agent::{AgentId, Personality};
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::history::HistoryEntry;
@@ -144,7 +145,7 @@ async fn an_agent_whose_context_fills_up_compacts_it_on_its_own_before_its_next_
     let stored = main.stored_agent_channel_state(helper).await.unwrap();
     let now: Vec<_> = stored
         .transcript
-        .messages()
+        .messages(ThreadId::line(main.id()))
         .into_iter()
         .filter_map(|m| m.content)
         .filter(|c| !c.is_empty())
@@ -172,7 +173,11 @@ async fn a_compaction_that_fails_ends_the_turn() {
     );
     let stored = main.stored_agent_channel_state(helper).await.unwrap();
     assert!(
-        stored.transcript.messages().iter().any(|m| m.content.as_deref() == Some("Hi.")),
+        stored
+            .transcript
+            .messages(ThreadId::line(main.id()))
+            .iter()
+            .any(|m| m.content.as_deref() == Some("Hi.")),
         "the transcript as it was"
     );
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
@@ -187,7 +192,11 @@ async fn an_agent_whose_personality_does_not_list_compaction_does_not_compact() 
     assert!(answer.is_ok(), "the call made with the context as it is");
     let stored = main.stored_agent_channel_state(helper).await.unwrap();
     assert!(
-        stored.transcript.messages().iter().any(|m| m.content.as_deref() == Some("Hi.")),
+        stored
+            .transcript
+            .messages(ThreadId::line(main.id()))
+            .iter()
+            .any(|m| m.content.as_deref() == Some("Hi.")),
         "nothing replaced"
     );
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();

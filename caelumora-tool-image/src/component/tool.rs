@@ -169,6 +169,7 @@ mod tests {
     use caelumora_api::model::{ModelError, ModelResult};
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::work::Work;
     use std::sync::Mutex;
@@ -218,12 +219,10 @@ mod tests {
     /// channel.
     async fn generated(tool: &FixedTools, params: Value) -> ToolResult<ToolOutput> {
         let mut state = AgentChannelState::default();
-        state.begin_turn(Work::new(
-            Default::default(),
-            None,
-            Default::default(),
-            Default::default(),
-        ));
+        state.begin_turn(
+            ThreadId::default(),
+            Work::new(Default::default(), None, Default::default(), Default::default()),
+        );
         let mut turn = Turn::of(&mut state, detached_actor_runtime(AgentId::default()))
             .expect("a turn was begun");
         tool_named(tool, GENERATE_IMAGE).execute(&params, None, &mut turn).await

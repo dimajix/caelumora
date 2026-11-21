@@ -1159,11 +1159,14 @@ mod tests {
         let mut state = AgentChannelState::default();
         // One call: the question was given, the transcript started anew,
         // and the answer came of it.
-        state.transcript.extend(vec![question.clone()]);
-        let given = ContextRef { transcript: state.transcript.start_anew(), ..Default::default() };
+        state.transcript.extend(ThreadId::default(), vec![question.clone()]);
+        let given = ContextRef {
+            transcript: state.transcript.start_anew(ThreadId::default()),
+            ..Default::default()
+        };
         let frame = state.keep_frame(&given.frame);
         let later = said("later");
-        state.transcript.extend(vec![later.clone()]);
+        state.transcript.extend(ThreadId::default(), vec![later.clone()]);
         kernel
             .state_store()
             .put_agent_channel_state(remote.id, channel.id, &mut state)
@@ -1189,7 +1192,7 @@ mod tests {
             messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>()
         };
         assert_eq!(
-            texts(seen.transcript().messages()),
+            texts(seen.transcript().messages(ThreadId::default())),
             ["later"],
             "what it is given next, not what it was given or answered"
         );
@@ -1871,7 +1874,7 @@ mod tests {
             NoteOrigin::default(),
             MessageId::default(),
         );
-        agent_state.transcript.push(first.clone());
+        agent_state.transcript.push(ThreadId::default(), first.clone());
         kernel
             .state_store()
             .put_agent_channel_state(helper.id, channel.id, &mut agent_state)
@@ -1943,7 +1946,7 @@ mod tests {
         let agent = for_alice.participant(ActorId::Agent(helper.id)).await.unwrap();
         let seen = agent.context().await.expect("alice made the agent");
         assert_eq!(seen.private_notes().0[0].text, "mine");
-        assert_eq!(seen.transcript().messages().len(), 1);
+        assert_eq!(seen.transcript().messages(ThreadId::default()).len(), 1);
         assert!(
             matches!(seen.context_of(first.id).await, Err(AgentContextError::NotRecorded { .. })),
             "the agent did not produce it"
@@ -2284,7 +2287,7 @@ mod tests {
             used: TokenUsage::counted(None, &answer),
             ..waiting_for_approval(session.id, channel.id, helper.id, calls)
         };
-        state.transcript.push(answer);
+        state.transcript.push(ThreadId::default(), answer);
         state.notes.push(
             Change::Add {
                 id: NoteId(1),

@@ -109,6 +109,7 @@ mod tests {
     use caelumora_domain::agent::testing::make_personality;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
     use caelumora_domain::channel::ChannelId;
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::channel::{Channel, Participant};
     use caelumora_domain::session::testing::make_session;
     use caelumora_domain::session::Session;
@@ -203,12 +204,15 @@ mod tests {
             .await
             .unwrap();
         let mut state = AgentChannelState::default();
-        state.begin_turn(Work::new(
-            EventContext::new(session.id, channel.id, ActorId::None, String::new()),
-            None,
-            channel.classification.clone(),
-            Default::default(),
-        ));
+        state.begin_turn(
+            ThreadId::line(channel.id),
+            Work::new(
+                EventContext::new(session.id, channel.id, ActorId::None, String::new()),
+                None,
+                channel.classification.clone(),
+                Default::default(),
+            ),
+        );
         let provider = ChannelLanguageComponent::new(PromptPosition::Start, testing::prompts());
         let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
         assert!(prompt.text.contains("\"de\""), "{}", prompt.text);

@@ -765,6 +765,7 @@ mod tests {
     use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
     use caelumora_api::library::LibraryBuilder;
     use caelumora_api::model::LanguageModelClient;
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::command::HELP_KIND;
     use caelumora_domain::prompt_catalogue::PromptVariant;
     use caelumora_security::AllowAllPolicy;
@@ -1230,7 +1231,7 @@ mod tests {
         let agent = stored_agent(kernel.entity_stores(), "helper", personality, owner).await;
         let mut state = AgentChannelState::default();
         let work = Work::new(Default::default(), None, Default::default(), Default::default());
-        state.begin_turn(work);
+        state.begin_turn(ThreadId::default(), work);
         kernel.state_store().put_agent_channel_state(agent.id, channel, &mut state).await.unwrap();
         let agents = kernel.agent_manager();
         let system = SecurityContext::system();

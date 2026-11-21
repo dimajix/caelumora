@@ -16,6 +16,7 @@ use caelumora_domain::agent::{
     AgentChannelState, AgentId, HearsDuringTurn, HearsFrom, RetryRefused,
 };
 use caelumora_domain::approval::ApprovalRequest;
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::ModelProfile;
@@ -43,6 +44,7 @@ async fn an_agent_takes_a_change_in_after_its_turn_and_is_given_what_stands_from
     let model = Arc::new(Gated::saying(&["first", "second"], 0));
     let Stuck { channel, context, agent, mut events, running, .. } =
         with_an_agent(Arc::<Gated>::clone(&model), Default::default()).await;
+    let line = ThreadId::line(channel.id());
     time::timeout(Duration::from_secs(5), async {
         while model.seen.lock().unwrap().is_empty() {
             time::sleep(Duration::from_millis(10)).await;
@@ -103,7 +105,7 @@ async fn an_agent_takes_a_change_in_after_its_turn_and_is_given_what_stands_from
     until(
         "the agent's transcript holds the modification",
         Box::new(move |state| {
-            state.transcript.messages().iter().any(|m| m.id == hello && m.modified.is_some())
+            state.transcript.messages(line).iter().any(|m| m.id == hello && m.modified.is_some())
         }),
     )
     .await;
@@ -118,7 +120,7 @@ async fn an_agent_takes_a_change_in_after_its_turn_and_is_given_what_stands_from
     alice.revoke_message(question).await.expect("hers to take back");
     until(
         "the agent takes it back",
-        Box::new(move |state| !state.transcript.messages().iter().any(|m| m.id == question)),
+        Box::new(move |state| !state.transcript.messages(line).iter().any(|m| m.id == question)),
     )
     .await;
     assert!(
@@ -141,7 +143,7 @@ async fn an_agent_takes_a_change_in_after_its_turn_and_is_given_what_stands_from
         Box::new(move |state| {
             state
                 .transcript
-                .messages()
+                .messages(line)
                 .iter()
                 .any(|m| m.id == first && m.classification == Classification::PUBLIC)
         }),
@@ -185,6 +187,61 @@ async fn an_agent_asked_to_answer_again_takes_its_answer_back_and_answers_withou
     let history: Vec<_> =
         channel.whole_history().await.into_iter().filter_map(|m| m.content).collect();
     assert_eq!(history, ["hello", "second"], "in its place, the new answer at the end");
+    running.abort();
+}
+
+/// Issue 602: asked to answer again from another thread of its channel, an agent answers again on
+/// the branch of the one thread it takes part in, whatever thread the request names.
+#[tokio::test]
+async fn an_agent_asked_to_answer_again_from_another_thread_answers_again_on_its_branch() {
+    use caelumora_domain::channel::Delegation;
+
+    let model = Arc::new(Gated::saying(&["first", "second"], 1));
+    let Stuck { channel, context, agent, mut events, running, .. } =
+        with_an_agent(Arc::<Gated>::clone(&model), Default::default()).await;
+    let first = answered(&mut events, agent).await.pop().expect("an answer");
+    let alice = ActorId::User(alice_of(&context));
+    // Asked by the delegate of a thread opened at the line, which only the tests make.
+    let asked = |thread| {
+        let context = EventContext {
+            sender_id: ActorId::Delegate(thread),
+            initiator_id: alice,
+            thread_id: thread,
+            ..channel.event_context()
+        };
+        let target = RetryTarget::Message(first.id);
+        let retry = ActorEvent::RetryRequested { target, author: ActorId::Agent(agent) };
+        vec![Envelope::new(context, retry)]
+    };
+    let delegation = Delegation {
+        giver: ActorId::Agent(agent),
+        recipient: alice,
+        initiator: alice,
+        briefs: VecDeque::new(),
+    };
+    channel.forge_delegate(delegation, asked).await;
+
+    let accepted = shown_by(&mut events, agent, "RetryAccepted").await;
+    assert!(
+        matches!(accepted, ActorEvent::RetryAccepted { target }
+            if target == RetryTarget::Message(first.id)),
+        "accepted: {accepted:?}"
+    );
+    model.gate.add_permits(1);
+    let said = |messages: Vec<Message>| {
+        messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>()
+    };
+    assert_eq!(said(answered(&mut events, agent).await), ["second"], "answered again");
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
+    let line = ThreadId::line(channel.id());
+    let kept: Vec<_> = stored
+        .transcript
+        .messages(line)
+        .into_iter()
+        .filter(|m| m.revoked.is_none())
+        .filter_map(|m| m.content)
+        .collect();
+    assert_eq!(kept, ["hello", "second"], "on the branch of its line, the first taken back");
     running.abort();
 }
 
@@ -261,7 +318,9 @@ async fn stored_once_answered(
     time::timeout(Duration::from_secs(10), async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
-            if state.turn.is_none() && contents_of(&state, MessageRole::Assistant).len() == answers
+            if state.turn.is_none()
+                && contents_of(&state, ThreadId::line(channel.id()), MessageRole::Assistant).len()
+                    == answers
             {
                 break state;
             }
@@ -272,11 +331,12 @@ async fn stored_once_answered(
     .unwrap_or_else(|_| panic!("the agent answers {answers} times"))
 }
 
-/// What the messages of `role` in the transcript of `state` say, in order.
-fn contents_of(state: &AgentChannelState, role: MessageRole) -> Vec<String> {
+/// What the messages of `role` on the branch of `thread` in the transcript of `state` say, in
+/// order.
+fn contents_of(state: &AgentChannelState, thread: ThreadId, role: MessageRole) -> Vec<String> {
     state
         .transcript
-        .messages()
+        .messages(thread)
         .into_iter()
         .filter(|m| m.role == role)
         .filter_map(|m| m.content)
@@ -601,11 +661,11 @@ async fn an_agent_whose_turn_outlasts_its_inbox_hears_all_of_it_afterwards() {
 
     let state = stored_once_answered(&channel, agent, 2).await;
     assert_eq!(
-        contents_of(&state, MessageRole::Assistant),
+        contents_of(&state, ThreadId::line(channel.id()), MessageRole::Assistant),
         ["first", "second"],
         "the turn ends as it began, and one turn answers all of it"
     );
-    let heard = contents_of(&state, MessageRole::User);
+    let heard = contents_of(&state, ThreadId::line(channel.id()), MessageRole::User);
     let mut expected: Vec<String> = vec!["hello".to_string(), "message 0, corrected".to_string()];
     expected.extend((1..SAID).map(|n| format!("message {n}")));
     expected.push("after the command".to_string());
@@ -633,6 +693,7 @@ async fn what_an_agent_was_delivered_and_did_not_store_before_a_restart_is_deliv
     let (Stuck { channel, context, agent, running, .. }, model) =
         asking_a_gated_model(&["never given", "Answered.", "Again."]).await;
     let alice = channel.user_actor(alice_of(&context)).unwrap();
+    let line = ThreadId::line(channel.id());
     let hello = channel
         .whole_history()
         .await
@@ -660,7 +721,11 @@ async fn what_an_agent_was_delivered_and_did_not_store_before_a_restart_is_deliv
     stop_and_wait(&channel, running).await;
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(
-        stored.transcript.messages().iter().all(|m| m.content.as_deref() != Some("and this too")),
+        stored
+            .transcript
+            .messages(line)
+            .iter()
+            .all(|m| m.content.as_deref() != Some("and this too")),
         "not taken in before the stop"
     );
 
@@ -679,7 +744,7 @@ async fn what_an_agent_was_delivered_and_did_not_store_before_a_restart_is_deliv
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     let heard: Vec<String> = state
         .transcript
-        .messages()
+        .messages(line)
         .into_iter()
         .filter(|m| m.role == MessageRole::User)
         .filter_map(|m| m.content)
@@ -885,13 +950,17 @@ async fn an_agent_hearing_during_a_turn_hears_what_its_inbox_reads_from_the_hist
 
     let state = stored_once_answered(&channel, agent, 1).await;
     assert_eq!(
-        contents_of(&state, MessageRole::Assistant),
+        contents_of(&state, ThreadId::line(channel.id()), MessageRole::Assistant),
         ["done"],
         "the turn ends after its tool step"
     );
     let mut heard = vec!["hello".to_string()];
     heard.extend(said.iter().cloned());
-    assert_eq!(contents_of(&state, MessageRole::User), heard, "all of it, once, in order");
+    assert_eq!(
+        contents_of(&state, ThreadId::line(channel.id()), MessageRole::User),
+        heard,
+        "all of it, once, in order"
+    );
     let seen = model.seen.lock().unwrap().clone();
     given_once_in_order(&seen[1], &said);
     let told =
@@ -942,13 +1011,17 @@ async fn behind_a_barrier_an_agent_hearing_during_a_turn_waits_for_what_the_hist
 
     let state = stored_once_answered(&channel, agent, 2).await;
     assert_eq!(
-        contents_of(&state, MessageRole::Assistant),
+        contents_of(&state, ThreadId::line(channel.id()), MessageRole::Assistant),
         ["done", "again"],
         "the turn, and one turn after it"
     );
     let mut heard = vec!["hello".to_string(), "before the command.".to_string()];
     heard.extend(after.iter().cloned());
-    assert_eq!(contents_of(&state, MessageRole::User), heard, "all of it, once, in order");
+    assert_eq!(
+        contents_of(&state, ThreadId::line(channel.id()), MessageRole::User),
+        heard,
+        "all of it, once, in order"
+    );
     assert_eq!(
         state.notes.current().iter().map(|n| n.text.as_str()).collect::<Vec<_>>(),
         ["marked during"],
@@ -1001,7 +1074,7 @@ async fn what_a_turn_heard_before_a_restart_is_neither_delivered_nor_answered_ag
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(stored.turn.is_some(), "the turn is under way");
     assert_eq!(
-        contents_of(&stored, MessageRole::User),
+        contents_of(&stored, ThreadId::line(channel.id()), MessageRole::User),
         ["hello", "and this too"],
         "and what it heard stored before its model is called"
     );
@@ -1017,7 +1090,11 @@ async fn what_a_turn_heard_before_a_restart_is_neither_delivered_nor_answered_ag
     time::sleep(Duration::from_millis(100)).await;
     assert_eq!(model.seen.lock().unwrap().len(), 3, "no other turn answers the request");
     let state = restarted.stored_agent_channel_state(agent).await.unwrap();
-    assert_eq!(contents_of(&state, MessageRole::User), ["hello", "and this too"], "heard once");
+    assert_eq!(
+        contents_of(&state, ThreadId::line(channel.id()), MessageRole::User),
+        ["hello", "and this too"],
+        "heard once"
+    );
     running.abort();
 }
 
@@ -1026,6 +1103,7 @@ async fn an_agent_takes_note_of_who_left_without_responding() {
     let model = Arc::new(Gated::saying(&["first", "second"], 1));
     let Stuck { channel, context, agent, mut events, running, .. } =
         with_an_agent(Arc::<Gated>::clone(&model), Default::default()).await;
+    let line = ThreadId::line(channel.id());
     answered(&mut events, agent).await;
 
     channel
@@ -1041,7 +1119,7 @@ async fn an_agent_takes_note_of_who_left_without_responding() {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
             if state
                 .transcript
-                .entries()
+                .entries(line)
                 .any(|node| matches!(node.entry, TranscriptEntry::ParticipantLeft { .. }))
             {
                 break state;
@@ -1051,7 +1129,7 @@ async fn an_agent_takes_note_of_who_left_without_responding() {
     })
     .await
     .expect("the agent takes note of it");
-    assert!(state.transcript.entries().any(|node| matches!(node.entry, TranscriptEntry::ParticipantLeft { participant, by, .. } if participant == context.initiator_id && by == context.initiator_id)));
+    assert!(state.transcript.entries(line).any(|node| matches!(node.entry, TranscriptEntry::ParticipantLeft { participant, by, .. } if participant == context.initiator_id && by == context.initiator_id)));
     assert!(
         matches!(channel.visible_entries(ActorId::Agent(agent)).await.last(), Some(HistoryEntry::ParticipantLeft { participant, by, .. }) if *participant == context.initiator_id && *by == context.initiator_id)
     );
@@ -1260,7 +1338,7 @@ async fn an_agent_given_something_to_read_wakes_takes_it_in_and_answers() {
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     let given: Vec<_> = stored
         .transcript
-        .entries()
+        .entries(line)
         .filter_map(|node| match &node.entry {
             TranscriptEntry::Given { message, source: None } => Some(message.clone()),
             _ => None,
@@ -1316,9 +1394,10 @@ async fn the_calls_of_a_message_dropped_on_its_way_out_are_not_run() {
         with_an_agent(Arc::new(Scripted(Mutex::new([calls].into()))), components).await;
 
     answered(&mut events, agent).await;
+    let line = ThreadId::line(channel.id());
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(stored.turn.is_none(), "the turn ended");
-    let said = stored.transcript.messages();
+    let said = stored.transcript.messages(line);
     assert!(
         said.iter().all(|m| m.tool_calls.is_empty() && m.role != MessageRole::Tool),
         "neither the calls nor their results: {said:?}"
@@ -1356,6 +1435,7 @@ async fn a_step_whose_message_is_dropped_ends_and_the_plan_goes_on() {
     let components = ComponentConfig { component_nodes: component_nodes.into() };
     let Stuck { channel, agent, mut events, running, .. } =
         with_an_agent(Arc::new(Scripted(Mutex::new(script.into()))), components).await;
+    let line = ThreadId::line(channel.id());
 
     let mut seen = Vec::new();
     time::timeout(Duration::from_secs(5), async {
@@ -1387,7 +1467,7 @@ async fn a_step_whose_message_is_dropped_ends_and_the_plan_goes_on() {
         "the first step ended with nothing said, the second went on"
     );
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
-    let said = stored.transcript.messages();
+    let said = stored.transcript.messages(line);
     let dropped = |m: &Message| {
         m.tool_calls.iter().any(|c| c.function_name == "dropped")
             || m.tool_results.iter().any(|r| r.tool_name == "dropped")
@@ -1424,8 +1504,9 @@ async fn a_call_an_emit_processor_changes_runs_as_it_changed_it() {
         with_an_agent(Arc::new(model), components).await;
 
     answered(&mut events, agent).await;
+    let line = ThreadId::line(channel.id());
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
-    let said = stored.transcript.messages();
+    let said = stored.transcript.messages(line);
     let called: Vec<_> = said
         .iter()
         .flat_map(|m| m.tool_calls.iter().map(|c| (c.function_name.clone(), c.visibility)))
@@ -1863,6 +1944,7 @@ async fn every_message_of_a_turn_carries_the_turn_its_start_announced() {
     };
     let Stuck { channel, agent, helper, mut events, running, .. } =
         with_an_agent(Arc::new(Scripted(Mutex::new(script.into()))), components).await;
+    let line = ThreadId::line(channel.id());
 
     let mut started = None;
     let mut shown = Vec::new();
@@ -1910,7 +1992,7 @@ async fn every_message_of_a_turn_carries_the_turn_its_start_announced() {
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     let (own, heard): (Vec<_>, Vec<_>) = stored
         .transcript
-        .messages()
+        .messages(line)
         .into_iter()
         .partition(|m| m.sender_id == ActorId::Agent(agent));
     assert!(
@@ -1947,6 +2029,7 @@ async fn a_turn_is_stored_with_the_step_that_comes_next() {
     };
     let Stuck { channel, agent, running, .. } =
         with_an_agent(Arc::new(Scripted(Mutex::new([calculate].into()))), components).await;
+    let line = ThreadId::line(channel.id());
 
     // What a crash now would leave: `Planning`, with the tool's result
     // in the turn - so that a resume asks the model about the result
@@ -1957,7 +2040,7 @@ async fn a_turn_is_stored_with_the_step_that_comes_next() {
             let has_result = state.turn.as_ref().is_some_and(|t| {
                 state
                     .transcript
-                    .messages()
+                    .messages(line)
                     .iter()
                     .any(|m| m.turn_id == Some(t.work.turn_id) && !m.tool_results.is_empty())
             });
@@ -2116,7 +2199,7 @@ async fn a_turn_that_reaches_the_limit_of_model_calls_is_given_up_and_may_be_ans
 
     // What its tools did stays, its end follows, and its model is told why.
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
-    let turns = given_up_turns(&stored);
+    let turns = given_up_turns(&stored, ThreadId::line(channel.id()));
     assert_eq!(turns.len(), 1);
     assert_eq!(
         turns[0].1,
@@ -2125,8 +2208,10 @@ async fn a_turn_that_reaches_the_limit_of_model_calls_is_given_up_and_may_be_ans
     );
     let results = turns[0].2.iter().filter(|m| m.role == MessageRole::Tool).count();
     assert_eq!(results, MAX_MODEL_CALLS as usize, "a result for every call");
-    let told =
-        given_next(&stored, agent).last().and_then(|m| m.content.clone()).unwrap_or_default();
+    let told = given_next(&stored, ThreadId::line(channel.id()), agent)
+        .last()
+        .and_then(|m| m.content.clone())
+        .unwrap_or_default();
     assert!(
         told.contains(
             "because it asked the model as often as one answer, or one step of a plan, may"
@@ -2207,6 +2292,7 @@ async fn a_turn_that_fails_after_a_tool_ran_keeps_what_it_said_and_the_agent_is_
     let Stuck { channel, context: _, agent, helper, mut events, running } =
         with_an_agent(Arc::new(FailsAfter(Mutex::new([calculate.clone()].into()))), components)
             .await;
+    let line = ThreadId::line(channel.id());
 
     time::timeout(Duration::from_secs(5), async {
         loop {
@@ -2226,20 +2312,23 @@ async fn a_turn_that_fails_after_a_tool_ran_keeps_what_it_said_and_the_agent_is_
     // The turn's messages stay where they were said, followed by its end
     // (issue 258); what the model saw for them can still be told.
     let seen = channel.agent_context(agent).await;
-    let turns = given_up_turns(&stored);
+    let turns = given_up_turns(&stored, ThreadId::line(channel.id()));
     assert_eq!(turns.len(), 1);
     assert!(matches!(turns[0].1, GivenUpReason::Failed { .. }));
     let roles: Vec<_> = turns[0].2.iter().map(|m| m.role).collect();
     assert_eq!(roles, [MessageRole::Assistant, MessageRole::Tool], "the call and its result");
     assert!(seen.context_of(calculate.id).await.is_ok(), "the call's context is resolved");
-    assert!(stored.transcript.messages().iter().any(|m| m.id == calculate.id), "in the transcript");
+    assert!(
+        stored.transcript.messages(line).iter().any(|m| m.id == calculate.id),
+        "in the transcript"
+    );
     assert!(
         channel.visible_messages(ActorId::Agent(agent)).await.iter().any(|m| m.id == calculate.id),
         "and in the channel's history, as the agent said it"
     );
 
     // Its model is given the call in full, and told why the turn ended.
-    let given = given_next(&stored, agent);
+    let given = given_next(&stored, ThreadId::line(channel.id()), agent);
     assert!(
         given.iter().any(|m| m
             .tool_calls
@@ -2280,10 +2369,11 @@ async fn an_agent_removed_during_a_turn_gives_it_up() {
     time::timeout(Duration::from_secs(5), async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
+            let line = ThreadId::line(channel.id());
             if state.turn.as_ref().is_some_and(|t| {
                 state
                     .transcript
-                    .messages()
+                    .messages(line)
                     .iter()
                     .any(|m| m.turn_id == Some(t.work.turn_id) && !m.tool_results.is_empty())
             }) {
@@ -2299,7 +2389,10 @@ async fn an_agent_removed_during_a_turn_gives_it_up() {
 
     let turns = time::timeout(Duration::from_secs(5), async {
         loop {
-            let turns = given_up_turns(&channel.stored_agent_channel_state(agent).await.unwrap());
+            let turns = given_up_turns(
+                &channel.stored_agent_channel_state(agent).await.unwrap(),
+                ThreadId::line(channel.id()),
+            );
             if !turns.is_empty() {
                 break turns;
             }
@@ -2312,13 +2405,14 @@ async fn an_agent_removed_during_a_turn_gives_it_up() {
     running.abort();
 }
 
-/// What the model of the agent whose state is `stored` is given next:
-/// its transcript as it stands, resolved as a turn's context is.
-fn given_next(stored: &AgentChannelState, agent: AgentId) -> Vec<Message> {
+/// What the model of the agent whose state is `stored` is given next in `thread`:
+/// the branch of its transcript as it stands, resolved as a turn's context is.
+fn given_next(stored: &AgentChannelState, thread: ThreadId, agent: AgentId) -> Vec<Message> {
     use crate::testing::catalogue;
     use caelumora_domain::context::{ContextItem, ContextRef, ContextResolver};
-    let reference = ContextRef { transcript: stored.transcript.digest(), ..ContextRef::default() };
-    ContextResolver::of(stored, &catalogue())
+    let reference =
+        ContextRef { transcript: stored.transcript.digest(thread), ..ContextRef::default() };
+    ContextResolver::of(stored, thread, &catalogue())
         .resolve(&reference, TurnId::new(), ActorId::Agent(agent))
         .expect("worded")
         .expect("resolved")
@@ -2371,10 +2465,11 @@ async fn lowering_the_channel_gives_up_a_running_turn() {
     time::timeout(Duration::from_secs(5), async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
+            let line = ThreadId::line(channel.id());
             if state.turn.as_ref().is_some_and(|t| {
                 state
                     .transcript
-                    .messages()
+                    .messages(line)
                     .iter()
                     .any(|m| m.turn_id == Some(t.work.turn_id) && !m.tool_results.is_empty())
             }) {
@@ -2395,7 +2490,7 @@ async fn lowering_the_channel_gives_up_a_running_turn() {
     assert!(told.contains("lowered"), "{told}");
     settled(&helper, ActorState::Idle).await;
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
-    let turns = given_up_turns(&stored);
+    let turns = given_up_turns(&stored, ThreadId::line(channel.id()));
     assert_eq!(turns.len(), 1);
     assert_eq!(turns[0].1, GivenUpReason::Lowered { channel: public.clone() });
     // What it said before the lowering was held by the channel: it stays,
@@ -2411,10 +2506,14 @@ async fn lowering_the_channel_gives_up_a_running_turn() {
     // The agent keeps what the turn said, but its model is given which
     // tool ran and not what it saw (issues 141, 258).
     assert!(
-        stored.transcript.messages().iter().any(|m| m.id == calculate.id),
+        stored
+            .transcript
+            .messages(ThreadId::line(channel.id()))
+            .iter()
+            .any(|m| m.id == calculate.id),
         "the record keeps it"
     );
-    let given = given_next(&stored, agent);
+    let given = given_next(&stored, ThreadId::line(channel.id()), agent);
     let call = given.iter().find(|m| m.id == calculate.id).expect("the call is given");
     assert_eq!(
         (call.tool_calls[0].function_name.as_str(), &call.tool_calls[0].arguments),
@@ -2485,6 +2584,7 @@ async fn a_cancel_ends_a_turn_waiting_for_approval_at_once() {
     let (call, components) = a_call_needing_approval();
     let Stuck { channel, context, agent, helper, mut events, running } =
         with_an_agent(Arc::new(Scripted(Mutex::new([call].into()))), components).await;
+    let line = ThreadId::line(channel.id());
     settled(&helper, ActorState::WaitingForUser).await;
 
     channel.cancel(&context, None).await.expect("permitted");
@@ -2520,7 +2620,7 @@ async fn a_cancel_ends_a_turn_waiting_for_approval_at_once() {
 
     // The call is answered as not executed (issue 148).
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
-    let last = stored.transcript.messages().pop().expect("the turn was taken over");
+    let last = stored.transcript.messages(line).pop().expect("the turn was taken over");
     let answered: Vec<_> = last.tool_results.iter().map(|r| r.status).collect();
     assert_eq!(answered, [ToolResultStatus::NotExecuted]);
 }
@@ -2763,7 +2863,7 @@ async fn a_turn_asked_for_again_while_a_tool_runs_tells_the_next_one_of_the_call
         "the tool is interrupted, and the next turn answers"
     );
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
-    let given_up = given_up_turns(&state);
+    let given_up = given_up_turns(&state, ThreadId::line(channel.id()));
     assert_eq!(given_up.len(), 1, "the turn is kept as given up");
     assert_eq!(given_up[0].1, GivenUpReason::Retried);
     assert_eq!(given_up[0].0, turn);
@@ -2771,7 +2871,7 @@ async fn a_turn_asked_for_again_while_a_tool_runs_tells_the_next_one_of_the_call
         given_up[0].2.iter().any(|m| m.tool_calls.iter().any(|c| c.function_name == "sleep")),
         "the call that ran stays"
     );
-    let told: Vec<_> = given_next(&state, agent)
+    let told: Vec<_> = given_next(&state, ThreadId::line(channel.id()), agent)
         .into_iter()
         .filter_map(|m| m.content)
         .filter(|c| c.contains("given up"))
@@ -2878,6 +2978,7 @@ async fn a_tool_call_interrupted_alone_is_answered_so_and_the_turn_goes_on() {
 #[tokio::test]
 async fn an_agent_removed_while_a_tool_runs_gives_up_its_turn_and_keeps_the_call() {
     let (Stuck { channel, context, agent, running, .. }, _) = with_an_agent_in_a_long_tool().await;
+    let line = ThreadId::line(channel.id());
 
     channel.remove_participant(&context, ActorId::Agent(agent)).await.expect("permitted");
 
@@ -2886,7 +2987,9 @@ async fn an_agent_removed_while_a_tool_runs_gives_up_its_turn_and_keeps_the_call
     let stored = time::timeout(STOP_GRACE, async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
-            if state.turn.is_none() && !given_up_turns(&state).is_empty() {
+            if state.turn.is_none()
+                && !given_up_turns(&state, ThreadId::line(channel.id())).is_empty()
+            {
                 break state;
             }
             time::sleep(Duration::from_millis(10)).await;
@@ -2894,10 +2997,10 @@ async fn an_agent_removed_while_a_tool_runs_gives_up_its_turn_and_keeps_the_call
     })
     .await
     .expect("the turn is given up before the grace runs out");
-    assert_eq!(given_up_turns(&stored)[0].1, GivenUpReason::Left);
+    assert_eq!(given_up_turns(&stored, ThreadId::line(channel.id()))[0].1, GivenUpReason::Left);
     let interrupted = stored
         .transcript
-        .messages()
+        .messages(line)
         .iter()
         .flat_map(|m| m.tool_results.clone())
         .find(|r| r.tool_name == "sleep")
@@ -2956,7 +3059,7 @@ async fn an_agent_stopped_in_a_model_call_keeps_its_turn_and_asks_again_when_its
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     assert_eq!(stored.processing_state, ActorState::Planning, "stored at the step it stood at");
     assert!(stored.turn.is_some(), "the turn is kept");
-    assert!(given_up_turns(&stored).is_empty(), "not given up");
+    assert!(given_up_turns(&stored, ThreadId::line(channel.id())).is_empty(), "not given up");
 
     let (_restarted, mut events, running) = run_again(&channel).await;
     asked(&model, 2).await;
@@ -2983,7 +3086,7 @@ async fn an_agent_stopped_while_a_tool_runs_records_the_call_as_stopped_and_goes
         ActorState::ExecutingTools,
         "the second call has no result yet"
     );
-    assert!(given_up_turns(&stored).is_empty(), "not given up");
+    assert!(given_up_turns(&stored, ThreadId::line(channel.id())).is_empty(), "not given up");
 
     let (_restarted, mut events, running) = run_again(&channel).await;
     let finished = answered(&mut events, agent).await;
@@ -3020,7 +3123,7 @@ async fn an_idle_agent_stopped_ends_at_once_where_it_stands() {
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     assert_eq!(stored.processing_state, ActorState::Idle);
     assert!(
-        stored.turn.is_none() && given_up_turns(&stored).is_empty(),
+        stored.turn.is_none() && given_up_turns(&stored, ThreadId::line(channel.id())).is_empty(),
         "nothing under way, nothing given up"
     );
 }
@@ -3035,7 +3138,10 @@ async fn an_agent_whose_channel_is_deleted_while_a_tool_runs_gives_its_turn_up()
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(stored.turn.is_none(), "the turn is not kept");
     assert_eq!(
-        given_up_turns(&stored).iter().map(|(_, reason, _)| reason.clone()).collect::<Vec<_>>(),
+        given_up_turns(&stored, ThreadId::line(channel.id()))
+            .iter()
+            .map(|(_, reason, _)| reason.clone())
+            .collect::<Vec<_>>(),
         [GivenUpReason::Left]
     );
     // Then its task is aborted, as deleting the channel does (issue 593).
@@ -3056,7 +3162,9 @@ async fn an_agent_removed_while_waiting_for_approval_gives_up_its_turn() {
     let stored = time::timeout(Duration::from_secs(5), async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
-            if state.turn.is_none() && !given_up_turns(&state).is_empty() {
+            if state.turn.is_none()
+                && !given_up_turns(&state, ThreadId::line(channel.id())).is_empty()
+            {
                 break state;
             }
             time::sleep(Duration::from_millis(10)).await;
@@ -3064,7 +3172,7 @@ async fn an_agent_removed_while_waiting_for_approval_gives_up_its_turn() {
     })
     .await
     .expect("the turn is given up");
-    assert_eq!(given_up_turns(&stored)[0].1, GivenUpReason::Left);
+    assert_eq!(given_up_turns(&stored, ThreadId::line(channel.id()))[0].1, GivenUpReason::Left);
     // The request it waited for is withdrawn, as for any turn given up
     // (issue 262).
     time::timeout(Duration::from_secs(5), async {
@@ -3217,6 +3325,7 @@ async fn a_user_learns_that_a_turn_cancelled_before_it_said_anything_ended() {
 async fn a_removed_agent_gives_its_turn_up_says_so_and_leaves_an_idle_state_behind() {
     let Stuck { channel, context, agent, helper, mut events, running } =
         stuck_in_a_model_call().await;
+    let line = ThreadId::line(channel.id());
 
     channel.remove_participant(&context, ActorId::Agent(agent)).await.expect("permitted");
 
@@ -3237,7 +3346,7 @@ async fn a_removed_agent_gives_its_turn_up_says_so_and_leaves_an_idle_state_behi
     .expect("the idle state is stored");
     assert!(stored.turn.is_none(), "the turn was abandoned, not stored");
     assert!(
-        stored.transcript.messages().iter().all(|m| m.sender_id != ActorId::Agent(agent)),
+        stored.transcript.messages(line).iter().all(|m| m.sender_id != ActorId::Agent(agent)),
         "nothing of it was recorded"
     );
     let farewell = time::timeout(Duration::from_secs(5), async {
@@ -3268,6 +3377,7 @@ async fn an_agent_that_starts_hears_another_agents_answer_as_its_words_without_t
     let (channel, _, agent, _) =
         agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(NeverAnswers), Default::default())
             .await;
+    let line = ThreadId::line(channel.id());
     let other = ActorId::Agent(AgentId::new());
     let call = ToolCall {
         id: Some("1".to_string()),
@@ -3302,7 +3412,7 @@ async fn an_agent_that_starts_hears_another_agents_answer_as_its_words_without_t
     channel.record_said(vec![answer.clone(), tool.clone()]).await;
     let state = channel.run_until(agent, |state| state.last_message == Some(answer.id)).await;
 
-    let heard = state.transcript.messages();
+    let heard = state.transcript.messages(line);
     assert_eq!(heard.len(), 1, "nothing of the tool message: {heard:?}");
     assert_eq!(
         (heard[0].id, heard[0].role, heard[0].content.as_deref()),
@@ -3328,6 +3438,7 @@ async fn an_agent_hears_a_person_s_call_with_its_result() {
     let (channel, context, agent, _) =
         agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(NeverAnswers), Default::default())
             .await;
+    let line = ThreadId::line(channel.id());
     let call = ToolCall {
         id: Some("1".to_string()),
         arguments: serde_json::json!({ "command": "ls" }),
@@ -3351,7 +3462,7 @@ async fn an_agent_hears_a_person_s_call_with_its_result() {
     channel.record_said(vec![made.clone()]).await;
     let state = channel.run_until(agent, |state| state.last_message == Some(made.id)).await;
 
-    let heard = state.transcript.messages();
+    let heard = state.transcript.messages(line);
     assert_eq!(heard.len(), 1, "{heard:?}");
     assert_eq!(
         (heard[0].id, heard[0].tool_calls.len(), heard[0].tool_results.len()),
@@ -3368,6 +3479,7 @@ async fn an_agent_that_starts_takes_in_what_it_missed_as_what_it_hears() {
     };
     let (channel, context, agent, _) =
         agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(NeverAnswers), components).await;
+    let line = ThreadId::line(channel.id());
     let said = |text: &str| Message {
         id: MessageId::new(),
         role: MessageRole::User,
@@ -3388,7 +3500,7 @@ async fn an_agent_that_starts_takes_in_what_it_missed_as_what_it_hears() {
         "the channel's history holds all it missed, for it"
     );
     assert_eq!(
-        contents(state.transcript.messages()),
+        contents(state.transcript.messages(line)),
         ["hello"],
         "its transcript what passed its processors"
     );
@@ -3407,6 +3519,7 @@ async fn all_an_agent_was_offered_is_in_its_channels_history_and_what_passes_its
     };
     let Stuck { channel, context, agent, helper, mut events, running } =
         with_an_agent(Arc::new(Scripted(Mutex::new([hi].into()))), components).await;
+    let line = ThreadId::line(channel.id());
     answered(&mut events, agent).await;
     settled(&helper, ActorState::Idle).await;
 
@@ -3429,10 +3542,10 @@ async fn all_an_agent_was_offered_is_in_its_channels_history_and_what_passes_its
         "the channel's history holds all it was offered, for it"
     );
     assert!(
-        !contents(state.transcript.messages()).contains(&"the secret is 42".to_string()),
+        !contents(state.transcript.messages(line)).contains(&"the secret is 42".to_string()),
         "its transcript only what passed"
     );
-    assert!(contents(state.transcript.messages()).contains(&"hello".to_string()));
+    assert!(contents(state.transcript.messages(line)).contains(&"hello".to_string()));
     running.abort();
 }
 

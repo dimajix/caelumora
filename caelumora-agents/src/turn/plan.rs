@@ -273,6 +273,7 @@ mod tests {
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::actor::EventContext;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::context::ModelProfile;
     use caelumora_domain::context::{ContextItem, Placement, PromptAt, PromptPart};
@@ -318,11 +319,14 @@ mod tests {
     #[test]
     fn advance_plan_moves_to_the_next_step_when_one_remains() {
         let mut state = AgentChannelState::default();
-        state.transcript.push(Message {
-            role: MessageRole::User,
-            content: Some("do it".to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
-        });
+        state.transcript.push(
+            ThreadId::default(),
+            Message {
+                role: MessageRole::User,
+                content: Some("do it".to_string()),
+                ..Message::new(Classification::CHANNEL_DEFAULT)
+            },
+        );
         let mut turn = Turn::begun(AgentId::default(), &mut state);
         turn.set_context(Vec::new(), Vec::new());
         turn.set_plan(plan_of(&["first", "second"]));
@@ -334,7 +338,7 @@ mod tests {
             turn.situation()
                 .agent_channel_state()
                 .transcript
-                .messages()
+                .messages(ThreadId::default())
                 .iter()
                 .all(|m| m.turn_id != Some(turn.turn_id())),
             "the instruction is no message of the turn"
@@ -410,15 +414,17 @@ mod tests {
             ..Message::new(Classification::CHANNEL_DEFAULT)
         };
         let mut state = AgentChannelState::default();
-        state
-            .transcript
-            .push(Message { sender_id: ActorId::None, ..text(MessageRole::User, "do it") });
+        state.transcript.push(
+            ThreadId::default(),
+            Message { sender_id: ActorId::None, ..text(MessageRole::User, "do it") },
+        );
         let step = text(MessageRole::Assistant, "step done");
         let answer = text(MessageRole::Assistant, "all done");
         let keeps_system =
             ModelProfile { system_messages: SystemMessages::Anywhere, ..ModelProfile::default() };
         let answer = {
             state.begin_turn(
+                ThreadId::default(),
                 Work::new(
                     EventContext::default(),
                     None,
@@ -481,12 +487,13 @@ mod tests {
             "each instruction where it was given"
         );
         assert_eq!(
-            state.transcript.messages().len(),
+            state.transcript.messages(ThreadId::default()).len(),
             3,
             "the instructions are not in the transcript"
         );
 
         state.begin_turn(
+            ThreadId::default(),
             Work::new(EventContext::default(), None, Classification::default(), Default::default())
                 .given_as(keeps_system),
         );
@@ -558,11 +565,14 @@ mod tests {
     #[test]
     fn a_plan_whose_instructions_were_replaced_is_named_again_where_its_step_stood() {
         let mut state = AgentChannelState::default();
-        state.transcript.push(Message {
-            role: MessageRole::User,
-            content: Some("do it".to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
-        });
+        state.transcript.push(
+            ThreadId::default(),
+            Message {
+                role: MessageRole::User,
+                content: Some("do it".to_string()),
+                ..Message::new(Classification::CHANNEL_DEFAULT)
+            },
+        );
         let mut turn = Turn::begun(AgentId::default(), &mut state);
         turn.set_context(Vec::new(), Vec::new());
         turn.set_plan(plan_of(&["first", "second"]));
@@ -574,7 +584,7 @@ mod tests {
             .situation()
             .agent_channel_state()
             .transcript
-            .entries()
+            .entries(ThreadId::default())
             .next()
             .map(|node| node.digest);
         turn.compact(vec![(message("summary"), None)], at_first).expect("compacted");
@@ -590,7 +600,7 @@ mod tests {
             .situation()
             .agent_channel_state()
             .transcript
-            .entries()
+            .entries(ThreadId::default())
             .rev()
             .find(|node| node.entry.message().is_some())
             .map(|node| node.digest);

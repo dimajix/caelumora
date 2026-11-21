@@ -154,9 +154,12 @@ async fn executed(
     params: Value,
 ) -> ToolResult<ToolOutput> {
     let mut state = AgentChannelState::default();
-    state.begin_turn(Work::new(Default::default(), None, Default::default(), Default::default()));
-    let mut turn =
-        Turn::of(&mut state, detached_actor_runtime(AgentId::default())).expect("a turn was begun");
+    let runtime = detached_actor_runtime(AgentId::default());
+    state.begin_turn(
+        runtime.thread_id(),
+        Work::new(Default::default(), None, Default::default(), Default::default()),
+    );
+    let mut turn = Turn::of(&mut state, runtime).expect("a turn was begun");
     tool_named(provider, name).execute(&params, None, &mut turn).await
 }
 

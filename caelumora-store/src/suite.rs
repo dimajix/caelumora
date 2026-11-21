@@ -1031,7 +1031,7 @@ pub async fn state_store_behaves(store: &dyn StateStore) {
         content: Some("hello".to_string()),
         ..Message::new(Classification::CHANNEL_DEFAULT)
     };
-    talking.transcript.extend(vec![hello]);
+    talking.transcript.extend(ThreadId::default(), vec![hello]);
     store
         .put_agent_channel_state(remote_agent, channel, &mut talking)
         .await
@@ -1047,19 +1047,27 @@ pub async fn state_store_behaves(store: &dyn StateStore) {
         serde_json::to_value(stored.changes()).expect("json"),
         "what was put is marked stored: nothing pending beyond what a loaded state has"
     );
-    assert_eq!(stored.transcript.digest(), talking.transcript.digest(), "with its transcript");
+    assert_eq!(
+        stored.transcript.digest(ThreadId::default()),
+        talking.transcript.digest(ThreadId::default()),
+        "with its transcript"
+    );
     // Stored in a second put, as what changed since the first (issue 376).
-    talking.transcript.extend(vec![Message {
-        content: Some("and more".to_string()),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
-    }]);
+    talking.transcript.extend(
+        ThreadId::default(),
+        vec![Message {
+            content: Some("and more".to_string()),
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        }],
+    );
     store
         .put_agent_channel_state(remote_agent, channel, &mut talking)
         .await
         .expect("put agent channel state");
     let stored = store.get_agent_channel_state(remote_agent, channel).await.expect("get");
     let positions = |state: &AgentChannelState| {
-        state.transcript.all_entries().map(|node| (node.seq, node.digest)).collect::<Vec<_>>()
+        let branch = state.transcript.entries(ThreadId::default());
+        branch.map(|node| (node.seq, node.digest)).collect::<Vec<_>>()
     };
     assert_eq!(positions(&stored), positions(&talking), "every entry where it was added");
     assert_eq!(stored.transcript.end().get(), 2);
@@ -1741,13 +1749,13 @@ pub async fn transcript_store_behaves(states: &dyn StateStore, transcripts: &dyn
 
     let mut state = AgentChannelState::default();
     for n in 1..=300 {
-        state.transcript.push(make_message(id(n)));
+        state.transcript.push(ThreadId::default(), make_message(id(n)));
     }
     assert!(state
         .transcript
         .modify(Message { content: Some("changed".to_string()), ..make_message(id(1)) }));
-    let first = state.transcript.start_anew().expect("a branch");
-    state.transcript.push(make_message(id(301)));
+    let first = state.transcript.start_anew(ThreadId::default()).expect("a branch");
+    state.transcript.push(ThreadId::default(), make_message(id(301)));
     let mut sent_again = state.clone();
     states.put_agent_channel_state(agent, channel, &mut state).await.expect("put");
     assert!(state.transcript.changes().is_none(), "the transcript is marked stored");
@@ -1756,8 +1764,8 @@ pub async fn transcript_store_behaves(states: &dyn StateStore, transcripts: &dyn
     states.put_agent_channel_state(agent, channel, &mut sent_again).await.expect("sent again");
     let kept = states.get_agent_channel_state(agent, channel).await.expect("get");
     assert_eq!(
-        (kept.transcript.end(), kept.transcript.all_entries().len()),
-        (state.transcript.end(), state.transcript.all_entries().len()),
+        (kept.transcript.end(), kept.transcript.digest(ThreadId::default())),
+        (state.transcript.end(), state.transcript.digest(ThreadId::default())),
         "nothing taken in twice"
     );
 
@@ -1769,9 +1777,14 @@ pub async fn transcript_store_behaves(states: &dyn StateStore, transcripts: &dyn
         "the path to a digest on an older branch"
     );
     assert_eq!(
-        seqs(transcripts.path(agent, channel, state.transcript.digest().unwrap()).await.unwrap()),
+        seqs(
+            transcripts
+                .path(agent, channel, state.transcript.digest(ThreadId::default()).unwrap())
+                .await
+                .unwrap()
+        ),
         Some(vec![301]),
-        "on the active one"
+        "on the branch of the thread"
     );
     assert_eq!(
         transcripts.message(agent, channel, id(1)).await.unwrap().and_then(|m| m.content),
@@ -1784,32 +1797,28 @@ pub async fn transcript_store_behaves(states: &dyn StateStore, transcripts: &dyn
 
     let loaded = states.get_agent_channel_state(agent, channel).await.expect("get");
     assert_eq!(
-        (loaded.transcript.digest(), loaded.transcript.end().get(), loaded.transcript.base().get()),
-        (state.transcript.digest(), state.transcript.end().get(), 0),
+        (loaded.transcript.digest(ThreadId::default()), loaded.transcript.end().get()),
+        (state.transcript.digest(ThreadId::default()), state.transcript.end().get()),
         "the transcript comes back whole"
     );
 
-    // Held from a position on, a root given again is added a second time.
+    // What no head reaches is not loaded: a root given again is added a second time.
     let end = state.transcript.end();
-    state.transcript.start_anew();
-    state.transcript_from = end;
-    states
-        .put_agent_channel_state(agent, channel, &mut state)
-        .await
-        .expect("put where the window begins");
+    state.transcript.start_anew(ThreadId::default());
+    states.put_agent_channel_state(agent, channel, &mut state).await.expect("put begun anew");
     let mut window = states.get_agent_channel_state(agent, channel).await.expect("get");
     assert_eq!(
-        (window.transcript.base(), window.transcript.is_empty()),
-        (end, true),
-        "from where the state holds it"
+        (window.transcript.end(), window.transcript.digest(ThreadId::default())),
+        (end, None),
+        "nothing its heads reach, and where the next entry goes"
     );
     let root = state
         .transcript
         .prefix(&first)
         .and_then(|path| path.first().map(|node| node.digest))
         .expect("a root");
-    window.transcript.push(make_message(id(1)));
-    assert_eq!(window.transcript.digest(), Some(root), "the same digest");
+    window.transcript.push(ThreadId::default(), make_message(id(1)));
+    assert_eq!(window.transcript.digest(ThreadId::default()), Some(root), "the same digest");
     states
         .put_agent_channel_state(agent, channel, &mut window)
         .await
@@ -1823,6 +1832,41 @@ pub async fn transcript_store_behaves(states: &dyn StateStore, transcripts: &dyn
     transcripts_go_with_their_states(states, transcripts, agent, channel, root).await;
 }
 
+/// A transcript with a branch for every thread (issue 602): the head of each written with the
+/// put and its branch loaded back from it, read back however far the others went on, and what no
+/// head reaches loaded with none.
+pub async fn transcripts_keep_a_branch_per_thread(states: &dyn StateStore) {
+    use caelumora_domain::message::testing::{id, make_message};
+    let (channel, agent) = (ChannelId::new(), AgentId::new());
+    let (line, side) = (ThreadId::line(channel), ThreadId::new());
+    let mut state = AgentChannelState::default();
+    state.transcript.push(line, make_message(id(1)));
+    state.transcript.push(side, make_message(id(1)));
+    state.transcript.push(side, make_message(id(2)));
+    for n in 3..=600 {
+        state.transcript.push(line, make_message(id(n)));
+    }
+    let left = state.transcript.start_anew(side).expect("what it held");
+    state.transcript.push(side, make_message(id(601)));
+    states.put_agent_channel_state(agent, channel, &mut state).await.expect("put");
+
+    let loaded = states.get_agent_channel_state(agent, channel).await.expect("get");
+    let ids = |state: &AgentChannelState, thread| {
+        state.transcript.messages(thread).iter().map(|m| m.id).collect::<Vec<_>>()
+    };
+    assert_eq!(ids(&loaded, line), ids(&state, line), "the branch of the line, whole");
+    assert_eq!(ids(&loaded, side), [id(601)], "the other's from its root on");
+    assert_eq!(loaded.transcript.end(), state.transcript.end(), "and where the next goes");
+    assert!(loaded.transcript.prefix(&left).is_none(), "what no head reaches is not loaded");
+
+    let mut going_on = loaded;
+    going_on.transcript.push(side, make_message(id(602)));
+    states.put_agent_channel_state(agent, channel, &mut going_on).await.expect("put");
+    let again = states.get_agent_channel_state(agent, channel).await.expect("get");
+    assert_eq!(ids(&again, side), [id(601), id(602)], "a head moved on is written with the put");
+    assert_eq!(ids(&again, line), ids(&state, line), "the other's stays where it was");
+}
+
 /// The transcript of `agent` in `channel`, which holds the entry `root`: gone with the channel's
 /// state, and with the agent's states.
 async fn transcripts_go_with_their_states(
@@ -1834,7 +1878,7 @@ async fn transcripts_go_with_their_states(
 ) {
     use caelumora_domain::message::testing::{id, make_message};
     let mut other = AgentChannelState::default();
-    other.transcript.push(make_message(id(1)));
+    other.transcript.push(ThreadId::default(), make_message(id(1)));
     states.put_agent_channel_state(agent, ChannelId::new(), &mut other).await.expect("put");
     states.delete_channel_state(channel).await.expect("delete");
     assert!(
@@ -1846,7 +1890,7 @@ async fn transcripts_go_with_their_states(
         .await
         .expect("put");
     let mut again = AgentChannelState::default();
-    again.transcript.push(make_message(id(2)));
+    again.transcript.push(ThreadId::default(), make_message(id(2)));
     states.put_agent_channel_state(agent, channel, &mut again).await.expect("put");
     states.delete_agent_channel_states(agent).await.expect("delete");
     assert!(
@@ -1872,12 +1916,15 @@ pub async fn given_store_behaves(states: &dyn StateStore, transcripts: &dyn Tran
     states.put_agent_channel_state(agent, channel, &mut state).await.expect("put");
     assert!(state.prompts.changes().is_empty(), "the texts are marked stored");
 
-    state.begin_turn(Work::new(
-        EventContext::default(),
-        None,
-        Classification::CHANNEL_DEFAULT,
-        Default::default(),
-    ));
+    state.begin_turn(
+        ThreadId::default(),
+        Work::new(
+            EventContext::default(),
+            None,
+            Classification::CHANNEL_DEFAULT,
+            Default::default(),
+        ),
+    );
     state.offer_tools(sets.clone());
     let system =
         state.keep_prompt(MessageRole::System, "system".to_string(), PromptAt::Start, None);

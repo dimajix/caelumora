@@ -99,7 +99,7 @@ fn framed(
 fn before_the_input(situation: &Situation<'_>) -> PromptAt {
     let transcript = &situation.agent_channel_state().transcript;
     let mut messages = transcript
-        .entries()
+        .entries(situation.branch_thread_id())
         .rev()
         .filter_map(|n| n.entry.message().map(|m| (n.digest, n.entry.part_of(), m)))
         .skip_while(|(_, part, _)| part.is_some())
@@ -154,6 +154,7 @@ mod tests {
     use crate::turn::Turn;
     use anyhow::Result;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::component::ComponentFailPolicy;
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::message::{Message, MessageId};
@@ -272,7 +273,7 @@ mod tests {
         earlier.role = MessageRole::User;
         let mut question = message("question");
         question.role = MessageRole::User;
-        agent_channel_state.perceive(vec![earlier, question]);
+        agent_channel_state.perceive(ThreadId::default(), vec![earlier, question]);
         let mut turn = Turn::begun(agent_id, &mut agent_channel_state);
         assemble(&provider, &mut turn).await.unwrap();
         assert_eq!(
@@ -281,7 +282,7 @@ mod tests {
             "the system prompt first, the notes before the turn's input"
         );
         assert_eq!(
-            turn.situation().agent_channel_state().transcript.messages().len(),
+            turn.situation().agent_channel_state().transcript.messages(ThreadId::default()).len(),
             2,
             "prompt parts are never stored in the context"
         );
@@ -289,7 +290,7 @@ mod tests {
         // A turn without new input - the newest message is the agent's own.
         let mut own = message("my answer");
         own.sender_id = ActorId::Agent(agent_id);
-        agent_channel_state.perceive(vec![own]);
+        agent_channel_state.perceive(ThreadId::default(), vec![own]);
         let mut turn = Turn::begun(agent_id, &mut agent_channel_state);
         assemble(&provider, &mut turn).await.unwrap();
         assert_eq!(
@@ -344,7 +345,7 @@ mod tests {
             prompt_providers: vec![at_end("[Time]\nnow"), at_end("[Why]\nasked")],
         };
         let mut agent_channel_state = AgentChannelState::default();
-        agent_channel_state.transcript.push(message("hello"));
+        agent_channel_state.transcript.push(ThreadId::default(), message("hello"));
         let turn = Turn::begun(AgentId::new(), &mut agent_channel_state);
         let (parts, _) = provider.current_context(&turn.situation()).await.unwrap();
         let placed: Vec<_> = parts.iter().map(|p| p.placement.clone()).collect();
@@ -364,15 +365,15 @@ mod tests {
         let mut agent_channel_state = AgentChannelState::default();
         let mut question = message("question");
         question.role = MessageRole::User;
-        agent_channel_state.perceive(vec![question]);
-        agent_channel_state.begin_turn(Default::default());
+        agent_channel_state.perceive(ThreadId::default(), vec![question]);
+        agent_channel_state.begin_turn(ThreadId::default(), Default::default());
         let rules = Message {
             sender_id: ActorId::Agent(agent_id),
             role: MessageRole::System,
             classification: Classification::PUBLIC,
             ..message("[Rules]\nBe brief.")
         };
-        agent_channel_state.give_parts(vec![("rules".to_string(), rules)]);
+        agent_channel_state.give_parts(ThreadId::default(), vec![("rules".to_string(), rules)]);
         agent_channel_state.turn = None;
 
         let provider = TurnContextProvider {

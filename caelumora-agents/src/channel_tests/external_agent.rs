@@ -17,6 +17,7 @@ use caelumora_domain::agent::{
 };
 use caelumora_domain::chain::Position;
 use caelumora_domain::channel::testing::{founded, make_channel};
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::channel::{Channel, ChannelId, HistoryAccess, Participant};
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::Classification;
@@ -163,6 +164,7 @@ async fn an_external_agent_that_starts_takes_in_what_it_missed_without_its_own()
     let remote = Arc::new(ScriptedExternalAgent::default());
     let (channel, context, agent, _) =
         external_channel(remote, external_components(), |_, _| None).await.unwrap();
+    let line = ThreadId::line(channel.id());
     let message = |sender: ActorId, text: &str| Message {
         id: MessageId::new(),
         role: MessageRole::User,
@@ -183,7 +185,7 @@ async fn an_external_agent_that_starts_takes_in_what_it_missed_without_its_own()
         .await;
     let state = channel.run_until(agent, |state| state.last_message == Some(three.id)).await;
     let kept: Vec<_> =
-        state.transcript.messages().into_iter().map(|m| m.content.unwrap()).collect();
+        state.transcript.messages(line).into_iter().map(|m| m.content.unwrap()).collect();
     assert_eq!(kept, ["one", "two", "three"], "what it missed, without its own");
 }
 
@@ -330,6 +332,7 @@ async fn an_external_agent_is_given_what_was_said_since_it_was_last_asked_and_an
     );
     let Stuck { channel, context, agent, mut events, running, .. } =
         with_an_external_agent(Arc::clone(&remote)).await;
+    let line = ThreadId::line(channel.id());
 
     let first = answered(&mut events, agent).await;
     assert_eq!(first.len(), 1);
@@ -385,7 +388,7 @@ async fn an_external_agent_is_given_what_was_said_since_it_was_last_asked_and_an
         vec!["hello", "How are you?"],
         "what the remote agent was given, on whichever branch"
     );
-    assert!(state.transcript.messages().is_empty(), "all of it sent: nothing to give next");
+    assert!(state.transcript.messages(line).is_empty(), "all of it sent: nothing to give next");
     // The context of each answer is what was given in its call (issue 205).
     assert_eq!(
         given_for(&channel, agent, &first[0]).await,
@@ -1101,18 +1104,20 @@ async fn after_a_restart_an_external_agent_sends_what_it_heard_but_had_not_sent(
         content: Some(text.to_string()),
         ..Message::new(Classification::CHANNEL_DEFAULT)
     };
-    let mut stored = AgentChannelState::default();
-    stored.perceive(vec![said("sent before")]);
-    stored.transcript.start_anew();
-    stored.perceive(vec![said("heard, then the crash")]);
-    stored.heard = after_founding();
+    let stored = |_: AgentId, channel: ChannelId| {
+        let line = ThreadId::line(channel);
+        let mut stored = AgentChannelState::default();
+        stored.perceive(line, vec![said("sent before")]);
+        stored.transcript.start_anew(line);
+        stored.perceive(line, vec![said("heard, then the crash")]);
+        stored.heard = after_founding();
+        Some(stored)
+    };
     let remote = Arc::new(ScriptedExternalAgent::answering(vec![vec![
         Ok(ExternalEvent::Message("Noted.".to_string())),
         Ok(ExternalEvent::Completed),
     ]]));
-    let built = external_channel(Arc::clone(&remote), external_components(), |_, _| Some(stored))
-        .await
-        .unwrap();
+    let built = external_channel(Arc::clone(&remote), external_components(), stored).await.unwrap();
     let Stuck { agent, mut events, running, .. } = start(built).await;
 
     answered(&mut events, agent).await;
@@ -1638,6 +1643,7 @@ async fn a_task_is_stored_as_soon_as_it_is_begun() {
     )]]));
     let Stuck { channel, context, agent, running, .. } =
         with_an_external_agent(Arc::clone(&remote)).await;
+    let line = ThreadId::line(channel.id());
     let alice = alice_of(&context);
 
     let state = time::timeout(Duration::from_secs(5), async {
@@ -1656,17 +1662,16 @@ async fn a_task_is_stored_as_soon_as_it_is_begun() {
         vec![(task("t-1"), OpenTaskState::Working)]
     );
     assert!(
-        state.transcript.messages().is_empty(),
+        state.transcript.messages(line).is_empty(),
         "what it was given for it is sent: a restart gives nothing twice"
     );
     let work = state.remote.work_of(&task("t-1")).expect("with the work it is");
-    let given = state
-        .transcript
-        .prefix(&work.context.transcript.expect("with what it was given for it"))
-        .unwrap();
+    assert!(work.context.transcript.is_some(), "with what it was given for it");
+    let sent = remote.sent.lock().unwrap().clone();
     assert_eq!(
-        given.iter().filter_map(|e| e.entry.message()?.content.clone()).collect::<Vec<_>>(),
-        ["hello"]
+        sent[0].1.said.last().map(|s| s.text.as_str()),
+        Some("hello"),
+        "which was sent, after who joined: a branch no head reaches is the store's (issue 602)"
     );
     let sent_as = remote.called_as()[0].1.clone();
     assert_eq!(

@@ -496,14 +496,12 @@ mod tests {
     /// A turn of `agent` under way in `state`, through the runtime of its actor under the
     /// ownership policy, which builds the context it acts in (issue 516).
     fn turn_of(agent: AgentId, state: &mut AgentChannelState) -> Turn<'_> {
-        state.begin_turn(Work::new(
-            Default::default(),
-            None,
-            Default::default(),
-            Default::default(),
-        ));
-        let runtime = owned_runtime_of(agent);
-        Turn::of(state, agent_runtime(runtime)).expect("a turn was begun")
+        let runtime = agent_runtime(owned_runtime_of(agent));
+        state.begin_turn(
+            runtime.thread_id(),
+            Work::new(Default::default(), None, Default::default(), Default::default()),
+        );
+        Turn::of(state, runtime).expect("a turn was begun")
     }
 
     fn note(id: u32, text: &str) -> Note {

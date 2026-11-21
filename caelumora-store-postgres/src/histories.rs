@@ -71,7 +71,7 @@ pub(crate) async fn append(
 ) -> StoreResult<()> {
     let Some(changes) = history.changes() else { return Ok(()) };
     let (key, name) = key(channel);
-    let added = HISTORIES.append(conn, &key, &name, changes).await?;
+    let added = HISTORIES.append(conn, &key, &name, changes.entries, changes.head).await?;
     if added.is_empty() {
         return Ok(());
     }

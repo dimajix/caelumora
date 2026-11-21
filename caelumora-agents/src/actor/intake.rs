@@ -12,23 +12,24 @@ use caelumora_api::logging::envelope_span;
 use caelumora_api::transport::EventReceiver;
 use caelumora_domain::actor::{ActorEvent, ActorId, Envelope, Pick};
 use caelumora_domain::agent::{AgentChannelState, HearsFrom};
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::message::Message;
 use caelumora_domain::transcript::TranscriptEntry;
 use tracing::{debug, trace, warn, Instrument};
 
 impl AgentBody {
-    /// Takes what others said, `heard`, into the agent's `state` (issues
-    /// 196, 206, 224), the same for both kinds of agent and every way in:
-    /// what it hears of it - `Message::as_heard` - as it passes its perceive
-    /// processors, into its transcript. A failing stage is logged and leaves
-    /// the transcript as it was: what was heard stays in the channel's
-    /// history, and is not offered again.
+    /// Takes what others said, `heard`, into the agent's `state` (issues 196,
+    /// 206, 224), the same for both kinds of agent and every way in: what it
+    /// hears of it - `Message::as_heard` - as it passes its perceive
+    /// processors, onto the branch of `thread` in its transcript. A failing
+    /// stage is logged and leaves the transcript as it was: what was heard
+    /// stays in the channel's history, and is not offered again.
     ///
     /// What is heard is never the agent's own: the channel delivers nothing
     /// back to its sender (`ChannelLoop::route_event_impl`), live or from its
     /// history, and every message an envelope carries is its sender's
     /// (`OriginEventSender`); what a delegate gives it to read is not heard but given.
-    async fn perceive(&self, state: &mut AgentChannelState, heard: Vec<Message>) {
+    async fn perceive(&self, state: &mut AgentChannelState, thread: ThreadId, heard: Vec<Message>) {
         let Some(last) = heard.last() else {
             return;
         };
@@ -41,14 +42,14 @@ impl AgentBody {
                 Vec::new()
             }
         };
-        state.perceive(perceived);
+        state.perceive(thread, perceived);
     }
 
     /// Takes in that a message of another reads as `modified` from now on
     /// (issue 234), the same for both kinds of agent - never its own, as
     /// nothing heard is (`perceive`): as the agent hears it -
     /// `Message::as_heard`, through its perceive processors, as everything
-    /// heard - into its transcript, if the message is on its active path,
+    /// heard - into its transcript, if the message is on a branch of it,
     /// as what its processors made of it under the message's id. Where nothing is left
     /// under it, or the stage fails, the message is taken back there: the
     /// version given before does not stand any more. Returns the change the
@@ -222,10 +223,12 @@ impl AgentBody {
     /// person (`AgentActor::handle_waiting_for_user`, issue 482): what others said is perceived as
     /// it comes (`perceive`), and so is a message modified or taken back since (issue 234); a
     /// reclassification is recorded as it is (issue 239), in the transcript where it holds the
-    /// message on its active path, and so is who joined or left (issue 408); what a delegate gives
+    /// message on a branch, and so is who joined or left (issue 408); what a delegate gives
     /// it to read is what it was given (`AgentChannelState::given`, issue 557). A modification or
     /// revocation the transcript did not take is handed over (`AgentBody::hand_over`, issue 236),
-    /// as the agent hears it. Returns any other event, for the caller to handle.
+    /// as the agent hears it. What it appends goes on the branch of the one thread the agent takes
+    /// part in (`ActorRuntime::thread_id`, issue 602), whatever thread the envelope names. Returns
+    /// any other event, for the caller to handle.
     pub(super) async fn take_in_said(
         &self,
         state: &mut AgentChannelState,
@@ -234,7 +237,7 @@ impl AgentBody {
         match event.event {
             ActorEvent::CompleteMessageGenerated(message) => {
                 trace!("Heard {:?}", message.content);
-                self.perceive(state, vec![message]).await;
+                self.perceive(state, self.runtime.thread_id(), vec![message]).await;
             }
             ActorEvent::MessageModified(modified) => {
                 if let Some(change) = self.take_in_modified(state, modified).await {
@@ -257,13 +260,12 @@ impl AgentBody {
             // Given to read by a delegate (issue 557), as a skill loaded for it is given: its giver
             // is the message's sender, and the request to respond follows it.
             ActorEvent::GivenToRead { message, .. } => {
-                state.given(message, None);
+                state.given(self.runtime.thread_id(), message, None);
             }
-            // Who joined or left (issue 408): noted where it came, asking
-            // nothing of the agent.
+            // Who joined or left (issue 408): noted on the agent's branch, asking nothing of it.
             ActorEvent::ParticipantJoined { .. } | ActorEvent::ParticipantLeft { .. } => {
                 if let Some(entry) = event.announced() {
-                    state.note_announced(entry);
+                    state.note_announced(self.runtime.thread_id(), entry);
                 }
             }
             _ => return Some(event),
@@ -318,6 +320,7 @@ mod tests {
     use caelumora_domain::actor::{ActorId, EventContext, RequestReason};
     use caelumora_domain::agent::{HearsDuringTurn, OthersWords};
     use caelumora_domain::chain::Position;
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::component::ComponentFailPolicy;
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::message::{MessageId, MessageRole};
@@ -363,21 +366,22 @@ mod tests {
         let body = AgentBody::detached(Vec::new());
 
         let mut state = AgentChannelState::default();
-        body.perceive(&mut state, vec![first.clone()]).await;
+        body.perceive(&mut state, ThreadId::default(), vec![first.clone()]).await;
         assert_eq!(
-            ids(state.transcript.messages()),
+            ids(state.transcript.messages(ThreadId::default())),
             vec![first.id],
             "never sent anything: what others said"
         );
-        state.transcript.start_anew();
-        body.perceive(&mut state, vec![empty.clone(), step.clone(), second.clone()]).await;
+        state.transcript.start_anew(ThreadId::default());
+        let heard = vec![empty.clone(), step.clone(), second.clone()];
+        body.perceive(&mut state, ThreadId::default(), heard).await;
         assert_eq!(
-            ids(state.transcript.messages()),
+            ids(state.transcript.messages(ThreadId::default())),
             vec![second.id],
             "after what was sent, with text"
         );
-        state.transcript.start_anew();
-        assert!(state.transcript.messages().is_empty(), "nothing new");
+        state.transcript.start_anew(ThreadId::default());
+        assert!(state.transcript.messages(ThreadId::default()).is_empty(), "nothing new");
     }
 
     #[tokio::test]
@@ -402,7 +406,7 @@ mod tests {
 
         let request = body.take_in(&mut state, heard("one"), &mut rx).await.request;
         assert_eq!(
-            texts(&state.transcript.messages()),
+            texts(&state.transcript.messages(ThreadId::default())),
             ["one", "two", "three"],
             "all of it, in order, also what came after the last request"
         );
@@ -415,7 +419,10 @@ mod tests {
 
         let request = body.take_in(&mut state, heard("four"), &mut rx).await.request;
         assert!(request.is_none(), "heard, but nobody asked");
-        assert_eq!(texts(&state.transcript.messages()), ["one", "two", "three", "four"]);
+        assert_eq!(
+            texts(&state.transcript.messages(ThreadId::default())),
+            ["one", "two", "three", "four"]
+        );
     }
 
     /// Issue 439: of the requests a turn takes in, it answers the last - in
@@ -467,12 +474,10 @@ mod tests {
     /// in `state`.
     fn under_way_for(state: &mut AgentChannelState, initiator: ActorId) {
         let context = EventContext { initiator_id: initiator, ..EventContext::default() };
-        state.begin_turn(Work::new(
-            context,
-            None,
-            Classification::CHANNEL_DEFAULT,
-            Default::default(),
-        ));
+        state.begin_turn(
+            ThreadId::default(),
+            Work::new(context, None, Classification::CHANNEL_DEFAULT, Default::default()),
+        );
     }
 
     /// A request to respond that is the very next event as a turn ends, in its authority, is
@@ -555,14 +560,14 @@ mod tests {
 
         assert!(body.take_in_during_turn(&mut state, &mut rx).await, "it took something in");
         assert_eq!(
-            texts(&state.transcript.messages()),
+            texts(&state.transcript.messages(ThreadId::default())),
             ["one", "two"],
             "what was said before the command"
         );
         let turn = state.turn.as_ref().expect("still under way");
         assert_eq!(
             turn.work.context.transcript,
-            state.transcript.digest(),
+            state.transcript.digest(ThreadId::default()),
             "the turn's next call is given it"
         );
         let mut left = Vec::new();
@@ -638,7 +643,7 @@ mod tests {
 
         assert!(body.take_in_during_turn(&mut state, &mut rx).await, "it took something in");
         assert_eq!(
-            texts(&state.transcript.messages()),
+            texts(&state.transcript.messages(ThreadId::default())),
             ["his first", "hers"],
             "what was said before her request, in order"
         );
@@ -750,7 +755,7 @@ mod tests {
 
         let first = body.take_in(&mut state, heard("one"), &mut rx).await;
         assert_eq!(
-            texts(&state.transcript.messages()),
+            texts(&state.transcript.messages(ThreadId::default())),
             ["one", "two"],
             "what was said before the command"
         );
@@ -767,7 +772,7 @@ mod tests {
         let next = rx.try_recv().await.expect("what follows the command stays queued");
         let rest = body.take_in(&mut state, next, &mut rx).await;
         assert_eq!(
-            texts(&state.transcript.messages()),
+            texts(&state.transcript.messages(ThreadId::default())),
             ["one", "two", "three"],
             "in the order it was said"
         );
@@ -778,6 +783,23 @@ mod tests {
         );
     }
 
+    // Writes down what it is handed, where it is handed it.
+    fn noted<'a>(
+        _: &'a dyn ActorRuntime,
+        state: &'a mut AgentChannelState,
+        change: TranscriptEntry,
+    ) -> BoxFuture<'a, ()> {
+        let text = match change {
+            TranscriptEntry::Modified { message } => {
+                format!("modified: {}", message.content.unwrap_or_default())
+            }
+            TranscriptEntry::Revoked { .. } => "taken back".to_string(),
+            _ => "something else".to_string(),
+        };
+        state.transcript.push(ThreadId::default(), Message { id: MessageId::new(), ..said(&text) });
+        Box::pin(ready(()))
+    }
+
     #[tokio::test]
     async fn a_change_is_recorded_where_the_transcript_holds_the_message_and_handed_over_where_it_does_not(
     ) {
@@ -786,9 +808,9 @@ mod tests {
         let mut state = AgentChannelState::default();
         let given = Message { id: MessageId::new(), ..said("given") };
         let kept = Message { id: MessageId::new(), ..said("kept") };
-        state.perceive(vec![given.clone()]);
-        state.transcript.start_anew();
-        state.perceive(vec![kept.clone()]);
+        state.perceive(ThreadId::default(), vec![given.clone()]);
+        state.transcript.start_anew(ThreadId::default());
+        state.perceive(ThreadId::default(), vec![kept.clone()]);
         let modified = |message: &Message, text: &str| {
             envelope(ActorEvent::MessageModified(Message {
                 content: Some(text.to_string()),
@@ -801,23 +823,6 @@ mod tests {
                 ..said(text)
             }))
         };
-        // Writes down what it is handed, where it is handed it.
-        fn noted<'a>(
-            _: &'a dyn ActorRuntime,
-            state: &'a mut AgentChannelState,
-            change: TranscriptEntry,
-        ) -> BoxFuture<'a, ()> {
-            let text = match change {
-                TranscriptEntry::Modified { message } => {
-                    format!("modified: {}", message.content.unwrap_or_default())
-                }
-                TranscriptEntry::Revoked { .. } => "taken back".to_string(),
-                _ => "something else".to_string(),
-            };
-            state.transcript.push(Message { id: MessageId::new(), ..said(&text) });
-            Box::pin(ready(()))
-        }
-
         let noting = AgentBody::detached(Vec::new()).handing_over(noted);
         tx.try_send(modified(&given, "given, corrected")).expect("room");
         tx.try_send(heard("and then")).expect("room");
@@ -830,8 +835,8 @@ mod tests {
         .expect("room");
         noting.take_in(&mut state, modified(&kept, "kept, corrected"), &mut rx).await;
 
-        assert_eq!(texts(&state.transcript.messages()), ["kept, corrected", "modified: given, corrected", "and then", "taken back", "taken back"],
-            "on the active path the transcript takes it; off it, it is handed over where it came - also what the agent never held: whether that is anything to tell is the actor's to see");
+        assert_eq!(texts(&state.transcript.messages(ThreadId::default())), ["kept, corrected", "modified: given, corrected", "and then", "taken back", "taken back"],
+            "on a branch the transcript takes it; off it, it is handed over where it came - also what the agent never held: whether that is anything to tell is the actor's to see");
 
         // A modification of which nothing passes the processors takes the
         // message back in the transcript; the channel's history keeps what
@@ -846,18 +851,26 @@ mod tests {
             .take_in(&mut state, modified(&kept, "kept, spam"), &mut rx)
             .await;
         assert_eq!(
-            texts(&state.transcript.messages()),
+            texts(&state.transcript.messages(ThreadId::default())),
             ["modified: given, corrected", "and then", "taken back", "taken back"],
             "no longer given, and nothing handed over"
         );
+    }
 
-        // A reclassification is recorded where the transcript holds the
-        // message, and handed over nowhere: a remote agent knows no labels.
+    /// A reclassification is recorded where the transcript holds the message, and handed over
+    /// nowhere: a remote agent knows no labels.
+    #[tokio::test]
+    async fn a_reclassification_is_recorded_where_the_transcript_holds_the_message_and_handed_over_nowhere(
+    ) {
+        let (_tx, rx) = mpsc::channel(8);
+        let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
+        let mut state = AgentChannelState::default();
+        let noting = AgentBody::detached(Vec::new()).handing_over(noted);
         let earlier = Message { id: MessageId::new(), ..said("earlier") };
-        state.perceive(vec![earlier.clone()]);
-        state.transcript.start_anew();
+        state.perceive(ThreadId::default(), vec![earlier.clone()]);
+        state.transcript.start_anew(ThreadId::default());
         let public = Classification::PUBLIC;
-        let before = state.transcript.all_entries().len();
+        let before = state.transcript.end();
         noting
             .take_in(
                 &mut state,
@@ -869,12 +882,12 @@ mod tests {
             )
             .await;
         assert_eq!(
-            state.transcript.all_entries().len(),
+            state.transcript.end(),
             before,
             "off the transcript's path: nothing recorded, nothing handed over"
         );
         let mut on_path = AgentChannelState::default();
-        on_path.perceive(vec![earlier.clone()]);
+        on_path.perceive(ThreadId::default(), vec![earlier.clone()]);
         noting
             .take_in(
                 &mut on_path,
@@ -886,7 +899,11 @@ mod tests {
             )
             .await;
         assert_eq!(
-            on_path.transcript.messages().first().map(|m| m.classification.clone()),
+            on_path
+                .transcript
+                .messages(ThreadId::default())
+                .first()
+                .map(|m| m.classification.clone()),
             Some(public),
             "on it, recorded"
         );

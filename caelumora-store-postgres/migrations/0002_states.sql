@@ -29,11 +29,12 @@ CREATE INDEX agent_channel_state_channel ON agent_channel_state (channel_id);
 CREATE INDEX agent_channel_state_under_way ON agent_channel_state (channel_id) WHERE has_work_under_way;
 
 -- The transcripts of the agents (issue 380), every branch: a node by its
--- position, with the message it holds or changes, by which it is found.
+-- position, with the message it holds or changes, by which it is found, and
+-- the head of every thread, by its position (issue 602).
 CREATE TABLE transcripts (
     agent_id text NOT NULL,
     channel_id text NOT NULL,
-    head text,
+    head jsonb,
     PRIMARY KEY (agent_id, channel_id)
 );
 CREATE INDEX transcripts_channel ON transcripts (channel_id);
@@ -85,7 +86,7 @@ CREATE INDEX frames_channel ON frames (channel_id);
 -- said.
 CREATE TABLE histories (
     channel_id text PRIMARY KEY,
-    head text,
+    head jsonb,
     attendance jsonb
 );
 

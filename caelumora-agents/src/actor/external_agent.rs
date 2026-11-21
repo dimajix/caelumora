@@ -44,6 +44,7 @@ use caelumora_api::transport::{EventReceiver, EventSender};
 use caelumora_domain::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_domain::agent::AgentChannelState;
 use caelumora_domain::agent::RetryRefused;
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::command::CommandDescription;
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::Classification;
@@ -364,12 +365,10 @@ impl ExternalAgentActor {
         // All it was ever given: in the calls before, and what it is given
         // now - every message, and every change of one, as it may have used
         // either version (issue 236).
-        state.classifications_given().iter().for_each(|c| work.see(c));
-        let given = ContextResolver::of(state, self.body.runtime.prompts()).given_messages(
-            &work.context.frame.profile,
-            self.id(),
-            work.context.frame.time_zone,
-        )?;
+        let thread = self.body.runtime.thread_id();
+        state.classifications_given(thread).iter().for_each(|c| work.see(c));
+        let given = ContextResolver::of(state, thread, self.body.runtime.prompts())
+            .given_messages(&work.context.frame.profile, self.id(), work.context.frame.time_zone)?;
         // A task that asked back before the channel was lowered is not
         // taken up: it is cancelled, and the request begins a new one.
         if let Some(asking) = state.remote.asking().cloned() {
@@ -423,7 +422,7 @@ impl ExternalAgentActor {
             state.remote.give(key, digest::prompt(&part.text));
         }
         self.pending_prompts().clear();
-        work.context.transcript = state.transcript.start_anew();
+        work.context.transcript = state.transcript.start_anew(self.body.runtime.thread_id());
         // The task that asked back is taken up by this call, whether or not
         // the remote agent tells it as begun again (issue 213).
         if let Some(asked) = &answers {
@@ -898,7 +897,7 @@ impl Answer {
 /// Tells the remote agent of `change`, a modification or revocation the
 /// transcript of `state` did not take (issue 236, handed over by `take_in`
 /// where it came): of a message it was given - one the transcript holds on
-/// a branch off its active path, in the conversation the remote agent
+/// a branch no head reaches, in the conversation the remote agent
 /// keeps - by a notice (`notice`) appended to the transcript, to be given
 /// with the next call as any message is; or, if a notice of the message
 /// was not given yet, by modifying that one, so that it is told once, of
@@ -907,8 +906,8 @@ impl Answer {
 /// conversation: then it is given everything anew.
 ///
 /// What the remote agent was given of the message is read from the store
-/// (`ActorRuntime::transcript_message`, issue 380): it lies on a branch
-/// before the active one, which the actor does not hold, and every branch
+/// (`ActorRuntime::transcript_message`, issue 380): it lies on a branch no
+/// head reaches any more, which the actor does not hold, and every branch
 /// given is stored before the next change is taken in. A store that cannot
 /// be read is logged, and nothing is told.
 fn tell<'a>(
@@ -921,15 +920,20 @@ fn tell<'a>(
             return;
         };
         match runtime.transcript_message(id).await {
-            Ok(was) => give_notice(state, change, was),
+            Ok(was) => give_notice(state, runtime.thread_id(), change, was),
             Err(e) => warn!("External agent cannot read message {} as it was given, to tell of its change: {:#}", id, e),
         }
     })
 }
 
-/// Tells the remote agent of `state` of `change` (`tell`), which it was
-/// given the message of as `was` - `None`: never.
-fn give_notice(state: &mut AgentChannelState, change: TranscriptEntry, was: Option<Message>) {
+/// Tells the remote agent of `state` in `thread` of `change` (`tell`), which
+/// it was given the message of as `was` - `None`: never.
+fn give_notice(
+    state: &mut AgentChannelState,
+    thread: ThreadId,
+    change: TranscriptEntry,
+    was: Option<Message>,
+) {
     if state.remote.conversation.is_none() {
         return;
     }
@@ -942,13 +946,13 @@ fn give_notice(state: &mut AgentChannelState, change: TranscriptEntry, was: Opti
     };
     let Some(was) = was.filter(|was| was.revoked.is_none()) else { return };
     let mut told = notice(&was, now.as_ref(), at);
-    match state.transcript.messages().into_iter().find(|m| m.notice_of == Some(id)) {
+    match state.transcript.messages(thread).into_iter().find(|m| m.notice_of == Some(id)) {
         Some(pending) => {
             told.id = pending.id;
             state.modify(told);
         }
         None => {
-            state.transcript.push(told);
+            state.transcript.push(thread, told);
         }
     }
 }
@@ -1174,7 +1178,7 @@ mod tests {
             Some(id) => store.message(agent, channel, id).await.expect("read"),
             None => None,
         };
-        give_notice(state, change, was);
+        give_notice(state, ThreadId::default(), change, was);
     }
 
     #[tokio::test]
@@ -1189,19 +1193,19 @@ mod tests {
         let told = |state: &AgentChannelState| {
             state
                 .transcript
-                .messages()
+                .messages(ThreadId::default())
                 .into_iter()
                 .map(|m| (m.notice_of, m.content.unwrap_or_default()))
                 .collect::<Vec<_>>()
         };
         let store = MemoryStore::new();
         let mut state = AgentChannelState::default();
-        state.transcript.extend(vec![first.clone(), second.clone()]);
-        state.transcript.start_anew();
+        state.transcript.extend(ThreadId::default(), vec![first.clone(), second.clone()]);
+        state.transcript.start_anew(ThreadId::default());
 
         tell_from(&store, &mut state, modified("first, corrected")).await;
         assert!(
-            state.transcript.messages().is_empty(),
+            state.transcript.messages(ThreadId::default()).is_empty(),
             "no conversation that holds it: nothing to tell"
         );
 
@@ -1229,7 +1233,7 @@ mod tests {
             ],
             "each once, where it was first told, as it stands; nothing of what it never held"
         );
-        let notice = &state.transcript.messages()[0];
+        let notice = &state.transcript.messages(ThreadId::default())[0];
         assert_ne!(notice.id, first.id, "an id of its own");
         assert_eq!(
             (notice.sender_id, notice.role, notice.sender_name.as_str()),
@@ -1237,7 +1241,7 @@ mod tests {
             "in the name of the message's sender"
         );
 
-        state.transcript.start_anew();
+        state.transcript.start_anew(ThreadId::default());
         tell_from(&store, &mut state, modified("once more")).await;
         assert_eq!(
             told(&state),
@@ -1250,11 +1254,14 @@ mod tests {
 
         let mut revoked = AgentChannelState::default();
         revoked.remote.conversation = Some(ConversationId("c-1".to_string()));
-        revoked.transcript.push(first.clone());
+        revoked.transcript.push(ThreadId::default(), first.clone());
         revoked.transcript.revoke(first.id, at);
-        revoked.transcript.start_anew();
+        revoked.transcript.start_anew(ThreadId::default());
         tell_from(&MemoryStore::new(), &mut revoked, modified("again")).await;
-        assert!(revoked.transcript.messages().is_empty(), "taken back where it was given");
+        assert!(
+            revoked.transcript.messages(ThreadId::default()).is_empty(),
+            "taken back where it was given"
+        );
     }
 
     #[test]

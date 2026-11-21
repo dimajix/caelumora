@@ -245,7 +245,9 @@ pub(in crate::component) fn known(
 /// The digest the agent of `turn` last knew the file `at` of `workspace` by, if it knew it (issue
 /// 538).
 fn last_known(turn: &Turn<'_>, workspace: &Workspace, at: &WorkspacePath) -> Option<Digest> {
-    turn.situation().agent_channel_state().last_known::<Workspace>(workspace.id, &at.to_string())
+    let situation = turn.situation();
+    let state = situation.agent_channel_state();
+    state.last_known::<Workspace>(situation.branch_thread_id(), workspace.id, &at.to_string())
 }
 
 /// What the tests of the file tools share.

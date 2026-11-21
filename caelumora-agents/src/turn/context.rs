@@ -30,9 +30,15 @@ impl Turn<'_> {
     /// If the context names what the agent's state does not hold, or an
     /// attachment given along cannot be read.
     pub(crate) async fn full_context(&mut self) -> Result<(Vec<Message>, Vec<ToolDescription>)> {
-        let resolved = ContextResolver::of(self.agent_channel_state, self.runtime.prompts())
-            .resolve(&self.current().work.context, self.turn_id(), ActorId::Agent(self.agent_id))?
-            .context("the context of the turn names what the agent's state does not hold")?;
+        let thread = self.thread();
+        let resolved =
+            ContextResolver::of(self.agent_channel_state, thread, self.runtime.prompts())
+                .resolve(
+                    &self.current().work.context,
+                    self.turn_id(),
+                    ActorId::Agent(self.agent_id),
+                )?
+                .context("the context of the turn names what the agent's state does not hold")?;
         let messages = self.given_along(self.as_messages(resolved.items)).await?;
         // The backends are given the tools natively, which knows no sets.
         Ok((messages, resolved.tool_sets.into_iter().flat_map(|set| set.tools).collect()))
@@ -51,7 +57,8 @@ impl Turn<'_> {
     /// If the transcript holds no entry `last`, or an attachment given along cannot be read.
     pub async fn conversation_until(&mut self, last: Digest) -> Result<Vec<Message>> {
         let FrameRef { profile, time_zone, .. } = self.current().work.context.frame;
-        let items = ContextResolver::of(self.agent_channel_state, self.runtime.prompts())
+        let thread = self.thread();
+        let items = ContextResolver::of(self.agent_channel_state, thread, self.runtime.prompts())
             .conversation_until(
                 last,
                 profile,
@@ -152,7 +159,8 @@ impl Turn<'_> {
             }
         }
         self.current_mut().work.context.frame.prompts = prompts;
-        self.agent_channel_state.give_parts(given);
+        let thread = self.thread();
+        self.agent_channel_state.give_parts(thread, given);
     }
 
     /// Keeps the text of a prompt part once by digest, and returns the
@@ -192,6 +200,7 @@ mod tests {
     use crate::turn::tests::seen;
     use caelumora_domain::actor::EventContext;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::context::{KnowledgeRef, KnowledgeSource, ModelProfile};
     use caelumora_domain::message::MessageId;
     use caelumora_domain::tool::testing::make_tool_description;
@@ -261,13 +270,17 @@ mod tests {
             let channel_classification = confidential.clone();
             async move {
                 let mut state = AgentChannelState::default();
-                state.perceive(vec![Message {
-                    role: MessageRole::User,
-                    attachments,
-                    ..Message::new(Classification::PUBLIC)
-                }]);
+                state.perceive(
+                    ThreadId::line(channel.id),
+                    vec![Message {
+                        role: MessageRole::User,
+                        attachments,
+                        ..Message::new(Classification::PUBLIC)
+                    }],
+                );
                 let profile = ModelProfile { max_images, ..ModelProfile::default() };
                 state.begin_turn(
+                    ThreadId::line(channel.id),
                     Work::new(Default::default(), None, channel_classification, Default::default())
                         .given_as(profile),
                 );
@@ -325,8 +338,8 @@ mod tests {
         // An answer of an earlier turn, and another agent's message.
         let earlier = thought(ActorId::Agent(agent), "earlier");
         let theirs = thought(other, "theirs");
-        state.transcript.push(earlier.clone());
-        state.transcript.push(theirs.clone());
+        state.transcript.push(ThreadId::default(), earlier.clone());
+        state.transcript.push(ThreadId::default(), theirs.clone());
 
         let profile =
             |reasoning_history| ModelProfile { reasoning_history, ..ModelProfile::default() };
@@ -337,6 +350,7 @@ mod tests {
         };
         let (first, second) = {
             state.begin_turn(
+                ThreadId::default(),
                 Work::new(
                     EventContext::default(),
                     None,
@@ -377,7 +391,7 @@ mod tests {
             "the first answer's reasoning, from the same turn"
         );
         assert!(
-            state.transcript.messages().iter().all(|m| m.reasoning.is_some()),
+            state.transcript.messages(ThreadId::default()).iter().all(|m| m.reasoning.is_some()),
             "stored reasoning is untouched"
         );
 
@@ -385,6 +399,7 @@ mod tests {
         // still not another agent's.
         let third = thought(ActorId::Agent(agent), "third");
         state.begin_turn(
+            ThreadId::default(),
             Work::new(EventContext::default(), None, Classification::default(), Default::default())
                 .given_as(profile(ReasoningHistory::Always)),
         );
@@ -408,7 +423,7 @@ mod tests {
         };
         let mut state = AgentChannelState::default();
         let question = text(MessageRole::User, "What is 2+2?");
-        state.transcript.push(question.clone());
+        state.transcript.push(ThreadId::default(), question.clone());
 
         let first = text(MessageRole::Assistant, "Let me think.");
         let second = text(MessageRole::Assistant, "4");
@@ -514,12 +529,10 @@ mod tests {
                 } else {
                     vec![ToolSet::new("tools", "some tools", tools.clone())]
                 };
-                state.begin_turn(Work::new(
-                    Default::default(),
-                    None,
-                    Default::default(),
-                    Default::default(),
-                ));
+                state.begin_turn(
+                    ThreadId::default(),
+                    Work::new(Default::default(), None, Default::default(), Default::default()),
+                );
                 state.offer_tools(sets);
                 let mut turn = Turn::under_way(agent, state);
                 let (_, offered) = executor::block_on(turn.full_context()).unwrap();
@@ -541,7 +554,7 @@ mod tests {
 
         let catalogue = testing::catalogue();
         let offered = |said: &Message| {
-            ContextResolver::of(&state, &catalogue)
+            ContextResolver::of(&state, ThreadId::default(), &catalogue)
                 .resolve(
                     &state.context_of(said).expect("sent with it"),
                     said.turn_id.expect("a turn's"),
@@ -611,7 +624,7 @@ mod tests {
             messages.iter().map(|m| (m.role, m.content.clone().unwrap_or_default())).collect()
         };
         let mut state = AgentChannelState::default();
-        state.perceive(vec![heard("hello")]);
+        state.perceive(ThreadId::default(), vec![heard("hello")]);
         {
             let mut turn = Turn::begun(agent, &mut state);
             turn.set_context(parts("[Rules]\nBe brief."), Vec::new());
@@ -629,7 +642,7 @@ mod tests {
             turn.commit(false, &Discard).await;
         }
 
-        state.perceive(vec![heard("again")]);
+        state.perceive(ThreadId::default(), vec![heard("again")]);
         let mut turn = Turn::begun(agent, &mut state);
         turn.set_context(parts("[Rules]\nBe brief."), Vec::new());
         let (messages, _) = turn.full_context().await.unwrap();
@@ -645,7 +658,7 @@ mod tests {
         drop(turn);
         state.turn = None;
 
-        state.perceive(vec![heard("once more")]);
+        state.perceive(ThreadId::default(), vec![heard("once more")]);
         let mut turn = Turn::begun(agent, &mut state);
         turn.set_context(parts("[Rules]\nBe very brief."), Vec::new());
         let (messages, _) = turn.full_context().await.unwrap();
@@ -659,7 +672,8 @@ mod tests {
             ],
             "changed, the new one after the input, the old one taken back"
         );
-        let last = turn.situation().agent_channel_state().transcript.digest().unwrap();
+        let last =
+            turn.situation().agent_channel_state().transcript.digest(ThreadId::default()).unwrap();
         let summarised = turn.conversation_until(last).await.unwrap();
         assert_eq!(
             given(&summarised),

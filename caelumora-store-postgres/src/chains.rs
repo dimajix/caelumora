@@ -17,7 +17,6 @@ use sqlx::postgres::PgConnection;
 use sqlx::types::Json;
 use std::marker::PhantomData;
 use std::ops::Range;
-use std::str::FromStr;
 
 /// How many nodes are read at once where a chain is read backwards.
 pub(crate) const BATCH: i64 = 256;
@@ -32,19 +31,24 @@ pub(crate) trait Entry:
 }
 
 /// The tables of the chains of one kind: the nodes, and the heads, each
-/// with the key of its chain in its first columns.
+/// with the key of its chain in its first columns. A head is of the kind
+/// `H` its chain has - the one digest of a `Chain`, the heads of the threads
+/// of a `Transcript` -, kept as JSON in the column `head`.
 #[derive(Debug)]
-pub(crate) struct Chains<E> {
+pub(crate) struct Chains<E, H = Option<Digest>> {
     nodes: &'static str,
     heads: &'static str,
     key: &'static [&'static str],
     /// Whether the table of the nodes keeps the message each is about, in
     /// `message_id`.
     by_message: bool,
-    entries: PhantomData<fn() -> E>,
+    entries: PhantomData<fn() -> (E, H)>,
 }
 
-impl<E: Entry> Chains<E> {
+impl<E: Entry, H> Chains<E, H>
+where
+    H: Serialize + DeserializeOwned + Default + Send + Unpin + 'static,
+{
     /// The chains in the table `nodes`, with the heads in `heads`, by the
     /// columns `key`.
     pub(crate) const fn new(
@@ -68,9 +72,10 @@ impl<E: Entry> Chains<E> {
         named.join(" AND ")
     }
 
-    /// Writes `changes` - what the holder's chain added since it was
-    /// stored - into the chain `key` names, which `name` names where it
-    /// fails: the nodes, then the head. Returns the nodes added.
+    /// Writes `entries` - what the holder's chain added since it was
+    /// stored - and its `head` into the chain `key` names, which `name`
+    /// names where it fails: the nodes, then the head. Returns the nodes
+    /// added.
     ///
     /// # Errors
     /// If they do not fit what is kept (`new_nodes`), or cannot be written.
@@ -79,10 +84,11 @@ impl<E: Entry> Chains<E> {
         conn: &mut PgConnection,
         key: &[String],
         name: &str,
-        changes: Stored<E>,
+        entries: Vec<Node<E>>,
+        head: H,
     ) -> StoreResult<Vec<Node<E>>> {
         let end = self.end(conn, key, name).await?;
-        let added = new_nodes(end, changes.entries)
+        let added = new_nodes(end, entries)
             .map_err(|e| StoreError::Backend(format!("what {name} added does not fit: {e}")))?;
         self.write_nodes(conn, key, name, &added).await?;
         let columns = self.key.join(", ");
@@ -95,11 +101,7 @@ impl<E: Entry> Chains<E> {
         for value in key {
             query = query.bind(value);
         }
-        query
-            .bind(changes.head.map(|head| head.to_string()))
-            .execute(&mut *conn)
-            .await
-            .map_err(failed(name))?;
+        query.bind(Json(head)).execute(&mut *conn).await.map_err(failed(name))?;
         Ok(added)
     }
 
@@ -150,7 +152,7 @@ impl<E: Entry> Chains<E> {
     }
 
     /// The position after the last node of the chain `key` names.
-    async fn end(
+    pub(crate) async fn end(
         &self,
         conn: &mut PgConnection,
         key: &[String],
@@ -166,28 +168,22 @@ impl<E: Entry> Chains<E> {
         Ok(position(end))
     }
 
-    /// The head of the chain `key` names; `None` if it has none, or none is
-    /// kept.
+    /// The head of the chain `key` names; the default of its kind if none
+    /// is kept.
     pub(crate) async fn head(
         &self,
         conn: &mut PgConnection,
         key: &[String],
         name: &str,
-    ) -> StoreResult<Option<Digest>> {
+    ) -> StoreResult<H> {
         let statement = format!("SELECT head FROM {} WHERE {}", self.heads, self.of_key());
         let mut query = sqlx::query_scalar(sql(statement));
         for value in key {
             query = query.bind(value);
         }
-        let head: Option<Option<String>> =
+        let head: Option<Option<Json<H>>> =
             query.fetch_optional(&mut *conn).await.map_err(failed(name))?;
-        head.flatten()
-            .map(|head| {
-                Digest::from_str(&head).map_err(|e| {
-                    StoreError::Backend(format!("the head of {name} is no digest: {e}"))
-                })
-            })
-            .transpose()
+        Ok(head.flatten().map(|Json(head)| head).unwrap_or_default())
     }
 
     /// The nodes of the chain `key` names at the positions `range` holds,
@@ -220,25 +216,6 @@ impl<E: Entry> Chains<E> {
         Ok(nodes.into_iter().map(|Json(node)| node).collect())
     }
 
-    /// The chain `key` names, which `name` names where it fails, from the
-    /// position `from` on, as a holder keeps it; empty if none is kept.
-    ///
-    /// # Errors
-    /// If it cannot be read, or what is read is no chain.
-    pub(crate) async fn load(
-        &self,
-        conn: &mut PgConnection,
-        key: &[String],
-        name: &str,
-        from: Position,
-    ) -> StoreResult<Chain<E>> {
-        let head = self.head(conn, key, name).await?;
-        let entries = self.nodes(conn, key, name, from..Position::MAX, false, None).await?;
-        Chain::suffix(from, Stored { entries, head }).map_err(|e| {
-            StoreError::Backend(format!("{name} cannot be read from position {from}: {e}"))
-        })
-    }
-
     /// The path from the root up to the entry with the digest `digest` of
     /// the chain `key` names, on whichever branch - the newest such entry if
     /// one is there twice -, read backwards in batches; `None` if there is
@@ -253,8 +230,45 @@ impl<E: Entry> Chains<E> {
         name: &str,
         digest: Digest,
     ) -> StoreResult<Option<Vec<Node<E>>>> {
-        let (mut want, mut path) = (Some(digest), Vec::new());
-        let mut before = Position::MAX;
+        self.follow_back_before(conn, key, name, Position::MAX, Some(digest), Vec::new()).await
+    }
+
+    /// The path from the root up to the entry at the position `at` of the
+    /// chain `key` names, read backwards in batches from there: a branch of
+    /// a transcript, its head kept by its position.
+    ///
+    /// # Errors
+    /// If it cannot be read, there is no entry at `at`, or the path does not
+    /// lead back to a root.
+    pub(crate) async fn path_to(
+        &self,
+        conn: &mut PgConnection,
+        key: &[String],
+        name: &str,
+        at: Position,
+    ) -> StoreResult<Vec<Node<E>>> {
+        let Some(head) = self.nodes(conn, key, name, at..at.next(), false, None).await?.pop()
+        else {
+            return Err(StoreError::Backend(format!("{name} holds no entry at position {at}")));
+        };
+        let want = head.parent;
+        let path = self.follow_back_before(conn, key, name, at, want, vec![head]).await?;
+        Ok(path.unwrap_or_default())
+    }
+
+    /// Follows the path that `path` - the entries followed back so far,
+    /// newest first - goes on with back from the entry `want` names, the
+    /// newest such before the position `before`, reading backwards in
+    /// batches (`follow_back`).
+    async fn follow_back_before(
+        &self,
+        conn: &mut PgConnection,
+        key: &[String],
+        name: &str,
+        mut before: Position,
+        mut want: Option<Digest>,
+        mut path: Vec<Node<E>>,
+    ) -> StoreResult<Option<Vec<Node<E>>>> {
         while want.is_some() {
             let nodes =
                 self.nodes(conn, key, name, Position::START..before, true, Some(BATCH)).await?;
@@ -291,6 +305,27 @@ impl<E: Entry> Chains<E> {
             .await
             .map_err(failed(name))?;
         Ok(nodes.into_iter().map(|Json(node)| node).collect())
+    }
+}
+
+impl<E: Entry> Chains<E> {
+    /// The chain `key` names, which `name` names where it fails, from the
+    /// position `from` on, as a holder keeps it; empty if none is kept.
+    ///
+    /// # Errors
+    /// If it cannot be read, or what is read is no chain.
+    pub(crate) async fn load(
+        &self,
+        conn: &mut PgConnection,
+        key: &[String],
+        name: &str,
+        from: Position,
+    ) -> StoreResult<Chain<E>> {
+        let head = self.head(conn, key, name).await?;
+        let entries = self.nodes(conn, key, name, from..Position::MAX, false, None).await?;
+        Chain::suffix(from, Stored { entries, head }).map_err(|e| {
+            StoreError::Backend(format!("{name} cannot be read from position {from}: {e}"))
+        })
     }
 }
 

@@ -12,8 +12,9 @@
 //! what it says: the order entries were added, across every branch - what a
 //! range of the chain is read by. A chain may hold only the entries from a
 //! position on (`Chain::suffix`): what lies before is older, and a store's.
-//! `History` and `Transcript` are chains of messages (issue 06), an
-//! agent's notes (issue 17) and memory (issue 62) chains of changes.
+//! `History` is a chain of messages (issue 06), an agent's notes (issue 17)
+//! and memory (issue 62) chains of changes; a `Transcript` is a tree of the
+//! same nodes with a head per thread (issue 602).
 //!
 //! What goes into a digest is up to the entry's type, which computes it when
 //! the entry is pushed (see `crate::digest`); the chain keeps it in the
@@ -113,7 +114,7 @@ pub struct Node<E> {
 impl<E> Node<E> {
     /// `entry` at the position `seq`, after the entry `parent` names, with
     /// `digest`.
-    fn new(seq: Position, digest: Digest, parent: Option<Digest>, entry: E) -> Self {
+    pub(crate) fn new(seq: Position, digest: Digest, parent: Option<Digest>, entry: E) -> Self {
         Self { seq, digest, parent, entry }
     }
 

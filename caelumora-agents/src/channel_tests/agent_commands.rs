@@ -4,7 +4,7 @@
 use super::*;
 use crate::tool::turn_end::TURN_END_KIND;
 use caelumora_api::command::CommandError;
-use caelumora_domain::chain::Node;
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::tool::testing::make_tool_call;
 use caelumora_domain::transcript::TranscriptEntry;
 use caelumora_kernel::command::{CommandContext, CommandReply};
@@ -50,6 +50,7 @@ async fn with_a_marking_agent_under(access_policy: Arc<dyn AccessPolicy>, asleep
 #[tokio::test]
 async fn an_agent_carries_out_a_command_in_a_turn_of_its_own_and_answers_the_issuer_alone() {
     let Stuck { channel, context, agent, helper, running, .. } = with_a_marking_agent(false).await;
+    let line = ThreadId::line(channel.id());
     let alice = alice_of(&context);
     let actor = channel.user_actor(alice).unwrap();
     let mut watch = actor.watch();
@@ -98,7 +99,7 @@ async fn an_agent_carries_out_a_command_in_a_turn_of_its_own_and_answers_the_iss
     );
     assert!(state.turn.is_none(), "the turn is over");
     assert!(
-        matches!(state.transcript.last().map(|node| &node.entry), Some(TranscriptEntry::TurnFinished { turn_id: t, .. }) if Some(*t) == turn_id),
+        matches!(state.transcript.last(line).map(|node| &node.entry), Some(TranscriptEntry::TurnFinished { turn_id: t, .. }) if Some(*t) == turn_id),
         "its transcript records the turn's end"
     );
     let recorded = channel.history_entries().await.into_iter()
@@ -166,6 +167,7 @@ async fn a_command_that_fails_is_told_to_the_issuer_and_leaves_nothing_behind() 
     let actor = channel.user_actor(alice).unwrap();
     let mut watch = actor.watch();
     let before = channel.history_entries().await.len();
+    let ends_at = channel.stored_agent_channel_state(agent).await.unwrap().transcript.end();
 
     actor.execute_command("mark @helper fail").await.expect("sent to the agent");
     let (started, _, answer) = command_events(&mut watch).await;
@@ -185,10 +187,10 @@ async fn a_command_that_fails_is_told_to_the_issuer_and_leaves_nothing_behind() 
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(state.notes.current().is_empty(), "nothing it staged is applied");
     assert!(state.turn.is_none());
-    let ended = |node: &Node<TranscriptEntry>| matches!(node.entry, TranscriptEntry::TurnFinished { turn_id, .. } | TranscriptEntry::TurnGivenUp { turn_id, .. } if turn_id == begun);
-    assert!(
-        !state.transcript.all_entries().any(ended),
-        "no turn's end in its transcript: nothing happened"
+    assert_eq!(
+        state.transcript.end(),
+        ends_at,
+        "nothing recorded in its transcript, on whichever branch: nothing happened"
     );
     let recorded = channel.history_entries().await.split_off(before);
     assert!(

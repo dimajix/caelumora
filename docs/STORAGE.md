@@ -630,33 +630,38 @@ participant (issue 417), and is kept apart from the channel state's document (is
 
 ### Transcripts
 
-An agent's transcript in a channel (`Transcript`, a chain of `TranscriptEntry`) grows with every
-compaction and, for an external agent, with every call, each of which begins a branch of its own;
-the model is given only the active one. It is kept apart from the agent's state document as the
-history is (issue 380), with what differs:
+An agent's transcript in a channel (`Transcript`, a tree of `TranscriptEntry` with a head per
+thread) grows with every compaction and, for an external agent, with every call, each of which
+begins a branch of its own; the model is given in a thread only the branch its head ends. It is
+kept apart from the agent's state document as the history is (issue 380), with what differs:
 
-*   **The same chain, nothing derived.** The put of the agent's state writes the entries added since
-    it was last stored, after the history and before the document; the store keeps every branch.
+*   **The same tree, nothing derived.** The put of the agent's state writes the entries added since
+    it was last stored - also those no head reaches any more - and the head of every thread, by
+    its position (issue 602), after the history and before the document; the store keeps every
+    branch.
     What stands of a branch is read from it as it is loaded (`as_they_stand`).
 *   **The read side is the `TranscriptStore`**, handed out by the `Persistence`: the path to a
     digest, on whichever branch - what the context of an older message names -, a message as it
     stands where it was given, and which of some messages the transcript holds. The views read
     there, and an external agent's actor when it tells its remote agent of a change.
-*   **The holder keeps the active branch**, from its root on (`transcript_from`), and lets go of
-    what lies before after every put (`keep_window`, see
-    [AGENT-TURN.md](AGENT-TURN.md#what-is-held-in-memory)).
-*   **A digest may be there twice.** The holder dedupes an entry by its digest only within its
-    window, so a root given again after the transcript began anew is a second entry where it would
-    have been one. Both name the same content after the same predecessors; the store makes no
+*   **The holder keeps what its heads reach**, the branch of every thread from its root on, and
+    lets go of what no head reaches after every put (`keep_window`, see
+    [AGENT-TURN.md](AGENT-TURN.md#what-is-held-in-memory)). A transcript is loaded by its heads:
+    the branch of every thread is followed back from its head to its root.
+*   **A digest may be there twice.** The holder dedupes an entry by its digest only among what it
+    holds, so a root given again after a branch began anew is a second entry where it would have
+    been one. Both name the same content after the same predecessors; the store makes no
     digest unique, and a path is followed back from the newest entry with the digest.
 *   **One way of keeping a chain.** Both stores keep a history's and a transcript's chain alike, by
     position: the `MemoryStore` as nodes by position (`KeptChain`), `JsonStates` in segments
-    and a head (`chains`), the transcript in `<agent>.transcript/` beside the agent's snapshot,
+    and a head (`chains`) - of a transcript the heads of its threads -, the transcript in
+    `<agent>.transcript/` beside the agent's snapshot,
     without anything laid over it. A path is followed back segment by segment, a message looked for
     in every segment: slow where a database has indexes. In Postgres a transcript is the table
     `transcript_entries(agent_id, channel_id, seq, message_id, node)`, with an index on the message
-    an entry holds or changes, and its head in `transcripts`, written in the transaction of the
-    agent's state.
+    an entry holds or changes, and the heads of its threads in `transcripts`, written in the
+    transaction of the agent's state. A chain's head is kept as JSON (`head jsonb`), of whatever
+    kind its chain has.
 
 ### Prompt texts and tool sets
 

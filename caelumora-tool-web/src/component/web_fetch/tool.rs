@@ -198,6 +198,7 @@ mod tests {
     use caelumora_domain::actor::ActorEvent;
     use caelumora_domain::agent::{AgentChannelState, AgentId, Personality};
     use caelumora_domain::approval::Coverage;
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_domain::tool::{ToolCall, ToolResultStatus};
@@ -228,12 +229,10 @@ mod tests {
     /// channel.
     async fn fetched(tool: &FetchPageTool, params: Value) -> ToolResult<ToolOutput> {
         let mut state = AgentChannelState::default();
-        state.begin_turn(Work::new(
-            Default::default(),
-            None,
-            Default::default(),
-            Default::default(),
-        ));
+        state.begin_turn(
+            ThreadId::default(),
+            Work::new(Default::default(), None, Default::default(), Default::default()),
+        );
         let mut turn = Turn::of(&mut state, detached_actor_runtime(AgentId::new())).unwrap();
         tool.execute(&params, None, &mut turn).await
     }

@@ -354,16 +354,17 @@ Either way the channel aborts the task only if it does not end within `STOP_GRAC
 
 For every message an agent produced, it can be told what its model saw when it wrote it.
 
-### The transcript as a chain
+### The transcript as a tree
 
 The `Transcript` is what the agent's context is built from: its own messages in full, with tool
 calls and internal steps, and what others said as it received them. The `History` is all that
 was offered to the agent and what it said, with how its turns ended. The history is informational:
 it is the record of what was said and what it was produced from, for people to read, and it is never
-read to build what the model is given - that is built from the transcript alone (issue 387). Both
-are a `caelumora_domain::chain::Chain` of entries, each with a `Digest` over its content and the
-digest before it, so one digest names everything up to that point by content. What a message's
-digest covers is what the model sees of it, not what only describes it afterwards
+read to build what the model is given - that is built from the transcript alone (issue 387). The
+history is a `caelumora_domain::chain::Chain` of entries, the transcript a tree of the same nodes
+with a head for every thread (`Transcript`, issue 602); each entry has a `Digest` over its content
+and the digest before it, so one digest names everything up to that point by content. What a
+message's digest covers is what the model sees of it, not what only describes it afterwards
 (`digest::message_chain`). A message does not name its predecessor: the same message is in several
 chains with a different one in each, so the predecessor belongs to the chain.
 
@@ -385,11 +386,20 @@ A chain is a tree with a head:
     the chain - the entries after a position, a page before one - is read by positions.
 *   An external agent's transcript starts anew with every call, since the remote agent keeps what
     it was given: every call before is a branch from the root.
-*   Whoever holds a chain in memory may hold only a window of it, from a position on; the store
-    holds all of it. A digest whose entry lies before the window is found in the store, and an
-    entry appended with the digest of one only the store holds is added a second time - the same
-    content after the same predecessors, which the store keeps both of (see
+*   Whoever holds a chain in memory may hold only a window of it; the store holds all of it. A
+    digest whose entry lies outside the window is found in the store, and an entry appended with
+    the digest of one only the store holds is added a second time - the same content after the
+    same predecessors, which the store keeps both of (see
     [What is held in memory](#what-is-held-in-memory)).
+
+The transcript has a head for every thread the agent takes part in (issue 602): the *branch* of a
+thread is the path from its root up to its head, and what the agent's model is given in that
+thread. Every method that reads or extends a branch names its thread; a change of a message is
+recorded on every branch that holds it. The transcript gives every position, on whichever branch,
+so that its threads never give one twice. An agent takes part in one thread for now, that of its
+runtime (`ActorRuntime::thread_id`): what it takes in, answers again and does in a turn goes on the
+branch of that thread (`Situation::branch_thread_id`), whatever thread the envelope or the work
+names - a request to answer again reaches it from any thread.
 
 Neither ending a turn nor changing a message moves a head: each is an entry after what it is about.
 Nor does the end of what a compaction wrote, which is an entry of the transcript after it (see
@@ -439,20 +449,22 @@ channel's history, which records every message it says - in full, with what it w
 given, and when it compacted, as gone to nobody. Its actor tells the channel the latter after every
 step (`AgentChannelState::to_tell`, `MessageGiven`, `MessageWithdrawn`, `ContextCompacted`). What
 a turn said is its answer, kept with the turn as it is said (`TurnState::answer`), since a
-compaction in the middle of it may leave nothing of it on the transcript's active branch. What
+compaction in the middle of it may leave nothing of it on the branch it reads. What
 reads further back - what the agent saw when it produced an old message, a page of what it was
 offered and said - reads the channel's history in the store, as the agent, through the views.
 Where it stands in the channel's history is its state's (`AgentChannelState::heard`, issue 223):
 what its inbox opens at when it runs again, or when it joins again - unless its new view begins
 later. The last message it heard, said or was given is kept beside it
-(`AgentChannelState::last_message`), for its notes and memory to anchor at, since the active branch
+(`AgentChannelState::last_message`), for its notes and memory to anchor at, since a branch
 begins anew with every compaction and every call of an external agent.
 
-Of its transcript the actor holds the active branch alone, from its root on (`transcript_from`,
-issue 380): right after the transcript began anew - a compaction, an external agent's call -,
-nothing. Every reader in memory reads that branch: a turn and its next call, a compaction, how full
-the context is, answering again, taking in a change of a message. What lies on an older branch is
-read from the store (`TranscriptStore`): the path to a digest, for the context of an older message;
+Of its transcript the actor holds what its heads reach, the branch of every thread from its root on
+(issues 380, 602): right after a branch began anew - a compaction, an external agent's call -,
+nothing of it. What no head reaches any more it lets go of once it is stored
+(`Transcript::keep_window`): every position given has to reach the store. Every reader in memory
+reads the branch of a thread: a turn and its next call, a compaction, how full the context is,
+answering again, taking in a change of a message. What lies on a branch no head reaches is read
+from the store (`TranscriptStore`): the path to a digest, for the context of an older message;
 which messages reached the transcript, for a page of the agent's history; and, for an external
 agent, a message as its remote agent was given it, before it tells of a change (`tell`, through
 `ActorRuntime::transcript_message`). Its sums are parts of its state, not read over the branches:
@@ -665,7 +677,7 @@ the same code: the agent itself before a model call, as an activity of the compo
 464), and `/compact`, which the component carries out as a command. An agent whose personality does
 not list `compaction` does not compact at all. Before every call of a turn - the first of the next
 turn as well, with what was heard since - the activity is due once the context fills `threshold` of
-the model's context size, as soon as a call made on the active branch measured it; a model that
+the model's context size, as soon as a call made on the branch measured it; a model that
 reports no context size gives nothing to measure against, which the component says once. The agent
 then compacts in the state `Busy` (see [In a turn](#in-a-turn)); the strategy's calls do not count
 against `MAX_MODEL_CALLS`. A compaction that fails gives the turn up: the call it was to make room
@@ -968,10 +980,10 @@ What the model is given is not stored; it is resolved from what is (`caelumora_d
     texts and the tool sets, each as the profile gives it; what it resolves holds references to
     attachments alone, whose content the turn has put on what its model is given along before each
     call ([attachments](#attachments)). The turn's next call and every later
-    question about a message go through it: the turn against the active branch, the texts and the
-    tool sets the agent's state holds (`ContextResolver::of`), a question about an older message
-    against the path, the texts and the tool sets its reference names, loaded from the store
-    (`ContextResolver::on_path`). An external agent's remote agent is given the transcript's
+    question about a message go through it: the turn against the branch it reads, the texts
+    and the tool sets the agent's state holds (`ContextResolver::of`), a question about an older
+    message against the path, the texts and the tool sets its reference names, loaded from the
+    store (`ContextResolver::on_path`). An external agent's remote agent is given the transcript's
     messages through it as well, each framed as the profile says
     (`ContextResolver::given_messages`).
 

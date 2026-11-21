@@ -47,6 +47,7 @@ use caelumora_domain::approval::{
     ApprovalDecision, ApprovalRequest, ApprovalRule, ApprovalRuleId, ArgumentMatcher, Reach,
     RuleDecision, ToolMatcher,
 };
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::channel::{ChannelId, HistoryAccess};
 use caelumora_domain::command::{CommandDescription, CommandOutput};
 use caelumora_domain::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
@@ -385,8 +386,11 @@ async fn what_only_an_agents_owner_sees_is_recorded_and_reaches_nobody_else() {
         loop {
             let state =
                 world.kernel.state_store().get_agent_channel_state(other, main.id()).await.unwrap();
-            if let Some(message) =
-                state.transcript.messages().into_iter().find(|m| m.id == answered.id)
+            if let Some(message) = state
+                .transcript
+                .messages(ThreadId::line(main.id()))
+                .into_iter()
+                .find(|m| m.id == answered.id)
             {
                 break message;
             }

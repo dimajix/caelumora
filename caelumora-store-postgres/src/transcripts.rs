@@ -11,7 +11,7 @@ use crate::PostgresStore;
 use async_trait::async_trait;
 use caelumora_domain::agent::{AgentChannelState, AgentId};
 use caelumora_domain::chain::{Node, Position};
-use caelumora_domain::channel::ChannelId;
+use caelumora_domain::channel::{ChannelId, ThreadId};
 use caelumora_domain::context::FrameRef;
 use caelumora_domain::digest::Digest;
 use caelumora_domain::kept::Kept;
@@ -27,8 +27,9 @@ use sqlx::postgres::PgConnection;
 use sqlx::types::Json;
 use std::collections::{BTreeMap, HashSet};
 
-/// The chains of the transcripts, by agent and channel.
-const TRANSCRIPTS: Chains<TranscriptEntry> =
+/// The chains of the transcripts, by agent and channel, each with the head
+/// of every thread, by its position.
+const TRANSCRIPTS: Chains<TranscriptEntry, BTreeMap<ThreadId, Position>> =
     Chains::new("transcript_entries", "transcripts", &["agent_id", "channel_id"], true);
 
 /// The tables of the transcripts and of what was given, each by agent and
@@ -63,7 +64,7 @@ pub(crate) async fn append(
     write_kept(conn, "offered_tools", "sets", "value", &key, &name, &state.offered_tools).await?;
     write_kept(conn, "frames", "frame", "value", &key, &name, &state.frames).await?;
     if let Some(changes) = state.transcript.changes() {
-        TRANSCRIPTS.append(conn, &key, &name, changes).await?;
+        TRANSCRIPTS.append(conn, &key, &name, changes.entries, changes.heads).await?;
     }
     Ok(())
 }
@@ -76,15 +77,22 @@ pub(crate) fn stored(state: &mut AgentChannelState) {
     state.transcript.mark_stored();
 }
 
-/// The transcript of `agent` in `channel` from the position `from` on, as
-/// its state holds it; empty if none is kept.
+/// The transcript of `agent` in `channel`, as its state holds it: the
+/// branch of every thread, read back from its head; empty if none is kept.
 pub(crate) async fn load(
     conn: &mut PgConnection,
     agent: AgentId,
     channel: ChannelId,
-    from: Position,
 ) -> StoreResult<Transcript> {
-    TRANSCRIPTS.load(conn, &key(agent, channel), &transcript_of(agent, channel), from).await
+    let (key, name) = (key(agent, channel), transcript_of(agent, channel));
+    let heads = TRANSCRIPTS.head(conn, &key, &name).await?;
+    let mut branches = BTreeMap::new();
+    for (thread, at) in heads {
+        branches.insert(thread, TRANSCRIPTS.path_to(conn, &key, &name, at).await?);
+    }
+    let end = TRANSCRIPTS.end(conn, &key, &name).await?;
+    Transcript::loaded(end, branches)
+        .map_err(|e| StoreError::Backend(format!("{name} cannot be read: {e}")))
 }
 
 /// Writes what `kept` added since it was last stored into `table`, each

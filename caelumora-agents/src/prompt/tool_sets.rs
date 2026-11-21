@@ -90,6 +90,7 @@ mod tests {
     use crate::testing;
     use crate::turn::Turn;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::tool::testing::make_tool_description;
     use caelumora_domain::tool::ToolDescription;
     use caelumora_domain::work::Work;
@@ -101,12 +102,15 @@ mod tests {
     /// What the provider says in a turn begun with `sets`.
     async fn told(sets: Vec<ToolSet>) -> Prompt {
         let mut state = AgentChannelState::default();
-        state.begin_turn(Work::new(
-            Default::default(),
-            None,
-            Classification::CHANNEL_DEFAULT,
-            Default::default(),
-        ));
+        state.begin_turn(
+            ThreadId::default(),
+            Work::new(
+                Default::default(),
+                None,
+                Classification::CHANNEL_DEFAULT,
+                Default::default(),
+            ),
+        );
         state.offer_tools(sets);
         let turn = Turn::under_way(AgentId::new(), &mut state);
         let provider =

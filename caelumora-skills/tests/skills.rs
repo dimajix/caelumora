@@ -24,6 +24,7 @@ use caelumora_compaction::KnowledgeRestorer;
 use caelumora_domain::actor::{ActorEvent, ActorId};
 use caelumora_domain::agent::{AgentChannelState, AgentId, Personality};
 use caelumora_domain::channel::ChannelId;
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::{Classification, Confidentiality, Place};
 use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
@@ -195,7 +196,8 @@ async fn the_catalogue_lists_what_may_be_loaded_and_load_skill_gives_its_text_as
         matches!(read.as_slice(), [KnowledgeRef { source, .. }] if as_read(source)),
         "{read:?}"
     );
-    let given = state.transcript.last().map(|node| &node.entry);
+    let given =
+        state.transcript.last(ThreadId::line(session.channels()[0].id())).map(|node| &node.entry);
     assert!(
         matches!(given, Some(TranscriptEntry::Given { message, source: Some(GivenSource::Knowledge(source)) }) if as_read(source) && message.content.as_deref() == Some("[Skill: release-notes]\n1. Collect.\n2. Group.\n") && message.classification == internal),
         "its text given to read, under its title, as what it is (issue 389): {given:?}"
@@ -459,7 +461,11 @@ async fn a_skill_that_stands_given_as_it_is_is_not_given_again() {
     let changed = call(tools.as_ref(), &mut turn, LOAD_SKILL_TOOL_NAME, load).await.unwrap();
     assert_eq!(changed.value["status"], "loaded", "changed, it is given");
     drop(turn);
-    let given = state.transcript.entries().filter(|node| node.entry.knowledge().is_some()).count();
+    let given = state
+        .transcript
+        .entries(ThreadId::line(session.channels()[0].id()))
+        .filter(|node| node.entry.knowledge().is_some())
+        .count();
     assert_eq!(given, 2, "as it was, once, and as it is now");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
@@ -546,7 +552,12 @@ async fn a_compaction_gives_again_the_skills_given_in_the_part_it_replaces_that_
         "{told:?}"
     );
     let state = world.store.state_store().get_agent_channel_state(helper, main.id()).await.unwrap();
-    let texts: Vec<_> = state.transcript.messages().into_iter().filter_map(|m| m.content).collect();
+    let texts: Vec<_> = state
+        .transcript
+        .messages(ThreadId::line(main.id()))
+        .into_iter()
+        .filter_map(|m| m.content)
+        .collect();
     assert_eq!(
         texts[1..],
         ["[Skill: release-notes]\n1. Collect.\n", "Fine."],
@@ -802,7 +813,8 @@ async fn an_agent_loads_a_skill_for_its_owner_whoever_asked() {
     );
 
     let state = world.store.state_store().get_agent_channel_state(helper, main.id()).await.unwrap();
-    let given = state.transcript.messages().into_iter().last().expect("given");
+    let given =
+        state.transcript.messages(ThreadId::line(main.id())).into_iter().last().expect("given");
     assert!(
         given
             .content

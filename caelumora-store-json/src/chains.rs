@@ -20,11 +20,20 @@ use tracing::debug;
 /// How many entries of a chain one file holds.
 pub(super) const SEGMENT: u64 = 256;
 
-/// Where a chain stands: its head, and the position after its last entry.
+/// Where a chain stands: its head, of the kind `H` its chain has - the one
+/// digest of a `Chain`, the heads of the threads of a `Transcript` -, and
+/// the position after its last entry.
 #[derive(Debug, Default, Serialize, Deserialize)]
-pub(super) struct ChainHead {
-    pub(super) head: Option<Digest>,
+pub(super) struct ChainHead<H = Option<Digest>> {
+    pub(super) head: H,
     pub(super) end: Position,
+}
+
+/// Where a chain stands, of whatever kind its head is: the position after its
+/// last entry.
+#[derive(Debug, Default, Deserialize)]
+struct ChainEnd {
+    end: Position,
 }
 
 /// The position of the first entry of the segment that holds `seq`.
@@ -46,8 +55,16 @@ fn head_path(dir: &Path) -> PathBuf {
 }
 
 /// Where the chain in `dir` stands; at its start if none is kept there.
-pub(super) async fn read_head(dir: &Path) -> StoreResult<ChainHead> {
+pub(super) async fn read_head<H: DeserializeOwned + Default>(
+    dir: &Path,
+) -> StoreResult<ChainHead<H>> {
     Ok(read_json_opt(&head_path(dir)).await?.unwrap_or_default())
+}
+
+/// The position after the last entry of the chain in `dir`, whatever kind
+/// its head is; the start if none is kept there.
+pub(super) async fn read_end(dir: &Path) -> StoreResult<Position> {
+    Ok(read_json_opt::<ChainEnd>(&head_path(dir)).await?.unwrap_or_default().end)
 }
 
 /// The entries of the segment from `from`, as written - past the head's end
@@ -79,37 +96,39 @@ pub(super) async fn read_chain<E: DeserializeOwned>(
     Ok(nodes)
 }
 
-/// Writes `changes` - what the holder's chain added since it was stored -
-/// into the chain `key` names, kept in `dir`: the segments, then the head.
-/// Returns where the chain stands now, and the nodes added.
+/// Writes `entries` - what the holder's chain added since it was stored -
+/// and its `head` into the chain `key` names, kept in `dir`: the segments,
+/// then the head. Returns where the chain stands now, and the nodes added.
 ///
 /// # Errors
 /// If they do not fit (`new_nodes`), or cannot be written.
-pub(super) async fn append<E>(
+pub(super) async fn append<E, H>(
     dir: &Path,
     key: impl Display,
-    changes: Stored<E>,
-) -> StoreResult<(ChainHead, Vec<Node<E>>)>
+    entries: Vec<Node<E>>,
+    head: H,
+) -> StoreResult<(ChainHead<H>, Vec<Node<E>>)>
 where
     E: Serialize + DeserializeOwned + Clone,
+    H: Serialize,
 {
     fs::create_dir_all(dir).await.map_err(to_backend_error)?;
-    let head = read_head(dir).await?;
-    let added = new_nodes(head.end, changes.entries)
+    let kept_end = read_end(dir).await?;
+    let added = new_nodes(kept_end, entries)
         .map_err(|e| StoreError::Backend(format!("what {key} added does not fit: {e}")))?;
-    let end = head.end.after(added.len() as u64);
+    let end = kept_end.after(added.len() as u64);
     let mut by_segment: BTreeMap<Position, Vec<Node<E>>> = BTreeMap::new();
     for node in &added {
         by_segment.entry(segment_of(node.seq)).or_default().push(node.clone());
     }
     for (from, nodes) in by_segment {
         let mut stored = read_segment(dir, from).await?;
-        stored.retain(|node| node.seq < head.end);
+        stored.retain(|node| node.seq < kept_end);
         stored.extend(nodes);
         debug!("Writing the entries of {} from position {}", key, from);
         write_json_atomic(&segment_path(dir, from), &stored).await?;
     }
-    let head = ChainHead { head: changes.head, end };
+    let head = ChainHead { head, end };
     write_json_atomic(&head_path(dir), &head).await?;
     Ok((head, added))
 }
@@ -124,7 +143,7 @@ pub(super) async fn load<E: DeserializeOwned>(
     key: impl Display,
     from: Position,
 ) -> StoreResult<Chain<E>> {
-    let head = read_head(dir).await?;
+    let head: ChainHead = read_head(dir).await?;
     let entries = read_chain(dir, from, head.end).await?;
     Chain::suffix(from, Stored { entries, head: head.head })
         .map_err(|e| StoreError::Backend(format!("{key} cannot be read from position {from}: {e}")))
@@ -142,13 +161,47 @@ pub(super) async fn path<E: DeserializeOwned + Clone>(
     key: impl Display,
     digest: Digest,
 ) -> StoreResult<Option<Vec<Node<E>>>> {
-    let end = read_head(dir).await?.end;
-    let mut want = Some(digest);
-    let mut path = Vec::new();
-    let mut segment = end.previous().map(segment_of);
+    let end = read_end(dir).await?;
+    follow_back_before(dir, key, end, Some(digest), Vec::new()).await
+}
+
+/// The path from the root up to the entry at the position `at` of the chain
+/// `key` names, kept in `dir`, read backwards segment by segment from there:
+/// a branch of a transcript, its head kept by its position.
+///
+/// # Errors
+/// If it cannot be read, there is no entry at `at`, or the path does not
+/// lead back to a root.
+pub(super) async fn path_to<E: DeserializeOwned + Clone>(
+    dir: &Path,
+    key: impl Display,
+    at: Position,
+) -> StoreResult<Vec<Node<E>>> {
+    let nodes: Vec<Node<E>> = read_segment(dir, segment_of(at)).await?;
+    let Some(head) = nodes.iter().find(|node| node.seq == at) else {
+        return Err(StoreError::Backend(format!("{key} holds no entry at position {at}")));
+    };
+    let (want, path) = (head.parent, vec![head.clone()]);
+    let path = follow_back_before(dir, &key, at, want, path).await?;
+    Ok(path.unwrap_or_default())
+}
+
+/// Follows the path that `path` - the entries followed back so far, newest
+/// first - goes on with back from the entry `want` names, the newest such
+/// before the position `before` of the chain `key` names, kept in `dir`,
+/// reading backwards segment by segment (`follow_back`); `None` if there is
+/// none.
+async fn follow_back_before<E: DeserializeOwned + Clone>(
+    dir: &Path,
+    key: impl Display,
+    before: Position,
+    mut want: Option<Digest>,
+    mut path: Vec<Node<E>>,
+) -> StoreResult<Option<Vec<Node<E>>>> {
+    let mut segment = before.previous().map(segment_of);
     while let Some(from) = segment.filter(|_| want.is_some()) {
         let nodes: Vec<Node<E>> = read_segment(dir, from).await?;
-        follow_back(&mut want, &mut path, nodes.iter().rev().filter(|node| node.seq < end));
+        follow_back(&mut want, &mut path, nodes.iter().rev().filter(|node| node.seq < before));
         segment = segment_before(from);
     }
     followed(want, path)

@@ -1310,6 +1310,7 @@ mod tests {
     use caelumora_domain::agent::{AgentChannelState, AgentId};
     use caelumora_domain::approval::ApprovalStrategy;
     use caelumora_domain::channel::testing::main_channel;
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::channel::{
         self, moderation_components, Channel, ChannelId, InternalActor, Participant,
     };
@@ -2655,12 +2656,10 @@ mod tests {
         for agent in [&mut sessions, &mut users] {
             agents.create(&system, agent).await.unwrap();
             let mut state = AgentChannelState::default();
-            state.begin_turn(Work::new(
-                Default::default(),
-                None,
-                Default::default(),
-                Default::default(),
-            ));
+            state.begin_turn(
+                ThreadId::default(),
+                Work::new(Default::default(), None, Default::default(), Default::default()),
+            );
             states.put_agent_channel_state(agent.id, elsewhere, &mut state).await.unwrap();
         }
 

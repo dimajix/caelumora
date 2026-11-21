@@ -32,7 +32,7 @@ use std::sync::Arc;
 /// running loop holds the in-memory state for as long as it runs. What it
 /// was offered and said is its channel's history as it saw it, read from
 /// the store in pages (issues 379, 417), and what lies on its transcript
-/// beyond the active branch from the store too (issue 380), not from the
+/// beyond the branches its heads reach from the store too (issue 380), not from the
 /// part of it the state holds.
 #[derive(Debug, Clone)]
 pub struct AgentContextView {
@@ -298,6 +298,7 @@ mod tests {
     use super::*;
     use caelumora_domain::actor::testing::context_in;
     use caelumora_domain::agent::AgentId;
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::confidentiality::Confidentiality;
     use caelumora_domain::content::testing::make_content_ref;
     use caelumora_domain::context::{ContextItem, FrameRef, PromptAt, PromptRef};
@@ -352,13 +353,16 @@ mod tests {
             content: Some("question".to_string()),
             ..Message::new(Classification::CHANNEL_DEFAULT)
         };
-        state.perceive(vec![question.clone()]);
-        state.begin_turn(Work::new(
-            Default::default(),
-            None,
-            Classification::CHANNEL_DEFAULT,
-            Default::default(),
-        ));
+        state.perceive(ThreadId::default(), vec![question.clone()]);
+        state.begin_turn(
+            ThreadId::default(),
+            Work::new(
+                Default::default(),
+                None,
+                Classification::CHANNEL_DEFAULT,
+                Default::default(),
+            ),
+        );
         let step = Message {
             id: MessageId::new(),
             sender_id: actor,
@@ -366,7 +370,7 @@ mod tests {
             content: Some("thinking".to_string()),
             ..Message::new(Classification::CHANNEL_DEFAULT)
         };
-        let sent = state.said(step.clone());
+        let sent = state.said(ThreadId::default(), step.clone());
         // Its channel's history, as it records what was said (issue 417).
         let mut history = History::default();
         history.extend(&context, vec![question.clone(), sent]);
@@ -408,10 +412,10 @@ mod tests {
         let mut state = AgentChannelState::default();
         let mut history = History::default();
         let question = text("question");
-        state.transcript.push(question.clone());
+        state.transcript.push(ThreadId::default(), question.clone());
         history.push(&context, question.clone());
         let answer = produced("answer");
-        let before = state.transcript.push(answer.clone());
+        let before = state.transcript.push(ThreadId::default(), answer.clone());
         history.push(
             &context,
             answer.clone().produced_from_context(before, state.keep_frame(&FrameRef::default())),
@@ -558,22 +562,21 @@ mod tests {
         let mut state = AgentChannelState::default();
         let mut history = ChannelState::new(channel);
         let question = text("question");
-        state.transcript.push(question.clone());
+        state.transcript.push(ThreadId::default(), question.clone());
         history.history.push(&context, question.clone());
         let answer = Message {
             turn_id: Some(TurnId::new()),
             sender_id: ActorId::Agent(agent),
             ..text("answer")
         };
-        let before = state.transcript.push(answer.clone());
+        let before = state.transcript.push(ThreadId::default(), answer.clone());
         history.history.push(
             &context,
             answer.clone().produced_from_context(before, state.keep_frame(&FrameRef::default())),
         );
         // A branch begun anew, which the state holds alone.
-        state.transcript_from = state.transcript.end();
-        state.transcript.start_anew();
-        state.transcript.push(text("later"));
+        state.transcript.start_anew(ThreadId::default());
+        state.transcript.push(ThreadId::default(), text("later"));
         let store = Arc::new(MemoryStore::new());
         store.put_agent_channel_state(agent, channel, &mut state).await.expect("put");
         store.put_channel_state(channel, &mut history).await.expect("put");

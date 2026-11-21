@@ -1,7 +1,7 @@
 //! An agent's transcript as a store keeps it (issue 380): every branch it
 //! ever had, written by the put of the agent's state in the channel
 //! (`StateStore::put_agent_channel_state`), while the agent's actor holds
-//! only its active branch. The `TranscriptStore` is the read side, for
+//! only what its heads reach. The `TranscriptStore` is the read side, for
 //! whoever reads what lies on an older branch - and of the prompt texts and
 //! tool sets placed beside it (issue 383), which are written by the same
 //! put, and held by the actor only while its turn under way names them, and

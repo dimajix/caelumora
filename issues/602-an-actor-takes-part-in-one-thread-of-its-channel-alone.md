@@ -417,3 +417,17 @@ above. The position of a predecessor (C) is no step yet.
   transcript (*Decided on 2026-11-21*), which corrects what the proposal said of the position of a
   predecessor and of Postgres. Issue 394 decided anew and done as step D: `Chain` no longer
   remembers the branch last taken, and a node never changes once stored.
+- **2026-11-21** — Step D committed. Step 1a done: `Transcript` is a type of its own, a tree with
+  a head per thread, as agreed. Beside the interface, and kept by the maintainer: `extend`, which
+  taking in uses, and `Situation::branch_thread_id`, the thread whose branch a work reads. Decided
+  by the maintainer, deviating from *Decided on 2026-11-21* until step 2: an agent's branch is the
+  one of the thread of its runtime (`ActorRuntime::thread_id`) - what it takes in, answers again
+  and does in a turn, whatever thread the envelope or the work names -, since a request to answer
+  again or a command reaches an agent from any thread, and read in the thread of the request it
+  was refused or began on an empty branch. Step 2 brings the thread of the envelope and of the
+  work. The stores of chains have a head of each kind (`KeptChain<E, H>`, `ChainHead<H>`,
+  `Chains<E, H>`), a transcript is loaded by following each head back to its root (`path_to`), and
+  Postgres keeps every head as JSON. `transcript_from` is gone. Also decided: `Chain::move_head`
+  and `Chain::prefix`, left without a caller outside tests, go in a step of their own after 1a,
+  with them the branches of `Chain`.
+

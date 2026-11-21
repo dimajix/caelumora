@@ -13,6 +13,7 @@ use caelumora_domain::actor::{ActorId, ActorState, EventContext};
 use caelumora_domain::agent::{AgentChannelState, AgentId};
 use caelumora_domain::approval::ApproverId;
 use caelumora_domain::chain::Position;
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::channel::{ChannelId, ChannelState};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::config::{AppConfig, BackendConfig};
@@ -305,6 +306,7 @@ async fn keeps_the_transcripts() {
     let Some(database) = Database::new() else { return };
     let store = database.backend();
     suite::transcript_store_behaves(store.as_ref(), store.as_ref()).await;
+    suite::transcripts_keep_a_branch_per_thread(store.as_ref()).await;
     suite::given_store_behaves(store.as_ref(), store.as_ref()).await;
     database.drop().await;
 }
@@ -333,12 +335,15 @@ async fn what_an_agent_waiting_for_an_approval_stored_survives_a_restart() {
         channel_id: channel,
         ..EventContext::default()
     };
-    state.begin_turn(Work::new(context, None, Classification::CHANNEL_DEFAULT, Default::default()));
+    state.begin_turn(
+        ThreadId::default(),
+        Work::new(context, None, Classification::CHANNEL_DEFAULT, Default::default()),
+    );
     let sets = vec![ToolSet::new("search", "searches", Vec::new())];
     state.offer_tools(sets.clone());
     let system =
         state.keep_prompt(MessageRole::System, "system".to_string(), PromptAt::Start, None);
-    state.transcript.push(said("look it up"));
+    state.transcript.push(ThreadId::default(), said("look it up"));
     let call =
         ToolCall { id: Some("1".to_string()), arguments: json!({}), ..make_tool_call("search") };
     let turn = state.turn.as_mut().expect("a turn");
@@ -370,8 +375,8 @@ async fn what_an_agent_waiting_for_an_approval_stored_survives_a_restart() {
         .collect();
     assert_eq!(pending, asked, "the same request, asked again from the turn");
     assert_eq!(
-        (loaded.processing_state, loaded.transcript.digest()),
-        (ActorState::WaitingForUser, state.transcript.digest()),
+        (loaded.processing_state, loaded.transcript.digest(ThreadId::default())),
+        (ActorState::WaitingForUser, state.transcript.digest(ThreadId::default())),
         "with its transcript"
     );
     assert_eq!(

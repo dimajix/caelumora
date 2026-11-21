@@ -72,7 +72,7 @@ impl Turn<'_> {
         // (issue 284).
         let TurnState { staged, notes, private_notes, answer: final_messages, .. } = turn;
         let channel_state_changed =
-            self.agent_channel_state.finish_turn(turn_id, notes, private_notes);
+            self.agent_channel_state.finish_turn(self.thread(), turn_id, notes, private_notes);
         let after = self.agent_channel_state.last_message.unwrap_or_default();
         for kind in staged.kinds() {
             let committed = self
@@ -112,7 +112,7 @@ impl Turn<'_> {
         let abandoned_calls = self.abandon_tool_calls(TurnEnd::GivenUp(&reason), output).await;
         let answering = self.answering();
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
-        self.agent_channel_state.give_up_turn(turn.work.turn_id, reason);
+        self.agent_channel_state.give_up_turn(self.thread(), turn.work.turn_id, reason);
         (answering, abandoned_calls)
     }
 
@@ -156,6 +156,7 @@ mod tests {
     use crate::turn::tests::message;
     use caelumora_domain::actor::ActorEvent;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::confidentiality::{Classification, Confidentiality};
     use caelumora_domain::message::MessageId;
     use caelumora_domain::message::MessageRole;
@@ -216,7 +217,7 @@ mod tests {
             content: Some(content.to_string()),
             ..Message::new(Classification::CHANNEL_DEFAULT)
         };
-        state.transcript.push(message);
+        state.transcript.push(ThreadId::default(), message);
         state
     }
 
@@ -227,13 +228,17 @@ mod tests {
         turn.give_up(GivenUpReason::Left, &Discard).await;
 
         assert!(state.turn.is_none(), "the turn is over");
-        assert_eq!(state.transcript.messages().len(), 3, "what it said is not unsaid (issue 258)");
         assert_eq!(
-            state.transcript.all_entries().count(),
+            state.transcript.messages(ThreadId::default()).len(),
+            3,
+            "what it said is not unsaid (issue 258)"
+        );
+        assert_eq!(
+            state.transcript.changes().map_or(0, |changes| changes.entries.len()),
             4,
             "followed by its end, and nothing branches"
         );
-        let turns = given_up_turns(&state);
+        let turns = given_up_turns(&state, ThreadId::default());
         assert_eq!(turns.len(), 1);
         assert_eq!((turns[0].1.clone(), turns[0].2.len()), (GivenUpReason::Left, 2));
         assert!(state.notes.current().is_empty(), "the note it staged is not taken over");
@@ -283,7 +288,7 @@ mod tests {
         let told = given.last().and_then(|m| m.content.clone()).unwrap_or_default();
         assert!(told.contains("withheld"), "{told}");
         assert_eq!(
-            state.transcript.messages()[1].tool_calls[0].arguments,
+            state.transcript.messages(ThreadId::default())[1].tool_calls[0].arguments,
             serde_json::json!({ "to": "bob" }),
             "the record keeps it all"
         );
@@ -338,7 +343,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(8);
         let committed = turn.commit(true, &InMemoryEventSender::new(tx)).await;
 
-        let messages = state.transcript.messages();
+        let messages = state.transcript.messages(ThreadId::default());
         let roles: Vec<MessageRole> = messages.iter().map(|m| m.role).collect();
         assert_eq!(
             roles,
@@ -384,7 +389,7 @@ mod tests {
         let turn = a_turn_with_an_open_step(&mut state);
         turn.give_up(GivenUpReason::Failed { message: "boom".to_string() }, &Discard).await;
 
-        let turns = given_up_turns(&state);
+        let turns = given_up_turns(&state, ThreadId::default());
         let answered: Vec<_> =
             turns[0].2.last().unwrap().tool_results.iter().map(|r| r.status).collect();
         assert_eq!(
@@ -399,9 +404,13 @@ mod tests {
         let mut state = a_state_with("hello");
         let turn = Turn::begun(AgentId::default(), &mut state);
         turn.give_up(GivenUpReason::Left, &Discard).await;
-        assert_eq!(given_up_turns(&state).len(), 1, "one rule for every turn (issue 258)");
-        assert!(given_up_turns(&state)[0].2.is_empty());
-        assert_eq!(state.transcript.entries().len(), 2);
+        assert_eq!(
+            given_up_turns(&state, ThreadId::default()).len(),
+            1,
+            "one rule for every turn (issue 258)"
+        );
+        assert!(given_up_turns(&state, ThreadId::default())[0].2.is_empty());
+        assert_eq!(state.transcript.entries(ThreadId::default()).len(), 2);
     }
 
     #[tokio::test]
@@ -420,7 +429,11 @@ mod tests {
         let committed = turn.commit(false, &Discard).await;
         assert_eq!(committed.final_messages.len(), 1, "internal steps are not part of the answer");
         assert_eq!(committed.final_messages[0].id, final_answer.id);
-        assert_eq!(agent_channel_state.transcript.messages().len(), 2, "but of the transcript");
+        assert_eq!(
+            agent_channel_state.transcript.messages(ThreadId::default()).len(),
+            2,
+            "but of the transcript"
+        );
         assert!(
             agent_channel_state.turn.is_none(),
             "nothing of the turn's work is stored with the state"
@@ -435,7 +448,8 @@ mod tests {
         let second = message("second");
         turn.push_message(first.clone());
         turn.push_message(second.clone());
-        let kept_from = turn.situation().agent_channel_state().transcript.digest();
+        let kept_from =
+            turn.situation().agent_channel_state().transcript.digest(ThreadId::default());
         turn.compact(vec![(message("summary of first"), None)], kept_from).expect("compacted");
         let third = message("third");
         turn.push_message(third.clone());

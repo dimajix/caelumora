@@ -147,6 +147,7 @@ mod tests {
     use caelumora_domain::agent::{Agent, AgentChannelState, AgentId, Personality, PersonalityId};
     use caelumora_domain::approval::{ApprovalStrategy, Approver};
     use caelumora_domain::channel::ChannelId;
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::channel::{Channel, InternalActor, Participant};
     use caelumora_domain::scope::Scope;
     use caelumora_domain::session::testing::make_session;
@@ -314,12 +315,15 @@ mod tests {
         // One who no longer exists: deleted once it founded the channel with the others.
         kernel.agent_manager().delete(&system, gone.id).await.unwrap();
         let mut state = AgentChannelState::default();
-        state.begin_turn(Work::new(
-            EventContext::new(session.id, channel.id, ActorId::None, String::new()),
-            None,
-            channel.classification.clone(),
-            Default::default(),
-        ));
+        state.begin_turn(
+            ThreadId::line(channel.id),
+            Work::new(
+                EventContext::new(session.id, channel.id, ActorId::None, String::new()),
+                None,
+                channel.classification.clone(),
+                Default::default(),
+            ),
+        );
         let turn = Turn::of(
             &mut state,
             agent_runtime(participant_runtime_in(
@@ -356,12 +360,15 @@ mod tests {
         let channel = &session.channels()[0];
         // In its own name alone: nobody it acts for may read the session.
         let mut state = AgentChannelState::default();
-        state.begin_turn(Work::new(
-            EventContext::new(session.id(), channel.id(), ActorId::None, String::new()),
-            None,
-            channel.classification(),
-            Default::default(),
-        ));
+        state.begin_turn(
+            ThreadId::line(channel.id()),
+            Work::new(
+                EventContext::new(session.id(), channel.id(), ActorId::None, String::new()),
+                None,
+                channel.classification(),
+                Default::default(),
+            ),
+        );
         let turn = Turn::of(
             &mut state,
             agent_runtime(participant_runtime_in(channel, ActorId::Agent(outsider))),

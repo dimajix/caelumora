@@ -132,8 +132,7 @@ impl StateStore for PostgresStore {
         )
         .await?;
         let mut state = read.unwrap_or_default();
-        state.transcript =
-            transcripts::load(&mut conn, agent_id, channel_id, state.transcript_from).await?;
+        state.transcript = transcripts::load(&mut conn, agent_id, channel_id).await?;
         drop(conn);
         load_named_by_turn(self, agent_id, channel_id, &mut state).await?;
         Ok(state)

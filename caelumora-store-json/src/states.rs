@@ -243,8 +243,7 @@ impl StateStore for JsonStates {
         let path = self.agent_channel_state_path(agent_id, channel_id).await?;
         debug!("Reading agent channel state from {}", path.display());
         let mut state: AgentChannelState = load_state(&path).await?.unwrap_or_default();
-        state.transcript =
-            self.load_transcript(agent_id, channel_id, state.transcript_from).await?;
+        state.transcript = self.load_transcript(agent_id, channel_id).await?;
         load_named_by_turn(self, agent_id, channel_id, &mut state).await?;
         Ok(state)
     }
@@ -372,6 +371,7 @@ mod tests {
     use caelumora_domain::actor::testing::context_in;
     use caelumora_domain::actor::ActorState;
     use caelumora_domain::chain::Position;
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::history::Reader;
     use caelumora_domain::message::testing::{id, make_message};
@@ -444,6 +444,7 @@ mod tests {
         suite::work_under_way_is_indexed(&states).await;
         suite::history_store_behaves(&states, &states).await;
         suite::transcript_store_behaves(&states, &states).await;
+        suite::transcripts_keep_a_branch_per_thread(&states).await;
         suite::given_store_behaves(&states, &states).await;
         assert!(!dir.path().join("runtime").exists(), "nothing of the store's own places");
     }
@@ -486,7 +487,7 @@ mod tests {
     /// document, which grows with them.
     fn said(state: &mut AgentChannelState, from: u128, to: u128) {
         for n in from..to {
-            state.transcript.push(make_message(id(n)));
+            state.transcript.push(ThreadId::default(), make_message(id(n)));
             state.last_message = Some(id(n));
             state.heard.took(Position::new(n as u64));
             let note = NoteChange::Add {
@@ -536,7 +537,7 @@ mod tests {
         // Read from the files, by a store opened anew, as after a restart.
         let loaded = states(dir.path()).get_agent_channel_state(agent, channel).await.unwrap();
         assert!(same(&loaded, &state), "{loaded:?}");
-        assert_eq!(loaded.transcript.messages().len(), 4);
+        assert_eq!(loaded.transcript.messages(ThreadId::default()).len(), 4);
         assert_eq!(
             (loaded.last_message, loaded.heard.next()),
             (Some(id(4)), Position::new(5)),
