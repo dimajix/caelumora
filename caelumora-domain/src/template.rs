@@ -1,7 +1,7 @@
 //! Session templates: what a session is made of - its participants and channels - before there is
 //! one. The domain builds a session from a template and the participants it names; finding or
 //! creating those participants in the store is the kernel's
-//! (`SessionManager::create_from_template`, issue 88), so nothing here touches a store.
+//! (`procedure::session::Create`, issue 88), so nothing here touches a store.
 
 use crate::actor::ActorId;
 use crate::approval::{ApprovalRule, ApprovalStrategy, Approver};
@@ -140,6 +140,7 @@ impl ChannelTemplate {
             return Err(TemplateError::ParticipantNotFound(stray.clone()));
         }
         let channel = Channel::build(
+            ChannelId::new(),
             session_id,
             ActorId::User(owner),
             self.name.clone(),
@@ -292,6 +293,10 @@ impl Stored for SessionTemplate {
         self.id
     }
 
+    fn address(&self) -> SessionTemplateId {
+        self.id()
+    }
+
     fn unique_name(&self) -> Option<ScopedName> {
         Some(Scoped::scoped_name(self))
     }
@@ -433,7 +438,7 @@ pub enum ParticipantTemplate {
 }
 
 /// What a participant of a template is for one session: the kernel finds or makes what it names
-/// (`SessionManager::create_from_template`).
+/// (`procedure::session::Create`).
 #[derive(Debug, Clone)]
 pub enum ParticipantRequest {
     /// This user, who must exist.

@@ -5,9 +5,7 @@
 use crate::auth::AuthenticatedUser;
 use crate::error::ApiError;
 use crate::error::{Json, Path, Query};
-use crate::routes::{
-    change_error, channel_response, channel_view, ensure_session, open_channel, views,
-};
+use crate::routes::{change_error, channel_response, channel_view, open_channel, views};
 use crate::sse::{bounded_by_token, data_event, named_event};
 use crate::state::AppState;
 use axum::response::sse::Event;
@@ -29,6 +27,8 @@ use caelumora_domain::value::name::Name;
 use caelumora_kernel::actor::user::{ChannelWatch, Lagged, UserActor};
 use caelumora_kernel::actor::Shown;
 use caelumora_kernel::channel::ChannelLoop;
+use caelumora_kernel::procedure::channel::{Create, Delete, Reclassify, Restore};
+use caelumora_kernel::procedure::participant::{LetGo, TakeIn};
 use caelumora_kernel::session::ChannelSpec;
 use caelumora_kernel::view::{Reached, SessionView, Views};
 use caelumora_rest_api::actor::ActorPath;
@@ -83,8 +83,9 @@ pub(super) async fn restore_channel(
     Path((session_id, channel_id)): Path<(SessionId, ChannelId)>,
     user: AuthenticatedUser,
 ) -> Result<Json<ChannelResponse>, ApiError> {
-    let session = ensure_session(&state, &user, session_id).await?;
-    session.restore_channel(&user.security_context(), channel_id).await?;
+    let context = user.security_context();
+    let restoring = Restore::new(&context, session_id, channel_id);
+    state.procedures.run(restoring).await?;
     Ok(Json(channel_response(&state, &user, session_id, channel_id).await?))
 }
 
@@ -96,9 +97,7 @@ pub(super) async fn create_channel(
     user: AuthenticatedUser,
     Json(payload): Json<CreateChannelRequest>,
 ) -> Result<Json<ChannelResponse>, ApiError> {
-    let session = ensure_session(&state, &user, session_id).await?;
     let context = user.security_context();
-
     let mut spec = ChannelSpec {
         components: moderation_components(
             payload.moderator.as_deref(),
@@ -115,7 +114,8 @@ pub(super) async fn create_channel(
     if let Some(uses) = payload.uses_workspace {
         spec.uses_workspace = uses;
     }
-    let channel = session.create_channel(&context, spec).await?;
+    let creating = Create::new(&context, session_id, spec);
+    let channel = state.procedures.run(creating).await?;
     Ok(Json(channel_response(&state, &user, session_id, channel.id()).await?))
 }
 
@@ -125,9 +125,9 @@ pub(super) async fn delete_channel(
     Path((session_id, channel_id)): Path<(SessionId, ChannelId)>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let session = ensure_session(&state, &user, session_id).await?;
-
-    match session.delete_channel(&user.security_context(), channel_id).await? {
+    let context = user.security_context();
+    let deleting = Delete::new(&context, session_id, channel_id);
+    match state.procedures.run(deleting).await? {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found(
             "channel_not_found",
@@ -366,14 +366,10 @@ pub(super) async fn add_participant(
     Json(payload): Json<AddParticipantRequest>,
 ) -> Result<Json<ChannelResponse>, ApiError> {
     // Through the session: one not in it yet is taken into it, too (issue 221).
-    let session = ensure_session(&state, &user, session_id).await?;
-    session
-        .add_participant(
-            &user.security_context(),
-            payload.participant,
-            Some((channel_id, payload.history)),
-        )
-        .await?;
+    let context = user.security_context();
+    let into = Some((channel_id, payload.history));
+    let adding = TakeIn::added(&context, session_id, payload.participant, into);
+    state.procedures.run(adding).await?;
     Ok(Json(channel_response(&state, &user, session_id, channel_id).await?))
 }
 
@@ -416,21 +412,24 @@ pub(super) async fn remove_participant(
     Path((session_id, channel_id, ActorPath(participant))): Path<(SessionId, ChannelId, ActorPath)>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let (_, channel) = open_channel(&state, &user, session_id, channel_id).await?;
     let context = user.security_context();
-    channel.remove_participant(&context, participant).await?;
+    let from = Some(channel_id);
+    let removing = LetGo::removed(&context, session_id, participant, from);
+    state.procedures.run(removing).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// Takes participant `aid` - the authenticated user, or an agent of theirs - out of the channel by
-/// their own act (issue 562), without the right to change it (`ChannelLoop::leave`).
+/// their own act (issue 562), without the right to change it (`LetGo::leaving`).
 pub(super) async fn leave(
     State(state): State<Arc<AppState>>,
     Path((session_id, channel_id, ActorPath(participant))): Path<(SessionId, ChannelId, ActorPath)>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let (_, channel) = open_channel(&state, &user, session_id, channel_id).await?;
-    channel.leave(&user.security_context(), participant).await?;
+    let context = user.security_context();
+    let from = Some(channel_id);
+    let leaving = LetGo::leaving(&context, session_id, participant, from);
+    state.procedures.run(leaving).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -595,8 +594,9 @@ pub(super) async fn reclassify_channel(
     user: AuthenticatedUser,
     Json(classification): Json<Classification>,
 ) -> Result<Json<ChannelResponse>, ApiError> {
-    let (_, channel) = open_channel(&state, &user, session_id, channel_id).await?;
-    channel.reclassify(&user.security_context(), classification).await?;
+    let context = user.security_context();
+    let reclassifying = Reclassify::new(&context, session_id, channel_id, classification);
+    state.procedures.run(reclassifying).await?;
     Ok(Json(channel_response(&state, &user, session_id, channel_id).await?))
 }
 
@@ -611,7 +611,9 @@ pub(super) async fn set_channel_language(
     Json(language): Json<Option<String>>,
 ) -> Result<Json<ChannelResponse>, ApiError> {
     let (_, channel) = open_channel(&state, &user, session_id, channel_id).await?;
-    channel.update_language(&user.security_context(), language.as_deref()).await?;
+    let context = user.security_context();
+    let changing = channel.controller().update_language(&context, language.as_deref());
+    changing.await.map_err(anyhow::Error::from)?;
     Ok(Json(channel_response(&state, &user, session_id, channel_id).await?))
 }
 
@@ -628,9 +630,10 @@ pub(super) async fn update_channel_approval_rules(
 ) -> Result<Json<ChannelResponse>, ApiError> {
     let (_, channel) = open_channel(&state, &user, session_id, channel_id).await?;
     channel
+        .controller()
         .update_approval_rules(&user.security_context(), rules)
         .await
-        .map_err(|e| change_error(e, "invalid_rule"))?;
+        .map_err(|e| change_error(e.into(), "invalid_rule"))?;
     Ok(Json(channel_response(&state, &user, session_id, channel_id).await?))
 }
 
@@ -646,12 +649,14 @@ pub(super) async fn update_channel_description(
 ) -> Result<Json<ChannelResponse>, ApiError> {
     let (_, channel) = open_channel(&state, &user, session_id, channel_id).await?;
     channel
+        .controller()
         .update_description(
             &user.security_context(),
             payload.summary.as_deref(),
             payload.briefing.as_deref(),
         )
-        .await?;
+        .await
+        .map_err(anyhow::Error::from)?;
     Ok(Json(channel_response(&state, &user, session_id, channel_id).await?))
 }
 

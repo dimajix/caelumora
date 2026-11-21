@@ -263,7 +263,7 @@ session and its channels from the users it is given, without touching a store
 stores and starts the session, and then finds or makes the agents - an agent is the one of its name
 in exactly the scope the template asks for, made if there is none - and takes them in as anyone is
 taken into a running session; if that fails, the session is taken back
-(`SessionManager::create_from_template`). REST and the TUI both create sessions this way.
+(`procedure::session::Create`). REST and the TUI both create sessions this way.
 
 A session may have a **workspace** attached: a tree of files that belongs to a user, with one
 classification, used by the participants of those channels of the session where it and the channel
@@ -384,11 +384,11 @@ Details: [MEMORY.md](MEMORY.md), [AGENT-TURN.md](AGENT-TURN.md).
 
 ## What an agent can look up
 
-What an agent knows how to do need not be built into its personality: a **skill** is a procedure
-written down - instructions only, no tools - that a user owns, shares and edits like a document,
-kept in the `EntityStore`. An agent with the `skills` component is shown a catalogue of the skills
-it may load where it is - name and description - and loads one when a task calls for it; a
-participant can give it one with `/skill`. Either way the skill's text goes into the agent's own
+What an agent knows how to do need not be built into its personality: a **skill** is a way of
+working written down - instructions only, no tools - that a user owns, shares and edits like a
+document, kept in the `EntityStore`. An agent with the `skills` component is shown a catalogue of
+the skills it may load where it is - name and description - and loads one when a task calls for it;
+a participant can give it one with `/skill`. Either way the skill's text goes into the agent's own
 transcript, never into the system prompt or the channel's history, and loading it is a decision of
 its own (`UseSkill`), besides whether its classification may flow into the channel. An agent may
 also write a skill down, for its owner, with approval.
@@ -456,11 +456,29 @@ Details: [STORAGE.md](STORAGE.md).
 What changes an entity is split by what it changes:
 
 *   **Its lifecycle is its manager's** - making it, deleting, restoring and purging it, with what
-    lies in its scope: the `SessionManager`'s for sessions, the `AgentManager`'s, `GroupManager`'s
-    and `WorkspaceManager`'s for their kinds, the `ProjectManager`'s for shared projects - made by
-    the program beside the `SessionManager`, which it holds -, and those of the plugins
-    (`SkillManager`, `ArtifactManager`). A channel's is its session's (`SessionLoop`); a session's
-    own project is made, deleted, restored and purged with the session by the `SessionManager`.
+    lies in its scope: the `AgentManager`'s, `GroupManager`'s and `WorkspaceManager`'s for their
+    kinds, and those of the plugins (`SkillManager`, `ArtifactManager`). The lifecycles of
+    sessions, their channels and shared projects, which touch several objects, are procedures
+    (below), carried out by the building blocks of what they touch: the `SessionManager`, the
+    register of the sessions that run, which it starts and stops; the session's loop, which runs
+    its channels; the controllers of sessions, channels and projects; and the `ProjectManager`, the
+    kernel's, which makes every project and finds, makes and purges the own projects of sessions. A
+    session's own project is made, deleted, restored and purged with the session.
+    Making a document, marking it deleted, taking its mark away and purging it are one `Lifecycle`
+    for each kind, which its manager holds - the `SessionManager` one for sessions and one for their
+    channels, the `ProjectManager` one for every project, the `GroupManager` one for groups, which
+    the controllers of sessions, channels and projects hold as well, so that the groups of
+    participants follow them, and the `AgentManager`, the `WorkspaceManager` and the plugins'
+    managers one for their kinds, by which what lies in a scope goes with its holder too
+    (`ScopeMember::lifecycle`, issue 593) -; each change but a purge is announced at the document's
+    address (`Stored::address`). The group of a document's participants or members is made or
+    restored before the document, so that they hear it made or restored - but for a new shared
+    project, which has no members yet, and whose creation is asked of first.
+*   **Whoever makes a change announces it**, in the method that makes it: a manager what it
+    makes, deletes and restores (`Lifecycle`), a controller what it writes, a running session or
+    channel what it starts, stops and lets in. No procedure announces anything. An undo is a
+    change too, and announces what balances what it undoes - a procedure that fails shows what
+    happened, its states in between among it (issue 593). A purge announces nothing.
 *   **What it is - its attributes - is its controller's**, where it has one: a name, a description,
     rules, participants. Sessions, channels, agents, users, workspaces and projects have one, as
     running sessions hold them live; the controller stores a change and announces it, so that the
@@ -468,6 +486,48 @@ What changes an entity is split by what it changes:
 *   **An entity without a controller** - a group, a skill, an artifact - is held live by nobody,
     and its manager changes its attributes too. A controller is made for a kind once
     something holds it live, not for the sake of this split.
+
+A **procedure** is one change of a lifecycle across the objects it touches (issue
+[593](../issues/593-every-lifecycle-change-is-guarded-in-a-way-of-its-own.md)): a session created,
+opened, stopped, deleted, restored, purged or put into another project, its own project lifted into
+a shared one, a shared project deleted, restored or purged, someone taken into a session or let go
+from it, an agent's deletion or restoring followed in its channels, a channel created, deleted,
+restored, built again or reclassified, a thread opened or closed. An entry point - a REST handler,
+the terminal, a command run in a channel, a plugin's writer, the follower of the agents' deletion
+and restoring (`procedure::follower::AgentFollower`, which a program starts beside its
+`SessionManager`) - makes it, as what it asks for, and the kernel's `ProcedureExecutor` carries it
+out in a task of its own; who reaches the session from within it finds the executor there
+(`SessionLoop::procedures`). The procedures reach the running sessions by the `SessionManager`,
+which the kernel knows weakly, since it holds the kernel (`Kernel::sessions`, issue 601). The
+executor holds the kernel weakly as well, made with it, and hands it to the procedure it carries
+out: a procedure holds only what it was asked for, and reaches the services of the kernel as it is
+carried out. It locks what it finds from the top down, by a key that names the object's path
+(`Key`), each key's parents shared with it: exclusively what it changes, shared what has to stay as
+it is. An object it finds locked defers it: it lets go of everything, waits for that object and
+enumerates again, so that nothing waits while it holds anything and no order of locks is needed; who
+waits at an object admits nobody after them. Holding its objects, it checks the state it finds and
+the permissions, once, and carries the change out by the building blocks of the objects, which know
+nothing of locking - what holds them lies around them, in the executor -; how to undo each step it
+records, and the executor undoes it if a later step fails (`Compensation`). No procedure is carried
+out within another - it would wait for itself -, and the executor refuses it. A procedure that a
+channel's `run` carries a step out for holds its objects until `run` answers. The REST server, as it
+opens a session for a request, has its channels left out as it started built again by a procedure of
+its own (`procedure::channel::Start`). A plugin writes procedures of its own, of the kernel's
+building blocks, as the sub-agents' start and end are (issue 558).
+
+Beside the procedures, guards stay where no procedure reaches. The executor locks within one
+process: where several share the stores, a session is held against the others as well
+(`SessionManager::hold`, issue 554) - by a procedure that deletes, restores or purges it, or lifts
+its own project, until it is done, and by one that starts it for as long as it runs here. The
+managers of a kind put what they make or restore into a scope without a procedure, since their
+lifecycle changes one object: they ask the holder of the scope before they make something and once
+it is written, and once they restored it (`ScopeHolders`, issue 458), so that nothing is left in the
+scope of a holder deleted meanwhile. A writer writes on the revision it read (issue 492), which
+keeps apart two changes of one document that no procedure orders - an attribute its controller
+changes. And what guards no lifecycle is no procedure: the ordinary flow of a channel's `run` - what
+is said, cancelling, waking, delegating into an open thread, an actor that ends by itself -, and the
+handles of a channel's participants, built under a lock of their own
+(`ChannelLoop::building_mentions`).
 
 An attachment is no entity: it is part of its message, read and taken back with it. The lifecycle
 of its content is the `AttachmentManager`'s: kept as it is uploaded for a message - or copied, as an
@@ -516,7 +576,8 @@ The design repeats a few decisions; new code follows them.
     time - is lost; the acts themselves are not queued. A channel records the leave of whoever it
     let go meanwhile as it is built (`ChannelLoop::reconcile`, see
     [CHANNELS.md](CHANNELS.md#letting-someone-go-from-the-session)); a session has its channels
-    follow the agents deleted or restored meanwhile as it starts (`SessionLoop::follow_agents`).
+    follow the agents deleted or restored meanwhile as it starts
+    (`SessionLoop::follow_agents`).
 *   **Least authority.** Everything is handed only what it needs: a component gets a narrow context,
     not its actor's runtime; an actor gets its own channel, not the session.
 *   **The kernel decides, the agent side asks.** As the frontends map what the kernel decides, the

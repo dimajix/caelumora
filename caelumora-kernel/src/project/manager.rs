@@ -1,49 +1,36 @@
-//! `ProjectManager`: making, deleting, restoring and purging shared projects (issue 467), with
-//! the sessions that lie in them and what lies in their scope.
+//! `ProjectManager`: making projects (issue 467) - shared ones, and the own projects of sessions -
+//! and the lifecycle by which they are made, deleted, restored and purged, the latter three by the
+//! procedures of a project and of a session (`procedure::project`, `procedure::session`, issue
+//! 593).
 
-use super::{store_error, ProjectError, ProjectResult, ProjectSpec};
-use crate::error::is_forbidden;
+use super::{ProjectError, ProjectResult, ProjectSpec};
 use crate::event::EventBus;
-use crate::group::{keep_participants, GroupManager};
-use crate::lock::LocksById;
-use crate::scoped::{found_or_made, purge_for_good, ScopeNotEmpty, ScopedEntities};
-use crate::session::{SessionError, SessionManager};
+use crate::group::GroupManager;
+use crate::lifecycle::Lifecycle;
+use crate::scoped::found_or_made;
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::event::{Announcing, GlobalEvent};
 use caelumora_domain::group::{Group, GroupId};
 use caelumora_domain::project::{Project, ProjectId};
-use caelumora_domain::query::{Filter, Query};
-use caelumora_domain::removal::Removal;
 use caelumora_domain::scope::Scope;
-use caelumora_domain::session::{Session, SessionField};
-use caelumora_domain::store::{StoreError, StoreResultExt, Stored};
+use caelumora_domain::session::SessionId;
+use caelumora_domain::store::{StoreError, StoreResult, StoreResultExt};
 use caelumora_domain::value::name::ScopedName;
 use caelumora_domain::value::text::Description;
 use caelumora_security::SecurityContext;
-use caelumora_store::{purge_behind, Deleted, EntityStores};
+use caelumora_store::EntityStores;
 use std::fmt;
-use std::slice;
 use std::sync::Arc;
 use tracing::{info, warn};
 
-/// The one that makes, deletes, restores and purges shared projects, each with the group of its
-/// members. Made by the program beside the `SessionManager`, which it holds: deleting a project
-/// deletes the sessions that lie in it, and only the `SessionManager` deletes a session - it stops
-/// what runs in it.
+/// The one that makes projects, each with the group of its members - shared ones, and the own
+/// projects of sessions -, and holds their lifecycle, by which the procedures of a project and of
+/// a session delete, restore and purge them. The kernel's (`Kernel::project_manager`).
 pub struct ProjectManager {
-    /// What deletes, restores and purges the sessions that lie in a project.
-    sessions: Arc<SessionManager>,
-    stores: EntityStores,
-    /// What deletes and restores the group of a project's members with it.
+    /// The lifecycle of projects: each made, deleted, restored and purged by it, announced as each
+    /// is but a purge (issue 593).
+    projects: Lifecycle<Project>,
+    /// What makes and purges the group of a project's members with it (issue 348).
     groups: Arc<GroupManager>,
-    events: Arc<EventBus>,
-    /// What goes with a project deleted, restored or purged.
-    scoped: Arc<ScopedEntities>,
-    /// One lock per project id, held while that project is deleted, restored or purged, so that
-    /// none of them meets another half done: each goes through the project, its sessions, its
-    /// scope and its group, more than one store write (issue 492) - as the `SessionManager` holds
-    /// one per session.
-    lifecycles: LocksById<ProjectId>,
 }
 
 impl fmt::Debug for ProjectManager {
@@ -53,22 +40,21 @@ impl fmt::Debug for ProjectManager {
 }
 
 impl ProjectManager {
-    /// The manager of the projects of the kernel `sessions` works with.
-    pub fn new(sessions: Arc<SessionManager>) -> Self {
-        let kernel = Arc::clone(sessions.kernel());
-        Self {
-            stores: kernel.entity_stores().clone(),
-            groups: Arc::clone(kernel.group_manager()),
-            events: Arc::clone(kernel.event_bus()),
-            scoped: Arc::clone(kernel.scoped_entities()),
-            sessions,
-            lifecycles: LocksById::new(),
-        }
+    /// The manager of the projects in `stores`, announced on `events`, each with the group of its
+    /// members made by `groups`.
+    pub(crate) fn new(
+        stores: &EntityStores,
+        events: Arc<EventBus>,
+        groups: Arc<GroupManager>,
+    ) -> Self {
+        Self { projects: Lifecycle::new(&stores.projects, events), groups }
     }
 
     /// Makes the shared project `spec` asks for, of the user `ctx` acts for - in the global scope
-    /// or their own -, with nobody among its members yet (`CreateProject`, asked by the store), and
-    /// the group of its members in the kernel's name.
+    /// or their own -, with nobody among its members yet (`CreateProject`, asked by the store),
+    /// announced as it is stored (`Lifecycle`), then the group of its members in the kernel's name:
+    /// asked first what the caller may, as nobody hears of it by the group yet. If the group cannot
+    /// be made, the project is marked deleted again, announced so, and purged.
     ///
     /// # Errors
     /// `OwnerNotAUser`, `InvalidScope` for another scope, `Invalid` for a name or a description
@@ -82,16 +68,13 @@ impl ProjectManager {
         require_shared(&scope)?;
         let mut project = Project::new(ScopedName::new(&name, scope)?, owner);
         project.description = Description::optional(description.as_deref())?;
-        self.stores.projects.create(ctx, &mut project).await?;
-        if let Err(e) =
-            keep_participants(self.stores.groups.as_ref(), Group::of_project(&project)).await
-        {
-            if let Err(cleanup) = purge_for_good(self.stores.projects.as_ref(), project.id).await {
+        self.projects.create(ctx, &mut project).await?;
+        if let Err(e) = self.groups.keep_participants(Group::of_project(&project)).await {
+            if let Err(cleanup) = self.projects.discard(&project).await {
                 warn!(project = %project.id, "A project whose group could not be made is left: {cleanup}");
             }
             return Err(e.into());
         }
-        self.events.announce(GlobalEvent::created::<Project>(&project.id), &project);
         info!(project = %project.id, by = %ctx.caller_id, "Project created");
         Ok(project)
     }
@@ -112,210 +95,72 @@ impl ProjectManager {
         require_shared(&spec.scope)?;
         let name = ScopedName::new(&spec.name, spec.scope.clone())?;
         found_or_made(
-            || async { Ok(self.stores.projects.find_by_name(ctx, &name).await.optional()?) },
+            || async { Ok(self.projects.store().find_by_name(ctx, &name).await.optional()?) },
             || self.create(ctx, spec.clone()),
             |e| matches!(e, ProjectError::Store(StoreError::NameTaken { .. })),
         )
         .await
     }
 
-    /// Deletes project `id` on behalf of `ctx` (`DeleteProject`): marked first, then the sessions
-    /// that lie in it - each through the `SessionManager`, in `ctx`'s name, with what lies in its
-    /// scope -, then what lies in its scope (`ScopedEntities`), as far as `ctx` may delete it, then
-    /// the group of its members in the kernel's name - all of it with the project's mark, by
-    /// `ctx`'s caller (issue 469). If a session or something of its scope is left that `ctx` may
-    /// not delete, the project is kept, its mark taken away again, and what they could delete stays
-    /// deleted. `false` if there was none the caller could see.
+    /// The own project of session `id`, if it is there: the one in its scope, found by its name
+    /// (`Project::own_name`) in the kernel's name - none once it was lifted (issue 467).
     ///
     /// # Errors
-    /// `InvalidScope` for a session's own, which goes with the session; `ScopeNotEmpty` with how
-    /// many sessions and what else are left; `Session` if deleting a session failed otherwise -
-    /// `SessionError::RunsElsewhere` for one another process runs (issue 554), which keeps the
-    /// project as it is; or whatever the store reports, `PermissionDenied` included.
-    pub async fn delete(&self, ctx: &SecurityContext, id: ProjectId) -> ProjectResult<bool> {
-        let _lifecycle = self.lifecycles.lock(id).await;
-        let Some(project) = self.stores.projects.get(ctx, id).await.optional()? else {
-            return Ok(false);
-        };
-        if project.is_own() {
-            return Err(ProjectError::InvalidScope);
-        }
-        // One mark for all that goes with it (issue 469); marked before its scope is gone through,
-        // so that nothing is put into it afterwards (`ScopeHolders`, issue 458).
-        let removal = Removal::now(ctx.caller_id);
-        if !self.stores.projects.delete(ctx, id, &removal).await? {
-            return Ok(false);
-        }
-        let holder = project.holds();
-        let deleted = async {
-            let mut left = Vec::new();
-            let sessions = self.sessions_in(id).await?;
-            let kept = self.delete_sessions(ctx, &sessions, &removal).await?;
-            if kept > 0 {
-                left.push((Session::KIND, kept));
-            }
-            left.extend(
-                self.scoped.delete_lying_in(ctx, slice::from_ref(&holder), &removal).await?,
-            );
-            ScopeNotEmpty::require_empty(&holder, left)?;
-            self.groups.delete_participants(slice::from_ref(&holder), &removal).await?;
-            Ok::<_, ProjectError>(())
-        }
-        .await;
-        if let Err(error) = deleted {
-            if let Err(undo) = self.stores.projects.restore(&SecurityContext::system(), id).await {
-                warn!(project = %id, "A project could not be deleted and not be unmarked again: {undo}");
+    /// Whatever the store reports.
+    pub(crate) async fn load_own(&self, id: SessionId) -> StoreResult<Option<Project>> {
+        let system = SecurityContext::system();
+        self.projects.store().find_by_name(&system, &Project::own_name(id)).await.optional()
+    }
+
+    /// Makes `own`, a session's own project, with the group of its members, in the kernel's name
+    /// (issue 467), each announced as it is made - the group first, so that its members hear of
+    /// the project, and both, or, if the project cannot be made, neither -: as a session is made,
+    /// and for a procedure that moves a session into a new own (`procedure::session::move_to`);
+    /// taken back by `discard_own`.
+    ///
+    /// # Errors
+    /// Whatever the store reports.
+    pub(crate) async fn make_own(&self, own: &mut Project) -> StoreResult<()> {
+        self.groups.keep_participants(Group::of_project(own)).await?;
+        if let Err(error) = self.projects.create(&SecurityContext::system(), own).await {
+            let group = GroupId::of_project(own.id);
+            if let Err(undo) = self.groups.discard_participants(group).await {
+                warn!(project = %own.id, "The group of a session's own project that could not be made is left: {undo}");
             }
             return Err(error);
         }
-        self.events.announce(GlobalEvent::deleted::<Project>(&id), &project);
-        info!(project = %id, by = %ctx.caller_id, "Project deleted");
-        Ok(true)
-    }
-
-    /// Restores the deleted project `id` on behalf of `ctx` (`Restore`): its mark taken away and
-    /// the group of its members restored in the kernel's name - both, or neither: it keeps its mark
-    /// then, so that it can be tried again (issue 469) -, then the sessions deleted with it and
-    /// what lay in its scope - what carries its mark -, as far as `ctx` may restore them; what they
-    /// may not stays deleted, and the project comes back all the same.
-    ///
-    /// # Errors
-    /// `NotFound` if it is not deleted or not the caller's to see, `InvalidScope` for a session's
-    /// own, or whatever else the store reports - `NameTaken` among it.
-    pub async fn restore(&self, ctx: &SecurityContext, id: ProjectId) -> ProjectResult<Project> {
-        let _lifecycle = self.lifecycles.lock(id).await;
-        // What went with it carries its mark (issue 469).
-        let Deleted { entity: deleted, removal } =
-            self.stores.projects.get_deleted(ctx, id).await.map_err(store_error(id))?;
-        if deleted.is_own() {
-            return Err(ProjectError::InvalidScope);
-        }
-        let project = self.stores.projects.restore(ctx, id).await.map_err(store_error(id))?;
-        let holder = project.holds();
-        // If its members cannot come back, it is marked again as it was, so that a restoring tried
-        // again finds what went with it.
-        if let Err(error) =
-            self.groups.restore_participants(slice::from_ref(&holder), &removal).await
-        {
-            if let Err(undo) =
-                self.stores.projects.delete(&SecurityContext::system(), id, &removal).await
-            {
-                warn!(project = %id, "A project could not be restored and not be marked deleted again: {undo}");
-            }
-            return Err(error.into());
-        }
-        for session in self
-            .stores
-            .sessions
-            .list_deleted_with(&SecurityContext::system(), removal.id, &in_project(id))
-            .await?
-            .items
-        {
-            if let Err(e) = self.sessions.restore(ctx, session.id).await {
-                info!(project = %id, session = %session.id, "A session of a restored project stays deleted: {e}");
-            }
-        }
-        if let Err(e) = self.scoped.restore_lying_in(ctx, slice::from_ref(&holder), &removal).await
-        {
-            warn!(project = %id, "The project was restored, but not what lies in its scope: {e}");
-        }
-        self.events.announce(GlobalEvent::restored::<Project>(&id), &project);
-        info!(project = %id, by = %ctx.caller_id, "Project restored");
-        Ok(project)
-    }
-
-    /// Removes the deleted project `id` for good on behalf of `ctx`, in the order of every purge of
-    /// what has something behind it (`purge_behind`): its purge begun (`Purge`, asked before
-    /// anything is removed), then - in the kernel's name - what lies behind it (`remove_behind`),
-    /// then the project. A step that fails leaves it deleted, its purge begun, so that the next
-    /// purge removes what is left (issue 496). Announces nothing, as no purge does. `false` if
-    /// there was nothing deleted the caller could see.
-    ///
-    /// # Errors
-    /// `InvalidScope` for a session's own, `PermissionDenied`, `Session` if purging a session
-    /// failed, or whatever the store reports.
-    pub async fn purge(&self, ctx: &SecurityContext, id: ProjectId) -> ProjectResult<bool> {
-        let _lifecycle = self.lifecycles.lock(id).await;
-        let Some(Deleted { entity: deleted, .. }) =
-            self.stores.projects.get_deleted(ctx, id).await.optional()?
-        else {
-            return Ok(false);
-        };
-        if deleted.is_own() {
-            return Err(ProjectError::InvalidScope);
-        }
-        let purged = purge_behind(self.stores.projects.as_ref(), ctx, id, async |project| {
-            self.remove_behind(project).await
-        })
-        .await?;
-        if purged {
-            info!(project = %id, by = %ctx.caller_id, "Project purged");
-        }
-        Ok(purged)
-    }
-
-    /// Removes what lies behind `project` once its purge is begun, in the kernel's name: the
-    /// sessions deleted that lie in it, what lies in its scope and the group of its members. What a
-    /// purge that failed before removed already, or another purged meanwhile, is passed over.
-    ///
-    /// # Errors
-    /// `Session` if purging a session failed, or whatever the store reports.
-    async fn remove_behind(&self, project: &Project) -> ProjectResult<()> {
-        let system = SecurityContext::system();
-        for Deleted { entity: session, .. } in self.deleted_sessions_in(project.id).await? {
-            self.sessions.purge(&system, session.id).await.map_err(ProjectError::Session)?;
-        }
-        self.scoped.purge_lying_in(slice::from_ref(&project.holds())).await?;
-        purge_for_good(self.stores.groups.as_ref(), GroupId::of_project(project.id)).await?;
         Ok(())
     }
 
-    /// The sessions that lie in project `id`, read in the kernel's name: all of them are found,
-    /// whatever the caller may read.
-    async fn sessions_in(&self, id: ProjectId) -> ProjectResult<Vec<Session>> {
-        Ok(self.stores.sessions.list(&SecurityContext::system(), &in_project(id)).await?.items)
-    }
-
-    /// The deleted sessions that lie in project `id`, read in the kernel's name.
-    async fn deleted_sessions_in(&self, id: ProjectId) -> ProjectResult<Vec<Deleted<Session>>> {
-        Ok(self
-            .stores
-            .sessions
-            .list_deleted(&SecurityContext::system(), &in_project(id))
-            .await?
-            .items)
-    }
-
-    /// Deletes `sessions` on behalf of `ctx` through the `SessionManager`, as a project they lie
-    /// in is deleted, marked with `removal`, its mark; answers how many are left - not the caller's
-    /// to read or delete, or with something in their scope that is not.
+    /// Takes `own`, made as a session's own project and not to be kept, back, in the kernel's name:
+    /// marked deleted and announced so, as its making was announced, and purged
+    /// (`Lifecycle::discard`), the group of its members with it - as making a session fails, and
+    /// for the compensation of moving a session into it.
     ///
     /// # Errors
-    /// `Session` if deleting one failed otherwise; what was deleted before stays deleted.
-    async fn delete_sessions(
-        &self,
-        ctx: &SecurityContext,
-        sessions: &[Session],
-        removal: &Removal,
-    ) -> ProjectResult<usize> {
-        let mut kept = 0;
-        for session in sessions {
-            match self.sessions.delete_with(ctx, session.id, removal).await {
-                Ok(true) => {}
-                Ok(false) => kept += 1,
-                Err(e)
-                    if is_forbidden(&e)
-                        || matches!(
-                            e.downcast_ref::<SessionError>(),
-                            Some(SessionError::ScopeNotEmpty(_))
-                        ) =>
-                {
-                    kept += 1
-                }
-                Err(e) => return Err(ProjectError::Session(e)),
-            }
-        }
-        Ok(kept)
+    /// Whatever the store reports.
+    pub(crate) async fn discard_own(&self, own: &Project) -> StoreResult<()> {
+        self.projects.discard(own).await?;
+        self.groups.discard_participants(GroupId::of_project(own.id)).await
+    }
+
+    /// Removes `own`, the own project of a session, for good with the group of its members, in the
+    /// kernel's name - marked deleted first if it is not -: as the session is purged. What lay in
+    /// its scope is the caller's to have purged. Announces nothing.
+    ///
+    /// # Errors
+    /// Whatever the store reports.
+    pub(crate) async fn purge_own(&self, own: ProjectId) -> StoreResult<()> {
+        self.groups.purge_participants(GroupId::of_project(own)).await?;
+        self.projects.purge_for_good(own).await?;
+        Ok(())
+    }
+
+    /// The lifecycle of projects, shared ones and the own projects of sessions, by which the
+    /// procedures of a project and of a session delete, restore and purge them
+    /// (`procedure::project`, `procedure::session`).
+    pub(crate) fn lifecycle(&self) -> &Lifecycle<Project> {
+        &self.projects
     }
 }
 
@@ -331,29 +176,18 @@ fn require_shared(scope: &Scope) -> ProjectResult<()> {
     }
 }
 
-/// The sessions that lie in project `id`.
-fn in_project(id: ProjectId) -> Query<SessionField> {
-    Query::filtered(Filter::in_project(id))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::testing::{create, failing_kernel};
     use crate::testing::TestKernel;
-    use caelumora_domain::channel::Channel;
-    use caelumora_domain::component::ComponentBundle;
-    use caelumora_domain::security::SecurityAttributes;
-    use caelumora_domain::session::testing::make_session;
     use caelumora_domain::user::UserId;
-    use std::sync::atomic::Ordering;
 
     /// A project is found by its name where it is asked for, or made there: whoever asks twice, or
     /// two at once, get the one project, made once.
     #[tokio::test]
     async fn a_project_is_found_by_its_name_or_made_once() {
-        let manager = Arc::new(SessionManager::new(TestKernel::default().build()));
-        let projects = ProjectManager::new(manager);
+        let kernel = TestKernel::default().build();
+        let projects = kernel.project_manager();
         let owner = UserId::new();
         let ctx =
             SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
@@ -368,89 +202,5 @@ mod tests {
         assert!(one_made != other_made, "made once: {one_made}, {other_made}");
         let (again, made) = projects.find_or_create(&ctx, &spec).await.unwrap();
         assert_eq!((again.id, made), (one.id, false), "found the next time");
-    }
-
-    /// Issue 469: a project whose members' group cannot come back stays deleted, marked as it was,
-    /// and tried again, comes back with its sessions and what lay in its scope.
-    #[tokio::test]
-    async fn a_project_whose_restoring_failed_comes_back_whole_when_tried_again() {
-        let (kernel, passing) = failing_kernel(Group::KIND);
-        let stores = kernel.entity_stores().clone();
-        let manager = Arc::new(SessionManager::new(kernel));
-        let projects = ProjectManager::new(Arc::clone(&manager));
-        let owner = UserId::new();
-        let ctx =
-            SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
-        let system = SecurityContext::system();
-        let session = create(&manager, &ctx, make_session("in it", owner)).await.unwrap();
-        let project = projects
-            .create(&ctx, ProjectSpec::new("report", Scope::UserScope { user_id: owner }))
-            .await
-            .unwrap();
-        session.update_project(&ctx, Some(project.id)).await.unwrap();
-        let mut bundle = ComponentBundle::new(
-            ScopedName::new("tools", project.holds()).unwrap(),
-            Default::default(),
-            SecurityAttributes::systems(),
-        );
-        stores.component_bundles.create(&system, &mut bundle).await.unwrap();
-        projects.delete(&ctx, project.id).await.unwrap();
-        let mark = stores.projects.get_deleted(&system, project.id).await.unwrap().removal;
-
-        passing.store(0, Ordering::SeqCst);
-        projects.restore(&ctx, project.id).await.expect_err("its members cannot come back");
-        assert_eq!(
-            stores.projects.get_deleted(&system, project.id).await.unwrap().removal,
-            mark,
-            "it stays deleted, marked as it was"
-        );
-
-        passing.store(usize::MAX, Ordering::SeqCst);
-        projects.restore(&ctx, project.id).await.expect("restored when tried again");
-        assert!(
-            stores.groups.get(&system, GroupId::of_project(project.id)).await.is_ok(),
-            "with its members"
-        );
-        assert!(stores.sessions.get(&system, session.id()).await.is_ok(), "its session");
-        assert!(
-            stores.component_bundles.get(&system, bundle.id).await.is_ok(),
-            "and what lay in its scope"
-        );
-    }
-
-    /// Issue 496: a purge that fails part of the way - here as the channel of a session in the
-    /// project is marked - leaves the project deleted, its purge begun, so that it is not restored
-    /// without what went already, and the next purge removes what is left.
-    #[tokio::test]
-    async fn a_project_whose_purge_failed_is_finished_by_the_next() {
-        let (kernel, passing) = failing_kernel(Channel::KIND);
-        let stores = kernel.entity_stores().clone();
-        let manager = Arc::new(SessionManager::new(kernel));
-        let projects = ProjectManager::new(Arc::clone(&manager));
-        let owner = UserId::new();
-        let ctx =
-            SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
-        let system = SecurityContext::system();
-        let session = create(&manager, &ctx, make_session("in it", owner)).await.unwrap();
-        let project = projects
-            .create(&ctx, ProjectSpec::new("report", Scope::UserScope { user_id: owner }))
-            .await
-            .unwrap();
-        session.update_project(&ctx, Some(project.id)).await.unwrap();
-        projects.delete(&ctx, project.id).await.unwrap();
-
-        passing.store(0, Ordering::SeqCst);
-        projects.purge(&system, project.id).await.expect_err("its session's channel cannot go");
-        let left = stores.projects.get_deleted(&system, project.id).await.expect("it is left");
-        assert!(left.entity.purging(), "its purge begun");
-        assert!(projects.restore(&ctx, project.id).await.is_err(), "not to be restored");
-
-        passing.store(usize::MAX, Ordering::SeqCst);
-        assert!(projects.purge(&system, project.id).await.expect("purged when tried again"));
-        assert!(stores.projects.get_deleted(&system, project.id).await.is_err(), "it is gone");
-        assert!(
-            stores.sessions.get_deleted(&system, session.id()).await.is_err(),
-            "with its session"
-        );
     }
 }

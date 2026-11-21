@@ -7,7 +7,7 @@
 use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Json, Path, Query};
 use crate::routes::sessions::all_listed;
-use crate::routes::{ensure_session, session_response, views};
+use crate::routes::{session_response, views};
 use crate::state::AppState;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -16,6 +16,8 @@ use caelumora_domain::project::ProjectId;
 use caelumora_domain::session::SessionId;
 use caelumora_domain::user::UserId;
 use caelumora_kernel::controller::ProjectController;
+use caelumora_kernel::procedure::project::{Delete, Lift, Purge, Restore};
+use caelumora_kernel::procedure::session::Move;
 use caelumora_kernel::project::ProjectSpec;
 use caelumora_rest_api::access::AccessEntry;
 use caelumora_rest_api::deleted::{DeletedResponse, ListOptions};
@@ -62,7 +64,8 @@ pub(super) async fn create_project(
         )
     })?;
     let made = state
-        .project_manager
+        .kernel
+        .project_manager()
         .create(
             &user.security_context(),
             ProjectSpec {
@@ -149,10 +152,8 @@ pub(super) async fn lift_project(
             "A project is lifted into its owner's scope or the global one",
         )
     })?;
-    controller(&state, project_id)
-        .await?
-        .lift(&user.security_context(), &request.name, scope)
-        .await?;
+    let lifting = Lift::new(&user.security_context(), project_id, &request.name, scope);
+    state.procedures.run(lifting).await?;
     Ok(Json(readable(&state, &user, project_id).await?))
 }
 
@@ -163,7 +164,8 @@ pub(super) async fn delete_project(
     Path(project_id): Path<ProjectId>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    match state.project_manager.delete(&user.security_context(), project_id).await? {
+    let deleting = Delete::new(&user.security_context(), project_id);
+    match state.procedures.run(deleting).await? {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found(
             "project_not_found",
@@ -179,7 +181,8 @@ pub(super) async fn restore_project(
     Path(project_id): Path<ProjectId>,
     user: AuthenticatedUser,
 ) -> Result<Json<ProjectResponse>, ApiError> {
-    state.project_manager.restore(&user.security_context(), project_id).await?;
+    let restoring = Restore::new(&user.security_context(), project_id);
+    state.procedures.run(restoring).await?;
     Ok(Json(readable(&state, &user, project_id).await?))
 }
 
@@ -190,7 +193,8 @@ pub(super) async fn purge_project(
     Path(project_id): Path<ProjectId>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    match state.project_manager.purge(&user.security_context(), project_id).await? {
+    let purging = Purge::new(&user.security_context(), project_id);
+    match state.procedures.run(purging).await? {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found(
             "project_not_found",
@@ -235,8 +239,8 @@ async fn update_project(
     session_id: SessionId,
     project: Option<ProjectId>,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
-    let session = ensure_session(state, user, session_id).await?;
-    session.update_project(&user.security_context(), project).await?;
+    let moving = Move::new(&user.security_context(), session_id, project);
+    state.procedures.run(moving).await?;
     Ok(Json(session_response(state, user, session_id).await?))
 }
 

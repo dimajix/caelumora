@@ -43,8 +43,11 @@ use crate::component::ComponentRegistry;
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use crate::group::GroupManager;
+use crate::procedure::ProcedureExecutor;
+use crate::project::ProjectManager;
 use crate::scoped::ScopedEntities;
 use crate::seed::{self, SeedSection};
+use crate::session::SessionManager;
 use crate::user_provider::UserManager;
 use crate::workspace::reaper::CommandReaper;
 use crate::workspace::WorkspaceManager;
@@ -66,7 +69,7 @@ use caelumora_store::{EntityStores, StateStore};
 use extension::Extensions;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{self, Arc, Weak};
 
 /// The services and managers everything in a process shares, made once by the `KernelBuilder`.
 #[derive(Debug)]
@@ -93,7 +96,8 @@ pub struct Kernel {
     agent_kinds: Arc<AgentKinds>,
     event_bus: Arc<EventBus>,
     controller_manager: Arc<ControllerManager>,
-    /// Who takes part in a channel and whether they may (issue 356).
+    /// The decisions on participants: whether one may run, take part in a channel, and act for
+    /// whom (issue 356).
     participation: Arc<Participation>,
     commands: ComponentConfig,
     /// What the system restricts of tool calls everywhere
@@ -107,6 +111,8 @@ pub struct Kernel {
     attachments: Arc<AttachmentManager>,
     /// The one writer of teams (issue 286).
     groups: Arc<GroupManager>,
+    /// The one that makes projects and holds their lifecycle (issue 467).
+    projects: Arc<ProjectManager>,
     /// The one owner of agents' lifecycle (issue 314).
     agents: Arc<AgentManager>,
     /// The one owner of what of an actor outlives its run (issue 386).
@@ -124,6 +130,10 @@ pub struct Kernel {
     prompts: Arc<PromptCatalogue>,
     /// The sections of the seed the plugins claimed (issue 323).
     seed_sections: BTreeMap<String, Arc<dyn SeedSection>>,
+    /// What carries out the changes of the lifecycles of sessions and projects (issue 593).
+    procedures: Arc<ProcedureExecutor>,
+    /// The session manager made for it, known weakly, since it holds the kernel (issue 601).
+    sessions: sync::RwLock<Weak<SessionManager>>,
 }
 
 impl Kernel {
@@ -247,7 +257,8 @@ impl Kernel {
         &self.controller_manager
     }
 
-    /// Who takes part in a channel and whether they may (issue 356).
+    /// The decisions on participants: whether one may run, take part in a channel, and act for
+    /// whom (issue 356).
     pub(crate) fn participation(&self) -> &Arc<Participation> {
         &self.participation
     }
@@ -260,6 +271,25 @@ impl Kernel {
     /// The one owner of workspaces and their places (issue 253).
     pub fn workspace_manager(&self) -> &Arc<WorkspaceManager> {
         &self.workspaces
+    }
+
+    /// What carries out every change of a lifecycle - one per process (issue 593): for the entry
+    /// points, which make the procedures, never for a building block of one.
+    pub fn procedures(&self) -> &Arc<ProcedureExecutor> {
+        &self.procedures
+    }
+
+    /// The session manager made for it (`SessionManager::new`), by which the procedures it hands
+    /// the kernel to reach the running sessions as they are carried out (issue 593); `None` if
+    /// none was made, or it is gone.
+    pub(crate) fn sessions(&self) -> Option<Arc<SessionManager>> {
+        self.sessions.read().unwrap_or_else(sync::PoisonError::into_inner).upgrade()
+    }
+
+    /// Makes `sessions` the session manager the kernel knows (`sessions`), as it is made.
+    pub(crate) fn know_sessions(&self, sessions: &Arc<SessionManager>) {
+        *self.sessions.write().unwrap_or_else(sync::PoisonError::into_inner) =
+            Arc::downgrade(sessions);
     }
 
     /// What ends the commands nobody may run any longer (issues 254, 344).
@@ -277,6 +307,13 @@ impl Kernel {
     /// 348).
     pub fn group_manager(&self) -> &Arc<GroupManager> {
         &self.groups
+    }
+
+    /// The one that makes projects - shared ones and the own projects of sessions - and holds their
+    /// lifecycle, by which the procedures of a project and of a session delete, restore and purge
+    /// them (issues 467, 593).
+    pub fn project_manager(&self) -> &Arc<ProjectManager> {
+        &self.projects
     }
 
     /// The one owner of agents' lifecycle (issue 314).

@@ -35,8 +35,8 @@ impl Command for RenameCommand {
 #[async_trait]
 impl ChannelCommand for RenameCommand {
     /// Runs `/channel rename` with `args`, the new name of the channel the command is issued in
-    /// (`ChannelLoop::update_name`, which asks `UpdateChannel`). Only the issuer is answered: the
-    /// channel tells everyone its new name.
+    /// (`ChannelController::update_name`, which asks `UpdateChannel`). Only the issuer is answered:
+    /// the channel tells everyone its new name.
     async fn execute(
         &self,
         args: &str,
@@ -50,9 +50,10 @@ impl ChannelCommand for RenameCommand {
         Name::new(name).map_err(|e| invalid(e.to_string()))?;
         context
             .channel
+            .controller()
             .update_name(&context.issuer.security_context(), name)
             .await
-            .map_err(|e| command_error(RENAME_COMMAND_NAME, &e))?;
+            .map_err(|e| command_error(RENAME_COMMAND_NAME, &e.into()))?;
         Ok(CommandOutput::private(format!("This channel is called {name} now.")))
     }
 }

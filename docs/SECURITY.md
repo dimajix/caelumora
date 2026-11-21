@@ -280,9 +280,10 @@ asked by the one `CheckedStore` over a backend's storage - no backend asks a pol
 
 What is not a store call asks first and acts afterwards. The `SessionManager` finds a session for a
 caller in one place and checks a running session like a stored one - `GetSession`, answering "not
-found" alike whether it runs or not. Stopping and deleting check before they stop anything;
-restoring and purging reach only what was deleted and leave `Restore` and `Purge` to the store. A
-rename is stored first - which is where it is checked - and changes the live entity only then.
+found" alike whether it runs or not. Stopping and deleting check before they stop anything, in the
+procedures of a session (`procedure::session::Stop`, `delete`, issue 593); restoring and purging
+reach only what was deleted and leave `Restore` and `Purge` to the store. A rename is stored first -
+which is where it is checked - and changes the live entity only then.
 
 ### Access lists
 
@@ -311,7 +312,8 @@ lose theirs.
     *   `Group` - a team, or the participants of a session or a channel. A member counts wherever
         they act, not only in that place, and only while the group is there: a deleted group
         grants nothing - except that its members are told of a deletion (`HearDeleted`), since
-        the participants' groups of a session go with it, before its deletion is announced.
+        the participants' groups of a session go with it, before or after its deletion is
+        heard of.
     *   `Everyone` - every user, an agent by its owner: a session anybody may join, a workspace
         anybody may read.
 *   **What the policy learns.** Who belongs to a group is a fact neither the attributes nor the
@@ -374,9 +376,10 @@ member exists, so that who may not change it learns nothing of who exists (issue
 names the group of its members for reading, and the participants of each session that lies in it: a
 session put into a project shares it with them in the kernel's name, since changing the session was
 asked (`UpdateSession`, and reading the project, `GetProject`), and the entry goes as the session
-leaves. Deleting a project deletes the sessions in it through the `SessionManager`, each in the
-deleter's name, as what lies in a scope is (issue 320); the group of its members goes and comes back
-with the project in the kernel's name, as the participants' groups do.
+leaves. Deleting a project deletes the sessions in it as deleting one does
+(`procedure::session::delete`), each in the deleter's name, as what lies in a scope is (issue 320);
+the group of its members goes and comes back with the project in the kernel's name, as the
+participants' groups do.
 
 The REST API names the participants of a session or channel by the session's or channel's id
 (`kind: session`, `kind: channel`), a team by its own (`kind: group`).
@@ -476,6 +479,18 @@ asks what, in whose name and by which reason is mapped, check by check, in
     `ConfidentialityQuestions::require_*`, offering with `AccessQuestions::may_*` and
     `ConfidentialityQuestions::may_*`.
 
+Who enforces is who acts; one place decides (issue 593). What an object does itself it enforces
+itself, in the method that does it: a channel its `cancel`, opening and closing a thread,
+reclassifying. An operation across objects - taking someone in, letting them go, creating, deleting
+or restoring a channel or a session - is a procedure's, and the procedure enforces it, in the order
+of the rules above; a store or a controller enforces as it writes (rule 1). None of them holds the
+decision: whoever enforces asks the place that decides - the `AccessPolicy` by
+`Enforcement::require` for one action, `Participation` for participants (who may run, take part, act
+for whom), `caelumora-domain` for the rules of a document - and turns a refusal into its own error.
+A procedure that must know an answer before it changes another object asks the same place ahead, and
+the object asks again as it acts - as opening a thread is asked ahead, before its founders are taken
+into the session (`channel::require_opening`).
+
 One enforcing site turns a refusal into an outcome of its own rather than an error: the
 `ToolExecutor`, which answers a call refused by the policy as forbidden. It asks as every act does,
 so that the refusal is logged alike. `ChannelLoop::reclassify` asks `may_publish` of the old
@@ -504,8 +519,8 @@ can answer a question differently from the action.
 ### Operations that check themselves
 
 An operation that checks its permission as part of what it does - `ChannelLoop::cancel`,
-`add_participant`, a store's `update_channel` - keeps that check itself. Only pure questions go into
-`AccessQuestions`, and none onto the entities.
+`ChannelLoop::close_thread`, a store's `update_channel` - keeps that check itself. Only pure
+questions go into `AccessQuestions`, and none onto the entities.
 
 Such an operation checks with `Enforcement::require(context, action, refusal)`, another extension
 trait on every `AccessPolicy`. It answers a refusal with the operation's own error and logs every

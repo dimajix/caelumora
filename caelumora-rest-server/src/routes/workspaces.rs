@@ -273,7 +273,9 @@ pub(super) async fn set_uses_workspace(
     Json(request): Json<UsesWorkspaceRequest>,
 ) -> Result<Json<ChannelResponse>, ApiError> {
     let (_, channel) = open_channel(&state, &user, session_id, channel_id).await?;
-    channel.update_uses_workspace(&user.security_context(), request.uses).await?;
+    let context = user.security_context();
+    let changing = channel.controller().update_uses_workspace(&context, request.uses);
+    changing.await.map_err(anyhow::Error::from)?;
     Ok(Json(channel_response(&state, &user, session_id, channel_id).await?))
 }
 

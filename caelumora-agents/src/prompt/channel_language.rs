@@ -108,6 +108,7 @@ mod tests {
     use caelumora_domain::actor::{ActorId, EventContext};
     use caelumora_domain::agent::testing::make_personality;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::channel::ChannelId;
     use caelumora_domain::channel::{Channel, Participant};
     use caelumora_domain::session::testing::make_session;
     use caelumora_domain::session::Session;
@@ -183,6 +184,7 @@ mod tests {
             SecurityContext::new(ActorId::User(owner.id), Default::default(), Default::default());
         let session = make_session("s", owner.id);
         let mut channel = Channel::build(
+            ChannelId::new(),
             session.id,
             ActorId::User(owner.id),
             Name::new("main").unwrap(),
@@ -213,14 +215,14 @@ mod tests {
         assert_eq!(prompt.classification, Some(Classification::PUBLIC));
 
         let running = session_loop.channel(channel.id).expect("the channel runs");
-        running.update_language(&system, Some("fr")).await.unwrap();
+        running.controller().update_language(&system, Some("fr")).await.unwrap();
         let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
         assert!(prompt.text.contains("\"fr\""), "the language as it is now: {}", prompt.text);
 
-        session_loop.update_language(&system, Some("it")).await.unwrap();
+        session_loop.controller().update_language(&system, Some("it")).await.unwrap();
         let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
         assert!(prompt.text.contains("\"fr\""), "its own before the session's: {}", prompt.text);
-        running.update_language(&system, None).await.unwrap();
+        running.controller().update_language(&system, None).await.unwrap();
         let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
         assert!(
             prompt.text.contains("\"it\""),

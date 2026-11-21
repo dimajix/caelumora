@@ -25,7 +25,7 @@ The entity stores (`EntityStore<T>`, in `caelumora-store`) keep the long-lived d
 *   **Projects**: what holds the results of sessions, each a user's (see
     [PROJECTS.md](PROJECTS.md)): a session's own lies in the session's scope, a shared one in the
     global scope or its owner's; each holds a scope of its own, where its artifacts lie.
-*   **Skills**: procedures written down for agents, a kind of the plugin `caelumora-skills` (see
+*   **Skills**: instructions written down for agents, a kind of the plugin `caelumora-skills` (see
     [SKILLS.md](SKILLS.md)).
 *   **Artifacts**: results an agent published, each a user's, with its versions, a kind of the
     plugin `caelumora-artifacts`. Their content lies in a storage of content (see
@@ -464,15 +464,15 @@ purge begun, for the next purge to finish; the record holds across every writer 
 lock in one process could. A channel is restored only through its running session, so the session's
 purge begun keeps its channels too; and nothing that lies in a project - its sessions, what lies in
 its scope - is restored while the project is deleted, so the project's purge begun keeps them.
-Deleting, restoring and purging a session are serialised by the `SessionManager`, under the lock it
-also starts a session with, so that a purge never meets it half deleted or half restored - within
-one process, and against the others that share the store by the session's hold (`SessionLocks`, see
-[Several instances](#several-instances)). Deleting, restoring and purging a project are serialised
-by the `ProjectManager`, under one lock per project id, since each goes through the project's
-sessions, its scope and its group. Both tables of locks by id are a `LocksById`, which keeps an id's
-lock only while somebody holds it or waits for it. What the kernel removes for good that is not
-marked - the channels of a session being purged, a document whose creation failed - it marks first,
-in its own name. The state of what was deleted stays in the `StateStore` until it is purged (see
+Deleting, restoring and purging a session are procedures that hold it exclusively, as starting it
+does (`procedure::session`, issue 593), so that a purge never meets it half deleted or half
+restored - within one process, and against the others that share the store by the session's hold
+(`SessionLocks`, see [Several instances](#several-instances)). Deleting, restoring and purging a
+project hold the project and the sessions that lie in it exclusively (`procedure::project`), since
+each goes through the project's sessions, its scope and its group; lifting a session's own holds the
+project and that session. What the kernel removes for good that is not marked - the channels of a
+session being purged, a document whose creation failed - it marks first, in its own name. The state
+of what was deleted stays in the `StateStore` until it is purged (see
 [Deleting state](#deleting-state)).
 
 ### Demo data
@@ -719,8 +719,9 @@ not help; the rule is the kernel's to keep:
 each holding the state under a lock of its own while it changes and stores it.
 
 This holds because a session starts only once, however many requests ask for it at the same time:
-starting, stopping, deleting, restoring and purging a session take one lock per session id, so a
-stop cannot miss a start under way, and a deleted session cannot be started again meanwhile. Where
+starting, stopping, deleting, restoring and purging a session are procedures that hold it
+exclusively (`procedure::session`, issue 593), so a stop cannot miss a start under way, and a
+deleted session cannot be started again meanwhile. Where
 several processes share the store, the session's hold keeps it so between them (`SessionLocks`, see
 [Several instances](#several-instances)).
 
@@ -780,14 +781,16 @@ in [ARCHITECTURE.md](ARCHITECTURE.md#managers-and-controllers).
     announced - to who reached the document as it was classified and as it is - and logged, once, by
     the controller. What a controller does besides - a group that follows the participants, an event
     of its own, the checks of a workspace, which is changed as stored rather than as live - it does
-    between the steps of a `Writing`, the change under way. A running session's and a channel's loop
-    only forward to their controller what does no more than that. The `UserController` holds no
-    `LiveDocument`: the user's record belongs to the system and is only kept current, and their
-    profile is created with its first change and announced as it stands, to its user and the kernel
-    alone. The `WorkspaceController` also holds the storage its workspace lies in and the
-    confidentiality policy, which a new classification is asked of. The `PersonalityController` is
-    no writer at all (issue 406): personalities are changed in the store, and it only holds the one
-    copy every running agent of a personality answers from (see below).
+    between the steps of a `Writing`, the change under way. A running channel's and session's loop
+    hands its controller out (`ChannelLoop::controller`, `SessionLoop::controller`), through which
+    their attributes are changed (issue 593). The
+    `UserController` holds no `LiveDocument`: the user's record belongs to the system and is only
+    kept current, and their profile is created with its first change and announced as it stands,
+    to its user and the kernel alone. The `WorkspaceController` also holds the storage its
+    workspace lies in and the confidentiality policy, which a new classification is asked of. The
+    `PersonalityController` is no writer at all (issue 406): personalities are changed in the
+    store, and it only holds the one copy every running agent of a personality answers from (see
+    below).
 
 ### Session-owned and per-instance controllers
 
@@ -807,21 +810,22 @@ A missing record is `StoreError::NotFound`, which a lookup that expects it may b
 
 ### Following changes
 
-Neither the actors nor the sessions take over changes of themselves - a running session's
-controller is the one writer of it and holds every change live already; taken over again on top of
-what changed since, a join would list one let go after it (issue
-[590](../issues/590-a-session-lets-nobody-go.md)). A running session follows only whom it takes
-in, whether its agents are deleted or restored, which decides which actors run in its channels, and
-whether its participants are renamed, which decides whom a mention addresses (see
+Neither the actors nor the sessions take over changes of themselves - a running session's controller
+is the one writer of it and holds every change live already; taken over again on top of what changed
+since, a join would list one let go after it (issue
+[590](../issues/590-a-session-lets-nobody-go.md)). A running session follows only whom it takes in,
+whether its participants are renamed, which decides whom a mention addresses; whether its agents are
+deleted or restored, which decides which actors run in its channels, the follower of the agents
+follows for every running session (`procedure::follower::AgentFollower`, see
 [CHANNELS.md](CHANNELS.md)). The `ControllerManager` takes every announced change to an agent, a
 user, a workspace or a project into its live controller, once per instance - the place where changes
 made in other instances will arrive (see [Several instances](#several-instances)). An event carries
 the resulting value, so taking over an instance's own change again changes nothing; a workspace and
 a project are read again as stored instead, since the announcement of a new access list does not
 carry it. A text in it that does not fit the domain's value is left out and logged. Changes whose
-announcements it lost it makes up for by reading every live controller again as stored (issue
-502). Reading again holds the lock of a change, so that a change of this instance under way is not
-set back by what was read before it.
+announcements it lost it makes up for by reading every live controller again as stored (issue 502).
+Reading again holds the lock of a change, so that a change of this instance under way is not set
+back by what was read before it.
 
 No change of a personality is announced. Its controller takes in the personality as stored whenever
 it is asked for - as an agent of it is resolved to take part, and by the `CommandReaper` - and from

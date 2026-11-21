@@ -280,6 +280,10 @@ impl Stored for Personality {
         self.id
     }
 
+    fn address(&self) -> PersonalityId {
+        self.id()
+    }
+
     fn deleted(&self) -> Option<&Removal> {
         self.deleted.as_ref()
     }

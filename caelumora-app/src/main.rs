@@ -20,7 +20,9 @@ use caelumora_decision::plugin::DecisionPlugin;
 use caelumora_domain::config::AppConfig;
 use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_kernel::plugin::Plugin;
-use caelumora_kernel::project::ProjectManager;
+use caelumora_kernel::procedure::follower::AgentFollower;
+use caelumora_kernel::procedure::session;
+use caelumora_kernel::procedure::ProcedureExecutor;
 use caelumora_kernel::session::SessionManager;
 use caelumora_logging::{init, LogTarget};
 use caelumora_memory::library::MemoryLibrary;
@@ -89,8 +91,10 @@ async fn main() -> Result<()> {
     for library in libraries() {
         builder.library(library.as_ref())?;
     }
-    let kernel = Arc::new(builder.build()?);
-    let session_manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+    let kernel = builder.build()?;
+    let session_manager = SessionManager::new(Arc::clone(&kernel));
+    // Whether the agents of the running sessions exist, followed as long as the server runs.
+    let _agents_followed = AgentFollower::spawn(&session_manager);
     let user_manager = Arc::clone(kernel.user_manager());
     if user_manager.is_empty() {
         tracing::warn!(
@@ -108,16 +112,16 @@ async fn main() -> Result<()> {
     // What was under way when the process last ended goes on (issue 388),
     // beside the requests rather than before them.
     tokio::spawn({
-        let session_manager = Arc::clone(&session_manager);
-        async move { session_manager.resume_interrupted().await }
+        let kernel = Arc::clone(&kernel);
+        async move { session::resume_interrupted(&kernel).await }
     });
 
     let shutdown = CancellationToken::new();
     let state = Arc::new(AppState {
         auth,
+        procedures: Arc::clone(kernel.procedures()),
         kernel,
         session_manager: Arc::clone(&session_manager),
-        project_manager: Arc::new(ProjectManager::new(Arc::clone(&session_manager))),
         compartments: Arc::new(config.compartments.clone()),
         shutdown: shutdown.clone(),
     });
@@ -136,6 +140,7 @@ async fn main() -> Result<()> {
         )
     });
     // The request id is set inside the request span, which is the outer layer.
+    let procedures = Arc::clone(&state.procedures);
     let app = app(routes::api(state, &rest_plugins))
         .layer(middleware::from_fn(error::request_id))
         .layer(trace_layer);
@@ -143,7 +148,7 @@ async fn main() -> Result<()> {
     let listener = TcpListener::bind(config.server.address).await?;
     tracing::info!("Caelumora listening on {}", listener.local_addr()?);
     let serving = axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_on_signal(session_manager, shutdown.clone()));
+        .with_graceful_shutdown(shutdown_on_signal(procedures, shutdown.clone()));
     tokio::select! {
         served = serving.into_future() => served?,
         () = async { shutdown.cancelled().await; time::sleep(CONNECTIONS_CLOSE).await } => {
@@ -161,12 +166,13 @@ const CONNECTIONS_CLOSE: Duration = Duration::from_secs(1);
 /// Waits for SIGINT or SIGTERM, then shuts down in order (issue 297): the
 /// sessions are stopped, their actors keeping what they are in the middle
 /// of, and the `local` shell's commands ended, within `SHUTDOWN_BOUND` -
-/// meanwhile requests are still answered, a start of a session refused;
-/// then `shutdown` ends every stream, and the server takes no new request.
-async fn shutdown_on_signal(session_manager: Arc<SessionManager>, shutdown: CancellationToken) {
+/// meanwhile requests are still answered, but one that reaches a session, a
+/// procedure, refused; then `shutdown` ends every stream, and the server takes
+/// no new request.
+async fn shutdown_on_signal(procedures: Arc<ProcedureExecutor>, shutdown: CancellationToken) {
     signalled().await;
     tracing::info!("Caelumora is shutting down");
-    session_manager.shutdown().await;
+    session::shut_down(&procedures).await;
     shutdown.cancel();
 }
 
@@ -343,7 +349,7 @@ mod tests {
     /// component defaults, on which the example seed's models build (issue 445), its variants of
     /// the texts, which they are given (issue 57), and the workflows its image models run (issues
     /// 512, 525) - read from where the program runs, the root of the sources.
-    fn kernel(store: &Persistence) -> Kernel {
+    fn kernel(store: &Persistence) -> Arc<Kernel> {
         let config = AppConfig::load(example("config.yaml")).unwrap();
         let root = root();
         let prompts =
@@ -372,7 +378,7 @@ mod tests {
 
     /// The kernel of the program, with its plugins and its libraries, over `store`, as `config`
     /// configures it.
-    fn kernel_of(store: &Persistence, config: &AppConfig) -> Kernel {
+    fn kernel_of(store: &Persistence, config: &AppConfig) -> Arc<Kernel> {
         let config = &with_local_model(config.clone());
         let access_policy = Arc::new(AllowAllPolicy::new());
         let secrets =

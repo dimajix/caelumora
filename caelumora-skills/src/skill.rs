@@ -129,6 +129,10 @@ impl Stored for Skill {
         self.id
     }
 
+    fn address(&self) -> SkillId {
+        self.id()
+    }
+
     fn unique_name(&self) -> Option<ScopedName> {
         Some(self.scoped_name())
     }
@@ -198,7 +202,7 @@ impl Scoped for Skill {
 
 /// What a skill tells the model to do (issue 22): instructions in Markdown,
 /// loaded into a turn when the skill is used - twice a briefing, enough for
-/// a procedure, not for a manual.
+/// a way of working, not for a manual.
 pub enum SkillBodyRule {}
 
 impl TextRule for SkillBodyRule {

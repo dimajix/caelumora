@@ -49,6 +49,18 @@ idle, and nothing gives it back.
   starts; what it would have *done* on them (cancelling actors on a lowering) is to be checked.
 - **Agents in several sessions** are not unloaded with one session; that is
   [382](382-agents-held-without-a-session.md).
+- **Who owns a running session, as a step before.** `SessionManager` holds a running session in
+  three maps that change together - its loop (`sessions`), the task it runs in (`handles`) and its
+  hold against other processes (`holds`) -, and its stop is a sequence across two objects: the
+  manager aborts the session's task and waits for it to end, and only then may the loop announce
+  its channels stopped (`SessionLoop::announce_channels_stopped`), or a channel could start after
+  it was announced stopped. The rule holds between the two, in the loop's doc comment and in the
+  order of `SessionManager::stop_running`. A second way of stopping and starting - unloading -
+  makes it worth a step of its own, without a change of behaviour: preferably the loop owns its
+  task, as it owns its channels' tasks, and stops itself in one step - aborting, waiting,
+  announcing -, so that `handles` goes; or one type of the manager's holds loop, task and hold in
+  one map, with a stop of its own. Found in issue
+  [593](593-every-lifecycle-change-is-guarded-in-a-way-of-its-own.md).
 
 ## Done when
 
@@ -67,3 +79,11 @@ idle, and nothing gives it back.
 - **2026-11-16** — [557](557-a-conversation-cannot-go-on-two-ways-at-once.md) proposes unloading
   a channel's idle threads the way this issue unloads a channel; with the channel's line a thread,
   a channel whose threads are all unloaded is idle. Best designed together.
+- **2026-11-19** — [593](593-every-lifecycle-change-is-guarded-in-a-way-of-its-own.md) has a
+  channel run on, empty, rather than stop by itself as its last actor ends, and records an empty
+  channel that rests - stopped by the procedure that lets the last one go, started again by the one
+  that takes someone in - as *Later: a channel that rests*: one case of unloading, to be decided
+  here.
+- **2026-11-19** — Who owns a running session added to *Considerations*, as a step before this
+  one, at the maintainer's request in issue
+  [593](593-every-lifecycle-change-is-guarded-in-a-way-of-its-own.md).

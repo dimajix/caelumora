@@ -1,9 +1,9 @@
-//! Skills (issues 22, 323): procedures written down for agents to follow - the first subject moved
-//! out of the kernel, as a plugin of their own and a library (issue 516). The crate is cut into
-//! layers by features (cut 11 of issue 323): without features it is the entity (`skill`) and the
-//! wire types (`wire`), which a client reads; `api` adds what an agent's work does with skills and
-//! what that fails with (`extension`), the crate's part of the kernel's API; `kernel` adds the one
-//! writer of skills (`manager`), how a viewer reaches them, and an agent's work through them
+//! Skills (issues 22, 323): instructions written down for agents to follow - the first subject
+//! moved out of the kernel, as a plugin of their own and a library (issue 516). The crate is cut
+//! into layers by features (cut 11 of issue 323): without features it is the entity (`skill`) and
+//! the wire types (`wire`), which a client reads; `api` adds what an agent's work does with skills
+//! and what that fails with (`extension`), the crate's part of the kernel's API; `kernel` adds the
+//! one writer of skills (`manager`), how a viewer reaches them, and an agent's work through them
 //! (`view`), the questions of who may use and change one (`access`) and the plugin that joins all
 //! of it to the kernel (`plugin`); `library` adds the `skills` component and the library that
 //! registers it (`library`); `server` adds the routes.

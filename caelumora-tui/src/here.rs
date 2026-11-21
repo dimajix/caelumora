@@ -9,7 +9,7 @@ use caelumora_domain::user::UserId;
 use caelumora_domain::value::name::Name;
 use caelumora_domain::workspace::WorkspaceId;
 use caelumora_kernel::kernel::Kernel;
-use caelumora_kernel::project::{ProjectManager, ProjectSpec};
+use caelumora_kernel::project::ProjectSpec;
 use caelumora_kernel::workspace::WorkspaceSpec;
 use caelumora_security::SecurityContext;
 use std::path::Path;
@@ -40,16 +40,15 @@ pub(crate) fn name_of(dir: &Path) -> Result<Name> {
 }
 
 /// The project and the workspace of the directory `here`, in the own scope of `owner`, for whom
-/// `context` acts: found by the directory's name (`name_of`), or made - the project by `projects`,
-/// the workspace in the storage `HERE`, which keeps every workspace in that directory. Two programs
-/// started at once in a new directory find what the first made.
+/// `context` acts: found by the directory's name (`name_of`), or made - the project by the kernel's
+/// `ProjectManager`, the workspace in the storage `HERE`, which keeps every workspace in that
+/// directory. Two programs started at once in a new directory find what the first made.
 ///
 /// # Errors
 /// What finding or making them reports - `InAnotherStorage` if the workspace of the directory's
 /// name lies in another storage.
 pub(crate) async fn place_of(
     kernel: &Kernel,
-    projects: &ProjectManager,
     context: &SecurityContext,
     owner: UserId,
     here: &Path,
@@ -60,7 +59,7 @@ pub(crate) async fn place_of(
         description: Some(WHAT.to_string()),
         ..ProjectSpec::new(name.as_str(), scope.clone())
     };
-    let (project, _) = projects.find_or_create(context, &project).await?;
+    let (project, _) = kernel.project_manager().find_or_create(context, &project).await?;
     let workspace = WorkspaceSpec {
         description: Some(WHAT.to_string()),
         ..WorkspaceSpec::new(name.as_str(), scope, HERE)

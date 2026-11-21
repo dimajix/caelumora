@@ -172,13 +172,12 @@ impl UserManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::Announced;
     use async_trait::async_trait;
     use caelumora_domain::actor::ActorId;
-    use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::event::EntityChange;
     use caelumora_domain::removal::Removal;
     use caelumora_domain::role::RoleId;
-    use caelumora_domain::security::SecurityAttributes;
     use caelumora_domain::store::Stored;
     use caelumora_domain::user::testing::make_user;
     use caelumora_domain::value::name::Name;
@@ -186,34 +185,7 @@ mod tests {
     use caelumora_store::testing::ContendedStore;
     use caelumora_store::{EntityStores, Persistence};
     use std::collections::HashMap;
-    use std::mem;
     use std::sync::atomic::Ordering;
-    use std::sync::Mutex;
-
-    /// What was announced.
-    #[derive(Debug, Default)]
-    struct Announced(Mutex<Vec<GlobalEvent>>);
-
-    impl EventPublisher for Announced {
-        fn publish(&self, event: GlobalEvent, _attributes: SecurityAttributes) {
-            self.0.lock().unwrap().push(event);
-        }
-
-        fn publish_classified(
-            &self,
-            event: GlobalEvent,
-            attributes: SecurityAttributes,
-            _classifications: &[Classification],
-        ) {
-            self.publish(event, attributes);
-        }
-    }
-
-    impl Announced {
-        fn taken(&self) -> Vec<GlobalEvent> {
-            mem::take(&mut *self.0.lock().unwrap())
-        }
-    }
 
     /// A manager of `providers`, keeping records in a store of its own.
     fn chain(providers: Vec<Arc<dyn UserProvider>>) -> UserManager {

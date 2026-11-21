@@ -83,13 +83,15 @@ it registers, a plugin
     `caelumora-model-ollama`, the backend `comfyui` of `caelumora-model-comfyui` (issue 525) and the
     backend `systemone` of `caelumora-model-systemone` (issue 551);
 *   makes its kind go with what holds the scope it lies in (`scope_member`, a `ScopeMember`, which
-    says only what its kind adds - where it announces and what lies behind an entity), and
+    says only what its kind adds - the `Lifecycle` of its kind, which announces what it makes,
+    deletes and restores, and what lies behind an entity), and
     puts it into a scope only by the holders of scopes (`scope_holders`, a `ScopeHolders`): asked
     before it writes (`require`) and once it has written (`keep_made`, `restore`), so that
     nothing is left in the scope of a holder deleted meanwhile (issue 458);
 *   makes what it keeps behind an agent go with it (`agent_member`, an `AgentMember`): removed
     when the agent is purged, after the kernel's own state of it - by the `AgentManager`,
-    whether the agent is purged alone or with its scope;
+    whether the agent is purged alone or with its scope -, for good by the `Lifecycle` of its kind
+    (`purge_for_good`), as the agent's memory goes;
 *   claims its section of the configuration (`config::<C>(name)`), read as `C`, under `plugins`, and
     of the seed files (`seed_section`, a `SeedSection`), at their top level - the seed holds what
     the plugins keep, and no library claims a section of it, so that it has nothing to keep apart;
@@ -199,11 +201,16 @@ does with its kind it offers as **extensions**, by one pattern:
     where no storage of content is configured, the workspace's reader where the work may use none,
     the places of the stores where their backend tells none. A face that acts on a running channel
     acts through the running session the work's `SessionView` gives out (`session_loop`),
-    reaching the channel as a frontend does (`channel_for`), by the loops' public operations,
-    each checking itself - the sub-agents' writer (issue 558). No method of a face
-    takes a context or an identity, and what it hands out is data, not an object of the kernel - but
-    for a handle, named as one, that carries a right beyond the call: the workspace's terminal and
-    shell.
+    reaching the channel as a frontend does (`channel_for`). What changes a lifecycle there it
+    carries out as a procedure of its own (issue 593): built of what the kernel's procedures share
+    (`procedure::thread::open`) and the methods of its objects (`ChannelLoop::close_thread`), given
+    the kernel as the executor hands it over, carried out by that executor, which the running
+    session hands out (`SessionLoop::procedures`), and answering the face's error type, into which
+    it translates what the executor fails with (`From<ProcedureError>`) - the sub-agents' writer
+    (issue 558). No method
+    of a face takes a context or an identity, and what it hands out is data, not an object of the
+    kernel - but for a handle, named as one, that carries a right beyond the call: the workspace's
+    terminal and shell.
 *   **Asked for where it is used, never kept.** A face acts in the context of the call that asked
     for it - the rights as they are at each call -, so a component asks for it again each time.
 *   **Staged, then committed.** What a turn changes of a service that keeps what a turn changes

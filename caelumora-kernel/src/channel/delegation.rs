@@ -2,9 +2,8 @@
 //! delegate to its recipient, and what came of it brought back to its giver where the thread was
 //! opened - each thread's delegation kept in the channel's state, which the channel alone writes.
 
-use super::participation::ResolvedParticipant;
 use super::run::RunningActor;
-use super::thread::Phase;
+use super::ResolvedParticipant;
 use super::{ActorChange, ChannelError, ChannelLoop};
 use crate::actor::delegate::DelegateActor;
 use anyhow::{anyhow, Result};
@@ -45,11 +44,8 @@ impl ChannelLoop {
         )
         .await?;
         let not_open = || ChannelError::ThreadNotOpen { thread, channel: self.id };
-        let opening = self
-            .thread(thread)
-            .filter(|opened| opened.phase() == Phase::Open)
-            .and_then(|opened| opened.opening())
-            .ok_or_else(not_open)?;
+        let opening =
+            self.thread(thread).and_then(|opened| opened.opening()).ok_or_else(not_open)?;
         let giver = context.caller_id;
         let origin = opening.origin.thread;
         let runs_in = |participant: ActorId, thread: ThreadId| {
@@ -86,7 +82,7 @@ impl ChannelLoop {
         let brief = Brief { message, given_at: None };
         let briefs = VecDeque::from([brief]);
         let delegation = Delegation { giver, recipient, initiator: context.initiator_id, briefs };
-        let _ = self.changes_tx.send(ActorChange::Delegate(thread, delegation));
+        let _ = self.request(ActorChange::Delegate(thread, delegation));
         debug!("{} delegates into thread {} of channel {}", giver, thread, self.id);
         Ok(())
     }
@@ -166,7 +162,7 @@ impl ChannelLoop {
     /// Starts the delegate of `thread`, in it.
     async fn start_delegate(&self, thread: ThreadId) {
         let resolved = ResolvedParticipant::delegate(thread, self.session_id, self.id);
-        if let Err(e) = self.start_participant(resolved, thread, None, None).await {
+        if let Err(e) = self.add_actor(resolved, thread, None, None).await {
             warn!("The delegate of thread {} of channel {} cannot start: {:#}", thread, self.id, e);
         }
     }

@@ -1,6 +1,6 @@
 //! `ControllerManager`: where the kernel gets its controllers - made for the documents of a running
 //! session, or shared in this instance for agents, personalities, users, workspaces and projects
-//! (issues 121, 406, 467).
+//! (issues 121, 406, 467) -, and whether an agent exists, which its controller cannot tell.
 
 use super::{
     AgentController, ChannelController, PersonalityController, ProjectController,
@@ -34,7 +34,8 @@ use tracing::warn;
 /// nobody uses is loaded again the next time.
 type Registry<K, C> = Arc<Mutex<HashMap<K, Weak<C>>>>;
 
-/// Where the kernel gets its controllers, in two ways that differ on purpose:
+/// Where the kernel gets its controllers, in two ways that differ on purpose - and, beside them,
+/// whether an agent exists (`agent_exists`), which the shared controllers cannot tell:
 ///
 /// - `new_…_controller(document)` makes a new controller for a document
 ///   that belongs to a running session - its `Session` and `Channel`s. The
@@ -112,6 +113,16 @@ impl ControllerManager {
             Arc::<EventBus>::clone(&self.event_bus),
             &self.stores,
         ))
+    }
+
+    /// Whether agent `id` exists - neither deleted nor purged -, asked of the agents' store rather
+    /// than of the controllers: the instance keeps the controller of an agent while an actor of it
+    /// runs, also once it was deleted (issue 314).
+    ///
+    /// # Errors
+    /// Whatever the store reports but that there is none.
+    pub(crate) async fn agent_exists(&self, id: AgentId) -> StoreResult<bool> {
+        Ok(self.stores.agents.get(&SecurityContext::system(), id).await.optional()?.is_some())
     }
 
     /// The controller of agent `id` in this instance: the one its actors hold, or loaded from the

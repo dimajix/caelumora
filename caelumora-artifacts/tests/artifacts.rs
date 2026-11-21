@@ -56,6 +56,7 @@ use caelumora_kernel::event::{EventBus, EventSubscription, SubscriptionTopic};
 use caelumora_kernel::group::GroupSpec;
 use caelumora_kernel::kernel::Kernel;
 use caelumora_kernel::plugin::Plugin;
+use caelumora_kernel::procedure::project;
 use caelumora_kernel::project::ProjectSpec;
 use caelumora_kernel::scoped::ScopeNotEmpty;
 use caelumora_kernel::session::{ChannelSpec, SessionError, SessionLoop};
@@ -274,7 +275,7 @@ async fn the_tool_is_offered_where_the_channel_uses_a_workspace() {
     drop(turn);
 
     let alice = World::as_user(world.alice);
-    session.channels()[0].update_uses_workspace(&alice, false).await.unwrap();
+    session.channels()[0].controller().update_uses_workspace(&alice, false).await.unwrap();
     let mut state = AgentChannelState::default();
     let turn = agent_testing::turn(&session, helper, world.alice, &mut state);
     assert_eq!(
@@ -428,7 +429,7 @@ async fn new_artifacts_go_to_the_storage_the_section_names_or_the_one_there_is()
     let world = world().await;
     assert!(manager(&world).is_configured(), "kept, the one there is");
 
-    fn built(names: &[&str], section: Value) -> Result<Kernel, String> {
+    fn built(names: &[&str], section: Value) -> Result<Arc<Kernel>, String> {
         let storage = names
             .iter()
             .map(|name| (name.to_string(), BackendConfig::new("local", json!({ "root": name }))))
@@ -453,7 +454,7 @@ async fn new_artifacts_go_to_the_storage_the_section_names_or_the_one_there_is()
         .try_build()
         .map_err(|e| format!("{e:#}"))
     }
-    let configured = |kernel: Kernel| {
+    let configured = |kernel: Arc<Kernel>| {
         kernel.services().get::<ArtifactManager>().is_some_and(|manager| manager.is_configured())
     };
     assert!(!configured(built(&[], json!({})).unwrap()), "no storage unless configured");
@@ -566,7 +567,7 @@ fn api_of(world: &World) -> Router {
         auth,
         kernel: Arc::clone(&world.kernel),
         session_manager: Arc::clone(&world.manager),
-        project_manager: Arc::clone(&world.projects),
+        procedures: Arc::clone(world.kernel.procedures()),
         compartments: Default::default(),
         shutdown: Default::default(),
     });
@@ -1335,15 +1336,9 @@ async fn an_artifact_of_a_lifted_project_drops_its_channel_once_the_session_is_p
     let (artifact, _) =
         publish(&world, &alice, session_id, main, &at, "report.md", None).await.unwrap();
     let project = session.session().project;
-    world
-        .kernel
-        .controller_manager()
-        .project_controller(project)
-        .await
-        .unwrap()
-        .lift(&alice, "reports", Scope::UserScope { user_id: world.alice })
-        .await
-        .expect("kept as hers");
+    let lifting =
+        project::Lift::new(&alice, project, "reports", Scope::UserScope { user_id: world.alice });
+    world.kernel.procedures().run(lifting).await.expect("kept as hers");
     let read_by = |group| AclEntry { subject: Subject::Group(group), grant: Grant::Read };
     let channel = read_by(GroupId::of_channel(main));
     let members = read_by(GroupId::of_project(project));
@@ -1376,7 +1371,8 @@ async fn an_artifact_of_a_shared_project_outlives_the_session_it_was_published_i
     let world = world().await;
     let (alice, carol) = (World::as_user(world.alice), World::as_user(world.carol));
     let project = world
-        .projects
+        .kernel
+        .project_manager()
         .create(&alice, ProjectSpec::new("report", Scope::UserScope { user_id: world.alice }))
         .await
         .unwrap();
@@ -1400,7 +1396,7 @@ async fn an_artifact_of_a_shared_project_outlives_the_session_it_was_published_i
         .unwrap();
     let session = world.shared_session(&[], &[]).await;
     session.update_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
-    session.update_project(&alice, Some(project.id)).await.unwrap();
+    world.manager.update_project(&alice, session.id(), Some(project.id)).await.unwrap();
     let (session_id, main) = (session.id(), session.channels()[0].id());
     let (_, terminal) = terminal_in(&session, main, &alice).await.unwrap();
     let at = WorkspacePath::parse("report.md").unwrap();
@@ -1450,7 +1446,8 @@ async fn publishing_into_a_project_needs_reading_it() {
     let world = world().await;
     let alice = World::as_user(world.alice);
     let carols = world
-        .projects
+        .kernel
+        .project_manager()
         .create(
             &World::as_user(world.carol),
             ProjectSpec::new("hers", Scope::UserScope { user_id: world.carol }),

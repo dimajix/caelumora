@@ -11,11 +11,15 @@
     reason = "test code: what fails here fails the test that runs it"
 )]
 
+#[cfg(test)]
+mod announced;
 mod scripted_agent;
 #[cfg(test)]
 mod stand_in;
 mod unasked_language_model;
 
+#[cfg(test)]
+pub(crate) use announced::Announced;
 pub use scripted_agent::{Script, ScriptedAgent, ScriptedAgents};
 #[cfg(test)]
 pub(crate) use stand_in::StandIn;
@@ -30,7 +34,8 @@ use crate::controller::WorkspaceController;
 use crate::error::refusal;
 use crate::kernel::{Kernel, KernelBuilder, ParticipantRuntime};
 use crate::plugin::Plugin;
-use crate::project::{ProjectError, ProjectManager};
+use crate::procedure::follower::AgentFollower;
+use crate::project::ProjectError;
 use crate::session::testing::{shared_store, SharedLocks};
 use crate::session::{SessionError, SessionLoop, SessionManager};
 use crate::view::Viewer;
@@ -308,14 +313,14 @@ impl Default for TestKernel<'_> {
 impl TestKernel<'_> {
     /// The kernel, for a test that it is built in.
     pub fn build(self) -> Arc<Kernel> {
-        Arc::new(self.try_build().expect("the kernel of a test is built"))
+        self.try_build().expect("the kernel of a test is built")
     }
 
     /// The kernel, or why it could not be built - for a test of that.
     ///
     /// # Errors
     /// As `KernelBuilder::new`, `plugin`, `library` and `build`.
-    pub fn try_build(self) -> Result<Kernel> {
+    pub fn try_build(self) -> Result<Arc<Kernel>> {
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&self.access_policy)));
         let mut builder = KernelBuilder::new(
             self.store,
@@ -348,8 +353,8 @@ pub struct World {
     pub store: Persistence,
     pub kernel: Arc<Kernel>,
     pub manager: Arc<SessionManager>,
-    /// Made beside `manager`, as the programs make it (issue 467).
-    pub projects: Arc<ProjectManager>,
+    /// Whether the agents of its sessions exist, followed as long as the world lasts (issue 593).
+    _agents_followed: AgentFollower,
     pub alice: UserId,
     pub bob: UserId,
     pub carol: UserId,
@@ -456,14 +461,14 @@ impl World {
         }
         .build();
         memberships.bind(&kernel.entity_stores().groups);
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
-        let projects = Arc::new(ProjectManager::new(Arc::clone(&manager)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
+        let agents_followed = AgentFollower::spawn(&manager);
         let mut world = Self {
             access_policy: recorder,
             store,
             kernel,
             manager,
-            projects,
+            _agents_followed: agents_followed,
             alice: UserId::new(),
             bob: UserId::new(),
             carol: UserId::new(),
@@ -684,6 +689,7 @@ impl World {
             .collect();
         let session = make_session("shared", self.alice);
         let mut channel = Channel::build(
+            ChannelId::new(),
             session.id,
             alice,
             Name::new("main").unwrap(),
@@ -746,7 +752,11 @@ pub fn not_found(error: &Error) -> bool {
         )
         || matches!(
             error.downcast_ref::<SessionError>(),
-            Some(SessionError::NotFound(_) | SessionError::TemplateNotFound(_))
+            Some(
+                SessionError::NotFound(_)
+                    | SessionError::TemplateNotFound(_)
+                    | SessionError::Store(StoreError::NotFound { .. })
+            )
         )
         || matches!(error.downcast_ref::<ProjectError>(), Some(ProjectError::NotFound(_)))
 }

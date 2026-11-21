@@ -7,6 +7,7 @@ mod history;
 mod inbox;
 mod participants;
 mod participation;
+mod resolved;
 mod run;
 mod settings;
 #[cfg(any(test, feature = "test-support"))]
@@ -16,8 +17,9 @@ mod tests;
 mod thread;
 mod threads;
 
-pub(crate) use participants::Entry;
-pub(crate) use participation::{Participation, ResolvedKind, ResolvedParticipant};
+pub(crate) use participation::Participation;
+pub(crate) use resolved::{ResolvedKind, ResolvedParticipant};
+pub(crate) use threads::require_opening;
 
 use crate::actor::approval::ApproverActor;
 use crate::actor::user::UserActor;
@@ -26,7 +28,6 @@ use crate::attachment::AttachmentManager;
 use crate::component::BuildContext;
 use crate::controller::{ChannelController, ControllerManager};
 use crate::kernel::ChannelRuntime;
-use crate::lock::LocksById;
 use crate::moderator::Moderator;
 use crate::session::SessionError;
 use crate::session::SessionLoop;
@@ -64,7 +65,7 @@ use std::time::Duration;
 use thread::Thread;
 #[cfg(any(test, feature = "test-support"))]
 use tokio::sync::broadcast;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::time;
 use tokio_util::task::TaskTracker;
 use tracing::{info, warn};
@@ -111,10 +112,6 @@ pub enum ChannelError {
     /// A user nudging themselves (issue 278): nobody would be asked.
     #[error("{participant} cannot nudge themselves in channel {channel}")]
     NudgesItself { participant: ActorId, channel: ChannelId },
-    /// A participant of the session whose user or agent was deleted
-    /// (issue 120).
-    #[error("{participant} of the session of channel {channel} no longer exists")]
-    ParticipantGone { participant: ActorId, channel: ChannelId },
     /// A message classified so that it may not enter the channel - above
     /// it, for an audience the channel's would not be covered by, or with a
     /// compartment that is not configured or may not be given (issue 133).
@@ -137,10 +134,10 @@ pub enum ChannelError {
     /// (`AgentKinds`, issue 370): its actor cannot be built.
     #[error("{participant} is of a kind of agent that cannot take part in channel {channel} here")]
     UnknownAgentKind { participant: ActorId, channel: ChannelId },
-    /// A participant added again while the actor it had before is still
-    /// ending - one that does not end even when aborted (issue 171).
-    #[error("{participant} is still leaving channel {channel}")]
-    StillLeaving { participant: ActorId, channel: ChannelId },
+    /// The channel stopped before it started the actor of one taken in (issue 593): deleted
+    /// meanwhile, since whoever takes someone in holds the session.
+    #[error("Channel {channel} stopped before it took {participant} in")]
+    Stopped { participant: ActorId, channel: ChannelId },
     /// Questions of an agent's call cannot be answered so (issue 165): they
     /// are not open, not put to the one answering, or not answered as they
     /// ask. The reason never repeats an answer.
@@ -172,7 +169,7 @@ pub enum ChannelError {
     ThreadQuiet { thread: ThreadId, channel: ChannelId },
 }
 
-/// Whether `error` of `Participation::resolve` or of building its actor says
+/// Whether `error` of `ResolvedParticipant::resolve` or of building its actor says
 /// that the participant cannot be run - its agent's personality, or the
 /// component bundles it includes (issue 270), are gone or not the
 /// agent's to read - rather than that the store failed.
@@ -207,10 +204,10 @@ type Actors = HashMap<ActorId, ChannelActor>;
 /// else hangs.
 pub const STOP_GRACE: Duration = Duration::from_secs(5);
 
-/// How long adding a participant again waits for the actor it had before
-/// to end (issue 171): past `STOP_GRACE`, after which that actor's task is
-/// aborted, by as long as the abort takes to reach it.
-const LEAVE_GRACE: Duration = Duration::from_secs(STOP_GRACE.as_secs() + 1);
+/// How long letting a participant go waits for its actor to end (issue 171): past `STOP_GRACE`,
+/// after which that actor's task is aborted, by as long as the abort takes to reach it. Past it, a
+/// procedure that waits at a key is logged (issue 593).
+pub(crate) const LEAVE_GRACE: Duration = Duration::from_secs(STOP_GRACE.as_secs() + 1);
 
 /// Waits until the tasks `tasks` track have ended, at most `STOP_GRACE`,
 /// and returns whether they did (issue 187). An actor whose task never
@@ -222,8 +219,31 @@ async fn stopped(tasks: &[TaskTracker]) -> bool {
     time::timeout(STOP_GRACE, future::join_all(tasks.iter().map(TaskTracker::wait))).await.is_ok()
 }
 
-/// A change to the actors a running channel runs (issue 46), carried out by
-/// `run`, which owns their tasks.
+/// A change handed to `run` (`ChannelLoop::request`), with whom `run` answers once it has carried
+/// it out (issue 593).
+struct Request {
+    change: ActorChange,
+    carried_out: oneshot::Sender<()>,
+}
+
+/// What `run` answers a change it was handed (`ChannelLoop::request`, issue 593): that it carried
+/// it out - the actor started and its join announced, or found removed again; the actor's leave
+/// announced once its task has ended; the tasks of every actor ended (`End`); the thread's opening
+/// announced; the thread closed and announced; the brief handed to the delegate, or dropped for a
+/// thread no longer open -, or nothing, if `run` ended with the change under way or before it was
+/// handed in, or the channel is gone. A change handed in before `run` starts waits for it.
+#[derive(Debug)]
+pub(crate) struct Answer(oneshot::Receiver<()>);
+
+impl Answer {
+    /// Waits for the answer: whether `run` carried the change out.
+    pub(crate) async fn carried_out(self) -> bool {
+        self.0.await.is_ok()
+    }
+}
+
+/// A change of what a running channel runs - its actors (issue 46), its threads (issue 557) -,
+/// carried out by `run`, which owns the actors' tasks.
 enum ActorChange {
     /// The actor to start - every actor of the channel is started so, as the channel is built and
     /// as a participant joins -, from which position on it is given the history - `None`: what is
@@ -243,13 +263,29 @@ enum ActorChange {
     /// (`ThreadOpened`, issue 557), before anyone founding it joins it, and records it among the
     /// channel's threads (`ChannelState::threads`).
     Open(ThreadId, Opening, SecurityContext),
-    /// The thread to close, on whose behalf - in whose name `run` announces it (`ThreadClosed`),
-    /// once whoever left it has left, and records it closed.
+    /// The thread to close, on whose behalf - in whose name `run` announces it (`ThreadClosed`) -,
+    /// recorded closed at once: whoever closes it holds it, as whoever lets someone go from it does
+    /// until they have left (issue 593).
     Close(ThreadId, SecurityContext),
     /// What is delegated into the thread (issue 557): `run` records its briefs behind those of the
     /// thread's delegation, starting the delegation with it if the thread has none, and hands them
     /// to the thread's delegate - starting it if it does not run.
     Delegate(ThreadId, Delegation),
+    /// Every actor of the channel told to end, as the channel stops or is deleted
+    /// (`ChannelLoop::end_actors`): `run` answers once their tasks have ended - what they sent
+    /// until then routed - or were aborted after `STOP_GRACE` (issue 593). Nobody is taken out of
+    /// the channel, and no leave is announced.
+    End,
+}
+
+/// How the actors of a channel end as it stops (`ChannelLoop::end_actors`): stopped, to be resumed
+/// when it runs again, or leaving for good, as it or its session is deleted (issue 377).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Ending {
+    /// Stopped, each keeping what it is in the middle of.
+    Stop,
+    /// Leaving, as from a deleted channel.
+    Leave,
 }
 
 #[derive(Debug)]
@@ -273,19 +309,6 @@ pub struct ChannelLoop {
     /// when someone joins or leaves (issue 46), so that every reader sees
     /// one set.
     actors: ArcSwap<Actors>,
-    /// The tasks of the actors that were removed, which may still be ending
-    /// (issue 171): a participant added again waits for its predecessor
-    /// (`left`). Kept until the participant is added again; the task of one
-    /// that has ended is waited for at once. Nothing else cleans it up: an
-    /// entry of a participant never added again stays as long as the
-    /// channel runs - a closed `TaskTracker`, a few bytes each, which only
-    /// grows with removals.
-    leaving: sync::Mutex<HashMap<ActorId, TaskTracker>>,
-    /// Held per participant while its part in the channel changes - taken in, let go, its actor
-    /// started again or stopped as its agent is restored or deleted (issue 564) -, so that two
-    /// changes of one participant do not cross: two takings-in would start two actors, and one
-    /// that fails would roll back the listing of an actor the other started.
-    changing: LocksById<ActorId>,
     /// Its open threads (issue 557), each with a moderator of its own: what an event's thread
     /// decides of it is what the channel delivers. Its line, in which every actor takes part but
     /// those that founded another, and the threads opened since (`threads`); replaced as a whole
@@ -295,9 +318,12 @@ pub struct ChannelLoop {
     /// Held while `mentions` is built and stored, so that a build from older actors - a join and
     /// a rename at once - does not replace a newer one (issue 585).
     building_mentions: sync::Mutex<()>,
-    /// Actors for `run` to start or stop; `run` takes the receiver.
-    changes_tx: mpsc::UnboundedSender<ActorChange>,
-    changes_rx: Mutex<mpsc::UnboundedReceiver<ActorChange>>,
+    /// The changes handed to `run` (`request`) - actors to start or let go, threads to open or
+    /// close, briefs to hand to a delegate -, each with its answer. `run` takes the receiver as it
+    /// starts, so that it runs once, and it goes with `run`: the requests still queued then, and
+    /// every one handed in after, are answered with nothing (issue 593).
+    requests_tx: mpsc::UnboundedSender<Request>,
+    requests_rx: sync::Mutex<Option<mpsc::UnboundedReceiver<Request>>>,
     state: Mutex<ChannelState>,
     state_store: Arc<dyn StateStore>,
     /// The read side of the histories (issue 379): the channel's own, as it
@@ -308,7 +334,6 @@ pub struct ChannelLoop {
     /// otherwise - a user follows their actor (issue 220).
     #[cfg(any(test, feature = "test-support"))]
     observed: broadcast::Sender<Envelope>,
-    run_lock: Mutex<()>,
 }
 
 impl ChannelLoop {
@@ -338,7 +363,7 @@ impl ChannelLoop {
         let threads = state.threads.clone();
         let state = Mutex::new(state);
 
-        let (changes_tx, changes_rx) = mpsc::unbounded_channel();
+        let (requests_tx, requests_rx) = mpsc::unbounded_channel();
         let channel_loop = Arc::new(Self {
             id,
             session_id,
@@ -350,19 +375,16 @@ impl ChannelLoop {
             agent_kinds: Arc::clone(runtime.agent_kinds()),
             runtime,
             actors: ArcSwap::from_pointee(HashMap::new()),
-            leaving: sync::Mutex::new(HashMap::new()),
-            changing: LocksById::new(),
             threads: ArcSwap::from_pointee(HashMap::new()),
             mentions: ArcSwap::from_pointee(MentionDirectory::default()),
             building_mentions: sync::Mutex::new(()),
-            changes_tx,
-            changes_rx: Mutex::new(changes_rx),
+            requests_tx,
+            requests_rx: sync::Mutex::new(Some(requests_rx)),
             state,
             state_store,
             history_store,
             #[cfg(any(test, feature = "test-support"))]
             observed: broadcast::channel(128).0,
-            run_lock: Mutex::new(()),
         });
         channel_loop.runtime.attach(&channel_loop);
         // Its threads first, which everything after takes part in (issue 557); then what changed
@@ -377,7 +399,7 @@ impl ChannelLoop {
         let internal_actors = channel_loop.channel.load().internal_actors.clone();
         for internal in &internal_actors {
             let resolved = ResolvedParticipant::internal(internal, session_id, id);
-            channel_loop.start_participant(resolved, line, None, None).await?;
+            channel_loop.add_actor(resolved, line, None, None).await?;
         }
         // The delegates of what is still delegated (issue 557), each reading on from where its
         // open brief was given, before the participants they give to.
@@ -401,7 +423,7 @@ impl ChannelLoop {
                     return Ok(false);
                 };
                 channel_loop.participation.require_runnable(&resolved).await?;
-                channel_loop.start_participant(resolved, thread, None, None).await?;
+                channel_loop.add_actor(resolved, thread, None, None).await?;
                 Ok(true)
             }
             .await;
@@ -430,7 +452,8 @@ impl ChannelLoop {
     /// One for each thread (issue 557), built as it is opened.
     ///
     /// # Errors
-    /// `SessionError::InvalidComponents` if the components make no moderator.
+    /// `SessionError::InvalidComponents` if the components make no moderator; what reading the
+    /// owner's context reports.
     async fn moderator(&self) -> Result<ComponentImpl<dyn Moderator>> {
         let runtime = &self.runtime;
         let channel = self.channel.load();
@@ -462,9 +485,10 @@ impl ChannelLoop {
     }
 
     /// `participant` with what its actor is built from
-    /// (`Participation::resolve`).
+    /// (`ResolvedParticipant::resolve`).
     async fn resolve(&self, participant: &Participant) -> Result<Option<ResolvedParticipant>> {
-        self.participation.resolve(participant, self.session_id, Some(self.id)).await
+        ResolvedParticipant::resolve(&self.controllers, participant, self.session_id, Some(self.id))
+            .await
     }
 
     /// The session the channel belongs to (issues 123, 361), given it with
@@ -478,7 +502,7 @@ impl ChannelLoop {
     /// `from` and `joined` as it says): it takes part in `thread` (issue 557), whose moderator
     /// routes to it, it is among the participants' actors, and it can be mentioned. The one way an
     /// actor enters the channel - when the channel is built and when a participant joins (issue
-    /// 91).
+    /// 91). What `run` answers once it started it (issue 593).
     async fn adopt(
         &self,
         actor: Arc<dyn Actor>,
@@ -486,7 +510,7 @@ impl ChannelLoop {
         thread: ThreadId,
         from: Option<Position>,
         joined: Option<SecurityContext>,
-    ) {
+    ) -> Answer {
         match self.thread(thread) {
             Some(taking_part) => taking_part.add_actor(Arc::clone(&actor)),
             None => warn!(
@@ -505,7 +529,26 @@ impl ChannelLoop {
             actors
         });
         self.rebuild_mentions();
-        let _ = self.changes_tx.send(ActorChange::Start(adopted, from, joined));
+        self.request(ActorChange::Start(adopted, from, joined))
+    }
+
+    /// Whether `run` has started - running, or ended -, having taken the requests (issue 593).
+    fn has_run(&self) -> bool {
+        self.requests_rx.lock().unwrap_or_else(sync::PoisonError::into_inner).is_none()
+    }
+
+    /// Drops the requests of a channel that will never run, as it is taken out of its session
+    /// before it started: whoever waits for an answer of it is answered with nothing (issue 593).
+    pub(crate) fn never_to_run(&self) {
+        drop(self.requests_rx.lock().unwrap_or_else(sync::PoisonError::into_inner).take());
+    }
+
+    /// Hands `change` to `run`, which carries the changes out one after the other, those handed to
+    /// it before it ran first; what it answers once it carried it out.
+    fn request(&self, change: ActorChange) -> Answer {
+        let (carried_out, answer) = oneshot::channel();
+        let _ = self.requests_tx.send(Request { change, carried_out });
+        Answer(answer)
     }
 
     pub fn id(&self) -> ChannelId {
@@ -523,6 +566,13 @@ impl ChannelLoop {
     /// Who the channel belongs to and who contributes to it (issue 11).
     pub fn security_attributes(&self) -> SecurityAttributes {
         self.channel.load().security_attributes.clone()
+    }
+
+    /// The channel's controller: its document live, through which it is changed and stored - its
+    /// name, language, description, use of the workspace and rules of approval, each asked by the
+    /// store as it is stored.
+    pub fn controller(&self) -> &Arc<ChannelController> {
+        &self.channel
     }
 
     /// The channel as it is now: a snapshot, to be read or handed on to an operation - not to be

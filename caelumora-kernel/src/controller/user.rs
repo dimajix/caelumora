@@ -331,36 +331,15 @@ impl UserController {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::Announced;
     use caelumora_domain::approval::{Reach, RuleDecision, ToolMatcher};
-    use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::role::RoleId;
-    use caelumora_domain::security::SecurityAttributes;
     use caelumora_domain::user::testing::make_user;
     use caelumora_domain::user::UserUpdateEvent;
     use caelumora_domain::value::text::Introduction;
     use caelumora_security::{OwnershipPolicy, Policies};
     use caelumora_store::Persistence;
     use std::slice;
-    use std::sync::Mutex;
-
-    /// What was announced, in order.
-    #[derive(Debug, Default)]
-    struct Announced(Mutex<Vec<GlobalEvent>>);
-
-    impl EventPublisher for Announced {
-        fn publish(&self, event: GlobalEvent, _attributes: SecurityAttributes) {
-            self.0.lock().unwrap().push(event);
-        }
-
-        fn publish_classified(
-            &self,
-            event: GlobalEvent,
-            attributes: SecurityAttributes,
-            _classifications: &[Classification],
-        ) {
-            self.publish(event, attributes);
-        }
-    }
 
     fn as_user(id: UserId) -> SecurityContext {
         SecurityContext::new(ActorId::User(id), Default::default(), Default::default())
@@ -455,9 +434,13 @@ mod tests {
                 "stored"
             );
         }
-        assert!(
-            matches!(announced.0.lock().unwrap().as_slice(), [_, event] if matches!(event.about::<UserProfile>(), Some((id, change)) if id == user.id && change.update::<UserProfile>().is_some_and(|p| p.introduction.as_ref().map(Introduction::as_str) == Some("I run the budget and the team."))))
-        );
+        let taken = announced.taken();
+        let [_, event] = taken.as_slice() else { panic!("announced twice: {taken:?}") };
+        let about = event.about::<UserProfile>().filter(|(id, _)| *id == user.id);
+        let profile = about.and_then(|(_, change)| change.update::<UserProfile>());
+        let introduction = profile.and_then(|profile| profile.introduction);
+        let told = introduction.as_ref().map(Introduction::as_str);
+        assert_eq!(told, Some("I run the budget and the team."), "announced");
     }
 
     /// Issue 306: the roles the `UserManager` stored and announced are the
@@ -511,7 +494,7 @@ mod tests {
         );
 
         assert_eq!(controller.profile().introduction, None);
-        assert!(announced.0.lock().unwrap().is_empty());
+        assert!(announced.taken().is_empty());
     }
 
     #[tokio::test]

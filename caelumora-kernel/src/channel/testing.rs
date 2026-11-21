@@ -8,14 +8,20 @@
     reason = "test code: what fails here fails the test that runs it"
 )]
 
-use crate::channel::thread::{Phase, Thread};
-use crate::channel::ChannelLoop;
+use crate::channel::thread::Thread;
 use crate::channel::ResolvedParticipant;
+use crate::channel::{ChannelLoop, Ending};
 use crate::controller::SessionController;
 use crate::kernel::{ChannelRuntime, Kernel, ParticipantRuntime};
+use crate::procedure::channel::Reclassify;
+use crate::procedure::participant::{let_go_from_channel, Exit, LetGo, TakeIn};
+use crate::procedure::thread;
+use crate::procedure::{Compensation, Deferred, Key, Locks, Procedure, ProcedureExecutor};
+use crate::session::SessionError;
 use crate::testing::shown;
 use crate::view::AgentContextView;
 use anyhow::{Error, Result};
+use async_trait::async_trait;
 use caelumora_api::actor::Actor;
 use caelumora_api::command::CommandError;
 use caelumora_api::transport::{EventReceiver, EventSender};
@@ -27,8 +33,10 @@ use caelumora_domain::channel::testing::{founded, make_channel};
 #[cfg(test)]
 use caelumora_domain::channel::ChannelId;
 use caelumora_domain::channel::{
-    Channel, Delegation, InternalActor, Opening, Participant, ThreadId, ThreadOrigin, ThreadState,
+    Channel, Delegation, HistoryAccess, InternalActor, Opening, Participant, ThreadId,
+    ThreadOrigin, ThreadState,
 };
+use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::content::ContentId;
 use caelumora_domain::history::testing::{items_of, messages_of};
 use caelumora_domain::history::{Attended, Audience, History, HistoryEntry, Reader, Recorded};
@@ -46,13 +54,17 @@ use caelumora_security::{AccessPolicy, ActionType, Policies, SecurityContext};
 use caelumora_store::testing::record_users;
 use caelumora_store::testing::stored_agent;
 use caelumora_store::{EntityStores, Persistence};
+use futures::future::BoxFuture;
 use std::collections::HashMap;
+use std::convert::Infallible;
+use std::future::Future;
 use std::mem;
 use std::sync;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::Receiver;
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio::time;
 
@@ -125,7 +137,7 @@ pub struct Stuck {
     pub agent: AgentId,
     pub helper: Arc<dyn Actor>,
     pub events: broadcast::Receiver<Envelope>,
-    pub running: JoinHandle<Result<()>>,
+    pub running: JoinHandle<Result<Infallible>>,
 }
 
 /// Alice and her agent `name` of `personality`, stored in `store`: her context, the agent and her.
@@ -256,7 +268,7 @@ impl ChannelLoop {
             ThreadState { opening: Some(opening), closed: false, delegation: Some(delegation) };
         self.state.lock().await.threads.insert(thread, held);
         let moderator = self.moderator().await.expect("a moderator");
-        let opened = Arc::new(Thread::new(moderator, Some(opening), Phase::Open));
+        let opened = Arc::new(Thread::new(moderator, Some(opening)));
         self.threads.rcu(|threads| {
             let mut threads = HashMap::clone(threads);
             threads.insert(thread, Arc::clone(&opened));
@@ -452,15 +464,14 @@ impl ChannelLoop {
     }
 
     /// Stops every actor, as stopping the channel with its session does
-    /// (`ChannelLoop::stop_actors`).
+    /// (`ChannelLoop::end_actors`).
     pub async fn stop_all_actors(&self) {
-        self.stop_actors().await;
+        self.end_actors(Ending::Stop).await;
     }
 
-    /// Has every actor leave, as deleting the channel does
-    /// (`ChannelLoop::leave_actors`).
+    /// Has every actor leave, as deleting the channel does (`ChannelLoop::end_actors`).
     pub async fn leave_all_actors(&self) {
-        self.leave_actors().await;
+        self.end_actors(Ending::Leave).await;
     }
 
     /// The state of `agent` in this channel, as stored.
@@ -505,5 +516,196 @@ impl ChannelLoop {
             }
             None => self.runtime.new_participant_runtime(actor),
         }
+    }
+}
+
+/// What the tests do to a channel as the entry points do (issue 593) - add a participant to it or
+/// let one go from it, reclassify it, open and close its threads -: in its session by the procedure
+/// (`TakeIn`, `LetGo`, `channel::Reclassify`, `thread::Open`, `thread::Close`), failing as the
+/// building blocks fail (`SessionError::untyped`); a channel of no session, which no procedure
+/// reaches, by its building block under a hold of the channel (`Holding`).
+impl ChannelLoop {
+    /// Removes `participant` from the channel on behalf of `context`, as `LetGo::removed` does.
+    ///
+    /// # Errors
+    /// As `procedure::participant::let_go_from_channel`.
+    pub async fn remove_participant(
+        self: &Arc<Self>,
+        context: &SecurityContext,
+        participant: ActorId,
+    ) -> Result<()> {
+        self.let_go_by(context, participant, Exit::Removed).await
+    }
+
+    /// Takes `participant` out of the channel by their own act, as `LetGo::leaving` does.
+    ///
+    /// # Errors
+    /// As `procedure::participant::let_go_from_channel`.
+    pub async fn leave(
+        self: &Arc<Self>,
+        context: &SecurityContext,
+        participant: ActorId,
+    ) -> Result<()> {
+        self.let_go_by(context, participant, Exit::Leaving).await
+    }
+
+    /// Lets `participant` go from the channel on behalf of `context` by the way `exit` says: in its
+    /// session by `LetGo`; in a channel of no session under a hold of the channel, as
+    /// `procedure::participant::let_go_from_channel` lets one go.
+    async fn let_go_by(
+        self: &Arc<Self>,
+        context: &SecurityContext,
+        participant: ActorId,
+        exit: Exit,
+    ) -> Result<()> {
+        if let Some(session) = self.session_loop() {
+            let (id, from) = (session.id(), Some(self.id));
+            let letting_go = match exit {
+                Exit::Removed => LetGo::removed(context, id, participant, from),
+                Exit::Leaving => LetGo::leaving(context, id, participant, from),
+            };
+            return session.procedures().run(letting_go).await.map_err(SessionError::untyped);
+        }
+        let (channel, context) = (Arc::clone(self), context.clone());
+        let kernel = Arc::clone(self.runtime.kernel());
+        self.holding(async move {
+            let letting_go = let_go_from_channel(&kernel, &channel, &context, participant, exit);
+            letting_go.await.map_err(SessionError::untyped)
+        })
+        .await
+    }
+
+    /// Gives the channel `classification` on behalf of `context` by the procedure that does it
+    /// (`channel::Reclassify`), as an entry point does.
+    ///
+    /// # Errors
+    /// As `ChannelLoop::reclassify`.
+    pub async fn reclassify_by_procedure(
+        self: &Arc<Self>,
+        context: &SecurityContext,
+        classification: Classification,
+    ) -> Result<()> {
+        if let Some(session) = self.session_loop() {
+            let reclassifying = Reclassify::new(context, session.id(), self.id, classification);
+            return session.procedures().run(reclassifying).await.map_err(SessionError::untyped);
+        }
+        let (channel, context) = (Arc::clone(self), context.clone());
+        self.holding(async move { channel.reclassify(&context, classification).await }).await
+    }
+
+    /// Adds `participant` to the channel on behalf of `context`, seeing as much of its history as
+    /// `history` grants, as `TakeIn::added` does with the channel named.
+    ///
+    /// # Errors
+    /// As `TakeIn::added`; if the channel belongs to no session.
+    pub async fn add_participant(
+        self: &Arc<Self>,
+        context: &SecurityContext,
+        participant: ActorId,
+        history: HistoryAccess,
+    ) -> Result<()> {
+        let session = self
+            .session_loop()
+            .ok_or_else(|| Error::msg("a channel of no session takes nobody in"))?;
+        let into = Some((self.id, history));
+        let adding = TakeIn::added(context, session.id(), participant, into);
+        session.procedures().run(adding).await.map(drop).map_err(SessionError::untyped)
+    }
+
+    /// Opens a thread of the channel at `origin` on behalf of `context`, with `founders`, by the
+    /// procedure that does it (`thread::Open`), as an entry point does; in a channel of no session
+    /// without founders.
+    ///
+    /// # Errors
+    /// As `thread::Open`; if a channel of no session is to take founders in, else as
+    /// `ChannelLoop::open_thread`.
+    pub async fn open_thread_by_procedure(
+        self: &Arc<Self>,
+        context: &SecurityContext,
+        origin: ThreadOrigin,
+        founders: &[ActorId],
+    ) -> Result<ThreadId> {
+        let founders = founders.to_vec();
+        if let Some(session) = self.session_loop() {
+            let opening = thread::Open::new(context, session.id(), self.id, origin, founders);
+            return session.procedures().run(opening).await.map_err(SessionError::untyped);
+        }
+        // A channel of no session takes nobody in: its threads are opened without founders.
+        anyhow::ensure!(founders.is_empty(), "a channel of no session takes no founders in");
+        let (channel, context) = (Arc::clone(self), context.clone());
+        let opened = ThreadId::new();
+        self.holding(async move { channel.open_thread(&context, opened, origin).await }).await?;
+        Ok(opened)
+    }
+
+    /// Closes `thread` on behalf of `context` by the procedure that does it (`thread::Close`), as
+    /// an entry point does.
+    ///
+    /// # Errors
+    /// As `ChannelLoop::close_thread`.
+    pub async fn close_thread_by_procedure(
+        self: &Arc<Self>,
+        context: &SecurityContext,
+        thread: ThreadId,
+    ) -> Result<bool> {
+        if let Some(session) = self.session_loop() {
+            let closing = thread::Close::new(context, session.id(), self.id, thread);
+            return session.procedures().run(closing).await.map_err(SessionError::untyped);
+        }
+        let (channel, context) = (Arc::clone(self), context.clone());
+        let (closed_tx, closed_rx) = oneshot::channel();
+        self.holding(async move {
+            let closed = channel.close_thread(&context, thread).await?;
+            let _ = closed_tx.send(closed);
+            Ok(())
+        })
+        .await?;
+        Ok(closed_rx.await.unwrap_or(false))
+    }
+
+    /// Carries `change` out under a hold of the channel, for a channel of no session.
+    async fn holding(
+        &self,
+        change: impl Future<Output = Result<()>> + Send + 'static,
+    ) -> Result<()> {
+        let key = Key::Channel(self.session_id, self.id);
+        under_hold(self.runtime.kernel().procedures(), key, change).await
+    }
+}
+
+/// Carries `change` out through `procedures`, holding `key` exclusively: for a test that changes an
+/// object no procedure of the entry points reaches - a channel of no session, a session loop that
+/// runs in no manager (issue 593).
+///
+/// # Errors
+/// What `change` fails with.
+pub(crate) async fn under_hold(
+    procedures: &ProcedureExecutor,
+    key: Key,
+    change: impl Future<Output = Result<()>> + Send + 'static,
+) -> Result<()> {
+    let change = sync::Mutex::new(Box::pin(change) as BoxFuture<'static, Result<()>>);
+    procedures.run(Holding { key, change }).await
+}
+
+/// A change of a test, carried out holding `key` exclusively.
+struct Holding {
+    key: Key,
+    /// Behind a lock, since a procedure is `Sync` and a boxed future only `Send`.
+    change: sync::Mutex<BoxFuture<'static, Result<()>>>,
+}
+
+#[async_trait]
+impl Procedure for Holding {
+    type Plan = ();
+    type Output = ();
+    type Error = Error;
+
+    async fn enumerate(&self, _: &Kernel, locks: &mut Locks<'_>) -> Result<(), Deferred> {
+        locks.exclusive(self.key)
+    }
+
+    async fn carry_out(self, (): (), _: &Kernel, _: &mut Compensation) -> Result<(), Error> {
+        self.change.into_inner().unwrap_or_else(sync::PoisonError::into_inner).await
     }
 }

@@ -99,6 +99,10 @@ mod tests {
             self.id
         }
 
+        fn address(&self) -> NoteId {
+            self.id()
+        }
+
         fn deleted(&self) -> Option<&Removal> {
             self.deleted.as_ref()
         }
@@ -199,6 +203,10 @@ mod tests {
                 fn id(&self) -> NoteId {
                     self.0.id
                 }
+
+                fn address(&self) -> NoteId {
+                    self.id()
+                }
                 fn deleted(&self) -> Option<&Removal> {
                     self.0.deleted()
                 }
@@ -265,7 +273,7 @@ mod tests {
     }
 
     /// The kernel with `plugin` alone, configured as `config` says, or why it could not be built.
-    fn built(config: AppConfig, plugin: &dyn Plugin) -> Result<Kernel> {
+    fn built(config: AppConfig, plugin: &dyn Plugin) -> Result<Arc<Kernel>> {
         TestKernel { config, plugins: vec![plugin], ..Default::default() }.try_build()
     }
 
@@ -283,8 +291,8 @@ mod tests {
 
         let notebook = kernel.services().get::<Notebook>().expect("its manager, a service");
         assert_eq!(notebook.greeting, "hello", "its section of the configuration");
-        let views = Arc::new(SessionManager::new(Arc::clone(&kernel)))
-            .views(Viewer::new(SecurityContext::system()));
+        let views =
+            SessionManager::new(Arc::clone(&kernel)).views(Viewer::new(SecurityContext::system()));
         assert!(views.service::<Notebook>().is_some(), "reached by its views");
 
         // Its component kind, given the manager it uses.

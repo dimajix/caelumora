@@ -301,6 +301,7 @@ mod tests {
     fn one_who_left_is_told_besides() {
         let leaving = ActorId::User(UserId::new());
         let channel = Channel::build(
+            ChannelId::new(),
             SessionId::new(),
             ActorId::User(UserId::new()),
             Name::new("main").unwrap(),

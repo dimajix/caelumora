@@ -1,38 +1,27 @@
-//! The channels of a running session: finding, creating, deleting and restoring them.
+//! The channels of a running session: finding them, adding and removing them as they run, and
+//! holding those that do not run.
 
-use super::{
-    purge_channel_document, require_classification, ChannelEntry, ChannelRun, ChannelSpec, Listed,
-    SessionError, SessionLoop,
-};
-use crate::channel::ChannelLoop;
-use crate::group::keep_participants;
-use crate::scoped::ScopeNotEmpty;
+use super::{ChannelEntry, ChannelRun, Listed, SessionError, SessionLoop};
+use crate::channel::{ChannelLoop, Ending};
 use crate::view::{channel_reading, ReadingBasis};
 use anyhow::{Error, Result};
 use caelumora_api::component::ComponentError;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::AgentId;
-use caelumora_domain::channel::{self, Channel, ChannelId, Participant};
+use caelumora_domain::channel::{self, Channel, ChannelId};
 use caelumora_domain::confidentiality::Place;
 use caelumora_domain::event::{Announcing, GlobalEvent};
-use caelumora_domain::group::Group;
-use caelumora_domain::removal::Removal;
-use caelumora_domain::scope::Scope;
-use caelumora_domain::store::{StoreError, StoreResultExt, Stored};
-use caelumora_domain::template::InternalActorTemplate;
-use caelumora_domain::value::language::Language;
 use caelumora_domain::value::name::Name;
-use caelumora_security::{ActionType, Enforcement, SecurityContext};
-use caelumora_store::Deleted;
+use caelumora_security::SecurityContext;
 use futures::future;
-use std::slice;
+use std::collections::HashSet;
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::warn;
 
 /// What `error` of building a channel's loop says if its components cannot be read
 /// (`ComponentError::is_unavailable`, issue 463); `error` itself otherwise - a store that failed
 /// among it.
-fn unavailable_components(error: Error) -> Result<ComponentError, Error> {
+pub(crate) fn unavailable_components(error: Error) -> Result<ComponentError, Error> {
     match error.downcast::<SessionError>() {
         Ok(SessionError::InvalidComponents(cause)) if cause.is_unavailable() => Ok(cause),
         Ok(other) => Err(other.into()),
@@ -59,10 +48,11 @@ impl SessionLoop {
         self.channels.get(&channel_id).map(|entry| entry.listed())
     }
 
-    /// Has every channel of the session follow whether its agents exist
-    /// (issue 314) - `only`, or every agent if `None`: a deleted one rests in
-    /// them, a restored one runs again (`ChannelLoop::follow_agents`).
-    pub(crate) async fn follow_agents(&self, only: Option<AgentId>) {
+    /// Has every channel of the session follow whether its agents exist (issue 314), for
+    /// `procedure::participant::Follow` and a session as it starts (`procedure::session::open`) -
+    /// those of `only`, or every agent if `None`: a deleted one rests in them, a restored one runs
+    /// again (`ChannelLoop::follow_agents`).
+    pub(crate) async fn follow_agents(&self, only: Option<&HashSet<AgentId>>) {
         for channel in self.channels() {
             channel.follow_agents(only).await;
         }
@@ -85,20 +75,12 @@ impl SessionLoop {
         }
     }
 
-    /// Tells the actors of every channel to stop (`ChannelLoop::stop_actors`),
-    /// for a session that stops (issue 377): they keep what they are in the
-    /// middle of, to be resumed when it runs again. All channels at once;
-    /// returns once their actors have ended, or `STOP_GRACE` has passed.
-    pub(crate) async fn stop_actors(&self) {
-        future::join_all(self.channels().iter().map(|channel| channel.stop_actors())).await;
-    }
-
-    /// Has the actors of every channel leave for good
-    /// (`ChannelLoop::leave_actors`), for a session that is deleted (issue
-    /// 377): as when each of its channels is deleted. All channels at once;
-    /// returns once their actors have ended, or `STOP_GRACE` has passed.
-    pub(crate) async fn leave_actors(&self) {
-        future::join_all(self.channels().iter().map(|channel| channel.leave_actors())).await;
+    /// Ends the actors of every channel as `ending` says (`ChannelLoop::end_actors`), for a session
+    /// that stops - they keep what they are in the middle of, to be resumed when it runs again - or
+    /// is deleted, as when each of its channels is deleted (issue 377). All channels at once;
+    /// returns once their actors have ended, or were aborted after `STOP_GRACE`.
+    pub(super) async fn end_actors(&self, ending: Ending) {
+        future::join_all(self.channels().iter().map(|channel| channel.end_actors(ending))).await;
     }
 
     /// The channel `channel_id` if it runs.
@@ -107,7 +89,7 @@ impl SessionLoop {
     }
 
     /// The channel `channel_id`, if the user `context` acts for may read it,
-    /// as `SessionManager::open` opens a session (issues 70, 102):
+    /// as `procedure::session::Open` opens a session (issues 70, 102):
     /// reached as the views reach a channel for a user (`channel_reading`,
     /// issue 304), by `GetChannel` and their clearance for it as a whole.
     ///
@@ -129,11 +111,17 @@ impl SessionLoop {
         self.running(channel_id, run)
     }
 
-    /// The loop of the channel `channel_id` if `run` says it runs.
+    /// The loop of the channel `channel_id` if `run` says it runs: for whoever reaches a channel of
+    /// the session - who reads it (`channel_for`), who joins it (`procedure::participant`), who
+    /// makes it and checks that every channel runs (`procedure::session`).
     ///
     /// # Errors
     /// `SessionError::ChannelUnavailable` if it does not (issue 463).
-    fn running(&self, channel_id: ChannelId, run: ChannelRun) -> Result<Arc<ChannelLoop>> {
+    pub(crate) fn running(
+        &self,
+        channel_id: ChannelId,
+        run: ChannelRun,
+    ) -> Result<Arc<ChannelLoop>> {
         match run {
             ChannelRun::Running(channel_loop) => Ok(channel_loop),
             ChannelRun::Unavailable(cause) => Err(SessionError::ChannelUnavailable {
@@ -148,7 +136,7 @@ impl SessionLoop {
     /// The channel `channel_id` with whether it runs, if `context` may read
     /// it - asked as `channel_for` asks it; `None` if there is no such
     /// channel, and equally if `context` may not read it.
-    async fn listed_channel_for(
+    pub(crate) async fn listed_channel_for(
         &self,
         context: &SecurityContext,
         channel_id: ChannelId,
@@ -167,31 +155,6 @@ impl SessionLoop {
         Some((channel, run))
     }
 
-    /// Nothing if every channel the session lists runs.
-    ///
-    /// # Errors
-    /// `SessionError::ChannelUnavailable` for the first that does not (issue
-    /// 463).
-    pub(super) fn require_running(&self) -> Result<()> {
-        for (channel, run) in self.listed_channels() {
-            self.running(channel.id, run)?;
-        }
-        Ok(())
-    }
-
-    /// The channel `channel_id` if it runs, for whoever joins it: not asked
-    /// whether they may read it - joining it decides (`join`).
-    ///
-    /// # Errors
-    /// `SessionError::ChannelNotFound` if the session lists no such channel,
-    /// `SessionError::ChannelUnavailable` if it does not run (issue 463).
-    pub(super) fn channel_to_join(&self, channel_id: ChannelId) -> Result<Arc<ChannelLoop>> {
-        let (_, run) = self
-            .listed_channel(channel_id)
-            .ok_or(SessionError::ChannelNotFound { session: self.id, channel: channel_id })?;
-        self.running(channel_id, run)
-    }
-
     /// The running channel named `name`.
     pub fn channel_named(&self, name: &str) -> Option<Arc<ChannelLoop>> {
         self.channels
@@ -200,160 +163,39 @@ impl SessionLoop {
             .find(|channel| channel.name() == name)
     }
 
-    /// Creates a channel in the running session on behalf of `context` and
-    /// starts it (issue 09). The channel is a document of its own (issue 70),
-    /// stored first (`CreateChannel`), and then listed in the session, which
-    /// takes the permission to change the session (`UpdateSession`, asked
-    /// by the store); the channel belongs to the session's owner, like the
-    /// session's others, and its components are built in that owner's name
-    /// (issue 321). In the order of issue 304: what `spec` asks for is
-    /// validated - the component bundles it names read in the name of
-    /// `context`, who names them -, then creating the channel is asked,
-    /// then its participants' admission, and the store asks again as it stores
-    /// (issue 312). It is built and stored empty and started; then its
-    /// participants join it as its founders, by the one way in
-    /// (`ChannelLoop::found`, issue 420) - so that its history records them
-    /// as anyone who joins later. If one cannot, the channel is taken back.
-    /// It is announced as created once they joined.
+    /// Stops channel `channel_id` and takes it out of the session's channels - as it is deleted,
+    /// and for the compensation of creating or restoring it: its actors leave, given the time to
+    /// end by themselves - whoever did not aborted after `STOP_GRACE` - before its task is aborted
+    /// (issue 187); they store their state on their way out, which stays. Announced as stopped
+    /// where it was started; one whose task never started is never to run. One that does not run
+    /// (issue 463) is only taken out of the session's channels: nobody builds it again meanwhile,
+    /// as building it again (`procedure::channel::Start`) holds it as deleting it does.
+    pub(crate) async fn remove_channel(&self, channel_id: ChannelId) {
+        let Some((_, ChannelEntry::Running { channel: running, task })) =
+            self.channels.remove(&channel_id)
+        else {
+            return;
+        };
+        running.end_actors(Ending::Leave).await;
+        match task {
+            Some(task) => {
+                task.abort();
+                let stopped =
+                    GlobalEvent::custom::<Channel>(&(self.id, channel_id), channel::STOPPED, &());
+                self.events.announce(stopped, &*running.channel());
+            }
+            None => running.never_to_run(),
+        }
+    }
+
+    /// Builds `channel`, which the session lists, and has the session run it - in place of one it
+    /// held as not running (issue 463), if any -, as it opens, and as a procedure creates,
+    /// restores or builds again a channel (`procedure::channel`); removed by `remove_channel`.
     ///
     /// # Errors
-    /// - `ValueError` if its name is no name or its language no tag.
-    /// - `StoreError::NameTaken` if the session has a channel of that name
-    ///   (issue 250).
-    /// - [`SessionError`] if `spec` asks for something that cannot be: components that make no
-    ///   moderator, or name bundles `context` may not read, or a participant who is not one of the
-    ///   session's.
-    /// - `StoreError::PermissionDenied` if `context` may not create the
-    ///   channel or change the session; nothing is changed then.
-    /// - What taking a founder in reports (`ChannelLoop::found`); the channel
-    ///   is taken back then.
-    pub async fn create_channel(
-        self: &Arc<Self>,
-        context: &SecurityContext,
-        spec: ChannelSpec,
-    ) -> Result<Arc<ChannelLoop>> {
-        let session = self.session();
-        let name = Name::new(&spec.name)?;
-        let language = Language::optional(spec.language.as_deref())?;
-        let classification = spec.classification;
-        require_classification(self.policies.confidentiality().as_ref(), &classification)?;
-
-        // The creator first, if they take part in the session at all.
-        let mut ids = vec![context.initiator_id];
-        ids.extend(spec.participants);
-        let mut participants = Vec::new();
-        for id in ids {
-            if participants.iter().any(|p: &Participant| p.actor_id() == id) {
-                continue;
-            }
-            match session.participants.iter().find(|p| p.actor_id() == id) {
-                Some(participant) => participants.push(participant.clone()),
-                None if id == context.initiator_id => {}
-                None => {
-                    return Err(
-                        SessionError::NotAParticipant { session: self.id, participant: id }.into()
-                    )
-                }
-            }
-        }
-
-        // Components the channel would not take are refused before the verb
-        // (issue 337); and whoever names component bundles names only what
-        // they may read themselves, though the channel builds them in
-        // its owner's name (issue 321): their own request.
-        self.components
-            .require_acceptable(&spec.components, ChannelLoop::COMPONENT_FACETS, context)
-            .await
-            .map_err(SessionError::InvalidComponents)?;
-
-        let mut channel = Channel::build(
-            self.id,
-            session.security_attributes.owner_id,
-            name,
-            spec.components,
-            classification,
-            language,
-        );
-        channel.internal_actors =
-            spec.internal_actors.iter().map(InternalActorTemplate::instantiate).collect();
-        channel.uses_workspace = spec.uses_workspace;
-        // Whether the actor may create it, before anything is asked of the
-        // others in it (issues 198, 312): who may not learns nothing of their
-        // clearance. The store asks again as it stores.
-        self.policies
-            .access_policy()
-            .require(
-                context,
-                ActionType::create(Channel::KIND, &channel.security_attributes),
-                StoreError::PermissionDenied,
-            )
-            .await?;
-        self.participation.require_admitted(context, &channel, &participants).await?;
-        self.stores.channels.create(context, &mut channel).await?;
-        let added =
-            match keep_participants(self.stores.groups.as_ref(), Group::of_channel(&channel)).await
-            {
-                Ok(()) => self.session_controller.add_channel(context, channel.id).await,
-                Err(e) => Err(e),
-            };
-        if let Err(error) = added {
-            self.roll_back_channel_creation(channel.id).await;
-            return Err(error.into());
-        }
-
-        let channel_loop = match self.add_channel_loop(&channel).await {
-            Ok(channel_loop) => channel_loop,
-            Err(error) => {
-                // Stored, but it cannot run: rolled back, so that the
-                // session does not keep a channel that fails every start.
-                if let Err(undo) = self.session_controller.remove_channel(context, channel.id).await
-                {
-                    warn!(
-                        "Channel {} of session {} could not be built and not be removed again: {}",
-                        channel.id, self.id, undo
-                    );
-                }
-                self.roll_back_channel_creation(channel.id).await;
-                return Err(error);
-            }
-        };
-        for participant in &participants {
-            if let Err(error) = self.found(context, &channel_loop, participant.actor_id()).await {
-                self.abandon_channel(context, &channel_loop).await;
-                return Err(error);
-            }
-        }
-        self.events.announce(
-            GlobalEvent::created::<Channel>(&(self.id, channel.id)),
-            &*channel_loop.channel(),
-        );
-        info!("Channel {}/{} created in session {}", channel.name, channel.id, self.id);
-        Ok(channel_loop)
-    }
-
-    /// Takes back `channel_loop`, created on behalf of `context` and started,
-    /// whose founders could not all join (issue 420): its actors leave, its
-    /// task ends, and it is taken out of the session and its document
-    /// purged - as if it had never been made.
-    async fn abandon_channel(&self, context: &SecurityContext, channel_loop: &Arc<ChannelLoop>) {
-        let id = channel_loop.id();
-        let task = match self.channels.remove(&id) {
-            Some((_, ChannelEntry::Running { task, .. })) => task,
-            _ => None,
-        };
-        channel_loop.leave_actors().await;
-        if let Some(task) = task {
-            task.abort();
-        }
-        if let Err(undo) = self.session_controller.remove_channel(context, id).await {
-            warn!("Channel {} of session {} could not take in its founders and not be removed again: {}", id, self.id, undo);
-        }
-        self.roll_back_channel_creation(id).await;
-    }
-
-    /// Builds the loop of `channel`, which the session lists, and has the
-    /// session run it.
-    pub(super) async fn add_channel_loop(
+    /// Whatever building it reports - components that cannot be read among it
+    /// (`unavailable_components`); the session holds what it held then.
+    pub(crate) async fn add_channel(
         self: &Arc<Self>,
         channel: &Channel,
     ) -> Result<Arc<ChannelLoop>> {
@@ -366,8 +208,17 @@ impl SessionLoop {
         Ok(channel_loop)
     }
 
+    /// Holds `channel`, which the session lists, as not running, its components not to be read
+    /// for `cause` (issue 463) - as it opens, as building it again fails anew
+    /// (`procedure::channel::Start`), and renewed as someone is let go from it
+    /// (`procedure::participant::let_go_from_session`).
+    pub(crate) fn hold_unavailable(&self, channel: Channel, cause: Arc<ComponentError>) {
+        self.channels
+            .insert(channel.id, ChannelEntry::Unavailable { channel: Arc::new(channel), cause });
+    }
+
     /// Has the session run `channel`, which it lists, as it opens
-    /// (`add_channel_loop`) - or holds it left out, with a warning, if its
+    /// (`add_channel`) - or holds it left out, with a warning, if its
     /// components cannot be read (issue 463): a bundle it names is gone, or
     /// no longer its owner's to read. The owner of a bundle, a third party,
     /// must not keep a session from opening, as the owner of an agent's
@@ -376,371 +227,26 @@ impl SessionLoop {
     /// # Errors
     /// Whatever else building it reports - a store that failed among it.
     pub(super) async fn add_listed_channel(self: &Arc<Self>, channel: Channel) -> Result<()> {
-        let Err(error) = self.add_channel_loop(&channel).await else { return Ok(()) };
+        let Err(error) = self.add_channel(&channel).await else { return Ok(()) };
         let cause = unavailable_components(error)?;
         warn!(
             "Channel {} of session {} cannot be run and is left out: {}",
             channel.id, self.id, cause
         );
-        self.channels.insert(
-            channel.id,
-            ChannelEntry::Unavailable { channel: Arc::new(channel), cause: Arc::new(cause) },
-        );
+        self.hold_unavailable(channel, Arc::new(cause));
         Ok(())
-    }
-
-    /// Builds again the channels left out as the session opened (issue 463),
-    /// as someone opens it while it runs: those whose components can be read
-    /// again run from now on, the others stay left out, with why they still
-    /// cannot run - also one whose store failed, for the session runs
-    /// already. Asked on every request in the session, so logged at
-    /// `debug!`. One deleted while it was built is not started. Not while
-    /// someone is let go from one of them (`rebuilding`, issue 590): it is
-    /// tried again by the next request.
-    pub(crate) async fn retry_unavailable(self: &Arc<Self>) {
-        let Ok(_rebuilding) = self.rebuilding.try_lock() else { return };
-        let unavailable: Vec<Arc<Channel>> = self
-            .channels
-            .iter()
-            .filter_map(|entry| match entry.value() {
-                ChannelEntry::Unavailable { channel, .. } => Some(Arc::clone(channel)),
-                ChannelEntry::Running { .. } => None,
-            })
-            .collect();
-        for channel in unavailable {
-            let built = ChannelLoop::new(self.channel_runtime(Channel::clone(&channel))).await;
-            let Some(mut entry) = self.channels.get_mut(&channel.id) else { continue };
-            let ChannelEntry::Unavailable { cause, .. } = &mut *entry else { continue };
-            match built.map_err(unavailable_components) {
-                Ok(channel_loop) => {
-                    *entry = ChannelEntry::Running { channel: channel_loop, task: None };
-                    drop(entry);
-                    info!("Channel {} of session {} can be run again", channel.id, self.id);
-                    let _ = self.start_tx.send(channel.id);
-                }
-                Err(Ok(now)) => {
-                    debug!(
-                        "Channel {} of session {} still cannot be run: {}",
-                        channel.id, self.id, now
-                    );
-                    *cause = Arc::new(now);
-                }
-                Err(Err(error)) => debug!(
-                    "Channel {} of session {} could not be built again: {:#}",
-                    channel.id, self.id, error
-                ),
-            }
-        }
-    }
-
-    /// Lets `participant` go from the channel `channel_id`, which did not run as it was reached
-    /// (issue 463), on behalf of `context`, who let them go from the session (issue 590): in its
-    /// stored document, as its controller lets one go, and in the copy the session holds, so that
-    /// it is built without them - or as a running channel lets them go, if it was built again
-    /// meanwhile. Not while it is built again (`rebuilding`, `retry_unavailable`), so that it is
-    /// never built from a copy that still lists them.
-    ///
-    /// # Errors
-    /// Whatever storing the channel reports.
-    pub(super) async fn let_go_where_unavailable(
-        &self,
-        context: &SecurityContext,
-        channel_id: ChannelId,
-        participant: ActorId,
-    ) -> Result<()> {
-        let _rebuilding = self.rebuilding.lock().await;
-        match self.listed_channel(channel_id) {
-            Some((_, ChannelRun::Running(running))) => {
-                running.let_go_with_the_session(context, participant).await
-            }
-            Some((held, ChannelRun::Unavailable(_))) if held.lists(participant) => {
-                let held = Channel::clone(&held);
-                let by = context.caller_id;
-                let channel = self.let_go_where_not_running(held, &[participant], by).await?;
-                if let Some(mut entry) = self.channels.get_mut(&channel_id) {
-                    if let ChannelEntry::Unavailable { channel: held, .. } = &mut *entry {
-                        *held = Arc::new(channel);
-                    }
-                }
-                Ok(())
-            }
-            Some((_, ChannelRun::Unavailable(_))) | None => Ok(()),
-        }
-    }
-
-    /// `channel`, which does not run, with `participants` let go by `by` (issue 590): stored in the
-    /// kernel's name - letting them go from the session was permitted - by a controller of its own,
-    /// which keeps each as a former participant, lets the group of its participants follow and
-    /// announces it, as for a running channel (`ChannelController::remove_participant`).
-    ///
-    /// # Errors
-    /// Whatever storing the channel reports.
-    async fn let_go_where_not_running(
-        &self,
-        channel: Channel,
-        participants: &[ActorId],
-        by: ActorId,
-    ) -> Result<Channel> {
-        if participants.is_empty() {
-            return Ok(channel);
-        }
-        let controller = self.controllers.new_channel_controller(channel);
-        for participant in participants {
-            controller.remove_participant(&SecurityContext::system(), *participant, by).await?;
-        }
-        Ok(Channel::clone(&controller.load()))
-    }
-
-    /// Stops and deletes the channel `channel_id` on behalf of `context`.
-    /// Deleting marks (issue 164): the channel is taken out of the session
-    /// and its document marked, but it and its state stay stored - it can
-    /// be restored (`restore_channel`) - until it is purged with its session
-    /// (`SessionManager::purge`). Asked about first, in the order
-    /// of issue 304 - whether `context` reaches the channel as the views
-    /// reach it (`listed_channel_for`), then may delete it (`DeleteChannel`), then,
-    /// as it is taken out of the session, change the session
-    /// (`UpdateSession`, by the store) - so that a refused deletion leaves
-    /// the channel running and listed. A channel that does not run, its
-    /// components unreadable (issue 463), is deleted alike. `false` if the
-    /// session has no such channel, and equally if `context` may not read it
-    /// or is not cleared for it, as every deletion answers (issue 513).
-    ///
-    /// # Errors
-    /// - `StoreError::PermissionDenied` if `context` may not delete the
-    ///   channel or change the session; nothing is changed then.
-    /// - `SessionError::ScopeNotEmpty` if something of its scope is left
-    ///   that `context` may not delete (issue 320): what they may is
-    ///   deleted, the channel is kept and runs on.
-    /// - Whatever else the store reports, the group of its participants
-    ///   failing to go among it (issue 348); the channel is kept then too,
-    ///   with its group.
-    pub async fn delete_channel(
-        &self,
-        context: &SecurityContext,
-        channel_id: ChannelId,
-    ) -> Result<bool> {
-        // Also one that does not run (issue 463): its owner removes it so.
-        let Some((channel, _)) = self.listed_channel_for(context, channel_id).await else {
-            return Ok(false);
-        };
-        self.policies
-            .access_policy()
-            .require(
-                context,
-                ActionType::delete(Channel::KIND, &channel.security_attributes),
-                StoreError::PermissionDenied,
-            )
-            .await?;
-        let scope = Scope::ChannelScope { session_id: self.id, channel_id };
-        self.session_controller.remove_channel(context, channel_id).await?;
-        // Marked before what lies in its scope, so that nothing of it goes unless the channel's
-        // deletion was granted, and nothing is put into its scope afterwards (`ScopeHolders`, issue
-        // 458). Then what lies in its scope goes as far as `context` may delete it (issue 320); an
-        // agent of it takes part in no other channel (`Scope::admits`). Then the group of its
-        // participants, in the kernel's name (issue 348). All of it carries the channel's mark and
-        // comes back with it (`restore_channel`, issues 178, 469). If any of it fails, the deletion
-        // is rolled back - in the kernel's name: its deletion was permitted - and runs on, without
-        // what was deleted but with its group. If the store finds nothing the caller could delete -
-        // gone meanwhile -, it is listed again, and nothing was deleted.
-        let removal = Removal::now(context.caller_id);
-        let deleted = async {
-            if !self.stores.channels.delete(context, channel_id, &removal).await? {
-                return Ok(false);
-            }
-            let left =
-                self.scoped.delete_lying_in(context, slice::from_ref(&scope), &removal).await?;
-            ScopeNotEmpty::require_empty(&scope, left).map_err(SessionError::from)?;
-            self.groups.delete_participants(slice::from_ref(&scope), &removal).await?;
-            Ok::<_, Error>(true)
-        }
-        .await;
-        match deleted {
-            Ok(true) => {}
-            Ok(false) => {
-                self.roll_back_channel_deletion(channel_id).await;
-                return Ok(false);
-            }
-            Err(error) => {
-                self.roll_back_channel_deletion(channel_id).await;
-                return Err(error);
-            }
-        }
-
-        // Whether it runs as it is taken out, not as it was reached: it may
-        // have been built again meanwhile (`retry_unavailable`).
-        let task = match self.channels.remove(&channel_id) {
-            Some((_, ChannelEntry::Running { channel: running, task })) => {
-                // Given the time to end by themselves before the channel's
-                // task - and with it whoever did not - is aborted (issue
-                // 187): they store their state on their way out, which stays.
-                running.leave_actors().await;
-                task
-            }
-            _ => None,
-        };
-        let event_bus = &self.events;
-        if let Some(task) = task {
-            task.abort();
-            event_bus.announce(
-                GlobalEvent::custom::<Channel>(&(self.id, channel_id), channel::STOPPED, &()),
-                &*channel,
-            );
-        }
-        event_bus.announce(GlobalEvent::deleted::<Channel>(&(self.id, channel_id)), &*channel);
-        info!(
-            "Channel {}/{} deleted from session {} by {}",
-            channel.name, channel_id, self.id, context.caller_id
-        );
-        Ok(true)
-    }
-
-    /// Restores the deleted channel `channel_id` of this session on behalf of `context` (issue
-    /// 164): its mark taken away, the group of its participants restored with it in the kernel's
-    /// name (issue 348), listed in the session again and started from its stored state. In the
-    /// order of issue 304: the deleted channel is read as such (`ReadDeleted`, as the session lists
-    /// its deleted channels), then restoring it is asked (`Restore`), then its participants'
-    /// clearance, as creating one does; the store asks again as it restores it, and to change the
-    /// session that lists it again (`UpdateSession`). Who was let go from the session while it was
-    /// deleted (issue 590) is let go from it now, in the kernel's name and removed by it, before
-    /// it is built - the document of a deleted channel cannot be changed -, and their clearance is
-    /// not asked: who was taken into the session again meanwhile comes back with it. While it is
-    /// restored, none of its participants is taken in or let go (`changing`, issue 590): it holds
-    /// the locks of all of them, in the order of their ids, until it is listed again, so that one
-    /// let go meanwhile is let go after it, from it too.
-    ///
-    /// # Errors
-    /// - `SessionError::ChannelNotFound` if the session has no such deleted
-    ///   channel, or `context` may not see it.
-    /// - `StoreError::NameTaken` if its name was taken since (issue 250).
-    /// - `StoreError::PermissionDenied` if `context` may not restore the
-    ///   channel or change the session; nothing is changed then.
-    /// - Whatever else the store reports, the group of its participants
-    ///   failing to come back among it (issue 348); the channel stays
-    ///   deleted then.
-    pub async fn restore_channel(
-        self: &Arc<Self>,
-        context: &SecurityContext,
-        channel_id: ChannelId,
-    ) -> Result<Arc<ChannelLoop>> {
-        // What went with it carries its mark (issue 469).
-        let of_this = self
-            .stores
-            .channels
-            .get_deleted(context, channel_id)
-            .await
-            .optional()?
-            .filter(|deleted| deleted.entity.session_id == self.id);
-        let Some(Deleted { entity: channel, removal }) = of_this else {
-            return Err(
-                SessionError::ChannelNotFound { session: self.id, channel: channel_id }.into()
-            );
-        };
-        self.policies
-            .access_policy()
-            .require(
-                context,
-                ActionType::restore(Channel::KIND, &channel.security_attributes),
-                StoreError::PermissionDenied,
-            )
-            .await?;
-        // All of its participants held, in one order wherever several are, until it is listed.
-        let held = channel.participants.iter().map(Participant::actor_id);
-        let _changing = self.changing.lock_all(held, ActorId::id).await;
-        let session = self.session();
-        let (staying, gone): (Vec<Participant>, Vec<Participant>) =
-            channel.participants.iter().cloned().partition(|p| session.takes_part(p.actor_id()));
-        let gone: Vec<ActorId> = gone.iter().map(Participant::actor_id).collect();
-        // As when it was created: its participants' clearance may have
-        // changed while it was deleted.
-        self.participation.require_admitted(context, &channel, &staying).await?;
-        let scope = Scope::ChannelScope { session_id: self.id, channel_id };
-        let channel = self.stores.channels.restore(context, channel_id).await?;
-        // The group of its participants first, with it, in the kernel's name (issue 348): whatever
-        // fails later, its participants reach it.
-        let listed = async {
-            self.groups.restore_participants(slice::from_ref(&scope), &removal).await?;
-            let channel = self.let_go_where_not_running(channel, &gone, ActorId::System).await?;
-            self.session_controller.add_channel(context, channel_id).await?;
-            Ok((self.add_channel_loop(&channel).await?, channel))
-        }
-        .await;
-        let (channel_loop, channel) = match listed {
-            Ok(listed) => listed,
-            Err(error) => {
-                // Rolled back: deleted again with its group, marked as it was, so that it is
-                // neither half back nor lost, and a restoring tried again finds what went with it.
-                let _ = self.session_controller.remove_channel(context, channel_id).await;
-                if let Err(undo) =
-                    self.groups.delete_participants(slice::from_ref(&scope), &removal).await
-                {
-                    warn!("Channel {} of session {} could not be restored and its group not be deleted again: {}", channel_id, self.id, undo);
-                }
-                if let Err(undo) = self
-                    .stores
-                    .channels
-                    .delete(&SecurityContext::system(), channel_id, &removal)
-                    .await
-                {
-                    warn!("Channel {} of session {} could not be restored and not be marked deleted again: {}", channel_id, self.id, undo);
-                }
-                return Err(error);
-            }
-        };
-        // What was deleted with it comes back with it (issue 178).
-        if let Err(e) =
-            self.scoped.restore_lying_in(context, slice::from_ref(&scope), &removal).await
-        {
-            warn!(
-                "Channel {} of session {} was restored, but not what lies in its scope: {}",
-                channel_id, self.id, e
-            );
-        }
-        self.events.announce(GlobalEvent::restored::<Channel>(&(self.id, channel_id)), &channel);
-        info!(
-            "Channel {}/{} restored in session {} by {}",
-            channel.name, channel_id, self.id, context.caller_id
-        );
-        Ok(channel_loop)
-    }
-
-    /// Rolls back deleting the channel `channel_id`, which failed half-way - in the kernel's name:
-    /// its deletion was permitted. Listed in the session again, last, and its mark taken away, if
-    /// it was marked. What cannot be put back is logged.
-    async fn roll_back_channel_deletion(&self, channel_id: ChannelId) {
-        let system = SecurityContext::system();
-        if let Err(e) = self.stores.channels.restore(&system, channel_id).await.optional() {
-            warn!(
-                "Channel {} of session {} could not be deleted and not be unmarked again: {}",
-                channel_id, self.id, e
-            );
-        }
-        if let Err(e) = self.session_controller.add_channel(&system, channel_id).await {
-            warn!(
-                "Channel {} of session {} could not be deleted and not be listed again: {}",
-                channel_id, self.id, e
-            );
-        }
-    }
-
-    /// Rolls back creating the channel `channel_id`, which failed half-way - in the kernel's name:
-    /// its creation was permitted. Its document is purged; if that fails, it is logged.
-    async fn roll_back_channel_creation(&self, channel_id: ChannelId) {
-        if let Err(e) = purge_channel_document(&self.stores, channel_id).await {
-            warn!(
-                "Channel {} of session {} could not be deleted again: {}",
-                channel_id, self.id, e
-            );
-        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::unavailable_components;
+    use crate::channel::testing::under_hold;
     use crate::channel::ChannelLoop;
     use crate::error::is_forbidden;
     use crate::moderator::broadcast_policy::BROADCAST_POLICY_KIND;
     use crate::moderator::random_policy::RANDOM_POLICY_KIND;
+    use crate::procedure::Key;
     use crate::session::testing::*;
     use crate::session::{ChannelSpec, SessionError, SessionLoop, SessionManager};
     use crate::view::Viewer;
@@ -901,7 +407,7 @@ mod tests {
             .unwrap();
         assert_eq!(asked.channel().language, language("en"), "the one asked for");
 
-        asked.update_language(&ctx, None).await.expect("the owner changes it");
+        asked.controller().update_language(&ctx, None).await.expect("the owner changes it");
         assert_eq!(asked.channel().language, None);
         let stored = kernel.entity_stores().channels.get(&ctx, asked.id()).await.unwrap();
         assert_eq!(stored.language, None, "stored, not only in memory");
@@ -911,7 +417,7 @@ mod tests {
     #[tokio::test]
     async fn a_channel_without_a_language_of_its_own_follows_its_sessions() {
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let (session, ctx, _) = running_session_of_a_user(&manager).await;
         let language = |tag: &str| Some(Language::new(tag).unwrap());
         let following = session.create_channel(&ctx, spec("following", vec![])).await.unwrap();
@@ -938,7 +444,7 @@ mod tests {
         };
         assert_eq!(held_in(&following).await, (None, None), "neither holds one");
 
-        session.update_language(&ctx, Some("de")).await.expect("the owner changes it");
+        session.controller().update_language(&ctx, Some("de")).await.expect("the owner changes it");
         assert_eq!(
             held_in(&following).await,
             (None, language("de")),
@@ -952,11 +458,11 @@ mod tests {
         let stored = kernel.entity_stores().sessions.get(&ctx, session.id()).await.unwrap();
         assert_eq!(stored.language, language("de"), "stored, not only in memory");
         assert!(
-            session.update_language(&ctx, Some("no language")).await.is_err(),
+            session.controller().update_language(&ctx, Some("no language")).await.is_err(),
             "no language tag"
         );
 
-        session.update_language(&ctx, None).await.expect("taken back");
+        session.controller().update_language(&ctx, None).await.expect("taken back");
         assert_eq!(held_in(&following).await, (None, None));
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
@@ -964,7 +470,7 @@ mod tests {
     #[tokio::test]
     async fn a_session_is_held_in_the_time_zone_its_owner_chooses_and_in_utc_otherwise() {
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let (session, ctx, _) = running_session_of_a_user(&manager).await;
         let berlin = TimeZone::new("Europe/Berlin").unwrap();
         let shown = async || {
@@ -983,7 +489,11 @@ mod tests {
             "UTC where it names none (issue 424)"
         );
 
-        session.update_time_zone(&ctx, Some("Europe/Berlin")).await.expect("the owner changes it");
+        session
+            .controller()
+            .update_time_zone(&ctx, Some("Europe/Berlin"))
+            .await
+            .expect("the owner changes it");
         assert_eq!(
             (session.session().effective_time_zone(), shown().await),
             (berlin, Some(berlin))
@@ -991,10 +501,10 @@ mod tests {
         let stored = kernel.entity_stores().sessions.get(&ctx, session.id()).await.unwrap();
         assert_eq!(stored.time_zone, Some(berlin), "stored, not only in memory");
         assert!(
-            session.update_time_zone(&ctx, Some("Europe/Atlantis")).await.is_err(),
+            session.controller().update_time_zone(&ctx, Some("Europe/Atlantis")).await.is_err(),
             "no time zone"
         );
-        session.update_time_zone(&ctx, None).await.expect("taken back");
+        session.controller().update_time_zone(&ctx, None).await.expect("taken back");
         assert_eq!(session.session().effective_time_zone(), TimeZone::UTC);
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
@@ -1117,8 +627,8 @@ mod tests {
         let stopped = events.iter().position(|e| matches!(e.about::<Channel>(), Some(((_, cid), EntityChange::Custom { name: STOPPED, .. })) if cid == id));
         let deleted = events.iter().position(|e| matches!(e.about::<Channel>(), Some(((_, cid), EntityChange::Deleted)) if cid == id));
         assert!(
-            stopped.is_some() && deleted.is_some() && stopped < deleted,
-            "stopped, then deleted: {events:?}"
+            stopped.is_some() && deleted.is_some() && deleted < stopped,
+            "deleted as it is marked, then stopped (issue 593): {events:?}"
         );
 
         assert!(!session.delete_channel(&ctx, id).await.unwrap(), "gone (issue 513)");
@@ -1182,8 +692,17 @@ mod tests {
                 .unwrap();
         let mut rx = kernel.event_bus().subscribe_all();
 
-        // Queued to be started, but deleted before `run` gets to it.
-        assert!(session_loop.delete_channel(&ctx, channel_id).await.expect("deleted"));
+        // Queued to be started, but stopped and taken out before `run` gets to it, as deleting it
+        // does (`procedure::channel::Delete`) - by its building block, as the loop runs in no
+        // manager that a procedure would reach it by.
+        let stopping = Arc::clone(&session_loop);
+        let key = Key::Channel(session.id, channel_id);
+        under_hold(kernel.procedures(), key, async move {
+            stopping.remove_channel(channel_id).await;
+            Ok(())
+        })
+        .await
+        .unwrap();
         let running = tokio::spawn({
             let session_loop = Arc::clone(&session_loop);
             async move { session_loop.run().await }
@@ -1194,7 +713,7 @@ mod tests {
         let about = |wanted: fn(&EntityChange) -> bool| {
             events.iter().any(|e| matches!(e.about::<Channel>(), Some(((_, id), change)) if id == channel_id && wanted(change)))
         };
-        assert!(about(|change| *change == EntityChange::Deleted), "{events:?}");
+        assert!(session_loop.channel(channel_id).is_none(), "taken out of the session's channels");
         assert!(
             !about(|change| matches!(change, EntityChange::Custom { name: STARTED, .. })),
             "never started: {events:?}"

@@ -1,7 +1,7 @@
 //! Channels and their states for the tests of this crate and of others, which write beside them
 //! only what they differ in.
 
-use super::{moderation_components, Channel, ChannelState};
+use super::{moderation_components, Channel, ChannelId, ChannelState};
 use crate::actor::{ActorEvent, ActorId, Envelope, EventContext};
 use crate::confidentiality::Classification;
 use crate::history::{Audience, Recorded};
@@ -18,6 +18,7 @@ use crate::value::name::Name;
 )]
 pub fn make_channel(session_id: SessionId, name: &str) -> Channel {
     let built = Channel::build(
+        ChannelId::new(),
         session_id,
         ActorId::System,
         Name::new(name).expect("a test's name of a channel is one"),

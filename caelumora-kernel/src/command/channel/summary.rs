@@ -36,8 +36,9 @@ impl Command for SummaryCommand {
 #[async_trait]
 impl ChannelCommand for SummaryCommand {
     /// Runs `/channel summary` with `args`: the summary of the channel the command is issued in,
-    /// its briefing kept (`ChannelLoop::update_description`, which asks `UpdateChannel`); an empty
-    /// `args` removes it. Its agents are told from their next turn on. Only the issuer is answered.
+    /// its briefing kept (`ChannelController::update_description`, which asks `UpdateChannel`); an
+    /// empty `args` removes it. Its agents are told from their next turn on. Only the issuer is
+    /// answered.
     async fn execute(
         &self,
         args: &str,
@@ -54,9 +55,10 @@ impl ChannelCommand for SummaryCommand {
         let briefing = channel.briefing.as_ref().map(|briefing| briefing.as_str());
         context
             .channel
+            .controller()
             .update_description(&context.issuer.security_context(), summary, briefing)
             .await
-            .map_err(|e| command_error(SUMMARY_COMMAND_NAME, &e))?;
+            .map_err(|e| command_error(SUMMARY_COMMAND_NAME, &e.into()))?;
         Ok(CommandOutput::private(match summary {
             Some(_) => "The summary of this channel is set.",
             None => "The summary of this channel is removed.",

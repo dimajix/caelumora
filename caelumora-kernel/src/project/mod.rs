@@ -1,10 +1,12 @@
-//! Projects (issue 467): what holds the results of sessions. Making, deleting, restoring and
-//! purging a shared project are the `ProjectManager`'s (`manager`), with the sessions that lie in
-//! it and what lies in its scope; what a project is - its name, description, members, access list
-//! and where it lies - its controller changes (`controller::ProjectController`). A session's own
-//! project is the session's: the `SessionManager` makes, deletes, restores and purges it with the
-//! session. A session is put into a project or taken out into its own by its
-//! `SessionLoop::update_project`, which makes it a new own where its own was lifted.
+//! Projects (issue 467): what holds the results of sessions. Making a project is the
+//! `ProjectManager`'s (`manager`), which holds their lifecycle; deleting, restoring and purging
+//! one, with the sessions that lie in it and what lies in its scope, are the procedures of a
+//! project (`procedure::project`); what a project is - its name, description, members, access
+//! list and where it lies - its controller changes (`controller::ProjectController`). A session's
+//! own project is the session's: made, deleted, restored and purged with the session
+//! (`procedure::session`), by the same lifecycle. A session is put into a project or taken out
+//! into its own by `procedure::session::move_to`, which makes it a new own where its own was
+//! lifted.
 
 mod manager;
 mod spec;
@@ -12,6 +14,7 @@ mod spec;
 pub use manager::ProjectManager;
 pub use spec::ProjectSpec;
 
+use crate::procedure::ProcedureError;
 use crate::scoped::ScopeNotEmpty;
 use anyhow::Error;
 use caelumora_domain::project::ProjectId;
@@ -41,6 +44,9 @@ pub enum ProjectError {
     Invalid(#[from] ValueError),
     #[error(transparent)]
     Store(#[from] StoreError),
+    /// What the executor of procedures failed with (issue 593).
+    #[error(transparent)]
+    Procedure(#[from] ProcedureError),
     /// A session of the project that could not be deleted, restored or purged with it.
     #[error("a session of the project: {0}")]
     Session(#[source] Error),

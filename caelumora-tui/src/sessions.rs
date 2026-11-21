@@ -20,7 +20,9 @@ use caelumora_domain::user::UserId;
 use caelumora_domain::value::language::Language;
 use caelumora_domain::workspace::{WorkspaceChoice, WorkspaceId};
 use caelumora_kernel::kernel::Kernel;
-use caelumora_kernel::session::{SessionError, SessionLoop, SessionManager, SessionSpec};
+use caelumora_kernel::procedure::session::{Create, Delete, Open, Stop};
+use caelumora_kernel::procedure::ProcedureExecutor;
+use caelumora_kernel::session::{SessionError, SessionLoop, SessionSpec};
 use caelumora_kernel::view::{ChannelView, SessionView, Views};
 use chrono::{DateTime, Local, Utc};
 use std::cmp::Reverse;
@@ -60,8 +62,8 @@ pub(crate) struct Sessions {
     /// the stores, since the terminal links no crate of stores (`docs/CRATES.md`), and the views
     /// read neither.
     kernel: Arc<Kernel>,
-    /// What opens and starts them.
-    manager: Arc<SessionManager>,
+    /// What carries out the procedures of their lifecycles: the kernel's.
+    procedures: Arc<ProcedureExecutor>,
     /// The user the program acts for.
     owner: UserId,
     /// The views as the user reads them, in whose name - theirs, with their roles - the sessions
@@ -74,18 +76,18 @@ pub(crate) struct Sessions {
 }
 
 impl Sessions {
-    /// The sessions of `owner`, read through `views` - in their name -, run by `manager` in
-    /// `kernel`, in `place`, the project and workspace of the directory the program was started
-    /// in, if it works there, started from the template named `template` where none is named.
+    /// The sessions of `owner`, read through `views` - in their name -, run in `kernel`, in
+    /// `place`, the project and workspace of the directory the program was started in, if it works
+    /// there, started from the template named `template` where none is named.
     pub(crate) fn new(
         kernel: Arc<Kernel>,
-        manager: Arc<SessionManager>,
         owner: UserId,
         views: Views,
         place: Option<(ProjectId, WorkspaceId)>,
         template: String,
     ) -> Self {
-        Self { kernel, manager, owner, views, place, template }
+        let procedures = Arc::clone(kernel.procedures());
+        Self { kernel, procedures, owner, views, place, template }
     }
 
     /// The sessions of the directory the viewer may read, newest first by the last message heard
@@ -138,11 +140,10 @@ impl Sessions {
             });
             return Ok((self.start(template).await?, told));
         };
-        match self.manager.open(self.views.context(), id).await {
+        let opening = Open::new(self.views.context(), id);
+        match self.procedures.run(opening).await {
             Ok(opened) => Ok((opened, None)),
-            Err(e) if matches!(e.downcast_ref(), Some(SessionError::RunsElsewhere(_))) => {
-                Err(SessionsError::OpenElsewhere(id))
-            }
+            Err(SessionError::RunsElsewhere(_)) => Err(SessionsError::OpenElsewhere(id)),
             Err(e) => Err(SessionsError::failed(format!("The session {id} cannot be resumed"), e)),
         }
     }
@@ -150,9 +151,10 @@ impl Sessions {
     /// Stops the session `id`, which the terminal leaves for another.
     ///
     /// # Errors
-    /// As `SessionManager::stop`.
+    /// As `procedure::session::Stop`.
     pub(crate) async fn stop(&self, id: SessionId) -> SessionsResult<()> {
-        let stopped = self.manager.stop(self.views.context(), id).await;
+        let stopping = Stop::new(self.views.context(), id);
+        let stopped = self.procedures.run(stopping).await;
         stopped
             .map_err(|e| SessionsError::failed(format!("The session {id} cannot be stopped"), e))?;
         Ok(())
@@ -174,7 +176,8 @@ impl Sessions {
         if id == talked_in {
             return Err(SessionsError::TalkedIn(id));
         }
-        let deleted = self.manager.delete(self.views.context(), id).await;
+        let deleting = Delete::new(self.views.context(), id);
+        let deleted = self.procedures.run(deleting).await;
         deleted
             .map_err(|e| SessionsError::failed(format!("The session {id} cannot be deleted"), e))?;
         Ok(id)
@@ -261,7 +264,8 @@ impl Sessions {
             project: self.place.map(|(project, _)| project),
             ..SessionSpec::default()
         };
-        let started = self.manager.create_from_template(security, template.id, spec).await;
+        let creating = Create::from_template(security, template.id, spec);
+        let started = self.procedures.run(creating).await;
         let what = format!("No session can be started from the template '{}'", template.name.name);
         started.map_err(|e| SessionsError::failed(what, e))
     }
@@ -416,7 +420,6 @@ pub(crate) mod testing {
     use caelumora_domain::user::testing::make_user;
     use caelumora_domain::workspace::WorkspaceId;
     use caelumora_kernel::kernel::Kernel;
-    use caelumora_kernel::project::ProjectManager;
     use caelumora_kernel::session::SessionManager;
     use caelumora_kernel::testing::TestKernel;
     use caelumora_kernel::view::Viewer;
@@ -471,9 +474,8 @@ pub(crate) mod testing {
         record_users(kernel.entity_stores(), &[&user]).await;
         let owner =
             SecurityContext::new(ActorId::User(user.id), Default::default(), Default::default());
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
-        let projects = ProjectManager::new(Arc::clone(&manager));
-        let place = place_of(&kernel, &projects, &owner, user.id, directory.path()).await.unwrap();
+        let manager = SessionManager::new(Arc::clone(&kernel));
+        let place = place_of(&kernel, &owner, user.id, directory.path()).await.unwrap();
         let sessions = sessions_of(&kernel, &manager, &owner, Some(place)).await;
         InDirectory { sessions, manager, kernel, owner, directory }
     }
@@ -499,7 +501,7 @@ pub(crate) mod testing {
         let ActorId::User(user) = owner.caller_id else { panic!("sessions are a user's") };
         let views = manager.views(Viewer::new(owner.clone()));
         let template = "default".to_string();
-        Sessions::new(Arc::clone(kernel), Arc::clone(manager), user, views, place, template)
+        Sessions::new(Arc::clone(kernel), user, views, place, template)
     }
 }
 
@@ -509,6 +511,7 @@ mod tests {
     use caelumora_domain::message::testing::make_message;
     use caelumora_domain::message::MessageId;
     use caelumora_kernel::session::testing::{running_session_of_a_user, test_kernel};
+    use caelumora_kernel::session::SessionManager;
     use chrono::TimeDelta;
 
     /// The session spoken in last comes first; one nobody spoke in counts by when it was made, and
@@ -546,7 +549,7 @@ mod tests {
     #[tokio::test]
     async fn a_session_is_started_from_the_template_named_and_others_by_the_directory() {
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let (_, owner, _) = running_session_of_a_user(&manager).await;
         let sessions = testing::sessions_of(&kernel, &manager, &owner, None).await;
 

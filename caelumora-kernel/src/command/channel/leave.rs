@@ -3,6 +3,7 @@
 use crate::command::{
     command_error, named_one, named_participants, taking_part, ChannelCommand, CommandContext,
 };
+use crate::procedure::participant::LetGo;
 use async_trait::async_trait;
 use caelumora_api::actor::Actor;
 use caelumora_api::command::{Command, CommandResult};
@@ -44,9 +45,9 @@ impl ChannelCommand for LeaveCommand {
     /// Runs `/channel leave` with `args`: the issuer leaves the channel the command was issued in,
     /// or with a name takes the agent of theirs it names out of it - among the agents taking part
     /// they may take out (`ParticipantView::may_leave`), found by name or handle (`named_one`) -,
-    /// by their own act (`ChannelLoop::leave`, which asks `LeaveChannel`). Neither leaves the
-    /// session. The command runs in the issuer's call, so its answer still reaches them once they
-    /// left; only they are answered: the channel tells everyone that someone left.
+    /// by their own act (`LetGo::leaving` with the channel, which asks `LeaveChannel`). Neither
+    /// leaves the session. The command runs in the issuer's call, so its answer still reaches them
+    /// once they left; only they are answered: the channel tells everyone that someone left.
     async fn execute(
         &self,
         args: &str,
@@ -68,9 +69,9 @@ impl ChannelCommand for LeaveCommand {
             )?;
             (participant.id(), format!("{agent} left {name}."))
         };
+        let (issuer, from) = (context.issuer.security_context(), Some(context.channel.id()));
         context
-            .channel
-            .leave(&context.issuer.security_context(), leaving)
+            .carry_out(|session| LetGo::leaving(&issuer, session, leaving, from))
             .await
             .map_err(|e| command_error(LEAVE_COMMAND_NAME, &e))?;
         Ok(CommandOutput::private(done))

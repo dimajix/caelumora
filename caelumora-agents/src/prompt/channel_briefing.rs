@@ -134,6 +134,7 @@ mod tests {
     use caelumora_domain::actor::{ActorId, EventContext};
     use caelumora_domain::agent::testing::make_personality;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::channel::ChannelId;
     use caelumora_domain::channel::{Channel, Participant};
     use caelumora_domain::confidentiality::Confidentiality;
     use caelumora_domain::session::testing::make_session;
@@ -229,6 +230,7 @@ mod tests {
         let session = make_session("s", owner.id);
         let confidential = Classification::general(Confidentiality::Confidential);
         let mut channel = Channel::build(
+            ChannelId::new(),
             session.id,
             ActorId::User(owner.id),
             Name::new("main").unwrap(),
@@ -271,10 +273,11 @@ mod tests {
 
         let running = session_loop.channel(channel.id).expect("the channel runs");
         running
+            .controller()
             .update_description(&system, Some("Planning"), Some("Dates are in UTC."))
             .await
             .unwrap();
-        running.update_name(&system, "planning").await.unwrap();
+        running.controller().update_name(&system, "planning").await.unwrap();
         let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
         let ours = prompt.text.find("[About this session]").unwrap();
         let its = prompt.text.find("[About this channel]").unwrap();
@@ -286,8 +289,8 @@ mod tests {
             prompt.text
         );
 
-        session_loop.update_description(&system, None, None).await.unwrap();
-        session_loop.update_name(&system, "release").await.unwrap();
+        session_loop.controller().update_description(&system, None, None).await.unwrap();
+        session_loop.controller().update_name(&system, "release").await.unwrap();
         let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
         assert!(
             prompt.text.contains("This session is called \"release\" and has the id")

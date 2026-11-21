@@ -26,7 +26,8 @@ use crate::actor::user::UserActor;
 use crate::channel::ChannelLoop;
 use crate::component::ComponentRegistry;
 use crate::error::{refusal, user_message};
-use crate::session::SessionLoop;
+use crate::procedure::Procedure;
+use crate::session::{SessionError, SessionLoop};
 use crate::view::{ChannelView, ParticipantView, SessionView, Viewer, Views};
 use anyhow::Error;
 use async_trait::async_trait;
@@ -37,6 +38,7 @@ use caelumora_api::component::{ComponentImpl, ComponentResult};
 use caelumora_domain::actor::SpanId;
 use caelumora_domain::command::{CommandDescription, CommandOutput, CommandVisibility};
 use caelumora_domain::security::SecurityAttributes;
+use caelumora_domain::session::SessionId;
 use caelumora_domain::store::StoreError;
 use caelumora_domain::type_map::TypeKey;
 use caelumora_domain::value::name::{named, Name};
@@ -88,6 +90,27 @@ impl CommandContext<'_> {
         self.channel
             .session_loop()
             .ok_or_else(|| command_error(command, &Error::msg("the channel belongs to no session")))
+    }
+
+    /// Carries out the procedure `make` builds for the session the channel belongs to (issue 593) -
+    /// a command is an entry point, which makes the procedures it asks for -, failing as its
+    /// building block failed (`SessionError::untyped`).
+    ///
+    /// # Errors
+    /// If the channel belongs to no session; as the procedure.
+    pub(crate) async fn carry_out<P>(
+        &self,
+        make: impl FnOnce(SessionId) -> P,
+    ) -> Result<P::Output, Error>
+    where
+        P: Procedure<Error = SessionError>,
+    {
+        let session = self
+            .channel
+            .session_loop()
+            .ok_or_else(|| Error::msg("the channel belongs to no session"))?;
+        let procedure = make(session.id());
+        session.procedures().run(procedure).await.map_err(SessionError::untyped)
     }
 
     /// The views of the session the channel belongs to in the issuer's name - what the issuer may

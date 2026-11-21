@@ -1,6 +1,6 @@
 //! What a caller chooses of a new session and of a new channel: `SessionSpec`, taken by
-//! `SessionManager::create_from_template`, and `ChannelSpec`, taken by
-//! `SessionLoop::create_channel`.
+//! `procedure::session::Create::from_template`, and `ChannelSpec`, taken by
+//! `procedure::channel::Create`.
 
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::channel;
@@ -30,7 +30,7 @@ pub struct SessionSpec {
 }
 
 /// What a new channel should be (issue 09), as it was asked: its name and
-/// language are made from it by `create_channel` (issue 248).
+/// language are made from it by `procedure::channel::Create` (issue 248).
 #[derive(Debug, Clone)]
 pub struct ChannelSpec {
     pub name: String,

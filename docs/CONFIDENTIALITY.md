@@ -115,8 +115,9 @@ policy allows a channel's owner to reclassify the channel and every message in i
 author their own message. To what is the flow's: a message never above its channel, and only with
 configured compartments.
 
-*   **A channel** (`ChannelLoop::reclassify`) is stored and announced. Lowering it releases what is
-    in it: every message is fitted into the new classification (`Classification::fitted_into`: its
+*   **A channel** (`procedure::channel::Reclassify`) is stored and announced. Lowering it releases
+    what is in it: every message is fitted into the new classification
+    (`Classification::fitted_into`: its
     level at most the channel's, the channel's compartments added to its audience), since the agents
     in the channel carry what they know into what they write next. Messages released further before
     keep their wider audience. This is recorded as one entry in the channel's history, which every

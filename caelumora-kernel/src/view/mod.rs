@@ -49,6 +49,7 @@ pub use workspace::WorkspaceView;
 
 use crate::actor::ActorManager;
 use crate::attachment::AttachmentManager;
+use crate::channel::Participation;
 use crate::component::ComponentRegistry;
 use crate::controller::ControllerManager;
 use crate::kernel::Kernel;
@@ -162,6 +163,8 @@ pub struct Views {
     /// Where a session's workspace is asked whether it may be used in a
     /// channel (issue 344).
     controllers: Arc<ControllerManager>,
+    /// Who may be taken in, asked of the candidates of a session (issue 356).
+    participation: Arc<Participation>,
     /// Where a user follows a channel through, running or not (issue 386).
     actors: Arc<ActorManager>,
     /// Where the attachments of messages are read (issue 282).
@@ -183,6 +186,7 @@ impl Views {
             components: Arc::clone(kernel.component_registry()),
             workspaces: Arc::clone(kernel.workspace_manager()),
             controllers: Arc::clone(kernel.controller_manager()),
+            participation: Arc::clone(kernel.participation()),
             actors: Arc::clone(kernel.actor_manager()),
             attachments: Arc::clone(kernel.attachment_manager()),
             running,
@@ -268,6 +272,10 @@ impl Views {
 
     pub(crate) fn controller_manager(&self) -> &Arc<ControllerManager> {
         &self.controllers
+    }
+
+    pub(crate) fn participation(&self) -> &Participation {
+        &self.participation
     }
 
     pub(crate) fn attachment_manager(&self) -> &Arc<AttachmentManager> {
@@ -3101,7 +3109,7 @@ mod tests {
             ..Default::default()
         }
         .build();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let manager = SessionManager::new(Arc::clone(&kernel));
         let system = SecurityContext::system();
 
         let alice = make_user("alice");

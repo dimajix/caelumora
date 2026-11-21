@@ -1198,8 +1198,8 @@ async fn an_external_agent_removed_while_it_answers_cancels_its_task_and_gives_i
 }
 
 /// What a deleted channel does with its actors before it aborts its
-/// task (`SessionLoop::delete_channel`, issue 187): an external agent
-/// has cancelled the remote task it followed by the time `leave_actors`
+/// task (`SessionLoop::remove_channel`, issue 187): an external agent
+/// has cancelled the remote task it followed by the time `end_actors`
 /// returns, and every actor - the approver too - ended by itself.
 #[tokio::test]
 async fn a_deleted_channel_waits_for_its_external_agent_to_cancel_its_open_task() {
@@ -1213,7 +1213,9 @@ async fn a_deleted_channel_waits_for_its_external_agent_to_cancel_its_open_task(
         with_an_external_agent(Arc::clone(&remote)).await;
     answered(&mut events, agent).await;
 
+    let leaving = Instant::now();
     channel.leave_all_actors().await;
+    assert!(leaving.elapsed() < STOP_GRACE, "every actor ended by itself");
     assert_eq!(
         *remote.cancelled.lock().unwrap(),
         vec![task("t-1")],
@@ -1221,11 +1223,8 @@ async fn a_deleted_channel_waits_for_its_external_agent_to_cancel_its_open_task(
     );
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(state.remote.open_tasks.is_empty(), "and that is stored");
-    time::timeout(Duration::from_secs(1), running)
-        .await
-        .expect("every actor ended by itself, and with them the channel")
-        .expect("the channel's task was not aborted")
-        .expect("the channel ended without an error");
+    // Then its task is aborted, as deleting the channel does (issue 593).
+    running.abort();
 }
 
 /// A channel that merely stops keeps its external agent's open task
@@ -1880,7 +1879,7 @@ async fn lowering_the_channel_gives_up_an_external_agents_answer_under_way() {
     time::sleep(Duration::from_millis(50)).await;
 
     channel
-        .reclassify(&context, Classification::general(Confidentiality::Public))
+        .reclassify_by_procedure(&context, Classification::general(Confidentiality::Public))
         .await
         .expect("permitted");
     let told = turn_given_up(&mut events, agent).await;

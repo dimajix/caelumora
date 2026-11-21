@@ -462,7 +462,9 @@ mod tests {
         let session = world.shared_session(&[helper], &[]).await;
         let main = Arc::clone(&session.channels()[0]);
         let alice = World::as_user(world.alice);
-        main.reclassify(&alice, Classification::PUBLIC).await.expect("where the tool is offered");
+        main.reclassify_by_procedure(&alice, Classification::PUBLIC)
+            .await
+            .expect("where the tool is offered");
         let mut watch = main.user_actor(world.alice).expect("she takes part").watch();
         main.user_actor(world.alice)
             .unwrap()

@@ -12,6 +12,8 @@ use caelumora_domain::approval::ApprovalRule;
 use caelumora_domain::session::SessionId;
 use caelumora_domain::snapshot::Detail;
 use caelumora_domain::value::name::NameMatch;
+use caelumora_kernel::procedure::participant::{LetGo, TakeIn};
+use caelumora_kernel::procedure::session::{Create, Delete, Purge, Restore};
 use caelumora_kernel::session::SessionSpec;
 use caelumora_kernel::view::SessionView;
 use caelumora_rest_api::actor::ActorPath;
@@ -36,10 +38,9 @@ pub(super) async fn create_session(
         workspace: payload.workspace.map(Into::into),
         project: payload.project_id,
     };
-    let session_loop = state
-        .session_manager
-        .create_from_template(&user.security_context(), payload.template_id, spec)
-        .await?;
+    let context = user.security_context();
+    let creating = Create::from_template(&context, payload.template_id, spec);
+    let session_loop = state.procedures.run(creating).await?;
 
     Ok(Json(listed(&state, &user, session_loop.id()).await?))
 }
@@ -118,7 +119,8 @@ pub(super) async fn restore_session(
     Path(session_id): Path<SessionId>,
     user: AuthenticatedUser,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
-    state.session_manager.restore(&user.security_context(), session_id).await?;
+    let restoring = Restore::new(&user.security_context(), session_id);
+    state.procedures.run(restoring).await?;
     Ok(Json(session_response(&state, &user, session_id).await?))
 }
 
@@ -129,7 +131,8 @@ pub(super) async fn purge_session(
     Path(session_id): Path<SessionId>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    match state.session_manager.purge(&user.security_context(), session_id).await? {
+    let purging = Purge::new(&user.security_context(), session_id);
+    match state.procedures.run(purging).await? {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found(
             "session_not_found",
@@ -143,10 +146,10 @@ pub(super) async fn delete_session(
     Path(session_id): Path<SessionId>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    // `SessionManager::delete` stops the running loop, marks the session deleted -
-    // kept with its channels until it is purged (issue 164) - and emits the
-    // corresponding lifecycle events.
-    match state.session_manager.delete(&user.security_context(), session_id).await? {
+    // Deleting stops the running loop, marks the session deleted - kept with its channels until
+    // it is purged (issue 164) - and emits the corresponding lifecycle events.
+    let deleting = Delete::new(&user.security_context(), session_id);
+    match state.procedures.run(deleting).await? {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found(
             "session_not_found",
@@ -163,7 +166,9 @@ pub(super) async fn rename_session(
 ) -> Result<Json<SessionResponse>, ApiError> {
     let session_loop = ensure_session(&state, &user, session_id).await?;
 
-    session_loop.update_name(&user.security_context(), &payload.name).await?;
+    let context = user.security_context();
+    let renaming = session_loop.controller().update_name(&context, &payload.name);
+    renaming.await.map_err(anyhow::Error::from)?;
 
     Ok(Json(listed(&state, &user, session_id).await?))
 }
@@ -181,7 +186,9 @@ pub(super) async fn set_session_language(
 ) -> Result<Json<SessionSnapshot>, ApiError> {
     let session_loop = ensure_session(&state, &user, session_id).await?;
 
-    session_loop.update_language(&user.security_context(), language.as_deref()).await?;
+    let context = user.security_context();
+    let changing = session_loop.controller().update_language(&context, language.as_deref());
+    changing.await.map_err(anyhow::Error::from)?;
 
     Ok(Json(session_response(&state, &user, session_id).await?))
 }
@@ -199,7 +206,9 @@ pub(super) async fn set_session_time_zone(
 ) -> Result<Json<SessionSnapshot>, ApiError> {
     let session_loop = ensure_session(&state, &user, session_id).await?;
 
-    session_loop.update_time_zone(&user.security_context(), time_zone.as_deref()).await?;
+    let context = user.security_context();
+    let changing = session_loop.controller().update_time_zone(&context, time_zone.as_deref());
+    changing.await.map_err(anyhow::Error::from)?;
 
     Ok(Json(session_response(&state, &user, session_id).await?))
 }
@@ -214,7 +223,9 @@ pub(super) async fn update_session_privacy(
 ) -> Result<Json<SessionSnapshot>, ApiError> {
     let session_loop = ensure_session(&state, &user, session_id).await?;
 
-    session_loop.update_privacy(&user.security_context(), payload.privacy).await?;
+    let context = user.security_context();
+    let changing = session_loop.controller().update_privacy(&context, payload.privacy);
+    changing.await.map_err(anyhow::Error::from)?;
 
     Ok(Json(session_response(&state, &user, session_id).await?))
 }
@@ -233,9 +244,10 @@ pub(super) async fn update_session_approval_rules(
     let session_loop = ensure_session(&state, &user, session_id).await?;
 
     session_loop
+        .controller()
         .update_approval_rules(&user.security_context(), rules)
         .await
-        .map_err(|e| change_error(e, "invalid_rule"))?;
+        .map_err(|e| change_error(e.into(), "invalid_rule"))?;
 
     Ok(Json(session_response(&state, &user, session_id).await?))
 }
@@ -253,12 +265,14 @@ pub(super) async fn update_session_description(
     let session_loop = ensure_session(&state, &user, session_id).await?;
 
     session_loop
+        .controller()
         .update_description(
             &user.security_context(),
             payload.summary.as_deref(),
             payload.briefing.as_deref(),
         )
-        .await?;
+        .await
+        .map_err(anyhow::Error::from)?;
 
     Ok(Json(session_response(&state, &user, session_id).await?))
 }
@@ -288,9 +302,10 @@ pub(super) async fn add_participant(
     user: AuthenticatedUser,
     Json(payload): Json<AddSessionParticipantRequest>,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
-    let session_loop = ensure_session(&state, &user, session_id).await?;
     let into = payload.channel.map(|channel| (channel, payload.history));
-    session_loop.add_participant(&user.security_context(), payload.participant, into).await?;
+    let context = user.security_context();
+    let adding = TakeIn::added(&context, session_id, payload.participant, into);
+    state.procedures.run(adding).await?;
     Ok(Json(session_response(&state, &user, session_id).await?))
 }
 
@@ -302,8 +317,9 @@ pub(super) async fn remove_participant(
     Path((session_id, ActorPath(participant))): Path<(SessionId, ActorPath)>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let session_loop = ensure_session(&state, &user, session_id).await?;
-    session_loop.remove_participant(&user.security_context(), participant).await?;
+    let context = user.security_context();
+    let removing = LetGo::removed(&context, session_id, participant, None);
+    state.procedures.run(removing).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -314,8 +330,9 @@ pub(super) async fn leave_session(
     Path((session_id, ActorPath(participant))): Path<(SessionId, ActorPath)>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let session_loop = ensure_session(&state, &user, session_id).await?;
-    session_loop.leave(&user.security_context(), participant).await?;
+    let context = user.security_context();
+    let leaving = LetGo::leaving(&context, session_id, participant, None);
+    state.procedures.run(leaving).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -331,7 +348,8 @@ pub(super) async fn join_session(
 ) -> Result<Json<SessionSnapshot>, ApiError> {
     let context = user.security_context();
     let participant = payload.participant.unwrap_or(context.principal_id);
-    state.session_manager.join(&context, session_id, participant, payload.channel).await?;
+    let joining = TakeIn::joining(&context, session_id, participant, payload.channel);
+    state.procedures.run(joining).await?;
     Ok(Json(session_response(&state, &user, session_id).await?))
 }
 

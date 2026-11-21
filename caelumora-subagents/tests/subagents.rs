@@ -13,6 +13,7 @@ use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::{Classification, Confidentiality};
 use caelumora_domain::history::HistoryEntry;
 use caelumora_domain::message::{Message, MessageId, MessageRole};
+use caelumora_domain::query::Query;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::user::UserId;
 use caelumora_domain::value::name::ScopedName;
@@ -255,6 +256,35 @@ async fn a_personality_is_found_from_the_channel_innermost_first() {
     let stored = agents.get(&World::system(), sub_agent.expect("started")).await.unwrap();
     assert_eq!(stored.personality_id, inner.id, "the channel's researcher, not the global one");
 
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// Issue 593: starting a sub-agent is one procedure, undone if a step fails - here opening its
+/// thread, at a thread that is not open, after its agent was made: no agent of it is left.
+#[tokio::test]
+async fn a_start_that_fails_leaves_no_agent() {
+    let world = world().await;
+    let model = |kind: &str| ComponentDescriptor::new("model", kind);
+    let internal = PersonalityKind::Internal;
+    personality(&world, "researcher", world.alice, internal, vec![model("researching")]).await;
+    let leading =
+        personality(&world, "leading", world.alice, internal, vec![model("leading")]).await;
+    let lead = world.agent("lead", world.alice, &leading).await;
+    let session = world.session_of(&[], &[lead], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let runtime = agent_runtime(participant_runtime_in(&main, ActorId::Agent(lead)));
+    let classification = Classification::general(Confidentiality::Internal);
+    let alice = ActorId::User(world.alice);
+    let writer = runtime.writer::<dyn SubAgentWriter>(alice, classification).await.expect("bound");
+    let agents = || async {
+        let listed = world.entity_store::<Agent>().list(&World::system(), &Query::all()).await;
+        listed.unwrap().items.len()
+    };
+    let before = agents().await;
+
+    let nowhere = ThreadOrigin { thread: ThreadId::new(), message: MessageId::new() };
+    writer.start("researcher", nowhere, "Find it.".to_string()).await.expect_err("not open");
+    assert_eq!(agents().await, before, "the agent it made is deleted again");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

@@ -33,7 +33,8 @@ use caelumora_kernel::controller::UserController;
 use caelumora_kernel::event::EventBus;
 use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_kernel::plugin::Plugin;
-use caelumora_kernel::project::ProjectManager;
+use caelumora_kernel::procedure::follower::AgentFollower;
+use caelumora_kernel::procedure::session;
 use caelumora_kernel::session::{SessionLoop, SessionManager};
 use caelumora_kernel::user_provider::Credential;
 use caelumora_kernel::view::{Viewer, Views};
@@ -248,7 +249,7 @@ async fn main() -> Result<()> {
     for library in libraries(log) {
         builder.library(library.as_ref())?;
     }
-    let kernel = Arc::new(builder.build()?);
+    let kernel = builder.build()?;
     kernel.seed(&config.seed).await?;
 
     // Whom the terminal acts for: the user the providers know by that name,
@@ -269,22 +270,17 @@ async fn main() -> Result<()> {
     let controller = kernel.controller_manager().user_controller(owner).await?;
     let security = controller.security_context(Default::default(), Default::default());
 
-    let session_manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
-    let projects = ProjectManager::new(Arc::clone(&session_manager));
+    let session_manager = SessionManager::new(Arc::clone(&kernel));
+    // Whether the agents of the running sessions exist, followed as long as the terminal runs.
+    let _agents_followed = AgentFollower::spawn(&session_manager);
     // Where the program was started, its project and workspace, if it works there.
     let place = match config.workspaces.storage.contains_key(HERE) {
-        true => Some(place_of(&kernel, &projects, &security, owner, &here).await?),
+        true => Some(place_of(&kernel, &security, owner, &here).await?),
         false => None,
     };
     let views = session_manager.views(Viewer::new(security));
-    let sessions = Sessions::new(
-        Arc::clone(&kernel),
-        Arc::clone(&session_manager),
-        owner,
-        views.clone(),
-        place,
-        args.template.clone(),
-    );
+    let sessions =
+        Sessions::new(Arc::clone(&kernel), owner, views.clone(), place, args.template.clone());
     let opening = match args.invocation() {
         Invocation::List => {
             for line in listing(&sessions.list().await?, None) {
@@ -310,7 +306,7 @@ async fn main() -> Result<()> {
         talk(session_loop, views, sessions, controller, bus, screen.as_mut(), signalled).await;
     // The terminal given back first: the shutdown may take a while.
     drop(screen);
-    session_manager.shutdown().await;
+    session::shut_down(kernel.procedures()).await;
     talked
 }
 

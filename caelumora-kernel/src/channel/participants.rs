@@ -1,8 +1,8 @@
-//! The participants of a channel: adding, removing and leaving, their mentions, and finding them by
-//! name.
+//! The participants of a running channel: their actors started and ended, following whether their
+//! agents exist, their mentions, and finding them by name.
 
 use super::{
-    ActorChange, Actors, ChannelActor, ChannelError, ChannelLoop, ChannelParticipant,
+    ActorChange, Actors, Answer, ChannelActor, ChannelLoop, ChannelParticipant,
     ResolvedParticipant, LEAVE_GRACE,
 };
 use anyhow::{Error, Result};
@@ -11,312 +11,55 @@ use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::AgentId;
 use caelumora_domain::chain::Position;
 use caelumora_domain::channel::Channel;
-use caelumora_domain::channel::HistoryAccess;
 use caelumora_domain::channel::Participant;
 use caelumora_domain::channel::ThreadId;
 use caelumora_domain::command::CommandDescription;
 use caelumora_domain::mention::MentionDirectory;
 use caelumora_domain::question::{QuestionError, Questions};
 use caelumora_domain::security::SecurityAttributes;
-use caelumora_domain::store::Stored;
 use caelumora_domain::value::name::{named, Name};
-use caelumora_security::{ActionType, SecurityContext, JOIN};
-use std::collections::HashMap;
+use caelumora_security::{ActionType, SecurityContext};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::time;
 use tracing::{info, warn};
 
-/// How someone comes into a channel (`ChannelLoop::take_in`) or a session (`SessionLoop::take_in`):
-/// the one way in, asked for in three ways.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Entry {
-    /// Added by whoever may change the channel (`UpdateChannel`), or the session.
-    Added,
-    /// By their own act, where the channel or the session lets them join (`JOIN`).
-    Joining,
-    /// As a founder of a channel just created (issue 420), named by whoever created it: creating
-    /// it (`CreateChannel`) was what was asked; or of a thread just opened (issue 557), named by
-    /// whoever opened it - whom they act for, or an agent of their own -: opening it
-    /// (`OpenThread`) was what was asked.
-    Founding,
-}
-
-/// How someone goes out of a channel (`ChannelLoop::let_go`): the one way out, asked for in three
-/// ways.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Exit {
-    /// Removed by whoever may change the channel (`UpdateChannel`).
-    Removed,
-    /// By their own act, themselves or their own agent (`LeaveChannel`, issue 562).
-    Leaving,
-    /// Let go from the session (issue 590), by whoever let them go from it: that was what was
-    /// asked.
-    WithTheSession,
-}
-
 impl ChannelLoop {
-    /// Adds `participant` - a participant of the session - to the channel on
-    /// behalf of `context` (issue 46), seeing as much of the history as
-    /// `history` grants: whoever may change the channel (`UpdateChannel`),
-    /// asked before anything of the participant (issue 198, F2) - who may not
-    /// learns nothing of its clearance or its personality. Then taken in as
-    /// [`Self::take_in`] says. For `SessionLoop::add_participant` alone, which holds the session's
-    /// lock of the participant first (issue 590).
-    ///
-    /// # Errors
-    /// `ChannelError::Forbidden` if `context` may not change the channel; as
-    /// [`Self::take_in`].
-    pub(crate) async fn add_participant(
-        &self,
-        context: &SecurityContext,
-        participant: ActorId,
-        history: HistoryAccess,
-    ) -> Result<()> {
-        self.require(
-            context,
-            |attributes| ActionType::update(Channel::KIND, attributes),
-            "adding a participant to",
-        )
-        .await?;
-        let line = ThreadId::line(self.id);
-        self.take_in(context, participant, history, Entry::Added, line).await
-    }
-
-    /// Takes `participant` - a participant of the session, and whom `context` acts for: themselves,
-    /// or their own agent - into the channel by their own act (issue 221), where an entry of the
-    /// channel's access list lets them join (`JOIN`). They see the whole history, as whoever may
-    /// change the channel let them by letting them join. Stored in the kernel's name, once joining
-    /// was permitted; then as [`Self::take_in`] says. For `SessionLoop::join` alone, which holds
-    /// the session's lock of the participant first (issue 590).
-    ///
-    /// # Errors
-    /// `ChannelError::Forbidden` if they may not join; as [`Self::take_in`].
-    pub(crate) async fn join(&self, context: &SecurityContext, participant: ActorId) -> Result<()> {
-        let line = ThreadId::line(self.id);
-        self.take_in(context, participant, HistoryAccess::All, Entry::Joining, line).await
-    }
-
-    /// Takes `participant` - a participant of the session - into the channel as one of its founders
-    /// (issue 420), on behalf of `context`, who just created it: given what is said from its join
-    /// on, as everybody who is there from the start - nothing is shared with it (issue 417). Asked
-    /// nothing beyond what anyone taken in is asked - creating the channel was permitted, with whom
-    /// it names - and stored in the kernel's name; then as [`Self::take_in`] says. For
-    /// `SessionLoop::found` alone, which holds the session's lock of the participant first (issue
-    /// 590): anything later is adding.
-    ///
-    /// # Errors
-    /// As [`Self::take_in`].
-    pub(crate) async fn found(
-        &self,
-        context: &SecurityContext,
-        participant: ActorId,
-    ) -> Result<()> {
-        let line = ThreadId::line(self.id);
-        self.take_in(context, participant, HistoryAccess::None, Entry::Founding, line).await
-    }
-
-    /// Takes `participant` into the channel, on behalf of `context`, seeing as much of the history
-    /// as `history` grants, to take part in `thread` (issue 557), by the way `entry` says: joining
-    /// is asked once the participant is resolved, before anything in its name - whether it can run
-    /// (`require_runnable`), where it lies and whether it is cleared. Stored first (also asked as
-    /// `ConfidentialityPolicy::cleared`), then its actor started (`start_participant`) - the
-    /// addition rolled back if it cannot be, as the channel had them before
-    /// (`ChannelController::roll_back_participant_addition`) - and the join announced, on the event
-    /// bus and in the channel, in the name of `context`'s caller - who added them, or who joined
-    /// (issue 408). A participant removed shortly before is added only once its old actor has ended
-    /// (`left`, issue 171). One change of a participant at a time (`changing`, issue 564): who
-    /// takes the same participant in meanwhile waits, and then finds them there - or takes them in
-    /// itself, where the first could not and was rolled back.
-    ///
-    /// # Errors
-    /// `ChannelError::NotInSession`, `OutOfScope`, `AlreadyParticipant`, `StillLeaving`,
-    /// `NotCleared` or `Forbidden`; a `StoreError` if `context` may not change the channel,
-    /// `PermissionDenied` for an agent that cannot run.
-    pub(super) async fn take_in(
-        &self,
-        context: &SecurityContext,
-        participant: ActorId,
-        history: HistoryAccess,
-        entry: Entry,
-        thread: ThreadId,
-    ) -> Result<()> {
-        let _changing = self.changing.lock(participant).await;
-        if self.actors.load().contains_key(&participant) {
-            return Err(ChannelError::AlreadyParticipant { participant, channel: self.id }.into());
-        }
-        self.left(participant).await?;
-        let found = self
-            .session_loop()
-            .and_then(|s| {
-                s.session().participants.iter().find(|p| p.actor_id() == participant).cloned()
-            })
-            .ok_or(ChannelError::NotInSession { participant, channel: self.id })?;
-        let resolved = self
-            .resolve(&found)
-            .await?
-            .ok_or(ChannelError::ParticipantGone { participant, channel: self.id })?;
-        // Joining or founding was permitted; storing is the kernel's.
-        let storing = match entry {
-            Entry::Added => context.clone(),
-            Entry::Joining => {
-                let channel = self.id;
-                let attributes = self.security_attributes();
-                self.participation
-                    .require_own_act(
-                        &resolved,
-                        context,
-                        ActionType::custom(Channel::KIND, &JOIN, &attributes),
-                        |refused| ChannelError::Forbidden { action: "joining", channel, refused },
-                    )
-                    .await?;
-                SecurityContext::system()
-            }
-            Entry::Founding => SecurityContext::system(),
-        };
-        // Whose participant it is first, then anything in its name (issue 562).
-        self.participation.require_runnable(&resolved).await?;
-        self.participation.require_admissible(&resolved, context, &self.classification())?;
-
-        let from = match entry {
-            Entry::Founding => None,
-            Entry::Added | Entry::Joining => self.history_start(history).await?,
-        };
-        let before = self.channel.add_participant(&storing, found.clone()).await?;
-
-        if let Err(error) = self.start_participant(resolved, thread, from, Some(context)).await {
-            // Stored, but it cannot run: the addition rolled back, as the channel had them before.
-            if let Err(undo) =
-                self.channel.roll_back_participant_addition(participant, &before).await
-            {
-                warn!(
-                    "{} was added to channel {} but could not be started nor rolled back: {}",
-                    participant, self.id, undo
-                );
-            }
-            return Err(error);
-        }
-        info!("{} joined channel {}", participant, self.id);
-        Ok(())
-    }
-
-    /// Removes `participant` from the channel on behalf of `context` (issue 46), who may change it
-    /// (`UpdateChannel`, asked as it is stored); then as [`Self::let_go`] says.
-    ///
-    /// # Errors
-    /// `ChannelError::NotAParticipant`; a `StoreError` if `context` may not change the channel.
-    pub async fn remove_participant(
-        &self,
-        context: &SecurityContext,
-        participant: ActorId,
-    ) -> Result<()> {
-        self.let_go(context, participant, Exit::Removed).await
-    }
-
-    /// Takes `participant` - whom `context` acts for: themselves, or their own agent - out of the
-    /// channel by their own act (issue 562), without the right to change it: leaving
-    /// (`LeaveChannel`) is asked in the participant's own context, an agent's by its owner, as
-    /// joining is (`join`). Stored in the kernel's name once leaving was permitted, kept as removed
-    /// by `context`'s caller; then as [`Self::let_go`] says. Whether it could run is not asked: an
-    /// agent whose personality was withdrawn is taken out by its owner. One that cannot be
-    /// resolved, a deleted agent resting in the channel, cannot leave: whoever may change the
-    /// channel removes it.
-    ///
-    /// # Errors
-    /// `ChannelError::NotAParticipant`; `ChannelError::Forbidden` if they may not leave; what
-    /// resolving the participant reports (`Participation::resolve`).
-    pub async fn leave(&self, context: &SecurityContext, participant: ActorId) -> Result<()> {
-        self.let_go(context, participant, Exit::Leaving).await
-    }
-
-    /// Takes `participant` out of the channel as it is let go from the session (issue 590), on
-    /// behalf of `context`, who let them go from it: asked nothing - letting them go from the
-    /// session was permitted - and stored in the kernel's name, kept as removed by `context`'s
-    /// caller; then as [`Self::let_go`] says. For `SessionLoop::remove_participant` and `leave`
-    /// alone. Nothing for one the channel does not list (any more).
-    ///
-    /// # Errors
-    /// What storing the channel reports.
-    pub(crate) async fn let_go_with_the_session(
-        &self,
-        context: &SecurityContext,
-        participant: ActorId,
-    ) -> Result<()> {
-        self.let_go(context, participant, Exit::WithTheSession).await
-    }
-
-    /// Takes `participant` out of the channel on behalf of `context`, by the way `exit` says:
-    /// leaving is asked once the participant is resolved. Stored first, kept as a former
-    /// participant removed by `context`'s caller, then its actor stopped - an agent at once,
-    /// without finishing a turn; the approver discards its pending approvals. Until its task has
-    /// ended, the participant cannot be added again (`left`, issue 171). The leave is announced by
-    /// the `ChannelController` on the event bus (issue 73), and in the channel by `run` with a
-    /// `ParticipantLeft` in the name of `context`'s caller, which its history records (issue 408),
-    /// once the actor's task has ended: what it still sends until then - the step it was in, the
-    /// end of its turn - enters the channel as its own, and nothing of it follows the announcement
-    /// (issues 162, 262). Its state is kept, for the record and for when it joins again.
+    /// Ends what `participant` takes part in of what runs in the channel, on behalf of `by`, for a
+    /// procedure that lets them go (`procedure::participant::let_go_from_channel`, or
+    /// `let_go_from_session` for every running channel of the session), which stored it, or takes
+    /// their start back: its actor stopped - an agent at once, without finishing a
+    /// turn; the approver discards its pending approvals -, and its task's end waited for (`left`,
+    /// issue 171): the procedure holds the participant meanwhile, so that nobody takes them in
+    /// again before. `run` announces the leave with a `ParticipantLeft` in the name of `by`'s
+    /// caller, which the history records (issue 408), once the actor's task has ended: what it
+    /// still sends until then - the step it was in, the end of its turn - enters the channel as its
+    /// own, and nothing of it follows the announcement (issues 162, 262). Its state is kept, for
+    /// the record and for when it joins again. Asks nothing, and the document is the caller's.
     ///
     /// A participant without an actor - a deleted agent resting in the channel, one that cannot
-    /// run - is removed from the document (issue 314), and restored it does not come back here;
-    /// where its attendance in the history is still open - it was left out as the channel started
-    /// rather than stopped while it ran -, its leave is recorded at once (issue 590).
-    /// An internal actor of the channel - its approver - is none (issue 420). One change of a
-    /// participant at a time (`changing`, issue 564), as `take_in` makes it.
-    ///
-    /// # Errors
-    /// `ChannelError::NotAParticipant` - but for one let go with the session, which the channel
-    /// need not list -, `Forbidden`; what resolving the one who leaves reports
-    /// (`Participation::resolve`); a `StoreError` if `context` may not change the channel, where
-    /// that is what is asked.
-    pub(super) async fn let_go(
-        &self,
-        context: &SecurityContext,
-        participant: ActorId,
-        exit: Exit,
-    ) -> Result<()> {
-        let _changing = self.changing.lock(participant).await;
-        let listed =
-            self.channel().participants.iter().find(|p| p.actor_id() == participant).cloned();
-        let Some(found) = listed else {
-            return match exit {
-                Exit::WithTheSession => Ok(()),
-                Exit::Removed | Exit::Leaving => {
-                    Err(ChannelError::NotAParticipant { participant, channel: self.id }.into())
-                }
-            };
-        };
-        // Leaving, or letting go from the session, was permitted; storing is the kernel's.
-        let storing = match exit {
-            Exit::Removed => context.clone(),
-            Exit::WithTheSession => SecurityContext::system(),
-            Exit::Leaving => {
-                let channel = self.id;
-                let attributes = self.security_attributes();
-                let leaving = ActionType::LeaveChannel(&attributes);
-                let refusal =
-                    |refused| ChannelError::Forbidden { action: "leaving", channel, refused };
-                let Some(resolved) = self.resolve(&found).await? else {
-                    return Err(refusal(leaving.refused()).into());
-                };
-                self.participation.require_own_act(&resolved, context, leaving, refusal).await?;
-                SecurityContext::system()
-            }
-        };
+    /// run - has nothing to stop; where its attendance in the history is still open - it was left
+    /// out as the channel started rather than stopped while it ran -, its leave is recorded at
+    /// once (issue 590). An internal actor of the channel - its approver - is none (issue 420).
+    pub(crate) async fn remove_actor(&self, participant: ActorId, by: &SecurityContext) {
         let running = self.actors.load().get(&participant).cloned();
-        self.channel.remove_participant(&storing, participant, context.caller_id).await?;
-        match running {
-            Some(running) => self.leave_actor(participant, running, context),
+        let left = match running {
+            Some(running) => Some(self.leave_actor(participant, running, by)),
             // Without an actor - left out as the channel started - but taking part in its history
             // all the same: its leave is recorded at once, so that its attendance ends here.
-            None => {
-                if let Some(&thread) = self.attending().await.get(&participant) {
+            None => match self.attending().await.get(&participant) {
+                Some(&thread) => {
                     let name = self.name_of(participant).await;
-                    let leave = ActorChange::Leave(participant, name, context.clone(), thread);
-                    let _ = self.changes_tx.send(leave);
+                    let leave = ActorChange::Leave(participant, name, by.clone(), thread);
+                    Some(self.request(leave))
                 }
-            }
+                None => None,
+            },
+        };
+        if let Some(left) = left {
+            self.left(participant, left).await;
         }
-        info!("{} left channel {}, removed by {}", participant, self.id, context.caller_id);
-        Ok(())
+        info!("{} left channel {}, removed by {}", participant, self.id, by.caller_id);
     }
 
     /// Has the actors of the channel's agents follow whether the agents exist (issue 314) - of
@@ -332,31 +75,30 @@ impl ChannelLoop {
     /// given back while the session runs, then one of the occasions that have the agents followed;
     /// telling it apart would need the channel to keep why it left out whom (issue 564). One that
     /// cannot be read or run is logged and left as it is. Of a running one only whether it exists
-    /// is asked, not again whether it may run. One change of a participant at a time (`changing`,
-    /// issue 564), as `take_in` makes it: an agent being taken in or let go meanwhile is looked at
-    /// once that is done, and not at all once it is no longer listed.
-    pub(crate) async fn follow_agents(&self, only: Option<AgentId>) {
+    /// is asked, not again whether it may run. For a procedure that holds the agents
+    /// (`participant::Follow`), or a session it starts (`procedure::session::open`): nobody takes
+    /// them in or lets them go meanwhile (issue 593).
+    pub(crate) async fn follow_agents(&self, only: Option<&HashSet<AgentId>>) {
         let agents: Vec<Participant> = self
             .channel()
             .participants
             .iter()
-            .filter(|p| matches!(p, Participant::Agent(id) if only.is_none_or(|only| only == *id)))
+            .filter(|p| matches!(p, Participant::Agent(id) if only.is_none_or(|only| only.contains(id))))
             .cloned()
             .collect();
         for participant in agents {
             let Participant::Agent(id) = participant else { continue };
             let actor = participant.actor_id();
-            let _changing = self.changing.lock(actor).await;
-            // Removed meanwhile, by whoever held the lock before: nothing to follow.
-            if !self.channel().lists(actor) {
-                continue;
-            }
             match self.actors.load().get(&actor).cloned() {
                 // Running: only whether it still exists matters.
-                Some(running) => match self.participation.agent_exists(id).await {
+                Some(running) => match self.controllers.agent_exists(id).await {
                     Ok(true) => {}
                     Ok(false) => {
-                        self.leave_actor(actor, running, &SecurityContext::system());
+                        let system = SecurityContext::system();
+                        let left = self.leave_actor(actor, running, &system);
+                        // For a procedure that holds the agent (`participant::Follow`), or a
+                        // session it starts, whose channels have no task to wait for (`left`).
+                        self.left(actor, left).await;
                         self.channel.announce_resting(id, true);
                         info!("{} was deleted and rests in channel {}", actor, self.id);
                     }
@@ -368,25 +110,28 @@ impl ChannelLoop {
                 None => {
                     let rejoined = async {
                         let Some(resolved) = self.resolve(&participant).await? else {
-                            return Ok(false);
+                            return Ok(None);
                         };
                         self.participation.require_runnable(&resolved).await?;
                         let (from, thread) = self.rejoining(actor).await?;
                         let thread = self.open_or_line(Some(thread));
                         let joined = SecurityContext::system();
-                        self.start_participant(resolved, thread, Some(from), Some(&joined)).await?;
-                        Ok::<_, Error>(true)
+                        let from = Some(from);
+                        let started = self.add_actor(resolved, thread, from, Some(&joined));
+                        Ok::<_, Error>(Some(started.await?))
                     }
                     .await;
                     match rejoined {
-                        Ok(true) => {
+                        Ok(Some(started)) => {
+                            // Started once `run` answers, as taking in waits for it.
+                            started.carried_out().await;
                             self.channel.announce_resting(id, false);
                             info!(
                                 "{} was restored and takes part in channel {} again",
                                 actor, self.id
                             );
                         }
-                        Ok(false) => {}
+                        Ok(None) => {}
                         Err(e) => warn!(
                             "{} of channel {} cannot be run and is left out: {:#}",
                             actor, self.id, e
@@ -399,44 +144,42 @@ impl ChannelLoop {
 
     /// Starts the actor of `resolved` to take part in `thread` (issue 557) - the one way every
     /// actor of the channel is started: as the channel is built (`ChannelLoop::new`), as a
-    /// participant is added, joins or founds a thread (`take_in`), as an agent is restored
-    /// (`follow_agents`). Once the actor it had before has ended (`left`), built, taken in
-    /// (`adopt`) and handed to `run` to start, which gives it the part of the history it may see -
-    /// from the position `from` on, nothing if `None`: what is said from its start on -, records
-    /// what it was given and announces its join in the name of `joined`'s caller (issues 408, 417,
-    /// 423) - nothing if `None`, for an actor that starts again with its channel. `take_in` waits
-    /// for `left` before it stores anything already; here it then finds nothing left to wait for.
+    /// participant is added, joins or founds (`procedure::participant::take_into_channel`), as an
+    /// agent is restored (`follow_agents`). Built, taken in (`adopt`) and handed to `run` to start,
+    /// which gives it the part of the history it may see - from the position `from` on, nothing if
+    /// `None`: what is said from its start on -, records what it was given and announces its join
+    /// in the name of `joined`'s caller (issues 408, 417, 423) - nothing if `None`, for an actor
+    /// that starts again with its channel. The actor it had before has ended: letting it go waited
+    /// for that (`left`). What `run` answers once it started it (issue 593). Asks nothing: whoever
+    /// takes them in decided that they may.
     ///
     /// # Errors
-    /// `ChannelError::StillLeaving`, or what building the actor reports; it
-    /// is not taken in then.
-    pub(super) async fn start_participant(
+    /// What building the actor reports; it is not taken in then.
+    pub(crate) async fn add_actor(
         &self,
         resolved: ResolvedParticipant,
         thread: ThreadId,
         from: Option<Position>,
         joined: Option<&SecurityContext>,
-    ) -> Result<()> {
-        self.left(resolved.actor_id()).await?;
+    ) -> Result<Answer> {
         let actor = self.create_actor(&resolved, thread).await?;
-        self.adopt(Arc::from(actor), resolved, thread, from, joined.cloned()).await;
-        Ok(())
+        Ok(self.adopt(Arc::from(actor), resolved, thread, from, joined.cloned()).await)
     }
 
     /// Makes `running`, the actor of `participant`, leave (`Actor::leave`),
     /// and takes it out of the channel's actors, its threads and the
     /// mentions; `run` announces it in the name of `remover` once its task
-    /// has ended. The document is the caller's.
-    fn leave_actor(&self, participant: ActorId, running: ChannelActor, remover: &SecurityContext) {
-        let ChannelActor { actor, thread, task, .. } = running;
+    /// has ended, and answers then (`left`). The document is the caller's.
+    fn leave_actor(
+        &self,
+        participant: ActorId,
+        running: ChannelActor,
+        remover: &SecurityContext,
+    ) -> Answer {
+        let ChannelActor { actor, thread, .. } = running;
         let name = actor.name().to_string();
-        self.leaving
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert(participant, task);
         self.drop_actor(participant, &actor, thread);
-        let leave = ActorChange::Leave(participant, name, remover.clone(), thread);
-        let _ = self.changes_tx.send(leave);
+        self.request(ActorChange::Leave(participant, name, remover.clone(), thread))
     }
 
     /// Takes `actor`, of `id`, out of the channel's actors, of `thread` it takes part in and of the
@@ -455,37 +198,23 @@ impl ChannelLoop {
         actor.leave();
     }
 
-    /// Waits until the actor `participant` had in the channel before has
-    /// ended its task, if it was removed (issue 171): until then it may
-    /// still store the participant's state - a turn given up - which a new
-    /// actor loads as it is built, and what it sends would pass as the new
-    /// actor's. At most `LEAVE_GRACE`: by then `run` has aborted it.
-    ///
-    /// # Errors
-    /// `ChannelError::StillLeaving` if it has not ended even so - it blocks
-    /// without ever reaching an `await`.
-    async fn left(&self, participant: ActorId) -> Result<(), ChannelError> {
-        let Some(task) = self
-            .leaving
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .get(&participant)
-            .cloned()
-        else {
-            return Ok(());
-        };
-        // Closed by `run` once it stops the actor; not if the channel does
-        // not run, and then nothing is tracked to wait for.
-        task.close();
-        if time::timeout(LEAVE_GRACE, task.wait()).await.is_err() {
-            warn!(
-                "{} is added to channel {} again, but its old actor has not ended",
-                participant, self.id
-            );
-            return Err(ChannelError::StillLeaving { participant, channel: self.id });
+    /// Waits until `run` carried out the leave of `participant` it answers with `left` (issue
+    /// 593): its actor's task has ended and its leave is announced - or the channel stopped, its
+    /// actor with it. Until then the actor may still store the participant's state - a turn given
+    /// up - which a new actor loads as it is built, and what it sends would pass as the new
+    /// actor's (issue 171): whoever lets a participant go waits for it, holding the participant,
+    /// so that nobody takes them in again meanwhile - not at all where `run` has not started, which
+    /// never starts an actor removed before (issue 171). At most `LEAVE_GRACE`: by then `run` has
+    /// aborted the actor; one that has not ended even so - it blocks without ever reaching an
+    /// `await` - is logged.
+    async fn left(&self, participant: ActorId, left: Answer) {
+        // Before `run` started, no actor of the channel had a task: one removed is never started.
+        if !self.has_run() {
+            return;
         }
-        self.leaving.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(&participant);
-        Ok(())
+        if time::timeout(LEAVE_GRACE, left.carried_out()).await.is_err() {
+            warn!("{} left channel {}, but its actor has not ended", participant, self.id);
+        }
     }
 
     /// Builds the handles of the participants anew from the names of the actors that run in the
@@ -659,24 +388,27 @@ mod tests {
     use crate::actor::user::ChannelWatch;
     use crate::actor::Shown;
     use crate::channel::testing::Policy;
+    use crate::channel::testing::Stuck;
     use crate::channel::tests::*;
-    use crate::channel::{ChannelError, ChannelLoop};
+    use crate::channel::{Answer, ChannelError, ChannelLoop};
     use crate::error::is_forbidden;
     use crate::session::testing::*;
     use crate::session::{ChannelSpec, SessionError, SessionManager};
-    use crate::testing::{attributes, Script, ScriptedAgents, World};
+    use crate::testing::{attributes, Script, ScriptedAgent, ScriptedAgents, World};
     use crate::view::Viewer;
     use anyhow::Error;
-    use caelumora_api::actor::Actor;
+    use caelumora_api::actor::{agent_factory, Actor};
+    use caelumora_api::library::{Library, LibraryBuilder};
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::actor::Envelope;
-    use caelumora_domain::agent::Personality;
+    use caelumora_domain::agent::{Personality, PersonalityKind};
     use caelumora_domain::chain::Position;
     use caelumora_domain::channel::{Channel, ChannelId, HistoryAccess, JOINED, LEFT};
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::history::{HistoryEntry, Reader};
     use caelumora_domain::security::{Grant, Subject};
     use caelumora_domain::session::testing::make_session;
+    use caelumora_domain::store::StoreError;
     use caelumora_domain::user::testing::make_user;
     use caelumora_domain::user::UserId;
     use caelumora_domain::value::name::Name;
@@ -686,8 +418,8 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
+    use tokio::sync::oneshot;
     use tokio::time;
-    use tokio_util::task::TaskTracker;
     #[tokio::test]
     async fn an_agent_is_found_by_its_name_or_its_handle_however_it_is_written() {
         let (channel, _, _) = channel_with_sleepers(&["Sassy", "Dr. Who", "Dr-Who", "Zoë"]).await;
@@ -747,25 +479,25 @@ mod tests {
         assert_eq!(channel.mentions().resolve("@sassy"), [sassy], "by what its actor tells");
     }
 
+    /// Issue 593: who lets a participant go waits until `run` answers that its old actor has
+    /// ended (`left`), so that nobody takes them in again meanwhile (issue 171) - once `run` has
+    /// started: before, no actor of the channel had a task. Asked of `left` itself, with an answer
+    /// that comes late: the scripted agents end at once as they leave.
     #[tokio::test]
-    async fn a_participant_is_added_again_only_once_its_old_actor_has_ended() {
-        let (channel, _, agent, _) = scripted_channel(Script::Hangs).await;
-        let participant = ActorId::Agent(agent);
-        assert!(channel.left(participant).await.is_ok(), "nothing to wait for: it never left");
-
-        // Its old actor takes a while to end, as one that stores its state.
-        let old = TaskTracker::new();
+    async fn letting_a_participant_go_waits_until_its_old_actor_has_ended() {
+        let Stuck { channel, agent, running, .. } = stuck_in_a_turn().await;
+        let (ended_tx, ended_rx) = oneshot::channel();
         let ended = Arc::new(AtomicBool::new(false));
         let ending = Arc::clone(&ended);
-        old.spawn(async move {
+        tokio::spawn(async move {
             time::sleep(Duration::from_millis(200)).await;
             ending.store(true, Ordering::SeqCst);
+            let _ = ended_tx.send(());
         });
-        channel.leaving.lock().unwrap().insert(participant, old);
 
-        channel.left(participant).await.expect("it ends within the grace");
+        channel.left(ActorId::Agent(agent), Answer(ended_rx)).await;
         assert!(ended.load(Ordering::SeqCst), "not before its old actor ended");
-        assert!(!channel.leaving.lock().unwrap().contains_key(&participant), "and is forgotten");
+        running.abort();
     }
 
     #[tokio::test]
@@ -804,7 +536,10 @@ mod tests {
         };
         let (alice, bob) = (user("alice", &["staff", "hr"]), user("bob", &["staff"]));
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));
-        let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
+        // Her roles in her context, as her login gives them: she reaches the channels she is
+        // cleared for (issue 593, reclassifying reaches the channel as `channel_for` does).
+        let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default())
+            .with_roles(alice.roles.clone(), None);
         let mut session = make_session("hers", alice.id);
         session.security_attributes =
             session.security_attributes.clone().granting(Subject::Actor(bob_id), Grant::Read);
@@ -847,7 +582,10 @@ mod tests {
             .await
             .expect("both are cleared for internal");
         let raising = team
-            .reclassify(&alice_ctx, Classification::general(Confidentiality::Confidential))
+            .reclassify_by_procedure(
+                &alice_ctx,
+                Classification::general(Confidentiality::Confidential),
+            )
             .await
             .expect_err("above bob");
         assert!(
@@ -1039,11 +777,10 @@ mod tests {
             channel.add_participant(&ctx, other, HistoryAccess::All).await.expect_err("already in");
         assert!(matches!(refusal(again), ChannelError::AlreadyParticipant { .. }));
         let stranger = ActorId::User(UserId::new());
-        let outside = channel
-            .add_participant(&ctx, stranger, HistoryAccess::All)
-            .await
-            .expect_err("not in the session");
-        assert!(matches!(refusal(outside), ChannelError::NotInSession { .. }));
+        let outside =
+            channel.add_participant(&ctx, stranger, HistoryAccess::All).await.expect_err("nobody");
+        let unknown = outside.downcast_ref::<StoreError>();
+        assert!(matches!(unknown, Some(StoreError::NotFound { .. })), "read first: {outside}");
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
@@ -1258,7 +995,7 @@ mod tests {
     /// Who takes part leaves by their own act, without the right to change the channel (issue
     /// 562): kept as removed by themselves, and announced in their name. Nobody else is taken out
     /// so; the owner leaves as anyone does, also the last one leaves, and the owner keeps the
-    /// channel, to come back to.
+    /// channel, to come back to - running, empty, as it was (issue 593).
     #[tokio::test]
     async fn who_takes_part_leaves_by_their_own_act_and_takes_nobody_else_out() {
         let (kernel, manager) = owned_kernel(Default::default());
@@ -1314,6 +1051,19 @@ mod tests {
             .add_participant(&as_user(alice_id), alice_id, HistoryAccess::All)
             .await
             .expect("she keeps the channel, and comes back");
+        let back = channel.user_actor(alice.id).expect("her actor");
+        back.send_message(Some("back".to_string()), None, Vec::new()).await.expect("said");
+        let heard = time::timeout(Duration::from_secs(5), async {
+            loop {
+                let entries = channel.history_entries().await;
+                let mut said = entries.iter().filter_map(HistoryEntry::said);
+                if said.any(|m| m.sender_id == alice_id && m.content.as_deref() == Some("back")) {
+                    break;
+                }
+                time::sleep(Duration::from_millis(10)).await;
+            }
+        });
+        heard.await.expect("the empty channel ran on, and her actor in it (issue 593)");
         manager.stop(&SecurityContext::system(), running.id()).await.unwrap();
     }
 
@@ -1362,7 +1112,7 @@ mod tests {
     #[derive(Debug, Clone, Copy)]
     enum Again {
         /// Left out since its personality was withdrawn, added by its owner once it is given back
-        /// (`take_in`).
+        /// (`TakeIn`).
         Added,
         /// Left out so, followed by the channel once it is given back (`follow_agents`).
         Followed,
@@ -1443,7 +1193,7 @@ mod tests {
                 Again::Added => {
                     main.add_participant(&alice, actor, HistoryAccess::None).await.unwrap();
                 }
-                Again::Followed => main.follow_agents(Some(helper)).await,
+                Again::Followed => main.follow_agents(Some(&HashSet::from([helper]))).await,
                 // The session follows the agent as it learns of the restore.
                 Again::Restored => {}
             }
@@ -1554,6 +1304,83 @@ mod tests {
             "what it was given is recorded, since it lies before its join: {visible:?}"
         );
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+    }
+
+    /// Scripted agents that answer, until the flag it holds is set: then none can start.
+    #[derive(Debug, Default)]
+    struct Breakable(Arc<AtomicBool>);
+
+    impl Library for Breakable {
+        fn name(&self) -> &'static str {
+            "breakable"
+        }
+
+        fn register(&self, library: &mut dyn LibraryBuilder) -> anyhow::Result<()> {
+            let broken = Arc::clone(&self.0);
+            let factory = agent_factory(move |runtime| {
+                let broken = broken.load(Ordering::SeqCst);
+                async move {
+                    anyhow::ensure!(!broken, "it cannot start");
+                    let answers = Script::Answers("ok".to_string());
+                    Ok(Box::new(ScriptedAgent::new(runtime, answers)) as Box<dyn Actor>)
+                }
+            });
+            library.register_agent_kind(PersonalityKind::Internal, &[], factory)
+        }
+    }
+
+    /// Issue 568, as taking someone in is undone (issue 593): an agent left out as its channel
+    /// started, its range of attendance open, that is taken in again and cannot start after all
+    /// has the listing taken back and no leave recorded - it never started, and stays as it was,
+    /// left out and attending.
+    #[tokio::test]
+    async fn one_taken_in_again_that_cannot_start_stays_left_out_without_a_leave() {
+        let breakable = Breakable::default();
+        let world = World::with(&[], &[&breakable], |_| {}).await;
+        let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
+        let helper = world.agent("helper", world.alice, &shared).await;
+        let session = world.shared_session(&[helper], &[]).await;
+        let main = session.channels()[0].id();
+        let helper = ActorId::Agent(helper);
+        let history = world.kernel.history_store();
+        let open = async || {
+            let attended = history.attendance(main, helper).await.unwrap();
+            attended.iter().any(|at| at.range.end == Position::MAX)
+        };
+        time::timeout(Duration::from_secs(5), async {
+            while !open().await {
+                time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("its join is recorded");
+        let personalities = &world.kernel.entity_stores().personalities;
+        let bob = World::as_user(world.bob);
+        let attributes_withdrawn = attributes(Some(world.bob), &[]);
+        let mut withdrawn = Personality { security_attributes: attributes_withdrawn, ..shared };
+        personalities.update(&bob, &mut withdrawn).await.unwrap();
+        let alice = World::as_user(world.alice);
+        world.manager.stop(&alice, session.id()).await.unwrap();
+        let session = world.manager.open(&alice, session.id()).await.unwrap();
+        let main = Arc::clone(&session.channels()[0]);
+        assert!(main.actor(helper).is_none(), "left out as it started");
+        let attributes_given = attributes(Some(world.bob), &[world.alice]);
+        let mut given_back = Personality { security_attributes: attributes_given, ..withdrawn };
+        personalities.update(&bob, &mut given_back).await.unwrap();
+        breakable.0.store(true, Ordering::SeqCst);
+
+        let adding = main.add_participant(&alice, helper, HistoryAccess::All);
+        adding.await.expect_err("it cannot start");
+
+        assert!(main.channel().lists(helper), "listed as before");
+        assert!(main.actor(helper).is_none(), "left out still");
+        assert!(open().await, "attending as before");
+        // Time for its run to record what it would.
+        time::sleep(Duration::from_millis(100)).await;
+        let page = history.page(main.id(), &Reader::Channel, Position::START, None, 1000, None);
+        let left = |entry: &&HistoryEntry| matches!(entry, HistoryEntry::ParticipantLeft { participant, .. } if *participant == helper);
+        assert_eq!(page.await.unwrap().entries().filter(left).count(), 0, "no leave recorded");
+        world.manager.stop(&alice, session.id()).await.unwrap();
     }
 
     /// Issue 590: a participant left out as the channel started - its personality withdrawn, its

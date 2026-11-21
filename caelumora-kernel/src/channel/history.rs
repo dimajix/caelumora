@@ -139,7 +139,7 @@ impl ChannelLoop {
             let name = self.name_of(participant).await;
             info!("{} left channel {} while it did not run: recorded now", participant, self.id);
             let leave = ActorChange::Leave(participant, name, SecurityContext::system(), thread);
-            let _ = self.changes_tx.send(leave);
+            let _ = self.request(leave);
         }
     }
 }

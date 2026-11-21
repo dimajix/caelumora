@@ -1158,6 +1158,7 @@ mod tests {
     use caelumora_domain::agent::{AgentChannelState, AgentId};
     use caelumora_domain::approval::{ApprovalRule, RuleDecision};
     use caelumora_domain::channel::Channel;
+    use caelumora_domain::channel::ChannelId;
     use caelumora_domain::config::{AppConfig, ApprovalsConfig};
     use caelumora_domain::content::testing::make_content_ref;
     use caelumora_domain::content::ContentId;
@@ -1531,6 +1532,7 @@ mod tests {
             AppConfig { approvals: ApprovalsConfig { rules: places.system }, ..Default::default() };
         let session = Session { approval_rules: places.session, ..bare_session(SessionId::new()) };
         let mut channel = Channel::build(
+            ChannelId::new(),
             session.id,
             ActorId::None,
             Name::new("main").unwrap(),

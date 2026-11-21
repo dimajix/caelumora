@@ -1,6 +1,7 @@
 //! The built-in `/participant add` command (issues 555, 560), `/add` for short.
 
 use crate::command::{command_error, names, ChannelCommand, CommandContext};
+use crate::procedure::participant::TakeIn;
 use anyhow::Error;
 use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandError, CommandResult};
@@ -13,7 +14,7 @@ use caelumora_domain::value::name::{Name, NameMatch};
 const ADD_COMMAND_NAME: &str = "participant add";
 
 /// `/participant add <name>`: brings the user or the agent named into the channel, and into its
-/// session first if not in it yet (`SessionLoop::add_participant`), sharing the whole history.
+/// session first if not in it yet (`TakeIn::added`), sharing the whole history.
 /// `/add` for short.
 #[derive(Debug)]
 pub(super) struct AddCommand(CommandDescription);
@@ -69,13 +70,10 @@ impl ChannelCommand for AddCommand {
                 Ok(CommandOutput::private(format!("{} takes part already.", one.name)))
             }
             [one] => {
+                let issuer = context.issuer.security_context();
+                let into = Some((channel_id, HistoryAccess::All));
                 context
-                    .session_loop(ADD_COMMAND_NAME)?
-                    .add_participant(
-                        &context.issuer.security_context(),
-                        one.id,
-                        Some((channel_id, HistoryAccess::All)),
-                    )
+                    .carry_out(|session| TakeIn::added(&issuer, session, one.id, into))
                     .await
                     .map_err(failed)?;
                 Ok(CommandOutput::private(format!("Added {}.", one.name)))

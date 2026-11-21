@@ -273,6 +273,10 @@ impl Stored for Folder {
         self.id
     }
 
+    fn address(&self) -> FolderId {
+        self.id()
+    }
+
     fn deleted(&self) -> Option<&Removal> {
         self.deleted.as_ref()
     }

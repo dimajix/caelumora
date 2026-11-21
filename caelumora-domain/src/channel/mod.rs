@@ -59,7 +59,8 @@ define_id!(ChannelId);
 /// 335).
 pub const STARTED: &str = "started";
 
-/// A channel was stopped: its actors ended.
+/// A running channel was stopped - its session stopped, or it was deleted -: its actors ended
+/// (issue 593).
 pub const STOPPED: &str = "stopped";
 
 /// Someone joined the channel - an agent or a user, as the `ActorId` in
@@ -183,6 +184,10 @@ impl Stored for Channel {
         self.id
     }
 
+    fn address(&self) -> (SessionId, ChannelId) {
+        (self.session_id, self.id)
+    }
+
     fn unique_name(&self) -> Option<ScopedName> {
         Some(self.scoped_name())
     }
@@ -291,7 +296,7 @@ impl Channel {
         self.participants.iter().any(|p| p.actor_id() == actor)
     }
 
-    /// A new channel, owned by `owner`, as every channel is built - from a
+    /// A new channel `id`, owned by `owner`, as every channel is built - from a
     /// template or on request (issue 09) -, read by its participants (issue
     /// 23): every user and agent in it, whoever they are at the time - the
     /// group of its participants (issue 304), which whoever stores the
@@ -299,8 +304,11 @@ impl Channel {
     /// any. Built empty (issue 420): its founders join by the one way in,
     /// as anyone does, once it is stored; and it has no internal actors -
     /// whoever builds it gives it those that are configured, and no others,
-    /// so that without an approver nothing in it is approved.
+    /// so that without an approver nothing in it is approved. Its `id` is
+    /// chosen by whoever builds it, so that a procedure can hold the channel
+    /// before it exists (`procedure::channel::Create`, issue 593).
     pub fn build(
+        id: ChannelId,
         session_id: SessionId,
         owner: ActorId,
         name: Name,
@@ -308,7 +316,6 @@ impl Channel {
         classification: Classification,
         language: Option<Language>,
     ) -> Self {
-        let id = ChannelId::new();
         let security_attributes = Self::attributes_of(id, owner);
         Self {
             id,

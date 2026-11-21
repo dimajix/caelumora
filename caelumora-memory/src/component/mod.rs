@@ -345,7 +345,7 @@ mod tests {
         /// Session `id` lets others read as `policy` says from now on.
         async fn set_privacy(&self, id: SessionId, policy: PrivacyConfig) {
             let session = self.running(id);
-            session.update_privacy(&owner_of(session), policy).await.unwrap();
+            session.controller().update_privacy(&owner_of(session), policy).await.unwrap();
         }
 
         /// Deletes session `id`: there is none such for whoever looks it up.

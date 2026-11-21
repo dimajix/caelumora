@@ -19,10 +19,10 @@ use async_trait::async_trait;
 use caelumora_domain::agent::{Agent, AgentId};
 use caelumora_domain::event::{Announcing, GlobalEvent};
 use caelumora_domain::message::MessageId;
-use caelumora_domain::store::{StoreError, StoreResult, StoreResultExt};
+use caelumora_domain::store::{StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_kernel::agent::AgentMember;
 use caelumora_kernel::event::EventBus;
-use caelumora_kernel::scoped::purge_for_good;
+use caelumora_kernel::lifecycle::Lifecycle;
 use caelumora_security::SecurityContext;
 use caelumora_store::EntityStore;
 use std::collections::HashMap;
@@ -35,8 +35,9 @@ use tracing::debug;
 
 /// The one keeper of agents' memory.
 pub(crate) struct MemoryManager {
-    memories: Arc<dyn EntityStore<AgentMemory>>,
-    /// Where what was stored is announced.
+    /// The memories made, and purged with their agents, each made announced.
+    memories: Lifecycle<AgentMemory>,
+    /// Where a commit to a memory made is announced.
     events: Arc<EventBus>,
     /// What is kept of each agent served since the process started: its numbers and its lock.
     agents: Mutex<HashMap<AgentId, Arc<Kept>>>,
@@ -61,8 +62,9 @@ impl fmt::Debug for MemoryManager {
 
 impl MemoryManager {
     /// The keeper of the memories `memories` holds, announcing what it stores on `events`.
-    pub(crate) fn new(memories: Arc<dyn EntityStore<AgentMemory>>, events: Arc<EventBus>) -> Self {
-        Self { memories, events, agents: Mutex::new(HashMap::new()) }
+    pub(crate) fn new(memories: &Arc<dyn EntityStore<AgentMemory>>, events: Arc<EventBus>) -> Self {
+        let lifecycle = Lifecycle::new(memories, Arc::<EventBus>::clone(&events));
+        Self { memories: lifecycle, events, agents: Mutex::new(HashMap::new()) }
     }
 
     /// The memory of `agent` as it is stored, read in `context`; while it remembers nothing, an
@@ -76,7 +78,8 @@ impl MemoryManager {
         context: &SecurityContext,
         agent: AgentId,
     ) -> StoreResult<AgentMemory> {
-        let stored = self.memories.get(context, AgentMemoryId::of(agent)).await.optional()?;
+        let stored =
+            self.memories.store().get(context, AgentMemoryId::of(agent)).await.optional()?;
         Ok(stored.unwrap_or_else(|| AgentMemory::new(agent, context.principal_id)))
     }
 
@@ -143,18 +146,18 @@ impl MemoryManager {
             for MemoryChange(change) in changes {
                 memory.chain.push(change, origin.clone(), after);
             }
+            // Made, it is announced by its lifecycle; changed, here, without what changed.
             let written = if made {
                 self.memories.create(context, &mut memory).await.created()?
             } else {
-                self.memories.update(context, &mut memory).await.written()?
+                let written = self.memories.store().update(context, &mut memory).await.written()?;
+                if written.is_some() {
+                    let event = GlobalEvent::updated::<AgentMemory>(&memory.address(), &());
+                    self.events.announce(event, &memory);
+                }
+                written
             };
             if written.is_some() {
-                let id = AgentMemoryId::of(agent);
-                let event = match made {
-                    true => GlobalEvent::created::<AgentMemory>(&id),
-                    false => GlobalEvent::updated::<AgentMemory>(&id, &()),
-                };
-                self.events.announce(event, &memory);
                 debug!("Applied {} changes to the memory of agent {}", count, agent);
                 return Ok(());
             }
@@ -183,7 +186,7 @@ impl MemoryManager {
 impl AgentMember for MemoryManager {
     async fn remove_behind(&self, agent: &Agent) -> StoreResult<()> {
         self.agents.lock().await.remove(&agent.id);
-        purge_for_good(self.memories.as_ref(), AgentMemoryId::of(agent.id)).await?;
+        self.memories.purge_for_good(AgentMemoryId::of(agent.id)).await?;
         Ok(())
     }
 }
@@ -225,8 +228,8 @@ mod tests {
         let memories = Persistence::in_memory().entity_store::<AgentMemory>(&policies).unwrap();
         let events = Arc::new(EventBus::new(&policies));
         // Two processes, each with a keeper of its own, on one store.
-        let here = MemoryManager::new(Arc::clone(&memories), Arc::clone(&events));
-        let there = MemoryManager::new(memories, events);
+        let here = MemoryManager::new(&memories, Arc::clone(&events));
+        let there = MemoryManager::new(&memories, events);
         let agent = AgentId::new();
         let owner = ActorId::User(UserId::new());
         let context = SecurityContext::new(owner, Default::default(), Default::default()).next(
@@ -280,7 +283,7 @@ mod tests {
         let access_policy = Arc::new(OwnershipPolicy::new());
         let policies = Policies::new(access_policy, Arc::new(ConfidentialityRules::default()));
         let memories = Persistence::in_memory().entity_store::<AgentMemory>(&policies).unwrap();
-        let manager = MemoryManager::new(memories, Arc::new(EventBus::new(&policies)));
+        let manager = MemoryManager::new(&memories, Arc::new(EventBus::new(&policies)));
         let agent = AgentId::new();
         let in_the_name_of = |owner: ActorId| {
             SecurityContext::new(owner, Default::default(), Default::default()).next(
@@ -309,7 +312,7 @@ mod tests {
         let policies = Policies::new(access_policy, Arc::new(ConfidentialityRules::default()));
         let memories = Persistence::in_memory().entity_store::<AgentMemory>(&policies).unwrap();
         let events = Arc::new(EventBus::new(&policies));
-        let manager = MemoryManager::new(memories, Arc::clone(&events));
+        let manager = MemoryManager::new(&memories, Arc::clone(&events));
         let agent = AgentId::new();
         let (alice, bob) = (UserId::new(), UserId::new());
         let as_user = |user| {

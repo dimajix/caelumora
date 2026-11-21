@@ -146,6 +146,16 @@ impl ChannelRuntime {
     }
 }
 
+/// What the tests of a channel of no session take from its runtime: the kernel, by whose executor
+/// they change the channel under a hold of their own, as its procedures would
+/// (`ChannelLoop::remove_participant`, issue 593).
+#[cfg(any(test, feature = "test-support"))]
+impl ChannelRuntime {
+    pub(crate) fn kernel(&self) -> &Arc<Kernel> {
+        &self.kernel
+    }
+}
+
 /// What a channel is built with (`ChannelLoop::new`), each read once there into what the channel
 /// holds or builds (issue 360): the runtime it is given offers the services by name rather than
 /// handing out the `Kernel` behind it (issue 191), and `ChannelLoop::new` takes no service

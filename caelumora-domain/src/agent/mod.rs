@@ -101,6 +101,10 @@ impl Stored for Agent {
         self.id
     }
 
+    fn address(&self) -> AgentId {
+        self.id()
+    }
+
     fn deleted(&self) -> Option<&Removal> {
         self.deleted.as_ref()
     }

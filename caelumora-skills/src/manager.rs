@@ -15,13 +15,14 @@ use crate::extension::{SkillError, SkillResult};
 use crate::skill::{Skill, SkillBody, SkillId, SkillUpdateEvent};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::confidentiality::Classification;
-use caelumora_domain::event::{Announcing, EventPublisher, GlobalEvent};
+use caelumora_domain::event::GlobalEvent;
 use caelumora_domain::removal::Removal;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::store::{StoreError, StoreResultExt};
 use caelumora_domain::value::name::ScopedName;
 use caelumora_domain::value::text::Description;
 use caelumora_kernel::event::EventBus;
+use caelumora_kernel::lifecycle::Lifecycle;
 use caelumora_kernel::scoped::{ScopeHolders, ScopeMember};
 use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_security::SecurityContext;
@@ -41,7 +42,9 @@ fn store_error(id: SkillId) -> impl FnOnce(StoreError) -> SkillError {
 }
 
 pub struct SkillManager {
-    skills: Arc<dyn EntityStore<Skill>>,
+    /// The lifecycle of skills: each made, deleted and restored by it, announced as each is (issue
+    /// 593).
+    skills: Lifecycle<Skill>,
     /// Asked whether a skill may be put into a scope (issue 458).
     holders: Arc<ScopeHolders>,
     events: Arc<EventBus>,
@@ -65,12 +68,13 @@ impl SkillManager {
         events: Arc<EventBus>,
         confidentiality: Arc<dyn ConfidentialityPolicy>,
     ) -> Self {
+        let skills = Lifecycle::new(&skills, Arc::<EventBus>::clone(&events));
         Self { skills, holders, events, confidentiality }
     }
 
     /// The store of skills, which the views read (`SkillViews`).
-    pub(crate) fn store(&self) -> &Arc<dyn EntityStore<Skill>> {
-        &self.skills
+    pub(crate) fn store(&self) -> &dyn EntityStore<Skill> {
+        self.skills.store()
     }
 
     /// Whether the one `ctx` acts for is cleared for `classification`: what
@@ -123,7 +127,6 @@ impl SkillManager {
 
         self.skills.create(ctx, &mut skill).await?;
         self.holders.keep_made(self, &skill).await?;
-        self.events.announce(GlobalEvent::created::<Skill>(&skill.id), &skill);
         info!(skill = %skill.id, by = %ctx.caller_id, "Skill created");
         Ok(skill)
     }
@@ -204,7 +207,7 @@ impl SkillManager {
             self.require_flow(ctx, classification)?;
         }
         let (skill, had) = loop {
-            let mut skill = self.skills.get(ctx, id).await.map_err(store_error(id))?;
+            let mut skill = self.skills.store().get(ctx, id).await.map_err(store_error(id))?;
             // Announced to who reaches it as it was, too: who no longer does
             // learns so (issue 312).
             let had = skill.classification.clone();
@@ -223,6 +226,7 @@ impl SkillManager {
             skill.updated_at = Utc::now();
             if self
                 .skills
+                .store()
                 .update(ctx, &mut skill)
                 .await
                 .written()
@@ -247,11 +251,12 @@ impl SkillManager {
     /// # Errors
     /// Whatever the store reports, `PermissionDenied` included.
     pub async fn delete(&self, ctx: &SecurityContext, id: SkillId) -> SkillResult<bool> {
-        let Some(skill) = self.skills.get(ctx, id).await.optional()? else { return Ok(false) };
-        if !self.skills.delete(ctx, id, &Removal::now(ctx.caller_id)).await? {
+        let Some(skill) = self.skills.store().get(ctx, id).await.optional()? else {
+            return Ok(false);
+        };
+        if !self.skills.delete(ctx, &skill, &Removal::now(ctx.caller_id)).await? {
             return Ok(false);
         }
-        self.events.announce(GlobalEvent::deleted::<Skill>(&id), &skill);
         info!(skill = %id, by = %ctx.caller_id, "Skill deleted");
         Ok(true)
     }
@@ -265,7 +270,6 @@ impl SkillManager {
     /// whatever else the store reports - `NameTaken` among it.
     pub async fn restore(&self, ctx: &SecurityContext, id: SkillId) -> SkillResult<Skill> {
         let skill = self.holders.restore(self, ctx, id).await.map_err(store_error(id))?;
-        self.events.announce(GlobalEvent::restored::<Skill>(&id), &skill);
         info!(skill = %id, by = %ctx.caller_id, "Skill restored");
         Ok(skill)
     }
@@ -277,7 +281,8 @@ impl SkillManager {
     /// # Errors
     /// `PermissionDenied`, or whatever the store reports.
     pub async fn purge(&self, ctx: &SecurityContext, id: SkillId) -> SkillResult<bool> {
-        let purged = self.skills.purge(ctx, id).await?;
+        // Nothing lies behind a skill: purged at once, its purge not begun first.
+        let purged = self.skills.store().purge(ctx, id).await?;
         if purged {
             info!(skill = %id, by = %ctx.caller_id, "Skill purged");
         }
@@ -290,11 +295,7 @@ impl SkillManager {
 impl ScopeMember for SkillManager {
     type Entity = Skill;
 
-    fn store(&self) -> &dyn EntityStore<Skill> {
-        self.skills.as_ref()
-    }
-
-    fn events(&self) -> Option<&dyn EventPublisher> {
-        Some(self.events.as_ref())
+    fn lifecycle(&self) -> &Lifecycle<Skill> {
+        &self.skills
     }
 }

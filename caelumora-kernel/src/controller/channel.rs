@@ -3,6 +3,7 @@
 use super::check_restricting;
 use super::document::LiveDocument;
 use crate::group::keep_participants;
+use crate::lifecycle::Lifecycle;
 use arc_swap::Guard;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::AgentId;
@@ -16,7 +17,7 @@ use caelumora_domain::security::Subject;
 use caelumora_domain::store::{StoreError, StoreResult};
 use caelumora_domain::value::name::Name;
 use caelumora_security::SecurityContext;
-use caelumora_store::{EntityStore, EntityStores};
+use caelumora_store::EntityStores;
 use std::sync::Arc;
 use tracing::error;
 
@@ -24,9 +25,10 @@ use tracing::error;
 /// permission is checked, on the channel's own attributes - and only then taken over live and
 /// announced.
 #[derive(Debug)]
-pub(crate) struct ChannelController {
+pub struct ChannelController {
     channel: LiveDocument<Channel>,
-    groups: Arc<dyn EntityStore<Group>>,
+    /// The lifecycle of groups, by which the group of its participants follows them.
+    groups: Lifecycle<Group>,
 }
 
 impl ChannelController {
@@ -41,9 +43,9 @@ impl ChannelController {
                 channel,
                 Arc::clone(&stores.channels),
                 Arc::clone(&stores.groups),
-                event_publisher,
+                Arc::clone(&event_publisher),
             ),
-            groups: Arc::clone(&stores.groups),
+            groups: Lifecycle::new(&stores.groups, event_publisher),
         }
     }
 
@@ -65,11 +67,7 @@ impl ChannelController {
     /// `StoreError::Invalid` if `new_name` is no name, otherwise whatever
     /// the store reports, `StoreError::PermissionDenied` included; the
     /// channel is then unchanged.
-    pub(crate) async fn update_name(
-        &self,
-        ctx: &SecurityContext,
-        new_name: &str,
-    ) -> StoreResult<()> {
+    pub async fn update_name(&self, ctx: &SecurityContext, new_name: &str) -> StoreResult<()> {
         let event = ChannelUpdateEvent::NameChanged(new_name.to_string());
         self.update(ctx, &event).await
     }
@@ -91,13 +89,14 @@ impl ChannelController {
     }
 
     /// Has the channel's conversation held in `language` - or in none in
-    /// particular - on behalf of `ctx` (`UpdateChannel`, issue 56).
+    /// particular - on behalf of `ctx` (`UpdateChannel`, issue 56). Its agents are told from their
+    /// next turn on; nothing said before is translated.
     ///
     /// # Errors
     /// `StoreError::Invalid` if `language` is no language tag, otherwise
     /// whatever the store reports, `StoreError::PermissionDenied` included;
     /// the channel is then unchanged.
-    pub(crate) async fn update_language(
+    pub async fn update_language(
         &self,
         ctx: &SecurityContext,
         language: Option<&str>,
@@ -107,12 +106,13 @@ impl ChannelController {
     }
 
     /// Sets whether the channel uses the workspace of its session (issue
-    /// 251) on behalf of `ctx` (`UpdateChannel`).
+    /// 251) on behalf of `ctx` (`UpdateChannel`). It permits nothing the classifications refuse; it
+    /// takes effect with the next use.
     ///
     /// # Errors
     /// Whatever the store reports, `StoreError::PermissionDenied`
     /// included; the channel is then unchanged.
-    pub(crate) async fn update_uses_workspace(
+    pub async fn update_uses_workspace(
         &self,
         ctx: &SecurityContext,
         uses: bool,
@@ -128,7 +128,7 @@ impl ChannelController {
     /// `StoreError::Validation` if a rule does not only ask or deny
     /// (`ApprovalRule::check_restricting`), otherwise whatever the store
     /// reports; the channel is then unchanged.
-    pub(crate) async fn update_approval_rules(
+    pub async fn update_approval_rules(
         &self,
         ctx: &SecurityContext,
         rules: Vec<ApprovalRule>,
@@ -236,7 +236,7 @@ impl ChannelController {
     /// # Errors
     /// `StoreError::Invalid` if one does not fit (`Channel::describe`),
     /// otherwise whatever the store reports; the channel is then unchanged.
-    pub(crate) async fn update_description(
+    pub async fn update_description(
         &self,
         ctx: &SecurityContext,
         summary: Option<&str>,
@@ -289,7 +289,7 @@ impl ChannelController {
     /// 286): the change of the participants was permitted and is stored. A failure is logged and
     /// corrected by the next change, which derives the group anew.
     async fn keep_participants(&self, channel: &Channel) {
-        if let Err(e) = keep_participants(self.groups.as_ref(), Group::of_channel(channel)).await {
+        if let Err(e) = keep_participants(&self.groups, Group::of_channel(channel)).await {
             error!(channel = %channel.id, "The group of the channel's participants does not follow them: {e}");
         }
     }

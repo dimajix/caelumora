@@ -110,6 +110,10 @@ impl Stored for ComponentBundle {
         self.id
     }
 
+    fn address(&self) -> ComponentBundleId {
+        self.id()
+    }
+
     fn deleted(&self) -> Option<&Removal> {
         self.deleted.as_ref()
     }

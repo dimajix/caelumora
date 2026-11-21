@@ -33,32 +33,35 @@ hand, not with the session. Purging is done in the kernel's name.
 A session or a channel runs on while it is deleted, and runs on if its deletion fails; nothing is
 put into its scope meanwhile (issue 458). Whoever puts something into a scope - makes it, restores
 it, publishes it - asks `ScopeHolders` (`scoped`) that the holder of the scope is there and not
-deleted, before writing and once written: the holder is marked before its scope is deleted - a
-session's own project with the session -, so what was put there before goes with it, who asks
-afterwards is refused, and what was written in between -
-after the deletion went through the scope - is taken back, purged or marked deleted again with the
-mark it carried. A channel's session is asked as well, since a channel is not marked with its
-session.
+deleted, once it is written - and before as well where it is made or published -: the holder is
+marked before its scope is deleted - a session's own project with the session -, so what was put
+there before goes with it, who asks afterwards is refused, and what was written in between - after
+the deletion went through the scope - is taken back, purged or marked deleted again with the mark it
+carried. A channel's session is asked as well, since a channel is not marked with its session.
 
 Each kind that may lie in a scope is a `ScopeMember` (issue 323), and `ScopedEntities` goes through
 them in the order they were registered; what is done with them is the same for every kind, and a
 member says only what its kind adds. What has a manager of its own - agents, workspaces, skills,
-artifacts - is a member by it, announced as it announces its own deletions - an artifact to whoever
-reads it, as when it is deleted alone (issues 319, 316) -, and what lies behind an entity - an
-agent's states in its channels and its memory, a workspace's place, an artifact's content - is
-removed before the entity is purged. Personalities, session templates and component bundles, which
-have none, are members by their store (`Unowned`), which marks them and announces nothing.
+artifacts - is a member by it and its `Lifecycle`, which announces each deletion and restoring as
+the manager announces its own (issues 319, 316, 593), and what lies behind an entity - an agent's
+states in its channels and its memory, a workspace's place, an artifact's content - is removed
+before the entity is purged. Personalities, session templates and component bundles, which have
+none, are members by a lifecycle of their own (`Unowned`), which marks them and announces nothing.
 
 The groups of the participants of a session and of its channels lie in its scope as well, but are
 not among what lies there: they belong to the session or channel itself, and its participants reach
 it by them (issue 348). They go and come back with its mark, in the kernel's name, whoever deletes
 or restores it - all of them or none (`GroupManager::delete_participants`, `restore_participants`),
-announced as a team. Deleting deletes them last, once nothing else of the scope is left, so that a
-session kept keeps its members; if they cannot go, the mark is taken away again, and they stay.
-Restoring restores them first, with the mark; if they cannot come back, the session or channel is
-marked again as it was - with them, so that a restoring tried again finds all of it -, and the
-restoring fails. So a session or channel that is there always has the group of its participants
-there, too. Purging purges them with it (`scoped::purge_for_good`).
+each announced as a team is. The `GroupManager` makes them too, announced as they are made, and
+purges them (`keep_participants`, `purge_participants`), and the controllers of the session, the
+channel or the project keep them following the participants by the same lifecycle of groups; who
+joins and leaves is announced as they do, not as a change of the group. Deleting deletes them last,
+once nothing else of the scope is left, so that a session kept keeps its members; if they cannot go,
+the mark is taken away again, and they stay. Restoring restores them first, with the mark; if they
+cannot come back, the session or channel is marked again as it was - with them, so that a restoring
+tried again finds all of it -, and the restoring fails. So a session or channel that is there always
+has the group of its participants there, too. Purging purges them with it
+(`GroupManager::purge_participants`).
 
 That holds because what lies in a session's or a channel's scope is used only within it
 (`Scope::admits`): an agent of it takes part only in that session's channels, or in that channel,
@@ -69,12 +72,12 @@ sessions it can never lie in, and is not stored.
 
 Every session has a **project** its results go to (`Session::project`, issue 467): one of its own,
 made with it in its scope, or a shared one it lies in, which it goes with. The session keeps its own
-project as it keeps the group of its participants (`SessionManager`): made with it, in the kernel's
-name; deleted and restored with its mark, the project after the groups, all of them or none; and
-purged with it. What lies in the project's scope goes with the session as what lies in the session's
-does, and what is left of it keeps the session as well (`ScopeNotEmpty`). A session is a user's, so
-that its project has an owner. How a session is put into a project, and how its own is kept, is in
-[PROJECTS.md](PROJECTS.md).
+project as it keeps the group of its participants: made with it, in the kernel's name, and purged
+with it (`ProjectManager`); deleted and restored with its mark (`procedure::session`), the project
+after the groups, all of them or none; and purged with it. What lies in the project's scope goes
+with the session as what lies in the session's does, and what is left of it keeps the session as
+well (`ScopeNotEmpty`). A session is a user's, so that its project has an owner. How a session is
+put into a project, and how its own is kept, is in [PROJECTS.md](PROJECTS.md).
 
 Every session has a privacy policy: whom it lets read what was said in it from other sessions. It is
 taken over from its template (private unless the template says otherwise), changed only by the
@@ -91,9 +94,16 @@ place, and one zone in a session keeps the times read from another of its channe
 
 ### Creating and deleting channels
 
-Channels can be created in, deleted from and restored to a running session
-(`SessionLoop::create_channel`, `delete_channel`, `restore_channel`). Each is stored first, and only
-then is the running session changed and the change announced:
+Channels can be created in, deleted from and restored to a session, which is started where it does
+not run (`procedure::channel::Create`, `Delete`, `Restore`). Each asks first, in the order of issue
+304 - creating what the request asks for, then `CreateChannel`, then the founders' admission;
+deleting whether the caller reaches the channel, then `DeleteChannel`; restoring `ReadDeleted`, then
+`Restore`, then whether its participants may take part again -, then carries the change out one step
+after the other - by the stores, the session's controller (`SessionLoop::controller`) and the
+session's loop, which runs the channels (`add_channel`, `remove_channel`) -, each that can be set
+back undone by its compensation if a later one fails - not what deleting a channel deleted of its
+scope, nor whom restoring it let go. Each is stored first, and only then is the running session
+changed and the change announced:
 
 *   **Creating** stores the channel (`CreateChannel`) and adds it to the session, which asks
     `UpdateSession`, so that only the owner may. A channel's name is unique in its session: the
@@ -125,36 +135,42 @@ that an actor cannot forget one:
     tasks.
 
 Both are synchronous and go past the events, like `cancel`: they take effect at once, not after
-what is queued. Every actor ends its own task. The channel's run loop alone owns the actors' tasks,
-so that they end with the channel's; whoever ended an actor waits on its task separately
-(`ChannelLoop::stop_actors`, `leave_actors`). All of them use the same grace: an actor that has not
-ended after `STOP_GRACE` is aborted. A tool that hangs does not keep an agent: both interrupt it,
-the call recorded as having run, and the agent ends within the grace.
+what is queued - also for an actor whose task never ran, so that whoever follows it learns it ended
+(issue 104). Every actor ends its own task. The channel's run loop alone owns the actors' tasks, so
+that they end with the channel's, and waits for them: for a single participant let go
+(`ActorChange::Leave`) as for every actor of a channel that stops or is deleted
+(`ChannelLoop::end_actors`, `ActorChange::End`, issue 593). It answers whoever told them once their
+tasks have ended, so that what they sent on their way out - the step they were in, the end of their
+turn - is in the channel before it is stopped. All of them use the same grace: an actor that has not
+ended after `STOP_GRACE` is aborted, by the run loop. A tool that hangs does not keep an agent: both
+interrupt it, the call recorded as having run, and the agent ends within the grace.
 
 ### Shutting down
 
 As the process ends - SIGINT or SIGTERM to the server, a signal, `/exit` or an error to the TUI -
-the sessions are shut down in order (`SessionManager::shutdown`, issue 297). From then on no session
-is started: a request that would start one is refused (`SessionError::ShuttingDown`), as one that
-would start a session another process runs is (`SessionError::RunsElsewhere`, issue 554). Every
-running session is stopped as `stop` stops it, all at once, so that each actor keeps what it is in
-the middle of. Of the commands, only what does not outlive the process ends: each storage decides
-(`TerminalProvider::shutdown`) - the `local` shell ends its commands, an Open Terminal instance
-keeps them, which the model can follow after a restart and their bound ends. The whole takes at most
-`SHUTDOWN_BOUND`, eight seconds, within the ten Docker leaves between SIGTERM and SIGKILL; what is
-still under way then ends with the process.
+the sessions are shut down in order (`procedure::session::shut_down`, issue 297). From then on the
+kernel's `ProcedureExecutor` admits no procedure: a request that reaches a session - opening one
+that runs too - is refused (`ProcedureError::ShuttingDown`, issue 593), as one that would start a
+session another process runs is (`SessionError::RunsElsewhere`, issue 554). Once the procedures
+under way are done, every running session is stopped as `procedure::session::Stop` stops it, all at
+once, so that each actor keeps what it is in the middle of. Of the commands, only what does not
+outlive the process ends: each storage decides (`TerminalProvider::shutdown`) - the `local` shell
+ends its commands, an Open Terminal instance keeps them, which the model can follow after a restart
+and their bound ends. The whole takes at most `SHUTDOWN_BOUND`, eight seconds, within the ten Docker
+leaves between SIGTERM and SIGKILL; what is still under way then ends with the process.
 
 ### Starting again after a restart
 
 What a shutdown or a crash interrupted goes on by itself when the server starts again (issue
 [388](../issues/388-resume-interrupted-work-after-a-restart.md)). Once it is seeded, the server has
-`SessionManager::resume_interrupted` start every session in which an agent's stored state has work
-under way: a turn stored at a step it goes on from, or a remote task the remote agent works on. The
-state store keeps an index of them (see [STORAGE.md](STORAGE.md#work-under-way)), so nothing else is
-loaded. Nobody asked for these sessions, so the kernel opens them in its own name; what the agents
-then do is done in their own names, as at every start. They are started one after another, beside
-the first requests, and not bounded otherwise: what they resume is the work that ran when the server
-stopped, no more (issue [436](../issues/436-work-resumed-after-a-restart-is-not-bounded.md)).
+`procedure::session::resume_interrupted` start every session in which an agent's stored state has
+work under way: a turn stored at a step it goes on from, or a remote task the remote agent works
+on. The state store keeps an index of them (see [STORAGE.md](STORAGE.md#work-under-way)), so
+nothing else is loaded. Nobody asked for these sessions, so the kernel opens them in its own name;
+what the agents then do is done in their own names, as at every start. They are started one after
+another, beside the first requests, and not bounded otherwise: what they resume is the work that ran
+when the server stopped, no more (issue
+[436](../issues/436-work-resumed-after-a-restart-is-not-bounded.md)).
 
 Not started is a session whose agents only wait for a person - an approval, a question, a remote
 task that asked back -, since the person's answer starts it; nor one deleted. A message delivered to
@@ -163,9 +179,14 @@ an agent but not yet taken in leaves the agent idle, so it waits for the next ac
 ### One writer per document
 
 Each document has one writer, which holds a lock while it changes and stores it: the
-`SessionController` for the session, the `ChannelController` for its channel. A change - a new
-name, say - is stored first, where it may still be refused, and only then taken over and announced.
-The controllers are described in [STORAGE.md](STORAGE.md#controllers).
+`SessionController` for the session, the `ChannelController` for its channel. A change - a new name,
+say - is stored first, where it may still be refused, and only then taken over and announced. The
+running session and channel hand their controllers out (`SessionLoop::controller`,
+`ChannelLoop::controller`), through which their attributes are changed - name, language, time zone,
+privacy, rules of approval, description, whether a channel uses the workspace; what changes the
+channels of a session, its participants, its project or its workspace is the kernel's alone, written
+by the procedures and the session (issue 593). The controllers are described in
+[STORAGE.md](STORAGE.md#controllers).
 
 ## Channels
 
@@ -206,7 +227,9 @@ channel, and of another thread its approvals and its questions, which its calls 
 mentions the viewer.
 
 A thread is **opened** at a message of another thread of its channel (`ThreadOrigin`), with its
-**founders** taking part in it alone (`SessionLoop::open_thread`). Opening goes through the session,
+**founders** taking part in it alone (`procedure::thread::Open`, issue 593, which holds the new
+thread, the one it is opened at and its founders until they are taken in). Opening goes through the
+session,
 as every way into a channel does (see
 [Taking someone into the session](#taking-someone-into-the-session)): a founder is mostly new to
 the session. Whoever reads the channel may open a thread (`OpenThread`),
@@ -220,14 +243,19 @@ sent first and so records it before the opening. The opening and the closing of 
 announced in the line (`ThreadOpened`, `ThreadClosed`), of the whole channel and told to its users;
 every thread is kept in the channel's state (`ChannelState::threads`), the closed ones as closed,
 from which the channel builds the open ones again as it starts; every actor starts again in the
-thread its range of attendance names, in the line if that thread was closed. One founder that
-cannot be taken in rolls the opening back: whoever was taken in is let go again, the thread closed.
+thread its range of attendance names, in the line if that thread was closed. Every founder is asked
+before the thread is there; one that cannot be taken in after all - whose actor cannot start - rolls
+the opening back: whoever was taken in is taken out again as if never taken in, the thread closed
+in the opener's name as a thread is closed, refused while anyone still takes part in it.
 
 A thread is **closed** by whoever opened it, or whoever may change the channel
-(`ChannelLoop::close_thread`), once nobody takes part in it - no actor runs in it, no participant
-listed without an actor attends it, and its founders are all taken in -, so that nobody is left in
-a thread closed: whoever takes part is let go first. The channel closes it once whoever left it has
-left: what they still sent until their task ended enters the thread, and their leave is recorded
+(`procedure::thread::Close`, which holds it until the channel closed it), once nobody takes part in
+it - no actor runs in it, no participant listed without an actor attends it -, so that nobody is
+left in a thread closed: whoever takes part is let go first. Letting someone go holds the thread
+they take part in until they have left (`procedure::participant::LetGo`, issue 593), as having an
+agent follow its deletion or restoring does the thread it rejoins, so that the channel closes a
+thread only once whoever left it has left: what they still sent until their task ended enters the
+thread, and their leave is recorded
 there; from then on what is sent into it is not let in. The line is never closed.
 
 ### Building a channel
@@ -256,13 +284,13 @@ among them. Its moderator and classification default as in a template (see
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md) and [Moderators](#moderators)).
 
 A channel is built and stored empty, and its founders join it by the one way in, as anyone added
-later does (`ChannelLoop::found`, issue 420): each taken in, its actor started, and its joining
+later does (`participant::take_in`, issue 420): each taken in, its actor started, and its joining
 recorded in the channel's history - its `ParticipantJoined`, in the creator's name; nothing of the
 history is shared with a founder, which is given what is said from its join on.
 So every participant of a channel has its join in the history, and the history alone says who
 took part when. Founding asks nothing beyond what anyone taken in is asked: naming the founders was
 creating the channel (`CreateChannel`), so changing it is not asked, and it is reachable from
-creating a channel alone - a requested one (`SessionLoop::create_channel`) and those of a template,
+creating a channel alone - a requested one (`procedure::channel::Create`) and those of a template,
 whose users and agents join the channels that name them once the session is made. Each founder's
 clearance is asked before anything is stored, and again as they join; if one cannot join, the
 channel is taken back. A channel's `run` applies the joins that wait as it begins, before it routes
@@ -319,20 +347,32 @@ may use it. How a session comes to its workspace and who reaches the files is in
 `SessionLoop::run` runs every channel, those the session had and those created later - but for one
 whose components cannot be read (see below).
 
-Every actor of a channel is started the one way (`ChannelLoop::start_participant`): built, taken
-in (`adopt`) and handed to `run` (`ActorChange::Start`), which starts its task - as the channel is
-built, its participants and its internal actors, as someone is added, joins or founds it, and as
-an agent is restored. They differ only in what they hand over: from which position the actor is
-given the history, and on whose behalf it joined, if it did - a channel started again records no
-joins. What waits when `run` begins is started before anything is routed.
+Every actor of a channel is started the one way (`ChannelLoop::add_actor`): built, taken in
+(`adopt`) and handed to `run` (`ActorChange::Start`), which starts its task - as the channel is
+built, its participants and its internal actors, as someone is added, joins or founds it, and as an
+agent is restored. They differ only in what they hand over: from which position the actor is given
+the history, and on whose behalf it joined, if it did - a channel started again records no joins.
+What waits when `run` begins is started before anything is routed. `run` carries out the changes
+handed to it one after the other, and answers each once it carried it out - a leave once the actor's
+task has ended and its leave is announced, the end of every actor once their tasks have ended, a
+thread's closing once it is closed (`ChannelLoop::request`, issue 593). `run` runs until its session
+stops or the channel is deleted - empty too, for whoever comes in: whether a channel runs changes
+with its session or its deletion, never by itself. It runs once; a change still under way as it
+ends, or handed in after, is answered with nothing: the channel stopped, its actors with it.
 
-*   Stopping the session stops the actors of every channel (`SessionLoop::stop_actors`), all at
-    once, waits for them up to `STOP_GRACE` and then aborts every channel; the commands started in
-    its workspace shell are ended. A stop therefore takes as long as its slowest actor needs to
-    store its state. Deleting the session has the actors leave instead (`leave_actors`), as
-    deleting a channel does.
+*   Stopping the session stops the actors of every channel (`SessionLoop::end_actors`), all at once,
+    waits until they have ended - those not ended after `STOP_GRACE` aborted - and then aborts every
+    channel, announcing each it started stopped (`channel::STOPPED`) before the session; the
+    commands started in its workspace shell are ended. A stop therefore takes as long as its slowest
+    actor needs to store its state. Deleting the session has the actors leave instead
+    (`Ending::Leave`), as deleting a channel does.
 *   Deleting a channel aborts that channel's task; its state is kept until it is purged. A channel
-    deleted while it waits to be started is never started.
+    deleted while it waits to be started is never started. A channel just created and taken back,
+    as a founder cannot join, is announced stopped as well, if it started.
+*   A channel that panics ends its session's loop, and with it every channel of the session, with
+    an error in the log. Nothing else follows: the session stays registered as running, its
+    channels listed but none of them running, until it is stopped - which announces them stopped
+    only then (`SessionLoop::run`). It is rare, and documented rather than handled.
 *   A participant that cannot be run is left out when the channel starts, with a warning, and the
     channel runs with everyone else: a user or agent deleted since it joined, or an agent whose
     personality or components were withdrawn or deleted. A third party - the owner of a personality
@@ -345,8 +385,11 @@ joins. What waits when `run` begins is started before anything is routed.
     deleted as any other, and whatever is to be done in it is refused with why
     (`SessionError::ChannelUnavailable`) - to whoever may read it; to anyone else it is not there.
     Its components are not changed after it was made: it runs again once they can be read, as
-    the session is opened again - also while it runs, as every request in it does
-    (`SessionLoop::retry_unavailable`, outside the lock that starts the session). A store
+    the session is opened again - also while it runs, as the REST server opens it for every
+    request (`procedure::channel::Start`, after the opening, issue 593). Requests at the same time
+    build it again one after the other, and one that has just started the session tries it again
+    at once: a channel that stays unavailable costs a try each, which is rare and cheap, and who
+    asks after its bundle was shared again finds it built. A store
     that fails keeps the session from opening, as it does for a participant. Creating or restoring
     a channel, or a session from a template, is its owner's own request, and is refused instead
     (`SessionError::ChannelUnavailable`); a session from a template is rolled back.
@@ -604,47 +647,64 @@ is permitted and can succeed.
 
 ## Participants
 
-Participants of the session can be added to and removed from a running channel, and leave it.
-Changing the participants is an operation of the channel (`ChannelLoop::add_participant`,
-`remove_participant`, `leave`), but whoever takes someone into a channel goes through the session
-(`SessionLoop::add_participant`, `join`, also for one in the session already): it makes the changes
-of one participant one at a time, before the channel does (issue 590), so that a rollback of the
-session's part never takes out one another took into a channel meanwhile, nor taking in and letting
-go cross; founding a channel holds it for each founder. Like renaming, the change is made
-by the channel's one writer, the `ChannelController`, by the rules of the channel's document: who
-comes in is no longer a former participant and has their invitation used up (`Channel::take_in`),
-who is removed is kept as a former participant (`Channel::let_go`, issue 164). It stores the
-channel - asked as `UpdateChannel` of whoever changes it, by default its owner, and in the kernel's
-name for one who joined, founded or left it -, lets the group of its participants follow and
-announces who joined or left. One whose actor then cannot start has the addition rolled back as the
-channel had them before (`Channel::undo_take_in`), announced as a leave. The changes of one
-participant - taken in, let go, its actor following its agent's deletion and restoring - are made
-one at a time, so that two who add the same participant at once take them in once, and a rollback
-never takes out one whose actor another started. Events only announce; nothing changes a channel
-because an event arrived.
+Participants of the session can be added to and removed from a running channel, and leave it. Taking
+someone in and letting them go are procedures (issue 593, see [ARCHITECTURE.md](ARCHITECTURE.md)):
+`procedure::participant::TakeIn` (added, or joining by their own act), into the session and with a
+channel named into that channel at once, and `procedure::participant::LetGo` (removed, or leaving),
+from the session with every channel of it, or from one channel. Each holds the participant
+(`Key::Participant`) and the channels it changes until the channel's `run` has carried the change
+out - the newcomer's actor started and its join announced, the leaver's actor ended and its leave
+announced -, and opens a stopped session as it starts. Taking in is one function of the procedures,
+`procedure::participant::take_in`, for anyone who comes in - added, joining, founding a channel or a
+thread -: acting across the session and its channels, it enforces what taking someone in asks,
+asking it once, whose participant they are first - what the session asks of them, then the channel,
+then whether they can run and may take part (`Participation::require_admitted`) -, lists them in the
+session unless they are in it, then in the channel, by the controllers of the two, and has the
+channel start their actor (`ChannelLoop::add_actor`); the procedure's compensation takes each step
+back if a later one fails. Whoever takes someone into a channel goes through the session's part,
+also for one in the session already. Letting go is one function as well,
+`procedure::participant::let_go_from_session` - or `let_go_from_channel` from one channel alone -:
+it asks whether they take part and may leave, then takes them off the session's list and out of
+every channel of it - a running one until their actor ended (`ChannelLoop::remove_actor`), one that
+does not run in its stored document and the copy the session holds; creating a channel holds the
+channel and its founders (`procedure::channel::Create`). Like renaming, the change is made by the
+channel's one writer, the `ChannelController`, by the rules of the channel's document: who comes in
+is no longer a former participant and has their invitation used up (`Channel::take_in`), who is
+removed is kept as a former participant (`Channel::let_go`, issue 164). It stores the channel -
+asked as `UpdateChannel` of whoever changes it, by default its owner, and in the kernel's name for
+one who joined, founded or left it -, lets the group of its participants follow and announces who
+joined or left. One whose actor then cannot start has the addition rolled back as the channel had
+them before (`Channel::undo_take_in`), announced as a leave. The changes of one participant - taken
+in, let go, its actor following its agent's deletion and restoring - are made one at a time, by
+procedures that hold the participant (`Key::Participant`), or the session as it starts, or - for an
+agent just made, whom nobody knows yet - the thread it founds; so that two who add the same
+participant at once take them in once, and a rollback never takes out one whose actor another
+started. Events only announce; nothing changes a channel because an event arrived.
 
 Adding is asked first as `UpdateChannel`, before anything of the newcomer is looked at, and then as
 `cleared` with the channel's classification, where a policy can hold the channel's level against the
 newcomer (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
 
-Who takes part in a channel and whether they may is one question, owned by `Participation` (issue
-356), which the `Kernel` holds once for the instance with the services it is asked with: the
-agents' store, the controllers, the `AccessPolicy` and the `ConfidentialityPolicy`. It resolves a
-participant as a document names it into a `ResolvedParticipant` - what its actor is built from, and
-the place it takes part in -, which asks nothing, and answers whether it may run, join or leave, lie
-where it may and is cleared for the channel, each a question of its own that whoever needs it asks
-in its order. The session and channel loops and the `SessionManager` ask it alike: when
-a channel is created, restored or built, when someone is taken in or leaves or an agent comes back,
-and when a channel is reclassified.
+Whether someone may take part in a channel is decided in one place, `Participation` (issue 356),
+which the `Kernel` holds once for the instance with the policies it decides by: the `AccessPolicy`
+and the `ConfidentialityPolicy`. It is given a participant resolved - a `ResolvedParticipant`, what
+a document names resolved by the controllers into what its actor is built from, and the place it
+takes part in (`ResolvedParticipant::resolve`), which asks nothing -, and answers whether it may
+run, join or leave, lie where it may and is cleared for the channel, each a question of its own that
+whoever needs it asks in its order. The procedures ask it, under their locks, when someone is taken
+in or leaves and when a channel is created or restored (issue 593); the channel's loop asks whether
+a participant may run as it builds a channel or an agent comes back, and whether every participant
+is cleared as the channel is reclassified.
 
 ### Taking someone into the session
 
 Who is not in the session yet is taken into it first, and with a channel named into that channel at
-once - by whoever may change the session (`SessionLoop::add_participant`), or by their own act where
-an entry of the session's access list grants them `Join` (`SessionLoop::join`;
-`SessionManager::join` opens the session for one who may join but not read it). Who joins takes in
-themselves or their own agent, never someone else. A third way in is founding a thread
-(`SessionLoop::open_thread`, see [Its threads](#its-threads)): its founders, the opener's own, are
+once - by whoever may change the session (`TakeIn::added`), which opens it as opening any session
+does, or by their own act where an entry of the session's access list grants them `Join`
+(`TakeIn::joining`), which opens it in the kernel's name for one who may join or read it
+(`procedure::session::open_to_take_in`): who joins reads nothing of it before they did. Who joins
+takes in themselves or their own agent, never someone else. A third way in is founding a thread
+(`procedure::thread::Open`, see [Its threads](#its-threads)): its founders, the opener's own, are
 taken into the session and the channel in the kernel's name, opening the thread being permitted.
 
 *   **Everything is asked before anything is stored**: changing the session and the channel - or,
@@ -692,35 +752,39 @@ agent said and saw stays readable for whoever may read its context.
 Deleting an agent (`AgentManager::delete`) marks it and changes no channel: it rests in every
 channel it takes part in until it is restored. The channels follow its mark instead:
 
-*   a running session, told of the deletion, has the agent's actor leave each of its channels, in
-    the kernel's name, and announces it as a leave (`channel::LEFT`);
+*   the follower of the agents, told of the deletion (`procedure::follower::AgentFollower`, issue
+    593) - which every program that runs sessions starts beside its `SessionManager`, the server
+    program and the terminal -, has the agent's actor leave each channel of a running session that
+    lists it, in the kernel's name, by a procedure that holds the agent there
+    (`participant::Follow`), and announces it as a leave (`channel::LEFT`);
 *   a channel that starts leaves it out, as any participant that no longer exists -
-    `Participation::resolve` asks the store whether it exists, not the controllers, which keep an
-    agent's controller while an actor of it still runs;
+    `ResolvedParticipant::resolve` asks the store whether it exists, not the controllers, which keep
+    an agent's controller while an actor of it still runs;
 *   the views show it as a former participant, removed as its mark says, and keep its name, so that
     what it said keeps its sender.
 
-A session subscribes to the events of its agents as it is made, follows each one it takes in as it
-takes them in, and looks at all of them again as it starts and after it lost events, so that a
-deletion or a restore it did not hear of is not missed. It follows its users alike, for their
-renames (see [`@`-Mentions](#-mentions)).
+The follower follows every agent's deletion and restoring, and after it lost events looks at the
+agents of every running session again; a session looks at all its agents as it starts, as opening
+it does (`procedure::session::open`), so that a deletion or a restore while its channels were built
+is not missed. A session subscribes to the events of its participants as it is made, and follows
+each one it takes in as it takes them in, for their renames (see [`@`-Mentions](#-mentions)).
 
 Restoring the agent is refused if another agent took its name in its scope meanwhile. Otherwise it
-takes part again in every channel it rested in: a running session builds its actor anew, gives it
-the part of the history it may see, as when it joined, and announces it as a join. Removing a
-resting agent from a channel changes the document, and the agent does not come back there; its
-leave was recorded as it began to rest, or, deleted while the channel did not run, is recorded as
-it is removed (see [How others learn of it](#how-others-learn-of-it)).
-Purging it removes its document and its state, its own and in every channel; in the channels it
-rested in it stays a former participant, without when it left. An agent of a session's or a
-channel's scope goes with that session or channel (see [Sessions](#sessions)).
+takes part again in every channel it rested in: the follower has its actor built anew, given the
+part of the history it may see, as when it joined, and announced as a join. Removing a resting agent
+from a channel changes the document, and the agent does not come back there; its leave was recorded
+as it began to rest, or, deleted while the channel did not run, is recorded as it is removed (see
+[How others learn of it](#how-others-learn-of-it)). Purging it removes its document and its state,
+its own and in every channel; in the channels it rested in it stays a former participant, without
+when it left. An agent of a session's or a channel's scope goes with that session or channel (see
+[Sessions](#sessions)).
 
 ### Leaving a channel
 
 Who takes part leaves a channel by their own act, and takes their own agent out of it the same way
-(`ChannelLoop::leave`), without the right to change it: removing anyone is whoever may change the
-channel's, leaving is everyone's for themselves. Removing and leaving go out by one way, as adding,
-joining and founding come in by one.
+(`LetGo::leaving` with the channel), without the right to change it: removing anyone is whoever may
+change the channel's, leaving is everyone's for themselves. Removing and leaving go out by one way,
+as adding, joining and founding come in by one.
 
 *   **Asked as joining is**: the one who leaves is whom the caller acts for, or their own agent
     (`Participation::require_own_act`), before anything is asked in their name, and `LeaveChannel`
@@ -730,7 +794,7 @@ joining and founding come in by one.
 *   **Stored in the kernel's name**, as a join is, kept as removed by whoever left or took their
     agent out, and announced in their name. They stay in the session.
 *   **No rule for the owner or the last one**: the owner leaves as anyone does and keeps the
-    channel, to add themselves back; the last one leaves, and the channel stays, empty.
+    channel, to add themselves back; the last one leaves, and the channel stays, empty and running.
 *   **Coming back** takes an entry granting `Join` that is not used up - for a role, a group or
     everyone - or whoever may change the channel: a personal invitation was used up as they came in.
 *   **Whether it could run is not asked**: its owner takes out an agent whose personality was
@@ -740,8 +804,8 @@ joining and founding come in by one.
 ### Letting someone go from the session
 
 Who takes part in a session is let go from it by whoever may change it
-(`SessionLoop::remove_participant`), or leaves it by their own act, themselves or their own agent
-(`leave`) - asked as leaving a channel is, as `LeaveSession` (issue
+(`LetGo::removed`), or leaves it by their own act, themselves or their own agent
+(`LetGo::leaving`) - asked as leaving a channel is, as `LeaveSession` (issue
 [590](../issues/590-a-session-lets-nobody-go.md)). Whoever a channel lists takes part in its
 session, so they go out of every channel of it as well:
 
@@ -766,7 +830,8 @@ session, so they go out of every channel of it as well:
     attendance ends only there.
 *   **Not rolled back.** Taking them out of a channel ended their turn, so a channel that fails
     leaves its error to the caller, and asking again - for one out of the session and still in a
-    channel of it - finishes it.
+    channel of it - finishes it: by whoever may change the session, as who left by their own act
+    no longer reaches it once they are out of it (issue 593).
 *   **Nothing is deleted.** What they said stays in the histories, and an agent's state stays; the
     session keeps no former participants of its own, its channels keep theirs. A personal
     invitation was used up as they came in. No rule for the owner or the last one, as for a
@@ -830,10 +895,12 @@ so - and its state is kept, for the record and for a later return. The approver 
 agent's pending approvals as denied, so that nothing keeps waiting, and decides the others again,
 since who may approve them changed. The approver itself is no participant and is never removed.
 
-A participant added again while its old actor still ends waits for it, at most a little past the
-grace, and is refused as still leaving after that. The new actor thus loads the state as the old one
-left it, and never runs next to it. What the old actor sent before it ended is routed before the new
-one starts under the same id. An actor removed before the run loop started it is never started.
+Whoever lets a participant go waits until `run` answers that its actor has ended, at most a little
+past the grace (`LEAVE_GRACE`), holding the participant: who takes them in again waits for that
+(issue 593). The new actor thus loads the state as the old one left it, and never runs next to it -
+but beside one that does not end even when aborted, which is logged and no longer refuses who comes
+after it. What the old actor sent before it ended is routed before the new one starts under the same
+id. An actor removed before the run loop started it is never started.
 
 ### How others learn of it
 
@@ -1008,15 +1075,15 @@ given what goes to the users and happens in its thread or the whole channel
     as the recipient's message. Both directions carry the delegating chain's initiator, so that the
     turns that answer them act in the authority the chain began in. Then the next brief is open.
 
-After a restart the channel builds its threads, reconciles what changed while it did not run,
-starts the delegates of what is still to answer, then its participants: a delegate reads on from
-where its open brief was given (`Actor::heard`), so that an answer recorded while it did not run is
-not lost, and gives a brief already given not again. A thread is closed with its delegate
-(`close_thread` does not count it): it is let go as the thread is to be closed, and what was open
-is dropped - a recipient let go right before is given back as gone only if its task ended before
-the close was applied. A brief given whose recipient does not start again after a restart - left
-out, as one that cannot be run - waits until the thread is closed: nothing records that it left,
-and the brief is not given again to be refused.
+After a restart the channel builds its threads, reconciles what changed while it did not run, starts
+the delegates of what is still to answer, then its participants: a delegate reads on from where its
+open brief was given (`Actor::heard`), so that an answer recorded while it did not run is not lost,
+and gives a brief already given not again. A thread is closed with its delegate
+(`ChannelLoop::close_thread` does not count it): it is let go as the thread is closed, and what was
+open is dropped - a recipient let go right before is given back as gone only if its task ended
+before the close was applied. A brief given whose recipient does not start again after a restart -
+left out, as one that cannot be run - waits until the thread is closed: nothing records that it
+left, and the brief is not given again to be refused.
 
 What a delegate gives:
 
@@ -1191,7 +1258,7 @@ everything in the channel shares:
     back would keep a stopped channel alive.
 
 A session exists before its channels: `SessionLoop::new` makes it, and then builds each channel as
-one created later is built (`add_channel_loop`), so that a channel has its session from the start.
+one created later is built (`add_channel`), so that a channel has its session from the start.
 
 The `ChannelRuntime` is the only source of `ParticipantRuntime`s, so every actor belongs to exactly
 one channel. A `ParticipantRuntime` is made for one participant and hands out only what concerns it:
@@ -1224,9 +1291,8 @@ controller, no registry and no store leaves it. Whether a command of an agent is
 of its session the kernel decides as it builds the actor: an agent whose command has the name of one
 of the session's is refused (issue 37).
 
-The full `ChannelLoop` and `SessionLoop` are `pub(crate)`, so components from other crates cannot
-reach them. Components are not given their actor's runtime either, only what their
-`ComponentContext` holds; see [COMPONENTS.md](COMPONENTS.md).
+Components from other crates are handed neither the `ChannelLoop` nor the `SessionLoop`, nor their
+actor's runtime, only what their `ComponentContext` holds; see [COMPONENTS.md](COMPONENTS.md).
 
 ## Moderators
 

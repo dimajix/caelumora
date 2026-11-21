@@ -18,11 +18,12 @@ entity's id as text, `within` the id of the entity it lies in, and `change` an `
     `ArtifactUpdateEvent`, …); a profile comes as it now stands, an agent's memory with nothing,
     since what it holds is its owner's to fetch;
 *   `Custom { name, data }` - something particular to the kind, under a name its module defines:
-    `session::STARTED` and `STOPPED`, a channel's `STARTED`, `STOPPED`, `JOINED` and `LEFT` - with
-    the `ActorId` of who joined or left -, `AGENT_STATE_CHANGED`, with the agent's id, and `SAID`,
-    with a message others hear as it was said and its thread (`Said`: of the line, or of another
-    where it mentions a user, issue 557; see
-    [CHANNELS.md](CHANNELS.md#what-is-new-to-a-user)).
+    `session::STARTED` and `STOPPED`, a channel's `STARTED`, `STOPPED` - as its session stops,
+    before the session's, or as it is deleted or taken back as its founders cannot join, since a
+    channel does not stop by itself (issue 593) -, `JOINED` and `LEFT` - with the `ActorId` of who
+    joined or left -, `AGENT_STATE_CHANGED`, with the agent's id, and `SAID`, with a message others
+    hear as it was said and its thread (`Said`: of the line, or of another where it mentions a
+    user, issue 557; see [CHANNELS.md](CHANNELS.md#what-is-new-to-a-user)).
 
 What happens to a channel's participants is a change of the channel: its readers are the ones who
 hear of it, and it carries the participant in its data.
@@ -80,10 +81,10 @@ receives the matching events that context may read through an `EventSubscription
 topic later, through the subscription's `Following`, which can be kept apart from its receiver. An
 event about a session, an agent or a user goes to its topic; one about a channel - and so about its
 participants - to the channel's and to the session's it lies in, which the bus reads from the
-event's address. Other kinds have no topic of their own. The kernel's own
-subscribers - the controllers, a running session, an approver, the `CommandReaper` - subscribe as
-the system (`subscribe_all`, `subscribe_session`, …), which the bus does not ask about: they receive
-everything on their topics.
+event's address. Other kinds have no topic of their own. The kernel's own subscribers - the
+controllers, a running session, an approver, the `CommandReaper`, the follower of the agents -
+subscribe as the system (`subscribe_all`, `subscribe_session`, …), which the bus does not ask about:
+they receive everything on their topics.
 
 All subscriptions are served by one dispatcher task, in the order the events were published, so that
 every subscriber receives what it shares with others in the same order - the place where the events
@@ -105,9 +106,10 @@ what it keeps (issue 502) - a loss between instances will be the rule, not the e
 
 *   the `ControllerManager` reads every live agent, user, workspace and project controller again as
     stored (see [STORAGE.md](STORAGE.md#following-changes));
-*   a running session looks at all its agents again, and has its channels build the handles of
-    their participants anew from their actors - whom it takes in it follows as it takes them in,
-    which loses nothing - (see
+*   the follower of the agents looks at the agents of every running session again
+    (`procedure::follower::AgentFollower`, issue 593), and a running session has its channels
+    build the handles of their participants anew from their actors - whom it takes in it follows
+    as it takes them in, which loses nothing - (see
     [CHANNELS.md](CHANNELS.md)); its own document it does not read again, since a session runs in
     one instance and its controller is the one writer of it there, which holds every change of it
     live already;
@@ -146,15 +148,16 @@ classifications.
 
 A subscription in someone's name receives the events about the entities its context may read. The
 bus asks the `AccessPolicy` the same question the `EntityStore` asks for reading them. The events of
-a channel - its creation, change, start and stop, who joins and leaves it, an agent's state in it -
-go by the channel's attributes and are asked as reading the channel. A user's record is everybody's
-to read, their profile only theirs, so an update of a `user_profile`, which carries the profile,
-reaches nobody else. A deletion is decided by the attributes it was published with, since the entity
-is gone by then, and asked as `HearDeleted`: whoever read it until then hears of it, also by a group
-that went with it - the groups of a session's participants are deleted before the session's deletion
-is announced, and the policy is asked later still. What a deleted session or channel announces as it
-stops (`session::STOPPED`, `channel::STOPPED`) is asked as reading it and reaches its owner alone,
-since it is stopped only once its groups are gone (issue
+a channel - its creation, change, start and stop, who joins and leaves it, an agent's state in
+it - go by the channel's attributes and are asked as reading the channel. A user's record is
+everybody's to read, their profile only theirs, so an update of a `user_profile`, which carries the
+profile, reaches nobody else. A deletion is decided by the attributes it was published with, since
+the entity is gone by then, and asked as `HearDeleted`: whoever read it until then hears of it, also
+by a group that went with it - announced as it is marked, by whoever marks it (issue 593), a
+deletion may be asked of before or after the groups of its participants are deleted, and
+`HearDeleted` counts an entry for a deleted group as one for a group that is there. What a deleted
+session or channel announces as it stops (`session::STOPPED`, `channel::STOPPED`) is asked as
+reading it and reaches its owner alone, since it is stopped only once its groups are gone (issue
 [458](../issues/458-deleted-while-it-runs.md)); its participants learn of it by the deletion.
 
 An event published with classifications reaches only who is also cleared for one of them, as the

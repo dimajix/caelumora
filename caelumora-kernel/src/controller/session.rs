@@ -3,6 +3,7 @@
 use super::check_restricting;
 use super::document::LiveDocument;
 use crate::group::keep_participants;
+use crate::lifecycle::Lifecycle;
 use arc_swap::Guard;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::approval::ApprovalRule;
@@ -17,7 +18,7 @@ use caelumora_domain::store::{StoreError, StoreResult};
 use caelumora_domain::value::name::Name;
 use caelumora_domain::workspace::WorkspaceId;
 use caelumora_security::SecurityContext;
-use caelumora_store::{EntityStore, EntityStores};
+use caelumora_store::EntityStores;
 use std::sync::Arc;
 use tracing::error;
 
@@ -25,11 +26,12 @@ use tracing::error;
 #[derive(Debug)]
 pub struct SessionController {
     session: LiveDocument<Session>,
-    groups: Arc<dyn EntityStore<Group>>,
+    /// The lifecycle of groups, by which the group of its participants follows them.
+    groups: Lifecycle<Group>,
 }
 
 impl SessionController {
-    pub fn new(
+    pub(crate) fn new(
         session: Session,
         event_publisher: Arc<dyn EventPublisher>,
         stores: &EntityStores,
@@ -40,9 +42,9 @@ impl SessionController {
                 session,
                 Arc::clone(&stores.sessions),
                 Arc::clone(&stores.groups),
-                event_publisher,
+                Arc::clone(&event_publisher),
             ),
-            groups: Arc::clone(&stores.groups),
+            groups: Lifecycle::new(&stores.groups, event_publisher),
         }
     }
 
@@ -68,7 +70,9 @@ impl SessionController {
 
     /// Has the channels of the session that hold no language of their own
     /// held in `language` - or in none in particular - on behalf of `ctx`
-    /// (`UpdateSession`, issue 425), as [`Self::update`] does.
+    /// (`UpdateSession`, issue 425), as [`Self::update`] does. The agents of
+    /// those channels are told from their next turn on; nothing said before
+    /// is translated.
     ///
     /// # Errors
     /// `StoreError::Invalid` if `language` is no language tag, otherwise see
@@ -83,7 +87,8 @@ impl SessionController {
 
     /// Has the session held in the time zone `time_zone` - or in UTC - on
     /// behalf of `ctx` (`UpdateSession`, issue 424), as [`Self::update`]
-    /// does.
+    /// does. Its agents' models are given the times of messages in it from
+    /// their next turn on.
     ///
     /// # Errors
     /// `StoreError::Invalid` if `time_zone` is no time zone, otherwise see
@@ -97,7 +102,9 @@ impl SessionController {
     }
 
     /// Changes the session's privacy policy on behalf of `ctx` (issue 134),
-    /// as [`Self::update`] does.
+    /// as [`Self::update`] does. What was remembered before keeps the privacy
+    /// it was said under: a wider policy lets go only what is said from now
+    /// on, a narrower one takes back what it let go.
     ///
     /// # Errors
     /// See [`Self::update`].
@@ -152,7 +159,7 @@ impl SessionController {
     ///
     /// # Errors
     /// See [`Self::update`].
-    pub async fn update_workspace(
+    pub(crate) async fn update_workspace(
         &self,
         ctx: &SecurityContext,
         workspace: Option<WorkspaceId>,
@@ -166,7 +173,7 @@ impl SessionController {
     ///
     /// # Errors
     /// See [`Self::update`].
-    pub async fn update_project(
+    pub(crate) async fn update_project(
         &self,
         ctx: &SecurityContext,
         project: ProjectId,
@@ -272,7 +279,11 @@ impl SessionController {
     /// # Errors
     /// Whatever the store reports, `StoreError::PermissionDenied` included;
     /// the session is then unchanged.
-    pub async fn add_channel(&self, ctx: &SecurityContext, channel: ChannelId) -> StoreResult<()> {
+    pub(crate) async fn add_channel(
+        &self,
+        ctx: &SecurityContext,
+        channel: ChannelId,
+    ) -> StoreResult<()> {
         let mut writing = self.session.write().await;
         writing
             .change(ctx, |session| {
@@ -290,7 +301,7 @@ impl SessionController {
     /// # Errors
     /// `StoreError::NotFound` if the session has no such channel; whatever
     /// the store reports otherwise. The session is then unchanged.
-    pub async fn remove_channel(
+    pub(crate) async fn remove_channel(
         &self,
         ctx: &SecurityContext,
         channel_id: ChannelId,
@@ -331,7 +342,7 @@ impl SessionController {
     /// 286), as a channel's does: the change was permitted and is stored. A failure is logged and
     /// corrected by the next change, which derives the group anew.
     async fn keep_participants(&self, session: &Session) {
-        if let Err(e) = keep_participants(self.groups.as_ref(), Group::of_session(session)).await {
+        if let Err(e) = keep_participants(&self.groups, Group::of_session(session)).await {
             error!(session = %session.id, "The group of the session's participants does not follow them: {e}");
         }
     }
@@ -340,40 +351,20 @@ impl SessionController {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::Announced;
     use caelumora_domain::actor::ActorId;
-    use caelumora_domain::confidentiality::Classification;
-    use caelumora_domain::security::SecurityAttributes;
     use caelumora_domain::session::testing::bare_session;
     use caelumora_domain::user::UserId;
     use caelumora_domain::value::ValueError;
     use caelumora_security::Policies;
     use caelumora_store::Persistence;
     use chrono::{Duration, Utc};
-    use std::sync::Mutex;
 
     /// A session's document alone, owned by the system: what the controller changes and stores. Its
     /// tests are about storing a change, not about a session the kernel makes, with the groups of
     /// its participants and a project of its own (issue 486).
     fn session() -> Session {
         bare_session(SessionId::new())
-    }
-
-    #[derive(Debug, Default)]
-    struct Announced(Mutex<Vec<GlobalEvent>>);
-
-    impl EventPublisher for Announced {
-        fn publish(&self, event: GlobalEvent, _attributes: SecurityAttributes) {
-            self.0.lock().unwrap().push(event);
-        }
-
-        fn publish_classified(
-            &self,
-            event: GlobalEvent,
-            attributes: SecurityAttributes,
-            _classifications: &[Classification],
-        ) {
-            self.publish(event, attributes);
-        }
     }
 
     #[tokio::test]
@@ -453,9 +444,7 @@ mod tests {
         controller.add_participant(&ctx, Participant::User(bob)).await.expect("taken in again");
 
         let joins = announced
-            .0
-            .lock()
-            .unwrap()
+            .taken()
             .iter()
             .filter(|event| {
                 let update =
@@ -490,10 +479,10 @@ mod tests {
             (Some("Release 2.0"), None),
             "empty is none"
         );
-        assert!(
-            matches!(announced.0.lock().unwrap().as_slice(), [event] if matches!(event.about::<Session>().and_then(|(_, change)| change.update::<SessionUpdateEvent>()), Some(SessionUpdateEvent::DescriptionChanged { .. }))),
-            "announced"
-        );
+        let taken = announced.taken();
+        let [event] = taken.as_slice() else { panic!("announced once: {taken:?}") };
+        let update = event.about::<Session>().and_then(|(_, c)| c.update::<SessionUpdateEvent>());
+        assert!(matches!(update, Some(SessionUpdateEvent::DescriptionChanged { .. })), "announced");
 
         let refused = controller.update_description(&ctx, Some("two\nlines"), None).await;
         assert!(
@@ -514,6 +503,6 @@ mod tests {
             stored.summary,
             "unchanged by what is refused"
         );
-        assert_eq!(announced.0.lock().unwrap().len(), 1);
+        assert!(announced.taken().is_empty(), "nothing announced of what is refused");
     }
 }

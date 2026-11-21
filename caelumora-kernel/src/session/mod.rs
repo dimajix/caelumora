@@ -1,59 +1,54 @@
-//! A running session: `SessionLoop`, how it is built and runs its channels.
+//! A running session: `SessionLoop`, how it is built, runs its channels and holds its workspace.
 
 mod channels;
 mod manager;
-mod participants;
-mod settings;
 mod spec;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
-mod threads;
 
+pub(crate) use channels::unavailable_components;
 pub(crate) use manager::Found;
 pub use manager::SessionManager;
 pub use spec::{ChannelSpec, SessionSpec};
 
-use crate::channel::{ChannelLoop, Participation};
+use crate::channel::ChannelLoop;
 use crate::command::CommandExecutor;
-use crate::component::ComponentRegistry;
 use crate::controller::{ControllerManager, SessionController, WorkspaceController};
 use crate::event::{EventBus, EventSubscription, Following, SubscriptionTopic};
-use crate::group::{keep_participants, GroupManager};
 use crate::kernel::{ChannelRuntime, Kernel};
-use crate::lock::LocksById;
-use crate::scoped::{purge_for_good, ScopeNotEmpty, ScopedEntities};
+use crate::procedure::{ProcedureError, ProcedureExecutor};
+use crate::scoped::ScopeNotEmpty;
 use crate::view::{Viewer, Views};
 use crate::workspace::WorkspaceManager;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Error, Result};
 use arc_swap::ArcSwapOption;
 use caelumora_api::component::ComponentError;
 use caelumora_api::workspace::{WorkspaceError, WorkspaceResult};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::{Agent, AgentUpdateEvent};
-use caelumora_domain::channel::{self, Channel, ChannelId};
+use caelumora_domain::channel::{self, Channel, ChannelId, Participant};
 use caelumora_domain::confidentiality::Classification;
-use caelumora_domain::event::EntityChange;
 use caelumora_domain::event::{Announcing, GlobalEvent};
-use caelumora_domain::group::Group;
 use caelumora_domain::group::GroupId;
 use caelumora_domain::privacy::SessionPrivacy;
-use caelumora_domain::project::{Project, ProjectId};
+use caelumora_domain::project::ProjectId;
 use caelumora_domain::scope::Scope;
+use caelumora_domain::security::{Grant, Subject};
 use caelumora_domain::session::{Session, SessionId};
-use caelumora_domain::store::{StoreResult, StoreResultExt};
+use caelumora_domain::store::{StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_domain::template::SessionTemplateId;
 use caelumora_domain::user::{User, UserUpdateEvent};
 use caelumora_domain::value::name::Name;
 use caelumora_domain::workspace::WorkspaceId;
 use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions};
-use caelumora_security::{Policies, SecurityContext};
-use caelumora_store::EntityStores;
+use caelumora_security::{ActionType, Enforcement, Policies, SecurityContext};
 use dashmap::DashMap;
+use std::convert::Infallible;
 use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::{AbortHandle, JoinSet};
-use tracing::warn;
+use tracing::info;
 
 /// A request for a channel that cannot be met as asked (issue 09). The
 /// messages are meant for users (see `crate::error::user_message`).
@@ -120,20 +115,57 @@ pub enum SessionError {
     /// session or channel is kept.
     #[error(transparent)]
     ScopeNotEmpty(#[from] ScopeNotEmpty),
-    /// The sessions are shut down as the process ends (issue 297): none is
-    /// started any more.
-    #[error("Caelumora is shutting down: no session is started")]
-    ShuttingDown,
+    /// What the executor of procedures failed with: the sessions are shut down as the process
+    /// ends (issue 297), and none is started any more, among it (issue 593).
+    #[error(transparent)]
+    Procedure(#[from] ProcedureError),
+    /// What a store reported.
+    #[error(transparent)]
+    Store(#[from] StoreError),
+    /// What anything else a procedure of a session asked failed with - a template, a workspace,
+    /// a channel -, judged further along its chain.
+    #[error("{0}")]
+    Failed(#[source] anyhow::Error),
     /// The session runs in another process that shares the stores (issue 554): it is not started,
     /// deleted, restored or purged here meanwhile.
     #[error("The session {0} runs in another process")]
     RunsElsewhere(SessionId),
 }
 
+impl SessionError {
+    /// The error as the building block a procedure carried out failed, for whoever looks into it
+    /// as it did before the procedure answered it (issue 593): what a store reported and what
+    /// anything else failed with as they are - a `ChannelError` among them -, the session's own as
+    /// it is.
+    pub fn untyped(self) -> anyhow::Error {
+        match self {
+            SessionError::Store(error) => error.into(),
+            SessionError::Failed(error) => error,
+            error => error.into(),
+        }
+    }
+}
+
+/// What a building block of a session, which answers `anyhow`, failed with, as a procedure of the
+/// session answers it (issue 593): the session's own error or the store's as they are, anything
+/// else as `Failed`.
+impl From<anyhow::Error> for SessionError {
+    fn from(error: anyhow::Error) -> Self {
+        let error = match error.downcast::<SessionError>() {
+            Ok(own) => return own,
+            Err(error) => error,
+        };
+        match error.downcast::<StoreError>() {
+            Ok(store) => SessionError::Store(store),
+            Err(error) => SessionError::Failed(error),
+        }
+    }
+}
+
 /// Nothing if a channel may be given `classification` at all - it names
 /// only configured compartments (issues 133, 304) - checked before anything
 /// is stored.
-fn require_classification(
+pub(crate) fn require_classification(
     policy: &dyn ConfidentialityPolicy,
     classification: &Classification,
 ) -> Result<()> {
@@ -150,7 +182,8 @@ enum ChannelEntry {
     Running { channel: Arc<ChannelLoop>, task: Option<AbortHandle> },
     /// Left out as the session opened (issue 463): its components cannot be read. Held with its
     /// document as it was then; a channel that does not run is changed only as someone is let go
-    /// from the session (issue 590), and its copy renewed with it (`let_go_where_unavailable`).
+    /// from the session (issue 590), and its copy renewed with it
+    /// (`procedure::participant::let_go_from_session`).
     Unavailable { channel: Arc<Channel>, cause: Arc<ComponentError> },
 }
 
@@ -198,21 +231,10 @@ pub struct SessionLoop {
     /// The services it works with, taken from `kernel` once (issue
     /// 229).
     policies: Policies,
-    stores: EntityStores,
     controllers: Arc<ControllerManager>,
     /// What a workspace attached to it is reached by.
     workspaces: Arc<WorkspaceManager>,
-    /// What judges the components of the channels made in it.
-    components: Arc<ComponentRegistry>,
-    /// Who it may take in, and who may take part in its channels (issue
-    /// 356).
-    participation: Arc<Participation>,
     events: Arc<EventBus>,
-    /// What goes with a channel deleted or restored (issue 178).
-    scoped: Arc<ScopedEntities>,
-    /// What deletes and restores the group of a channel's participants with
-    /// it (issue 348).
-    groups: Arc<GroupManager>,
     /// The user commands of every channel of the session.
     commands: Arc<CommandExecutor>,
     /// The session's channels, and which of them run (issues 116, 463). A
@@ -225,68 +247,24 @@ pub struct SessionLoop {
     start_tx: mpsc::UnboundedSender<ChannelId>,
     /// Taken by `run`, which is how it knows it is not already running.
     start_rx: Mutex<mpsc::UnboundedReceiver<ChannelId>>,
-    /// The events about its agents' lifecycle and its participants' names, subscribed to as the
-    /// session is made, so that nothing of whom it takes in before it runs is missed; taken by
-    /// `run`, which follows them. Taking them into their controllers is the `ControllerManager`'s
-    /// (issue 121).
+    /// The events about its participants' names, subscribed to as the session is made, so that
+    /// nothing of whom it takes in before it runs is missed; taken by `run`, which follows them.
+    /// Whether its agents exist the follower of the agents follows (`procedure::follower`, issue
+    /// 593); taking them into their controllers is the `ControllerManager`'s (issue 121).
     subscription: Mutex<EventSubscription>,
     /// What the participants it takes in are followed by on `subscription` (issue 590), from
     /// wherever it takes them in.
     following: Following,
-    /// Held while the session is put into another project (issue 467), so
-    /// that two such changes do not share and unshare projects across each
-    /// other.
-    moving: Mutex<()>,
-    /// Held while the channels that do not run are built again (`retry_unavailable`), and while
-    /// someone is let go from one of them (issue 590), so that none is built from a copy that
-    /// still lists one let go.
-    rebuilding: Mutex<()>,
-    /// Held while a participant is taken in - into the session and a channel of it, rolled back if
-    /// the channel cannot take them in, or as a founder of a channel (`found`) - or let go from the
-    /// session (issue 590), one change of a participant at a time, as a channel makes them
-    /// (`ChannelLoop::changing`): before the channel's lock, every way into a channel coming
-    /// through the session. Restoring a channel holds those of all its participants, in the
-    /// order of their ids, the one place several are held.
-    changing: LocksById<ActorId>,
 }
 
-/// Removes the document of channel `channel_id` for good, in the kernel's name, with the group of
-/// its participants: marked deleted first if it is not - a channel of a session being purged, which
-/// is hidden with the session, or one whose creation failed - since only what was deleted is purged
-/// (issue 164).
-async fn purge_channel_document(stores: &EntityStores, channel_id: ChannelId) -> StoreResult<bool> {
-    purge_for_good(stores.groups.as_ref(), GroupId::of_channel(channel_id)).await?;
-    purge_for_good(stores.channels.as_ref(), channel_id).await
-}
-
-/// The own project of session `id`, if it is there: the one in its scope, found by its name
-/// (`Project::own_name`) in the kernel's name - none once it was lifted (issue 467).
-///
-/// # Errors
-/// Whatever the store reports.
-async fn load_own(stores: &EntityStores, id: SessionId) -> StoreResult<Option<Project>> {
-    stores
-        .projects
-        .find_by_name(&SecurityContext::system(), &Project::own_name(id))
-        .await
-        .optional()
-}
-
-/// Makes `own`, a session's own project, with the group of its members, in the kernel's name (issue
-/// 467) - both, or, if the group cannot be made, neither: as the session is made, or taken out of a
-/// project once its own was lifted. Announcing it is the caller's.
-///
-/// # Errors
-/// Whatever the store reports.
-async fn make_own(stores: &EntityStores, own: &mut Project) -> StoreResult<()> {
-    stores.projects.create(&SecurityContext::system(), own).await?;
-    if let Err(error) = keep_participants(stores.groups.as_ref(), Group::of_project(own)).await {
-        if let Err(undo) = purge_for_good(stores.projects.as_ref(), own.id).await {
-            warn!(project = %own.id, "A session's own project whose group could not be made is left: {undo}");
-        }
-        return Err(error);
+/// `error` of the store about session `id`: that there is none - or none
+/// the caller may see - is the session's own error, what the request named
+/// and did not find (issue 323).
+pub(crate) fn store_error(id: SessionId) -> impl FnOnce(StoreError) -> Error {
+    move |error| match error {
+        StoreError::NotFound { .. } => SessionError::NotFound(id).into(),
+        error => error.into(),
     }
-    Ok(())
 }
 
 /// Asks whether `context` may attach the workspace `id` to the session `session_id` (issue 253):
@@ -296,7 +274,7 @@ async fn make_own(stores: &EntityStores, own: &mut Project) -> StoreResult<()> {
 ///
 /// # Errors
 /// What `WorkspaceManager::reached_to_attach` reports; `SessionError::WorkspaceOutOfScope`.
-async fn require_attachable(
+pub(crate) async fn require_attachable(
     workspaces: &WorkspaceManager,
     context: &SecurityContext,
     id: WorkspaceId,
@@ -372,14 +350,9 @@ impl SessionLoop {
             session_controller,
             workspace: ArcSwapOption::new(workspace),
             policies: kernel.policies().clone(),
-            stores: kernel.entity_stores().clone(),
             controllers: Arc::clone(kernel.controller_manager()),
             workspaces: Arc::clone(kernel.workspace_manager()),
-            components: Arc::clone(kernel.component_registry()),
-            participation: Arc::clone(kernel.participation()),
             events: Arc::clone(kernel.event_bus()),
-            scoped: Arc::clone(kernel.scoped_entities()),
-            groups: Arc::clone(kernel.group_manager()),
             kernel,
             commands,
             channels: DashMap::new(),
@@ -387,9 +360,6 @@ impl SessionLoop {
             start_rx: Mutex::new(start_rx),
             subscription: Mutex::new(subscription),
             following,
-            moving: Mutex::new(()),
-            rebuilding: Mutex::new(()),
-            changing: LocksById::new(),
         });
         for channel in channels {
             session_loop.add_listed_channel(channel).await?;
@@ -407,6 +377,14 @@ impl SessionLoop {
         self.session_controller.id()
     }
 
+    /// The session's controller: its document live, through which it is changed and stored, each
+    /// change asked by the store as it is stored - its name, language, time zone, privacy, rules of
+    /// approval and description; what changes its channels, its participants, its project or its
+    /// workspace is the crate's, written by the procedures and the session.
+    pub fn controller(&self) -> &Arc<SessionController> {
+        &self.session_controller
+    }
+
     /// The session as it is now: a snapshot, to be read or handed on to an operation - not to be
     /// kept, since it does not follow later changes.
     pub fn session(&self) -> Arc<Session> {
@@ -416,6 +394,13 @@ impl SessionLoop {
     /// The session as privacy sees it now (issue 134).
     pub fn privacy(&self) -> SessionPrivacy {
         SessionPrivacy::of(&self.session())
+    }
+
+    /// The executor of the kernel, for an entry point that reaches the session from within it - a
+    /// command run in one of its channels, a plugin's writer bound to it - to carry out the
+    /// procedures of its participants (issue 593); never for a building block of one.
+    pub fn procedures(&self) -> &Arc<ProcedureExecutor> {
+        self.kernel.procedures()
     }
 
     pub fn name(&self) -> Name {
@@ -431,58 +416,57 @@ impl SessionLoop {
         self.workspace.load_full().ok_or(WorkspaceError::NotUsableInChannel)
     }
 
+    /// Follows `participant` from now on, on the session's subscription (issue 590) - its names,
+    /// and its deletion, which its actor follows once it is taken in (`participant::Follow`) -, so
+    /// that nothing of it is missed until it is listed: for a procedure that takes them in, as it
+    /// reads them (`procedure::participant::take_into_session`). A topic followed already is not
+    /// followed twice.
+    pub(crate) fn follow(&self, participant: &Participant) {
+        self.events.follow(&self.following, SubscriptionTopic::of_participant(participant));
+    }
+
     /// Runs the session's channels, those it has and those created while it runs, until the session
-    /// is stopped - which aborts this, and with it every channel.
+    /// is stopped - which aborts this, and with it every channel (issue 593).
     ///
-    /// Its channels follow whether its agents exist (issue 314): told of an agent deleted or
-    /// restored, and of every agent as it starts and after it lost events - so that nothing that
-    /// happened meanwhile is missed. They follow the names of its participants alike: told of a
-    /// participant renamed, and after it lost events.
-    pub async fn run(&self) -> Result<()> {
+    /// Its channels follow the names of its participants: told of a participant renamed, and after
+    /// it lost events (issue 585). Whether its agents exist they follow by the follower of the
+    /// agents (`procedure::follower::AgentFollower`, issue 593), which changes no lifecycle of
+    /// theirs from here.
+    ///
+    /// # Errors
+    /// If it runs already, or a channel panicked, which ends it with every channel - logged by
+    /// whoever spawned it. Nothing else follows: the session stays registered as running, its
+    /// channels listed, none of them running, until it is stopped, which announces them stopped
+    /// only then.
+    pub async fn run(&self) -> Result<Infallible> {
         let mut start_rx = self.start_rx.try_lock().map_err(|_| anyhow!("Already running"))?;
         let mut subscription =
             self.subscription.try_lock().map_err(|_| anyhow!("Already running"))?;
 
         let mut join_set = JoinSet::new();
         let mut following = true;
-        self.follow_agents(None).await;
 
         loop {
             tokio::select! {
                 Some(channel_id) = start_rx.recv() => {
                     self.start_channel(channel_id, &mut join_set);
                 }
-                Some(res) = join_set.join_next(), if !join_set.is_empty() => {
-                    match res {
-                        Ok(channel_id) => {
-                            let stopped = self.channels.get_mut(&channel_id)
-                                .and_then(|mut entry| match &mut *entry {
-                                    ChannelEntry::Running { channel, task } => {
-                                        *task = None;
-                                        Some(channel.channel())
-                                    }
-                                    ChannelEntry::Unavailable { .. } => None,
-                                });
-                            // Gone: a deleted channel, whose actors all
-                            // stopped in time; `delete_channel` announces it.
-                            if let Some(stopped) = stopped {
-                                self.events.announce(GlobalEvent::custom::<Channel>(&(self.id, channel_id), channel::STOPPED, &()), &*stopped);
-                            }
-                        }
-                        // A deleted channel; `delete_channel` announces it.
-                        Err(e) if e.is_cancelled() => {}
-                        Err(e) => return Err(e.into()),
+                // A channel's task ends as it is aborted - deleted, or abandoned as its founders
+                // could not join -, which is let be; a `run` that failed was logged by
+                // `start_channel` and ends its task without an error; a channel that panicked
+                // ends the session, and with it every channel.
+                Some(Err(e)) = join_set.join_next(), if !join_set.is_empty() => {
+                    if !e.is_cancelled() {
+                        return Err(e.into());
                     }
                 }
                 received = subscription.receiver().recv(), if following => {
                     match received {
-                        Ok(global_event) => self.handle_global_event(&global_event).await,
+                        Ok(global_event) => self.handle_global_event(&global_event),
                         Err(RecvError::Lagged(lost)) => {
-                            tracing::warn!("Session {} lost {} events and looks at its participants again", self.id, lost);
-                            // An agent deleted or restored meanwhile is followed (issue 502), and
-                            // one renamed meanwhile is mentioned by its name (issue 585). Whom it
+                            tracing::warn!("Session {} lost {} events and looks at its participants' names again", self.id, lost);
+                            // One renamed meanwhile is mentioned by its name (issue 585). Whom it
                             // takes in it follows as it takes them in, which loses nothing.
-                            self.follow_agents(None).await;
                             self.rebuild_mentions();
                         }
                         // Not while the session holds the bus.
@@ -493,21 +477,16 @@ impl SessionLoop {
         }
     }
 
-    async fn handle_global_event(&self, global_event: &GlobalEvent) {
+    fn handle_global_event(&self, global_event: &GlobalEvent) {
         if let Some((participant, name)) = renamed(global_event) {
             self.participant_renamed(participant, &name);
-        }
-        if let Some((id, EntityChange::Deleted | EntityChange::Restored)) =
-            global_event.about::<Agent>()
-        {
-            self.follow_agents(Some(id)).await
         }
     }
 
     /// Starts the channel `id` in `join_set` - unless it was deleted while
     /// it waited to be started. The entry stays locked while its task is
-    /// set, so that `delete_channel` either finds the task or no channel.
-    fn start_channel(&self, id: ChannelId, join_set: &mut JoinSet<ChannelId>) {
+    /// set, so that `remove_channel` either finds the task or no channel.
+    fn start_channel(&self, id: ChannelId, join_set: &mut JoinSet<()>) {
         let Some(mut entry) = self.channels.get_mut(&id) else { return };
         let ChannelEntry::Running { channel, task } = &mut *entry else { return };
         let channel = Arc::clone(channel);
@@ -515,10 +494,92 @@ impl SessionLoop {
             GlobalEvent::custom::<Channel>(&(self.id, id), channel::STARTED, &()),
             &*channel.channel(),
         );
+        let session = self.id;
         *task = Some(join_set.spawn(async move {
-            let _ = channel.run().await;
-            channel.id()
+            let Err(error) = channel.run().await;
+            tracing::warn!("Channel {id} of session {session} could not run: {error:#}");
         }));
+    }
+
+    /// Announces every channel it started stopped (`channel::STOPPED`), as `channel::STARTED`
+    /// announced it, for a session whose task has ended - and with it every channel's aborted -,
+    /// and takes their tasks: a channel deleted meanwhile is not announced stopped again.
+    fn announce_channels_stopped(&self) {
+        for mut entry in self.channels.iter_mut() {
+            let id = *entry.key();
+            if let ChannelEntry::Running { channel, task } = entry.value_mut() {
+                if task.take().is_some() {
+                    self.events.announce(
+                        GlobalEvent::custom::<Channel>(&(self.id, id), channel::STOPPED, &()),
+                        &*channel.channel(),
+                    );
+                }
+            }
+        }
+    }
+
+    /// Attaches `workspace` to the session, or with `None` takes the one
+    /// attached away (issue 253), on behalf of `context`. Whoever may change
+    /// the session asks first (`UpdateSession`); to attach one, it must be
+    /// theirs to share (`GetWorkspace`, `UpdateWorkspace` - its owner,
+    /// issue 251, decision 12) and lie where this session may use it - not
+    /// in another session's scope. Taking it away shares nothing and asks
+    /// no more. Its channels use it as their classifications and switches
+    /// let them, from their next use - and as its access list lets each
+    /// participant (issue 23): attaching shares nothing by itself, unless `share`
+    /// says how far the session's participants may use it, which adds an entry
+    /// for them. Taking it away leaves the list as it is: it is the
+    /// workspace's, and its owner's to change.
+    ///
+    /// # Errors
+    /// `StoreError::PermissionDenied` if `context` may not change the session; what
+    /// `require_attachable` reports of the workspace - `WorkspaceError::NotFound` if there is none
+    /// they may read or are cleared for, `WorkspaceError::Store(StoreError::PermissionDenied)` if
+    /// it is not theirs to attach, `SessionError::WorkspaceOutOfScope` -; or whatever else storing
+    /// reports.
+    pub async fn update_workspace(
+        &self,
+        context: &SecurityContext,
+        workspace: Option<WorkspaceId>,
+        share: Option<Grant>,
+    ) -> Result<()> {
+        let session = self.session();
+        self.policies
+            .access_policy()
+            .require(
+                context,
+                ActionType::update(Session::KIND, &session.security_attributes),
+                StoreError::PermissionDenied,
+            )
+            .await?;
+        if let Some(id) = workspace {
+            require_attachable(&self.workspaces, context, id, self.id).await?;
+        }
+        let held = self.attach_workspace(context, workspace).await?;
+        if let (Some(controller), Some(grant)) = (held, share) {
+            controller.share(context, Subject::Group(GroupId::of_session(self.id)), grant).await?;
+        }
+        info!(session = %self.id, workspace = ?workspace, by = %context.caller_id, "Session's workspace changed");
+        Ok(())
+    }
+
+    /// Attaches `workspace` to the session on behalf of `context`, or with `None` takes the one
+    /// attached away, and holds it live (issue 344): stored as changing the session, without asking
+    /// whether it may be attached - its caller asked that (`update_workspace`), or found or made it
+    /// for the session as it made the session (`procedure::session::Create`). Returns the workspace
+    /// as it is held.
+    ///
+    /// # Errors
+    /// Whatever storing the session or reading the workspace reports.
+    pub(crate) async fn attach_workspace(
+        &self,
+        context: &SecurityContext,
+        workspace: Option<WorkspaceId>,
+    ) -> Result<Option<Arc<WorkspaceController>>> {
+        self.session_controller.update_workspace(context, workspace).await?;
+        let held = held_workspace(&self.controllers, self.id, workspace).await?;
+        self.workspace.store(held.clone());
+        Ok(held)
     }
 }
 
@@ -540,10 +601,10 @@ fn renamed(global_event: &GlobalEvent) -> Option<(ActorId, Name)> {
 
 #[cfg(test)]
 mod tests {
-
     use crate::kernel::Kernel;
     use crate::session::testing::*;
     use crate::session::SessionManager;
+    use crate::view::Viewer;
     use caelumora_api::actor::Actor;
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::testing::make_personality;
@@ -551,8 +612,14 @@ mod tests {
     use caelumora_domain::channel::HistoryAccess;
     use caelumora_domain::event::GlobalEvent;
     use caelumora_domain::security::SecurityAttributes;
+    use caelumora_domain::security::{Grant, Subject};
+    use caelumora_domain::session::testing::make_session;
+    use caelumora_domain::session::Session;
+    use caelumora_domain::store::StoreError;
+    use caelumora_domain::user::testing::make_user;
     use caelumora_domain::user::{User, UserUpdateEvent};
     use caelumora_security::SecurityContext;
+    use caelumora_store::testing::record_users;
     use caelumora_store::testing::stored_agent;
     use std::sync::Arc;
     use std::time::Duration;
@@ -669,6 +736,68 @@ mod tests {
             }
         };
         assert!(time::timeout(Duration::from_secs(2), mentioned).await.is_ok(), "by its new name");
+        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn only_the_owner_changes_a_sessions_privacy_and_everyone_in_it_sees_it() {
+        use caelumora_domain::privacy::PrivacyConfig;
+        use caelumora_domain::session::SessionUpdateEvent;
+        use caelumora_domain::user::UserId;
+
+        let (_, manager) = owned_kernel(Default::default());
+        let kernel = Arc::clone(manager.kernel());
+        let (alice, bob) = (make_user("alice"), make_user("bob"));
+        let as_user = |id: UserId| {
+            SecurityContext::new(ActorId::User(id), Default::default(), Default::default())
+        };
+        let mut session = make_session("hers", alice.id);
+        session.security_attributes = session
+            .security_attributes
+            .clone()
+            .granting(Subject::Actor(ActorId::User(bob.id)), Grant::Read);
+        session.participants =
+            record_users(manager.kernel().entity_stores(), &[&alice, &bob]).await;
+        let session = create(&manager, &as_user(alice.id), session).await.unwrap();
+        let mut events = kernel.event_bus().subscribe_all();
+
+        let refused = session
+            .controller()
+            .update_privacy(&as_user(bob.id), PrivacyConfig::SharedAudience)
+            .await
+            .expect_err("a participant may not");
+        assert!(matches!(refused, StoreError::PermissionDenied(_)), "{refused}");
+        assert_eq!(session.privacy().policy, PrivacyConfig::Private, "unchanged");
+
+        session
+            .controller()
+            .update_privacy(&as_user(alice.id), PrivacyConfig::SharedAudience)
+            .await
+            .expect("the owner may");
+        assert_eq!(session.privacy().policy, PrivacyConfig::SharedAudience);
+        let stored = kernel
+            .entity_stores()
+            .sessions
+            .get(&SecurityContext::system(), session.id())
+            .await
+            .unwrap();
+        assert_eq!(stored.privacy, PrivacyConfig::SharedAudience, "stored");
+        let shared = |event: &GlobalEvent| {
+            let about = event.about::<Session>().filter(|(id, _)| *id == session.id());
+            let update = about.and_then(|(_, change)| change.update::<SessionUpdateEvent>());
+            matches!(
+                update,
+                Some(SessionUpdateEvent::PrivacyChanged(PrivacyConfig::SharedAudience))
+            )
+        };
+        assert!(events.drain().await.iter().any(shared), "announced");
+        let for_bob =
+            manager.views(Viewer::new(as_user(bob.id))).session(session.id()).await.unwrap();
+        assert_eq!(
+            for_bob.privacy().policy,
+            PrivacyConfig::SharedAudience,
+            "shown to everyone who takes part"
+        );
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
 }

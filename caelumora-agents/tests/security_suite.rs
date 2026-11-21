@@ -617,8 +617,6 @@ async fn joining_needs_an_entry_that_lets_one_join() {
         "bob: JoinSession(alice's) yes",
         "bob: JoinChannel(alice's) yes",
         "bob: Cleared(bob) yes",
-        "bob: JoinChannel(alice's) yes",
-        "bob: Cleared(bob) yes",
     ]), "joining the session and the channel by the entries in his own name, and his clearance - stored in the kernel's");
     assert!(
         world.participants(world.bob, session.id(), main).await.contains(&ActorId::User(world.bob)),
@@ -1700,7 +1698,8 @@ async fn a_rule_of_a_place_outweighs_a_persons_rule() {
     let alice = World::as_user(world.alice);
     let hers = world.kernel.controller_manager().user_controller(world.alice).await.unwrap();
     hers.add_approval_rule(&alice, sleeping(RuleDecision::Allow, Reach::Everywhere)).await.unwrap();
-    main.update_approval_rules(&alice, vec![sleeping(RuleDecision::Ask, Reach::Everywhere)])
+    main.controller()
+        .update_approval_rules(&alice, vec![sleeping(RuleDecision::Ask, Reach::Everywhere)])
         .await
         .expect("her channel");
 
@@ -1714,6 +1713,7 @@ async fn a_rule_of_a_place_outweighs_a_persons_rule() {
     let hers = world.kernel.controller_manager().user_controller(world.alice).await.unwrap();
     hers.add_approval_rule(&alice, sleeping(RuleDecision::Allow, Reach::Everywhere)).await.unwrap();
     session
+        .controller()
         .update_approval_rules(&alice, vec![sleeping(RuleDecision::Deny, Reach::Everywhere)])
         .await
         .expect("her session");
@@ -1785,6 +1785,7 @@ async fn a_rule_that_denies_a_command_asks_for_a_line_it_cannot_judge() {
     let (world, session, main, _) = with_a_command_to_approve("ls && rm x").await;
     let alice = World::as_user(world.alice);
     session
+        .controller()
         .update_approval_rules(&alice, vec![commands(&["rm"], RuleDecision::Deny)])
         .await
         .expect("her session");
@@ -1799,6 +1800,7 @@ async fn a_rule_that_denies_a_command_asks_for_a_line_it_cannot_judge() {
     let hers = world.kernel.controller_manager().user_controller(world.alice).await.unwrap();
     hers.add_approval_rule(&alice, every_command.clone()).await.unwrap();
     session
+        .controller()
         .update_approval_rules(&alice, vec![commands(&["rm"], RuleDecision::Deny)])
         .await
         .expect("her session");
@@ -2571,7 +2573,7 @@ async fn tool_result(main: &ChannelLoop) -> String {
 #[tokio::test]
 async fn an_agent_reads_of_another_channel_what_the_policy_lets_it_copy() {
     let (world, session, main) = with_a_reader_of(|world| world.alice, false).await;
-    main.reclassify(&World::as_user(world.alice), Classification::PUBLIC)
+    main.reclassify_by_procedure(&World::as_user(world.alice), Classification::PUBLIC)
         .await
         .expect("hers to lower");
     let asked =
@@ -3212,9 +3214,12 @@ async fn an_external_agent_whose_answers_no_longer_enter_its_lowered_channel_is_
     let hermes = world.agent("hermes", world.alice, &remote).await;
     let session = world.shared_session(&[hermes], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
-    main.reclassify(&World::as_user(world.alice), Classification::general(Confidentiality::Public))
-        .await
-        .expect("hers to lower");
+    main.reclassify_by_procedure(
+        &World::as_user(world.alice),
+        Classification::general(Confidentiality::Public),
+    )
+    .await
+    .expect("hers to lower");
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let mut events = main.user_actor(world.bob).expect("he takes part").watch();
 
@@ -3277,7 +3282,7 @@ async fn lowering_a_channel_gives_up_an_external_agents_task_as_whoever_asked_be
 
     let (failed, asked) = world
         .asked(async {
-            main.reclassify(
+            main.reclassify_by_procedure(
                 &World::as_user(world.alice),
                 Classification::general(Confidentiality::Public),
             )
@@ -3433,12 +3438,14 @@ async fn a_session_is_made_in_a_project_as_it_is_put_into_one() {
     let template = world.template(Some(world.alice), &[], "helper", &plain).await;
     let (alice, carol) = (World::as_user(world.alice), World::as_user(world.carol));
     let project = world
-        .projects
+        .kernel
+        .project_manager()
         .create(&alice, ProjectSpec::new("report", Scope::UserScope { user_id: world.alice }))
         .await
         .unwrap();
     let carols = world
-        .projects
+        .kernel
+        .project_manager()
         .create(&carol, ProjectSpec::new("hers", Scope::UserScope { user_id: world.carol }))
         .await
         .unwrap();
@@ -3584,18 +3591,16 @@ async fn adding_an_agent_needs_owning_the_channel_and_the_agent_its_personality(
     assert_eq!(
         asked,
         checks(&[
-            // The session's way: the channel reached and changed, the agent read, may it run and
-            // is it cleared - before anything is stored.
+            // The session opened (issue 593), its way: the channel reached and changed, the agent
+            // read, may it run and is it cleared - before anything is stored.
+            "alice: GetSession(alice's) yes",
             "alice: GetChannel(alice's) yes",
             "alice: Cleared(alice) yes",
             "alice: UpdateChannel(alice's) yes",
             "alice: GetAgent(alice's) yes",
             "alice as helper: GetPersonality(bob's) yes",
             "alice: Cleared(helper) yes",
-            // The channel's, as it takes it in.
-            "alice: UpdateChannel(alice's) yes",
-            "alice as helper: GetPersonality(bob's) yes",
-            "alice: Cleared(helper) yes",
+            // The store's, as it stores the channel.
             "alice: GetChannel(alice's) yes",
             "alice: Cleared(alice) yes",
             "alice: UpdateChannel(alice's) yes",
@@ -3617,6 +3622,7 @@ async fn adding_an_agent_needs_owning_the_channel_and_the_agent_its_personality(
     assert_eq!(
         asked,
         checks(&[
+            "alice: GetSession(alice's) yes",
             "alice: GetChannel(alice's) yes",
             "alice: Cleared(alice) yes",
             "alice: UpdateChannel(alice's) yes",
@@ -3643,6 +3649,10 @@ async fn removing_an_agent_needs_owning_the_channel() {
     assert_eq!(
         asked,
         checks(&[
+            // The session opened and the channel reached, as letting go from it does (issue 593).
+            "bob: GetSession(alice's) yes",
+            "bob: GetChannel(alice's) yes",
+            "bob: Cleared(bob) yes",
             "bob: GetChannel(alice's) yes",
             "bob: Cleared(bob) yes",
             "bob: UpdateChannel(alice's) no"
@@ -3656,6 +3666,9 @@ async fn removing_an_agent_needs_owning_the_channel() {
     assert_eq!(
         asked,
         checks(&[
+            "alice: GetSession(alice's) yes",
+            "alice: GetChannel(alice's) yes",
+            "alice: Cleared(alice) yes",
             "alice: GetChannel(alice's) yes",
             "alice: Cleared(alice) yes",
             "alice: UpdateChannel(alice's) yes"

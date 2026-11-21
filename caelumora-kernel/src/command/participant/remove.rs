@@ -3,6 +3,7 @@
 use crate::command::{
     command_error, named_one, named_participants, taking_part, ChannelCommand, CommandContext,
 };
+use crate::procedure::participant::LetGo;
 use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandResult};
 use caelumora_domain::command::{
@@ -44,7 +45,7 @@ impl ChannelCommand for RemoveCommand {
     /// Runs `/participant remove` with `args`: removes the participant named - among those
     /// `/participant list` lists (`taking_part`) and can be named (`named_participants`), found by
     /// name or handle (`named_one`), also one that cannot run - from the channel, not from the
-    /// session (`ChannelLoop::remove_participant`), which asks whether the issuer may change the
+    /// session (`LetGo::removed` with the channel), which asks whether the issuer may change the
     /// channel. Only the issuer is answered: the channel tells everyone that someone left.
     async fn execute(
         &self,
@@ -60,9 +61,9 @@ impl ChannelCommand for RemoveCommand {
             |(name, _)| name,
             "in this channel",
         )?;
+        let (issuer, from) = (context.issuer.security_context(), Some(context.channel.id()));
         context
-            .channel
-            .remove_participant(&context.issuer.security_context(), participant.id())
+            .carry_out(|session| LetGo::removed(&issuer, session, participant.id(), from))
             .await
             .map_err(|e| command_error(REMOVE_COMMAND_NAME, &e))?;
         Ok(CommandOutput::private(format!("Removed {name}.")))

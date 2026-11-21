@@ -1,6 +1,7 @@
 //! The built-in `/channel create` command (issue 560).
 
 use crate::command::{command_error, ChannelCommand, CommandContext};
+use crate::procedure::channel::Create;
 use crate::session::ChannelSpec;
 use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandError, CommandResult};
@@ -38,7 +39,7 @@ impl Command for CreateCommand {
 impl ChannelCommand for CreateCommand {
     /// Runs `/channel create` with `args`, the name of the new channel: made as a channel that says
     /// nothing else (`ChannelSpec::new`), with the issuer alone in it
-    /// (`SessionLoop::create_channel`, which asks `CreateChannel` and `UpdateSession`). Only the
+    /// (`procedure::channel::Create`, which asks `CreateChannel` and `UpdateSession`). Only the
     /// issuer is answered: the session tells everyone of the new channel.
     async fn execute(
         &self,
@@ -51,9 +52,9 @@ impl ChannelCommand for CreateCommand {
         };
         let name = args.trim();
         Name::new(name).map_err(|e| invalid(e.to_string()))?;
-        let session = context.session_loop(CREATE_COMMAND_NAME)?;
-        session
-            .create_channel(&context.issuer.security_context(), ChannelSpec::new(name))
+        let issuer = context.issuer.security_context();
+        context
+            .carry_out(|session| Create::new(&issuer, session, ChannelSpec::new(name)))
             .await
             .map_err(|e| command_error(CREATE_COMMAND_NAME, &e))?;
         Ok(CommandOutput::private(format!("Created the channel {name}; you take part in it.")))
