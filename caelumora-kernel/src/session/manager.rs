@@ -2,7 +2,8 @@
 //! starts and stops, and the lifecycles of sessions and their channels, by which the procedures of
 //! a session make, delete, restore and purge them (`procedure::session`, issue 593).
 
-use super::{store_error, Ending, SessionError, SessionLoop};
+use super::{store_error, SessionError, SessionLoop};
+use crate::channel::Ending;
 use crate::event::EventBus;
 use crate::group::GroupManager;
 use crate::kernel::Kernel;
@@ -177,13 +178,13 @@ impl SessionManager {
     }
 
     /// Stops session `id` if it runs, for a procedure that holds it exclusively. Its actors are
-    /// ended first as `ending` says - told to stop, to be resumed when it runs again
-    /// (`SessionLoop::stop_actors`), or to leave for good (`SessionLoop::leave_actors`) - and given
-    /// `STOP_GRACE` to end by themselves before the session's task, and with it whoever did not, is
-    /// aborted (issue 377); once it has ended, and every channel's task is aborted with it, every
-    /// channel it started is announced stopped, then the session (issue 593), and its hold for this
-    /// process is let go. Nobody finds it running meanwhile. What runs in its channels besides -
-    /// the commands - is the caller's to end.
+    /// ended first as `ending` says - told to stop, to be resumed when it runs again, or to leave
+    /// for good (`SessionLoop::end_actors`) - and given `STOP_GRACE` to end by themselves, whoever
+    /// did not aborted then, before the session's task is aborted (issue 377); once it has ended,
+    /// and every channel's task is aborted with it, every channel it started is announced stopped,
+    /// then the session (issue 593), and its hold for this process is let go. Nobody finds it
+    /// running meanwhile. What runs in its channels besides - the commands - is the caller's to
+    /// end.
     pub(crate) async fn stop_running(
         &self,
         id: SessionId,
@@ -192,10 +193,7 @@ impl SessionManager {
         let handle = self.handles.remove(&id).map(|(_, handle)| handle);
         let removed = self.sessions.remove(&id).map(|(_, s)| s);
         if let Some(session_loop) = &removed {
-            match ending {
-                Ending::Stop => session_loop.stop_actors().await,
-                Ending::Leave => session_loop.leave_actors().await,
-            }
+            session_loop.end_actors(ending).await;
         }
         if let Some(handle) = handle {
             handle.abort();

@@ -187,16 +187,6 @@ enum ChannelEntry {
     Unavailable { channel: Arc<Channel>, cause: Arc<ComponentError> },
 }
 
-/// How the actors of a session end as it stops (`SessionManager::stop_running`): stopped, to be
-/// resumed when it runs again, or leaving for good, as it is deleted (issue 377).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Ending {
-    /// Stopped, each keeping what it is in the middle of.
-    Stop,
-    /// Leaving, as from a deleted channel.
-    Leave,
-}
-
 /// Whether a channel the running session lists runs (issue 463).
 #[derive(Debug, Clone)]
 pub(crate) enum ChannelRun {

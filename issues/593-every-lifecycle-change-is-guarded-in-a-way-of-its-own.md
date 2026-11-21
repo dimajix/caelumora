@@ -951,3 +951,20 @@ case; it is decided there, and may make this unnecessary.
   As the maintainer decided, lifting holds the session whose own it is against the other processes
   that share the stores too, as deleting it does (`SessionManager::hold`, issue 554); a test holds
   that it is refused while another holds the session.
+- **2026-11-20** — Step 5d-2 committed. Step 5e implemented, not committed yet: the actors of a
+  channel that stops or is deleted end through `run` (`ChannelLoop::end_actors`,
+  `ActorChange::End`), as a single participant let go does, in place of being waited for beside
+  `run` (`stop_actors`, `leave_actors`). `run` answers once the last that ran has ended - held by
+  each as it runs (`Ended`) -, so that what they sent on their way out is routed before the
+  channel is stopped; who has not ended after `STOP_GRACE` is aborted, as before.
+  Reviewed with fresh eyes, and so built: the actors are told to stop or to leave by whoever ends
+  them (`end_actors`, by `Ending`, now the channel's), at once and past what is queued, as a
+  participant let go is told (`drop_actor`) - `run` only waits for them, aborts who does not end
+  and answers -, so that a channel whose `run` never started, or did not get to the request, has
+  its actors told all the same (issue 104). `run` answers explicitly as it sees the last task end
+  (`Ended::let_go`), nothing if it ends first; aborting who does not end is one function for a
+  leave and for every actor (`abort_unless_stopped`). Tests hold that waiting is answered only once
+  `run` has seen the last task end, that the actors of a channel that never ran are told to leave,
+  and that what an actor sends as it ends is in the channel once ending returns. The proof of
+  admission the starts within the channel were to take in this step went with `Admitted` in step
+  R1: there is no proof left to take.

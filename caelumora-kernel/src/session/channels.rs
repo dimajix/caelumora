@@ -2,7 +2,7 @@
 //! holding those that do not run.
 
 use super::{ChannelEntry, ChannelRun, Listed, SessionError, SessionLoop};
-use crate::channel::ChannelLoop;
+use crate::channel::{ChannelLoop, Ending};
 use crate::view::{channel_reading, ReadingBasis};
 use anyhow::{Error, Result};
 use caelumora_api::component::ComponentError;
@@ -75,20 +75,12 @@ impl SessionLoop {
         }
     }
 
-    /// Tells the actors of every channel to stop (`ChannelLoop::stop_actors`),
-    /// for a session that stops (issue 377): they keep what they are in the
-    /// middle of, to be resumed when it runs again. All channels at once;
-    /// returns once their actors have ended, or `STOP_GRACE` has passed.
-    pub(super) async fn stop_actors(&self) {
-        future::join_all(self.channels().iter().map(|channel| channel.stop_actors())).await;
-    }
-
-    /// Has the actors of every channel leave for good
-    /// (`ChannelLoop::leave_actors`), for a session that is deleted (issue
-    /// 377): as when each of its channels is deleted. All channels at once;
-    /// returns once their actors have ended, or `STOP_GRACE` has passed.
-    pub(super) async fn leave_actors(&self) {
-        future::join_all(self.channels().iter().map(|channel| channel.leave_actors())).await;
+    /// Ends the actors of every channel as `ending` says (`ChannelLoop::end_actors`), for a session
+    /// that stops - they keep what they are in the middle of, to be resumed when it runs again - or
+    /// is deleted, as when each of its channels is deleted (issue 377). All channels at once;
+    /// returns once their actors have ended, or were aborted after `STOP_GRACE`.
+    pub(super) async fn end_actors(&self, ending: Ending) {
+        future::join_all(self.channels().iter().map(|channel| channel.end_actors(ending))).await;
     }
 
     /// The channel `channel_id` if it runs.
@@ -173,18 +165,18 @@ impl SessionLoop {
 
     /// Stops channel `channel_id` and takes it out of the session's channels - as it is deleted,
     /// and for the compensation of creating or restoring it: its actors leave, given the time to
-    /// end by themselves before its task - and with it whoever did not - is aborted (issue 187);
-    /// they store their state on their way out, which stays. Announced as stopped where it was
-    /// started; one whose task never started is never to run. One that does not run (issue 463) is
-    /// only taken out of the session's channels: nobody builds it again meanwhile, as building it
-    /// again (`procedure::channel::Start`) holds it as deleting it does.
+    /// end by themselves - whoever did not aborted after `STOP_GRACE` - before its task is aborted
+    /// (issue 187); they store their state on their way out, which stays. Announced as stopped
+    /// where it was started; one whose task never started is never to run. One that does not run
+    /// (issue 463) is only taken out of the session's channels: nobody builds it again meanwhile,
+    /// as building it again (`procedure::channel::Start`) holds it as deleting it does.
     pub(crate) async fn remove_channel(&self, channel_id: ChannelId) {
         let Some((_, ChannelEntry::Running { channel: running, task })) =
             self.channels.remove(&channel_id)
         else {
             return;
         };
-        running.leave_actors().await;
+        running.end_actors(Ending::Leave).await;
         match task {
             Some(task) => {
                 task.abort();

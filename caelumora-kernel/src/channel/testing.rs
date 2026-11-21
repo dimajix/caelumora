@@ -9,8 +9,8 @@
 )]
 
 use crate::channel::thread::Thread;
-use crate::channel::ChannelLoop;
 use crate::channel::ResolvedParticipant;
+use crate::channel::{ChannelLoop, Ending};
 use crate::controller::SessionController;
 use crate::kernel::{ChannelRuntime, Kernel, ParticipantRuntime};
 use crate::procedure::channel::Reclassify;
@@ -464,15 +464,14 @@ impl ChannelLoop {
     }
 
     /// Stops every actor, as stopping the channel with its session does
-    /// (`ChannelLoop::stop_actors`).
+    /// (`ChannelLoop::end_actors`).
     pub async fn stop_all_actors(&self) {
-        self.stop_actors().await;
+        self.end_actors(Ending::Stop).await;
     }
 
-    /// Has every actor leave, as deleting the channel does
-    /// (`ChannelLoop::leave_actors`).
+    /// Has every actor leave, as deleting the channel does (`ChannelLoop::end_actors`).
     pub async fn leave_all_actors(&self) {
-        self.leave_actors().await;
+        self.end_actors(Ending::Leave).await;
     }
 
     /// The state of `agent` in this channel, as stored.

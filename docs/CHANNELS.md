@@ -136,11 +136,15 @@ that an actor cannot forget one:
     tasks.
 
 Both are synchronous and go past the events, like `cancel`: they take effect at once, not after
-what is queued. Every actor ends its own task. The channel's run loop alone owns the actors' tasks,
-so that they end with the channel's; whoever ended an actor waits on its task separately
-(`ChannelLoop::stop_actors`, `leave_actors`). All of them use the same grace: an actor that has not
-ended after `STOP_GRACE` is aborted. A tool that hangs does not keep an agent: both interrupt it,
-the call recorded as having run, and the agent ends within the grace.
+what is queued - also for an actor whose task never ran, so that whoever follows it learns it ended
+(issue 104). Every actor ends its own task. The channel's run loop alone owns the actors' tasks, so
+that they end with the channel's, and waits for them: for a single participant let go
+(`ActorChange::Leave`) as for every actor of a channel that stops or is deleted
+(`ChannelLoop::end_actors`, `ActorChange::End`, issue 593). It answers whoever told them once their
+tasks have ended, so that what they sent on their way out - the step they were in, the end of their
+turn - is in the channel before it is stopped. All of them use the same grace: an actor that has not
+ended after `STOP_GRACE` is aborted, by the run loop. A tool that hangs does not keep an agent: both
+interrupt it, the call recorded as having run, and the agent ends within the grace.
 
 ### Shutting down
 
@@ -344,25 +348,25 @@ may use it. How a session comes to its workspace and who reaches the files is in
 `SessionLoop::run` runs every channel, those the session had and those created later - but for one
 whose components cannot be read (see below).
 
-Every actor of a channel is started the one way (`ChannelLoop::add_actor`): built, taken
-in (`adopt`) and handed to `run` (`ActorChange::Start`), which starts its task - as the channel is
-built, its participants and its internal actors, as someone is added, joins or founds it, and as
-an agent is restored. They differ only in what they hand over: from which position the actor is
-given the history, and on whose behalf it joined, if it did - a channel started again records no
-joins. What waits when `run` begins is started before anything is routed. `run` carries out the
-changes handed to it one after the other, and answers each once it carried it out - a leave once
-the actor's task has ended and its leave is announced, a thread's closing once it is closed
-(`ChannelLoop::request`, issue 593). `run` runs until its session stops or the
-channel is deleted - empty too, for whoever comes in: whether a channel runs changes with its
-session or its deletion, never by itself. It runs once; a change still under way as it ends, or
-handed in after, is answered with nothing: the channel stopped, its actors with it.
+Every actor of a channel is started the one way (`ChannelLoop::add_actor`): built, taken in
+(`adopt`) and handed to `run` (`ActorChange::Start`), which starts its task - as the channel is
+built, its participants and its internal actors, as someone is added, joins or founds it, and as an
+agent is restored. They differ only in what they hand over: from which position the actor is given
+the history, and on whose behalf it joined, if it did - a channel started again records no joins.
+What waits when `run` begins is started before anything is routed. `run` carries out the changes
+handed to it one after the other, and answers each once it carried it out - a leave once the actor's
+task has ended and its leave is announced, the end of every actor once their tasks have ended, a
+thread's closing once it is closed (`ChannelLoop::request`, issue 593). `run` runs until its session
+stops or the channel is deleted - empty too, for whoever comes in: whether a channel runs changes
+with its session or its deletion, never by itself. It runs once; a change still under way as it
+ends, or handed in after, is answered with nothing: the channel stopped, its actors with it.
 
-*   Stopping the session stops the actors of every channel (`SessionLoop::stop_actors`), all at
-    once, waits for them up to `STOP_GRACE` and then aborts every channel, announcing each it
-    started stopped (`channel::STOPPED`) before the session; the commands started in its workspace
-    shell are ended. A stop therefore takes as long as its slowest actor needs to
-    store its state. Deleting the session has the actors leave instead (`leave_actors`), as
-    deleting a channel does.
+*   Stopping the session stops the actors of every channel (`SessionLoop::end_actors`), all at once,
+    waits until they have ended - those not ended after `STOP_GRACE` aborted - and then aborts every
+    channel, announcing each it started stopped (`channel::STOPPED`) before the session; the
+    commands started in its workspace shell are ended. A stop therefore takes as long as its slowest
+    actor needs to store its state. Deleting the session has the actors leave instead
+    (`Ending::Leave`), as deleting a channel does.
 *   Deleting a channel aborts that channel's task; its state is kept until it is purged. A channel
     deleted while it waits to be started is never started. A channel just created and taken back,
     as a founder cannot join, is announced stopped as well, if it started.

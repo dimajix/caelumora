@@ -228,10 +228,10 @@ struct Request {
 
 /// What `run` answers a change it was handed (`ChannelLoop::request`, issue 593): that it carried
 /// it out - the actor started and its join announced, or found removed again; the actor's leave
-/// announced once its task has ended; the thread's opening announced; the thread closed and
-/// announced; the brief handed to the delegate, or dropped for a thread no longer open -, or
-/// nothing, if `run` ended with the change under way or before it was handed in, or the channel is
-/// gone. A change handed in before `run` starts waits for it.
+/// announced once its task has ended; the tasks of every actor ended (`End`); the thread's opening
+/// announced; the thread closed and announced; the brief handed to the delegate, or dropped for a
+/// thread no longer open -, or nothing, if `run` ended with the change under way or before it was
+/// handed in, or the channel is gone. A change handed in before `run` starts waits for it.
 #[derive(Debug)]
 pub(crate) struct Answer(oneshot::Receiver<()>);
 
@@ -271,6 +271,21 @@ enum ActorChange {
     /// thread's delegation, starting the delegation with it if the thread has none, and hands them
     /// to the thread's delegate - starting it if it does not run.
     Delegate(ThreadId, Delegation),
+    /// Every actor of the channel told to end, as the channel stops or is deleted
+    /// (`ChannelLoop::end_actors`): `run` answers once their tasks have ended - what they sent
+    /// until then routed - or were aborted after `STOP_GRACE` (issue 593). Nobody is taken out of
+    /// the channel, and no leave is announced.
+    End,
+}
+
+/// How the actors of a channel end as it stops (`ChannelLoop::end_actors`): stopped, to be resumed
+/// when it runs again, or leaving for good, as it or its session is deleted (issue 377).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Ending {
+    /// Stopped, each keeping what it is in the middle of.
+    Stop,
+    /// Leaving, as from a deleted channel.
+    Leave,
 }
 
 #[derive(Debug)]

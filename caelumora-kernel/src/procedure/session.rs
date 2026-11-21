@@ -13,13 +13,14 @@
 use super::{
     all_or_nothing, sessions_of, Compensation, Deferred, Key, Locks, Procedure, ProcedureExecutor,
 };
+use crate::channel::Ending;
 use crate::group::GroupManager;
 use crate::kernel::Kernel;
 use crate::project;
 use crate::scoped::ScopeNotEmpty;
 use crate::session::{
-    require_attachable, require_classification, store_error, Ending, Found, SessionError,
-    SessionLoop, SessionManager, SessionSpec,
+    require_attachable, require_classification, store_error, Found, SessionError, SessionLoop,
+    SessionManager, SessionSpec,
 };
 use crate::template::{
     resolve_participants, resolve_workspace, take_in_participants, TemplateParticipants,
