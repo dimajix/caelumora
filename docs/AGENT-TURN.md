@@ -371,25 +371,33 @@ chains with a different one in each, so the predecessor belongs to the chain.
 Each chain holds one entry type, an enum of what can happen; what stands is read from the entries.
 Notes and memory are chains too, ledgers of numbered items (see [MEMORY.md](MEMORY.md)).
 
-A chain is a tree with a head:
+A chain is only appended to:
 
-*   Appending makes the new entry the head; moving the head back leaves what followed as a branch
-    no longer active. Nothing is removed, and nothing changes an entry once added.
-*   What the chain says is its *active path*, root to head: the conversation as it stands. What
-    must consider every branch - looking up a message by id, the next number of a note - reads the
-    entries of every branch, and only as far back as it has to.
-*   A digest recorded earlier finds its entry on any branch, so a reference into a branch no longer
-    active still resolves.
+*   Every entry follows the one added before it. Nothing is removed, and nothing changes an entry
+    once added.
+*   What the chain says is read from its entries, in the order they were added; looking up a
+    message by id or the next number of a note reads only as far back as it has to.
+*   Every entry has a *position*, the order it was added in, beside its digest: the digest names
+    what the chain held up to it, the position where it is. A range of the chain - the entries
+    after a position, a page before one - is read by positions.
+*   Whoever holds a chain in memory may hold only the part of it from a position on; the store
+    holds all of it.
+
+The transcript is a tree of the same nodes, the one that branches:
+
+*   Appending makes the new entry the head of its thread; a compaction begins a branch anew, and
+    what it replaces stays as a branch no head reaches. Nothing is removed, and nothing changes an
+    entry once added.
+*   A digest recorded earlier finds its entry on any branch, so a reference into a branch no head
+    reaches still resolves.
 *   An entry appended with the digest of one already there is that entry: the head moves to it.
-*   Every entry has a *position*, the order it was added in across every branch, beside its
-    digest: the digest names what the chain held up to it, the position where it is. A range of
-    the chain - the entries after a position, a page before one - is read by positions.
+*   Positions are counted across every branch.
 *   An external agent's transcript starts anew with every call, since the remote agent keeps what
     it was given: every call before is a branch from the root.
-*   Whoever holds a chain in memory may hold only a window of it; the store holds all of it. A
-    digest whose entry lies outside the window is found in the store, and an entry appended with
-    the digest of one only the store holds is added a second time - the same content after the
-    same predecessors, which the store keeps both of (see
+*   Whoever holds a transcript in memory holds the branches its heads reach; the store holds all
+    of it. A digest whose entry lies outside them is found in the store, and an entry appended
+    with the digest of one only the store holds is added a second time - the same content after
+    the same predecessors, which the store keeps both of (see
     [What is held in memory](#what-is-held-in-memory)).
 
 The transcript has a head for every thread the agent takes part in (issue 602): the *branch* of a
@@ -427,7 +435,7 @@ nothing. What stands is read by one rule, kept with the message (`Message::modif
 
 In the transcript, a change applies only within the path that holds it, so a reference taken
 before the change resolves to the message as the model saw it then, and one taken after to what
-stands. In the history, a change applies to the message on whichever branch, as a change made in the
+stands. In the history, a change applies to the message said before it, as a change made in the
 channel does. Either way a change comes after what it changes, so the messages of a range of the
 chain that runs to its end are read as they stand from that range alone: what asks for one message,
 or for what a turn said, reads from where the message was said or the turn began, not from the start

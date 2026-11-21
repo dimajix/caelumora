@@ -3,12 +3,11 @@
 //!
 //! Like notes, memory is a ledger (`caelumora_domain::ledger`, issue 92): something is remembered
 //! (added), updated, forgotten (removed) or reclassified. Unlike notes, it belongs to the agent
-//! itself, not to one of its channels: it does not branch with a channel's history (principle 7 in
-//! issue 19), and every change records the channel it was made in and the privacy of that
-//! channel's session then. An entry carries the label of the turn that wrote it, so that it is
-//! recalled only where that may be read (the flow rule of issue 133), and its session's privacy as
-//! it was, so that it is recalled in another session only where that session's people agreed to it
-//! (issue 134).
+//! itself, not to one of its channels (principle 7 in issue 19), and every change records the
+//! channel it was made in and the privacy of that channel's session then. An entry carries the
+//! label of the turn that wrote it, so that it is recalled only where that may be read (the flow
+//! rule of issue 133), and its session's privacy as it was, so that it is recalled in another
+//! session only where that session's people agreed to it (issue 134).
 
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::AgentId;
@@ -103,7 +102,7 @@ impl AgentMemoryId {
 pub struct AgentMemory {
     /// Its agent's id (`AgentMemoryId::of`).
     pub id: AgentMemoryId,
-    /// Every change to it, on one branch.
+    /// Every change to it.
     pub chain: MemoryChain,
     /// Its owner - the agent's -, and no access list: nobody else reads it.
     pub security_attributes: SecurityAttributes,

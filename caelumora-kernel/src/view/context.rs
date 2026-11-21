@@ -89,7 +89,7 @@ impl AgentContextView {
         };
         let mut since_join = History::default();
         since_join.enter(Recorded::new(joined, actor, Audience::Everybody, &context_in(channel)));
-        for node in history.all_entries() {
+        for node in history.entries() {
             since_join.enter(node.entry.clone());
         }
         store

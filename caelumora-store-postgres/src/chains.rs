@@ -1,7 +1,7 @@
 //! A chain a state holds, as the Postgres store keeps it (issues 379, 380):
-//! a row per node in the table of its kind, by its position (`seq`) - every
-//! branch, each node written once (issue 394) -, and its head in a table of
-//! its own. A put writes both in the transaction of the state, so
+//! a row per node in the table of its kind, by its position (`seq`) - of a
+//! transcript every branch, each node written once (issue 394) -, and its
+//! head in a table of its own. A put writes both in the transaction of the state, so
 //! that no node is there past what its head was written with.
 
 use crate::connection::sql;

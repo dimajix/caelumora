@@ -5,10 +5,9 @@
 //! where a change is recorded to have been made - which a [`LedgerKind`]
 //! says.
 //!
-//! What stands now is the chain's active branch read from start to end
-//! (issue 08). A new version of an entry keeps its number (issue 302). The
-//! number of an entry is never given twice, on any branch: a reader may have
-//! read it before it was removed, or on a branch no longer active.
+//! What stands now is the chain read from start to end. A new version of an
+//! entry keeps its number (issue 302). The number of an entry is never given
+//! twice: a reader may have read it before it was removed.
 
 use crate::chain::Chain;
 use crate::confidentiality::Classification;
@@ -123,8 +122,8 @@ impl<K: LedgerKind> Chain<LedgerEntry<K>> {
         );
     }
 
-    /// The entries as they stand on the active branch: every entry that was
-    /// not removed, oldest first.
+    /// The entries as they stand: every entry that was not removed, oldest
+    /// first.
     pub fn current(&self) -> Vec<Item<K>> {
         let mut items: Vec<Item<K>> = Vec::new();
         for node in self.entries() {
@@ -134,17 +133,16 @@ impl<K: LedgerKind> Chain<LedgerEntry<K>> {
         items
     }
 
-    /// Whether `id` was ever given to an entry, on any branch - one removed
-    /// since included: a number that is not given again.
+    /// Whether `id` was ever given to an entry - one removed since included:
+    /// a number that is not given again.
     pub fn has_given(&self, id: K::Id) -> bool {
         let id: u32 = id.into();
-        self.all_entries().any(|e| added(&e.entry.change) == Some(id))
+        self.entries().any(|e| added(&e.entry.change) == Some(id))
     }
 
-    /// The number the next entry gets: one more than any entry ever added,
-    /// on any branch.
+    /// The number the next entry gets: one more than any entry ever added.
     pub fn next_id(&self) -> K::Id {
-        let highest = self.all_entries().filter_map(|e| added(&e.entry.change)).max().unwrap_or(0);
+        let highest = self.entries().filter_map(|e| added(&e.entry.change)).max().unwrap_or(0);
         K::Id::from(highest + 1)
     }
 
@@ -238,7 +236,7 @@ impl<K: LedgerKind> Staged<K> {
     }
 
     /// The number the next entry gets: one more than any entry ever added,
-    /// on any branch or by the staged changes.
+    /// by the ledger or by the staged changes.
     pub fn next_id(&self) -> K::Id {
         self.next_id
     }
@@ -351,20 +349,6 @@ mod tests {
             Some("The user lives in Hamburg.")
         );
         assert_eq!(standing.next_id(), NoteId(3));
-    }
-
-    #[test]
-    fn a_branch_no_longer_active_does_not_stand_but_its_numbers_are_not_given_again() {
-        let mut chain = NoteChain::default();
-        push(&mut chain, add(1, "a"), MessageId::new());
-        let fork = chain.digest();
-        push(&mut chain, add(2, "b"), MessageId::new());
-        push(&mut chain, Change::Remove { id: NoteId(1) }, MessageId::new());
-        chain.move_head(fork.as_ref());
-
-        let texts: Vec<String> = chain.current().into_iter().map(|n| n.text).collect();
-        assert_eq!(texts, ["a"], "the removal was on the other branch too");
-        assert_eq!(chain.next_id(), NoteId(3), "2 was given on the other branch");
     }
 
     #[test]

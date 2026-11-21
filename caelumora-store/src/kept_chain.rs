@@ -1,10 +1,10 @@
-//! How a store keeps a chain a state holds (issues 379, 380): its nodes by
-//! position, as the puts of its holder appended them, and its head - not as
-//! a `Chain`, which makes a digest unique. A holder that keeps only part of
-//! its chain dedupes only within it, so that a transcript may add an entry a
-//! second time whose first it no longer holds; the same digest
-//! names the same content after the same predecessors, and the store keeps
-//! both.
+//! How a store keeps a chain a state holds (issues 379, 380) - a history's
+//! `Chain` or a `Transcript` -: its nodes by position, as the puts of its
+//! holder appended them, and its head - not as a `Transcript`, which makes a
+//! digest unique. A transcript dedupes only
+//! within what it holds, so that it may add an entry a second time whose
+//! first it no longer holds; the same digest names the same content after
+//! the same predecessors, and the store keeps both.
 
 use caelumora_domain::chain::{Chain, Node, Position, Stored};
 use caelumora_domain::channel::ThreadId;

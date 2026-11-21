@@ -1989,8 +1989,7 @@ mod tests {
                 &actors,
             )
             .await;
-        let entries =
-            || async { channel.reading_history(|history| history.all_entries().len()).await };
+        let entries = || async { channel.reading_history(|history| history.entries().len()).await };
 
         channel
             .process_envelope(

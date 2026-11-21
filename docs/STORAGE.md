@@ -152,10 +152,10 @@ over one pool.
     writes it without what is kept apart. A put writes it whole, in one transaction with what is
     kept apart - the chain, the items derived from it, what was given -, and marks the state stored
     once the transaction is committed; so a crash leaves nothing to repair.
-*   **A chain a row per node** (`chains`), every branch, by its position: `history_entries` and
-    `transcript_entries`, each node written once, the heads in `histories` and
-    `transcripts`. A chain is read backwards in batches where the domain's rules follow it back - a
-    path to a digest, the answer of a turn.
+*   **A chain a row per node** (`chains`), every branch of a transcript, by its position:
+    `history_entries` and `transcript_entries`, each node written once, the heads in `histories`
+    and `transcripts`. A chain is read backwards in batches where the domain's rules follow it
+    back - a path to a digest, the answer of a turn.
 
 Its tests run against a database: `test/docker-compose.yml` starts one, and the variable
 `CAELUMORA_TEST_POSTGRES_URL` names it, read as a secret; each test keeps its tables in a schema of
@@ -518,9 +518,9 @@ against an update of the entity.
     [AGENT-TURN.md](AGENT-TURN.md#the-transcript-as-a-chain)). Each node carries its position, and
     a node is merged only at the position it has, or at the one after the last if it is new. A
     position is a type of its own, `chain::Position` - its place in the order entries were added,
-    across every branch, written as its number -, and so is everything that addresses entries by
-    one: a page and its cursor, a delivery, a mark of what was read, a participant's range, where a
-    window begins.
+    across every branch of a transcript, written as its number -, and so is everything that
+    addresses entries by one: a page and its cursor, a delivery, a mark of what was read, a
+    participant's range, where a window begins.
 *   A small part - the processing state, the turn under way, the tokens the agent's calls used, an
     external agent's open tasks and the classifications it was given, where an agent stands in its
     channel's history and the last message it took in - is recorded whole: it is changed in place

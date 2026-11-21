@@ -14,9 +14,8 @@ All three kinds of memory work alike:
 *   **Ledgers that are only appended to.** Each is a chain of changes - an entry added, updated,
     removed or reclassified - on the generic `Chain` type (see
     [AGENT-TURN.md](AGENT-TURN.md#the-transcript-as-a-tree)), one type for both,
-    `caelumora_domain::ledger::Ledger`. What stands now is the active branch read from start to end.
-    A number, once given, is not given again on any branch, and an entry updated keeps its own.
-    Notes branch with the conversation, agent memory does not.
+    `caelumora_domain::ledger::Ledger`. What stands now is the chain read from start to end. A
+    number, once given, is not given again, and an entry updated keeps its own.
 *   **Only the author changes them.** An agent notes, updates, revokes, remembers and forgets only
     its own entries.
 *   **Commit, don't write.** A tool stages its change on the turn; the change is applied when the
@@ -104,10 +103,10 @@ that keeps and decides, and a library with the component -, which a program list
 skills.
 
 *   **Where it lives.** The memory of an agent is one document of the plugin's kind (`memory`), kept
-    under the agent's id and owned by its owner; it holds the chain, which does not branch with a
-    channel's history. Every change records where it was made: the channel, and the privacy of that
-    channel's session then. It is read and written in the agent's name, each read and write asked
-    of the policy as for any document, and removed when the agent is purged.
+    under the agent's id and owned by its owner; it holds the chain. Every change records where it
+    was made: the channel, and the privacy of that channel's session then. It is read and written
+    in the agent's name, each read and write asked of the policy as for any document, and removed
+    when the agent is purged.
 *   **Tools.** `remember(text)`, `update_memory(id, text)` and `forget(id)`, all hidden: like
     private notes, memory is the agent's own, seen by its owner in the context panel, and through
     `/memory @agent`, a command of the agent for its owners alone, which shows what may be recalled
@@ -211,22 +210,21 @@ and which makes its reasoning private (see [CONFIDENTIALITY.md](CONFIDENTIALITY.
 
 ## Terms
 
-The words for what an agent remembers are used in one sense each. "Branches" means: follows the
-branch of the conversation it came from.
+The words for what an agent remembers are used in one sense each.
 
-| Term | Meaning | Scope | Lifetime | Branches |
-|---|---|---|---|---|
-| **History** | The record of what happened, never rewritten or compressed: one per channel, for every participant (issue 417) - every message said, with what an agent's own was produced from, a plan's steps and a turn given up too, how each turn ended, the commands an agent carried out, who joined or left, what an agent was given and where it stopped reading a prompt part given -, each entry with whom it went to, so that each reader is given what reached them. | channel | session | yes |
-| **Transcript** | The sequence of messages an agent's context is built from: its own messages in full, with tool calls and internal steps, and what others said as it received them; may be compacted. Not the history, which is the channel's public record. | agent in channel | session | yes |
-| **Prompt part** | Text given besides the conversation - the system prompt, notes - transient, recorded by digest, or given into the transcript where it changed, and then a message of it (see [AGENT-TURN.md](AGENT-TURN.md#prompt-parts)). | turn, or agent in channel as the transcript | transient, or as the transcript | -, or as the transcript |
-| **Context** | What one call of the model is given: prompt parts, the transcript and the tools offered - "context" in the usual LLM sense; reconstructable through `ContextRef` ("what the agent saw"). | one call | transient | - |
-| **Turn state** | The working state of a turn: plan, pending tool calls, the changes staged to the agent's state in the channel and for its memory. | agent in channel | turn | discarded |
-| **Notes** | Entries in an agent's public note chain of one channel, published there, with provenance; only the author writes and revokes. | agent in channel | session | yes |
-| **Session memory** | The union of the active public note chains of all agents in all channels of a session - a view, not a store. | session | session | per channel |
-| **Agent memory** | An alternative to private notes, chosen per personality: what an agent remembers across its channels and sessions, each entry recalled only where its label may be read. | agent | beyond the session | no |
-| **Private notes** | An agent's private note chain in one channel - the same mechanism as notes, readable only by the agent. | agent in channel | session | yes |
-| **Agent session memory** | The union of an agent's active private note chains across its channels - a view, readable only by the agent, each note only where its classification allows. | agent in session | session | per channel |
-| **Workspace** | Documents several channels edit together; outside the branches, every change an effect ([20](../issues/20-transactional-effects.md)). | session or beyond | until deleted | no |
+| Term | Meaning | Scope | Lifetime |
+|---|---|---|---|
+| **History** | The record of what happened, never rewritten or compressed: one per channel, for every participant (issue 417) - every message said, with what an agent's own was produced from, a plan's steps and a turn given up too, how each turn ended, the commands an agent carried out, who joined or left, what an agent was given and where it stopped reading a prompt part given -, each entry with whom it went to, so that each reader is given what reached them. | channel | session |
+| **Transcript** | The sequence of messages an agent's context is built from: its own messages in full, with tool calls and internal steps, and what others said as it received them; may be compacted. Not the history, which is the channel's public record. | agent in channel | session |
+| **Prompt part** | Text given besides the conversation - the system prompt, notes - transient, recorded by digest, or given into the transcript where it changed, and then a message of it (see [AGENT-TURN.md](AGENT-TURN.md#prompt-parts)). | turn, or agent in channel as the transcript | transient, or as the transcript |
+| **Context** | What one call of the model is given: prompt parts, the transcript and the tools offered - "context" in the usual LLM sense; reconstructable through `ContextRef` ("what the agent saw"). | one call | transient |
+| **Turn state** | The working state of a turn: plan, pending tool calls, the changes staged to the agent's state in the channel and for its memory. | agent in channel | turn |
+| **Notes** | Entries in an agent's public note chain of one channel, published there, with provenance; only the author writes and revokes. | agent in channel | session |
+| **Session memory** | The union of the public note chains of all agents in all channels of a session - a view, not a store. | session | session |
+| **Agent memory** | An alternative to private notes, chosen per personality: what an agent remembers across its channels and sessions, each entry recalled only where its label may be read. | agent | beyond the session |
+| **Private notes** | An agent's private note chain in one channel - the same mechanism as notes, readable only by the agent. | agent in channel | session |
+| **Agent session memory** | The union of an agent's private note chains across its channels - a view, readable only by the agent, each note only where its classification allows. | agent in session | session |
+| **Workspace** | Documents several channels edit together; every change an effect ([20](../issues/20-transactional-effects.md)). | session or beyond | until deleted |
 
 A **skill** is no tier of memory ([SKILLS.md](SKILLS.md)): not what an agent knows but how a task is
 done, a document a user owns and edits, which an agent loads into a turn - where it stands in the

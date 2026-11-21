@@ -430,4 +430,11 @@ above. The position of a predecessor (C) is no step yet.
   Postgres keeps every head as JSON. `transcript_from` is gone. Also decided: `Chain::move_head`
   and `Chain::prefix`, left without a caller outside tests, go in a step of their own after 1a,
   with them the branches of `Chain`.
+- **2026-11-21** — Step 1a committed. The step after it done: `Chain` no longer branches. Every
+  entry follows the one added before it, and the head is the last entry; `move_head`, `prefix`
+  and `all_entries` are gone, `entries` reads everything held, `apply` refuses an entry that does
+  not follow the one before it and merges an older change without effect, as a journal replays
+  it, and `push_with` no longer dedupes. The history, notes and memory read the same as before,
+  since nothing outside tests moved their heads; their stored form is unchanged, the head kept
+  beside the nodes. The transcript is the one tree.
 

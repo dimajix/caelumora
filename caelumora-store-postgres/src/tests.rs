@@ -465,10 +465,10 @@ async fn the_database_gives_a_reader_what_the_model_gives_them() {
     }
     store.put_channel_state(channel, &mut state).await.unwrap();
     let asked_of_all = |state: &ChannelState| {
-        state.history.all_entries().filter(|node| node.entry.entry.is_item()).count()
+        state.history.entries().filter(|node| node.entry.entry.is_item()).count()
     };
     let pool = database.connection.pool().await.unwrap();
-    let attendance = Attendance::of(state.history.all_entries());
+    let attendance = Attendance::of(state.history.entries());
     for reader in [
         Reader::Channel,
         Reader::Outsider,
@@ -480,7 +480,7 @@ async fn the_database_gives_a_reader_what_the_model_gives_them() {
         let ranges = attendance.of_reader(&reader);
         let given: Vec<i64> = state
             .history
-            .all_entries()
+            .entries()
             .filter(|node| {
                 node.entry.entry.is_item() && node.entry.seen_by(node.seq, &reader, &ranges)
             })

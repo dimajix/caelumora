@@ -458,7 +458,7 @@ mod tests {
         let recorded = Recorded::of(&Envelope::new(context, joined), alice, Audience::Everybody);
         assert!(history.enter(recorded.expect("a join is recorded")));
         assert_eq!(
-            Attendance::of(history.all_entries()).of_participant(alice),
+            Attendance::of(history.entries()).of_participant(alice),
             [Attended { thread, range: Position::START..Position::MAX }],
             "in its join's thread, from its join on"
         );
@@ -485,7 +485,7 @@ mod tests {
         let thread = ThreadId::new();
         let elsewhere = EventContext { thread_id: thread, ..context };
         assert!(history.enter(Recorded::new(joined(bob), bob, Audience::Everybody, &elsewhere)));
-        let attending = Attendance::of(history.all_entries()).attending();
+        let attending = Attendance::of(history.entries()).attending();
         assert_eq!(attending, HashMap::from([(bob, thread)]), "bob, in the thread he joined");
     }
 
@@ -530,7 +530,7 @@ mod tests {
         assert!(history.reclassify(&context, id(3), Classification::CHANNEL_DEFAULT));
 
         let mut items = StandingItems::default();
-        for node in history.all_entries() {
+        for node in history.entries() {
             items.take(node);
         }
         let derived: Vec<String> = items
@@ -549,7 +549,7 @@ mod tests {
         );
         assert!(items.said(id(9)).is_none());
 
-        let again = StandingItems::of(history.all_entries());
+        let again = StandingItems::of(history.entries());
         assert_eq!(
             serde_json::to_value(&again).unwrap(),
             serde_json::to_value(&items).unwrap(),
@@ -1001,7 +1001,7 @@ mod tests {
         ] {
             assert!(history.enter(Recorded::new(entry, sender, audience, &context)));
         }
-        let attendance = Attendance::of(history.all_entries());
+        let attendance = Attendance::of(history.entries());
         let starts_and_ends = |participant| {
             attendance
                 .of_participant(participant)
@@ -1019,7 +1019,7 @@ mod tests {
             let reading = Reader::Participant(reader);
             let attended = attendance.of_reader(&reading);
             history
-                .all_entries()
+                .entries()
                 .filter(|node| node.entry.seen_by(node.seq, &reading, &attended))
                 .map(|node| node.seq.get())
                 .collect()
@@ -1035,7 +1035,7 @@ mod tests {
             "what was shared with him, and since - the last his own"
         );
         assert_eq!(
-            Attendance::of(history.all_entries().chain(history.all_entries())).of_participant(bob),
+            Attendance::of(history.entries().chain(history.entries())).of_participant(bob),
             attendance.of_participant(bob),
             "an entry taken in twice changes nothing"
         );
@@ -1085,7 +1085,7 @@ mod tests {
         ] {
             assert!(history.enter(Recorded::new(entry, sender, Audience::Everybody, &context)));
         }
-        let ranges: Vec<_> = Attendance::of(history.all_entries())
+        let ranges: Vec<_> = Attendance::of(history.entries())
             .of_participant(alice)
             .into_iter()
             .map(|at| (at.range.start.get(), at.range.end.get()))

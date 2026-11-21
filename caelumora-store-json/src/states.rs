@@ -621,10 +621,13 @@ mod tests {
         let mut state = AgentChannelState::default();
         said(&mut state, 1, 2);
         states.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
-        said(&mut state, 2, 4);
+        said(&mut state, 2, 3);
+        states.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
+        said(&mut state, 3, 4);
         states.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
         let journal = journal_file(&states, agent, channel).await;
         let lines = std_fs::read_to_string(&journal).unwrap();
+        assert!(lines.lines().count() > 1, "a line older than the snapshot's last: {lines}");
 
         // As if the crash came after the snapshot and before the journal was emptied.
         let folding = floored(dir.path(), 0);

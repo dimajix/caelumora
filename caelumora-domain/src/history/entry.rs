@@ -44,14 +44,14 @@ pub enum HistoryEntry {
     /// it was given is changed by nobody. Gone to nobody, as what it was
     /// given, and read where that is.
     Withdrawn { message: MessageId, at: DateTime<Utc> },
-    /// The message `message` - on whichever branch - is classified
-    /// `classification` from here on (issue 133).
+    /// The message `message` is classified `classification` from here on
+    /// (issue 133).
     Reclassified { message: MessageId, classification: Classification },
-    /// The message `message.id` - on whichever branch - reads as `message`
-    /// from here on (issue 234, `Message::modify`).
+    /// The message `message.id` reads as `message` from here on (issue 234,
+    /// `Message::modify`).
     Modified { message: Message },
-    /// The message `message` - on whichever branch - was taken back by its
-    /// author at `at` (issue 234, `Message::revoke`).
+    /// The message `message` was taken back by its author at `at` (issue
+    /// 234, `Message::revoke`).
     Revoked { message: MessageId, at: DateTime<Utc> },
     /// The channel was classified `channel`, and every message said so far
     /// fits into it from here on (`Classification::fitted_into`).
@@ -333,7 +333,8 @@ impl HistoryEntry {
     /// turn's end, a command, a notice, a request, an approval or a question of a call, and who
     /// joined or left and what a newcomer was given, in the thread they joined - rather than in the
     /// whole channel: a classification of the channel, a change of a message, which reaches
-    /// whoever holds the message, as it does on every branch, and a thread opened or closed.
+    /// whoever holds the message, on every branch of a transcript too, and a thread opened or
+    /// closed.
     pub fn is_of_thread(&self) -> bool {
         match self {
             HistoryEntry::Said { .. }
@@ -1025,7 +1026,7 @@ mod tests {
 
         let loaded: History =
             serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
-        let entries: Vec<_> = loaded.all_entries().collect();
+        let entries: Vec<_> = loaded.entries().collect();
         assert_eq!(entries[0].entry.entry.context(), None, "said by someone else");
         assert_eq!(
             entries[1].entry.entry.context(),

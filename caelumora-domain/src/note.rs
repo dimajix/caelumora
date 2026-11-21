@@ -5,7 +5,7 @@
 //! channel they were written in (principles 2, 3 and 3a in issue 19). Each
 //! agent keeps them per channel as a [`NoteChain`], a ledger
 //! (`crate::ledger`, issue 92): a note is added, revoked (removed) or
-//! reclassified. It branches with the channel's conversation.
+//! reclassified.
 
 use crate::digest::Digest;
 use crate::ledger::{Change, Item, Ledger, LedgerKind};
