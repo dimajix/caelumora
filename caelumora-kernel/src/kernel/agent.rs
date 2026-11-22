@@ -36,6 +36,7 @@ use caelumora_domain::value::time_zone::TimeZone;
 use caelumora_security::confidentiality::ConfidentialityQuestions;
 use caelumora_security::{ActionType, Enforcement, Reclassified, SecurityContext};
 use chrono::Utc;
+use std::collections::BTreeSet;
 use std::fmt::Debug;
 use std::sync::Arc;
 use tracing::warn;
@@ -208,8 +209,12 @@ impl ActorRuntime for AgentRuntime {
         self.participant.channel_id
     }
 
-    fn thread_id(&self) -> ThreadId {
-        self.participant.thread_id()
+    fn threads(&self) -> BTreeSet<ThreadId> {
+        self.participant.threads()
+    }
+
+    fn joined_thread_id(&self) -> ThreadId {
+        self.participant.joined_thread_id()
     }
 
     fn agent(&self) -> Arc<Agent> {
@@ -463,12 +468,12 @@ mod tests {
         };
         let its = agent_in_channel(&channel);
         let mut asleep = AgentChannelState::default();
-        asleep.thread_mut(its.thread_id()).processing_state = ActorState::Sleeping;
+        asleep.thread_mut(its.joined_thread_id()).processing_state = ActorState::Sleeping;
 
         its.store_channel_state(&mut asleep).await.expect("its own state in its channel");
         let loaded = its.load_channel_state().await.expect("and back");
         assert_eq!(
-            loaded.thread(its.thread_id()).map(|part| part.processing_state),
+            loaded.thread(its.joined_thread_id()).map(|part| part.processing_state),
             Some(ActorState::Sleeping),
             "as it was stored"
         );

@@ -86,14 +86,13 @@ pub struct AgentChannelState {
     /// for an agent run here.
     #[serde(default, skip_serializing_if = "RemoteState::is_empty")]
     pub remote: RemoteState,
-    /// What the agent recorded that its channel is to be told of (issue
-    /// 417): what it was given to read, where it stopped reading a part
-    /// given (issue 537), a compaction of its context - for
-    /// the channel's history to hold what the agent saw where it saw it.
-    /// Taken by its actor after every step and sent (`take_told`); not
-    /// stored: one cut off by a crash is in the transcript alone.
+    /// What the agent recorded that its channel is to be told of (issue 417), each with the thread
+    /// whose branch it was recorded on, where it is told (issue 602): what it was given to read,
+    /// where it stopped reading a part given (issue 537), a compaction of its context - for the
+    /// channel's history to hold what the agent saw where it saw it. Taken by its actor after every
+    /// step and sent (`take_told`); not stored: one cut off by a crash is in the transcript alone.
     #[serde(skip)]
-    pub to_tell: Vec<ActorEvent>,
+    pub to_tell: Vec<(ThreadId, ActorEvent)>,
     /// The last of its channel's messages the agent took in - heard, said
     /// or was given (issue 417): where it stands in its channel's history,
     /// which it catches up with from there on, and where a turn's changes
@@ -408,7 +407,8 @@ impl AgentChannelState {
         let at = Utc::now();
         for stood in &standing {
             if !among(stood, &parts) && self.transcript.revoke(stood.1.id, at) {
-                self.to_tell.push(ActorEvent::MessageWithdrawn { message: stood.1.id, at });
+                let withdrawn = ActorEvent::MessageWithdrawn { message: stood.1.id, at };
+                self.to_tell.push((thread, withdrawn));
             }
         }
         for part in parts {
@@ -432,7 +432,7 @@ impl AgentChannelState {
         }
         self.transcript.give(thread, message.clone(), source);
         self.last_message = Some(message.id);
-        self.to_tell.push(ActorEvent::MessageGiven { message });
+        self.to_tell.push((thread, ActorEvent::MessageGiven { message }));
         let head = self.transcript.digest(thread);
         if let Some(turn) = self.turn_mut(thread) {
             turn.work.context.transcript = head;
@@ -487,7 +487,8 @@ impl AgentChannelState {
             .collect();
         let moved = self.transcript.compact(thread, given, keep_from)?;
         let to = self.transcript.digest(thread)?;
-        self.to_tell.push(ActorEvent::ContextCompacted { turn_id: turn.work.turn_id, from, to });
+        let compacted = ActorEvent::ContextCompacted { turn_id: turn.work.turn_id, from, to };
+        self.to_tell.push((thread, compacted));
         for (message, knowledge) in replacement {
             turn.work.see_message(&message);
             // A summary written by the agent's model is a call of it.
@@ -498,7 +499,7 @@ impl AgentChannelState {
                 turn.work.record_knowledge(knowledge);
             }
             self.last_message = Some(message.id);
-            self.to_tell.push(ActorEvent::MessageGiven { message });
+            self.to_tell.push((thread, ActorEvent::MessageGiven { message }));
         }
         turn.work.context.transcript = Some(to);
         turn.work.context.frame.prompts.retain_mut(|prompt| match prompt.at {
@@ -767,9 +768,9 @@ impl AgentChannelState {
         self.transcript.record(thread, given_up);
     }
 
-    /// What the agent recorded that its channel is to be told of
-    /// (`to_tell`), taken.
-    pub fn take_told(&mut self) -> Vec<ActorEvent> {
+    /// What the agent recorded that its channel is to be told of, each in its thread (`to_tell`),
+    /// taken.
+    pub fn take_told(&mut self) -> Vec<(ThreadId, ActorEvent)> {
         mem::take(&mut self.to_tell)
     }
 
@@ -1291,11 +1292,15 @@ mod tests {
             [pair("roster", "[Roster]\nalice, bob")],
             "what changed given anew, what holds nothing any more taken back"
         );
-        let withdrawn: Vec<MessageId> = state
-            .take_told()
+        let told = state.take_told();
+        assert!(
+            told.iter().all(|(thread, _)| *thread == ThreadId::default()),
+            "in the thread of the branch given (issue 602)"
+        );
+        let withdrawn: Vec<MessageId> = told
             .into_iter()
-            .filter_map(|event| match event {
-                ActorEvent::MessageWithdrawn { message, .. } => Some(message),
+            .filter_map(|told| match told {
+                (_, ActorEvent::MessageWithdrawn { message, .. }) => Some(message),
                 _ => None,
             })
             .collect();
@@ -1405,8 +1410,14 @@ mod tests {
             "what the turn says next is produced from it"
         );
         assert!(
-            matches!(state.take_told().as_slice(), [ActorEvent::MessageGiven { message }] if message.id == skill.id && message.produced_from().is_none()),
-            "its channel is to be told, as what it was given (issue 417)"
+            matches!(
+                state.take_told().as_slice(),
+                [(thread, ActorEvent::MessageGiven { message })]
+                    if *thread == ThreadId::default()
+                        && message.id == skill.id
+                        && message.produced_from().is_none()
+            ),
+            "its channel is to be told, as what it was given (issue 417), in its thread (issue 602)"
         );
         assert!(state.take_told().is_empty(), "once");
     }
@@ -1464,8 +1475,8 @@ mod tests {
         let told: Vec<_> = state
             .take_told()
             .into_iter()
-            .filter_map(|event| match event {
-                ActorEvent::MessageGiven { message } => Some(message.id),
+            .filter_map(|told| match told {
+                (_, ActorEvent::MessageGiven { message }) => Some(message.id),
                 _ => None,
             })
             .collect();
@@ -1803,13 +1814,20 @@ mod tests {
         assert_eq!(resolve(&state), before, "what was recorded before resolves to what it did");
         let told = state.take_told();
         assert!(
-            matches!(told.first(), Some(ActorEvent::ContextCompacted { from: f, to: t, .. }) if *f == from && *t == to),
+            matches!(
+                told.first(),
+                Some((_, ActorEvent::ContextCompacted { from: f, to: t, .. })) if *f == from && *t == to
+            ),
             "its channel is to be told of the compaction (issue 417)"
+        );
+        assert!(
+            told.iter().all(|(thread, _)| *thread == ThreadId::default()),
+            "in the thread of the branch compacted (issue 602)"
         );
         let followed: Vec<_> = told[1..]
             .iter()
-            .filter_map(|event| match event {
-                ActorEvent::MessageGiven { message } => Some(message.id),
+            .filter_map(|told| match told {
+                (_, ActorEvent::MessageGiven { message }) => Some(message.id),
                 _ => None,
             })
             .collect();

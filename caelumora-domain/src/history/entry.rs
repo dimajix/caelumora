@@ -927,6 +927,7 @@ mod tests {
     use crate::history::History;
     use crate::message::testing::{id, make_message};
     use crate::user::UserId;
+    use std::collections::BTreeSet;
 
     /// Issue 557: a thread opened or closed is of the whole channel, an item of its history told to
     /// its users - not to its agents, which take no note of it - and delivered again as it was.
@@ -970,11 +971,12 @@ mod tests {
         assert!(given.is_of_thread(), "of its thread");
         assert!(given.is_item(), "an item");
         let recipients = given.recipients();
-        assert!(recipients.goes_to(recipient, thread, Some(thread)), "to its recipient");
+        let in_thread = BTreeSet::from([thread]);
+        assert!(recipients.goes_to(recipient, &in_thread, Some(thread)), "to its recipient");
         let other = ActorId::Agent(AgentId::new());
-        assert!(!recipients.goes_to(other, thread, Some(thread)), "to no other agent");
+        assert!(!recipients.goes_to(other, &in_thread, Some(thread)), "to no other agent");
         let user = ActorId::User(UserId::new());
-        assert!(recipients.goes_to(user, thread, Some(thread)), "to the users");
+        assert!(recipients.goes_to(user, &in_thread, Some(thread)), "to the users");
         assert!(
             matches!(given.event(), Some(ActorEvent::GivenToRead { recipient: r, message: m })
                 if r == recipient && m.id == message.id),

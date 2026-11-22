@@ -512,7 +512,8 @@ impl ChannelLoop {
     pub(crate) fn new_participant_runtime(&self, actor: ActorId) -> ParticipantRuntime {
         match self.actors.load().get(&actor) {
             Some(taking_part) => {
-                self.runtime.participant_runtime(&taking_part.participant, taking_part.thread)
+                let joined = self.joined_in(Some(&taking_part.threads));
+                self.runtime.participant_runtime(&taking_part.participant, joined)
             }
             None => self.runtime.new_participant_runtime(actor),
         }

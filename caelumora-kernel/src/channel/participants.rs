@@ -19,7 +19,7 @@ use caelumora_domain::question::{QuestionError, Questions};
 use caelumora_domain::security::SecurityAttributes;
 use caelumora_domain::value::name::{named, Name};
 use caelumora_security::{ActionType, SecurityContext};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use tokio::time;
 use tracing::{info, warn};
@@ -47,10 +47,10 @@ impl ChannelLoop {
             Some(running) => Some(self.leave_actor(participant, running, by)),
             // Without an actor - left out as the channel started - but taking part in its history
             // all the same: its leave is recorded at once, so that its attendance ends here.
-            None => match self.attending().await.get(&participant) {
-                Some(&thread) => {
+            None => match self.attending().await.remove(&participant) {
+                Some(threads) => {
                     let name = self.name_of(participant).await;
-                    let leave = ActorChange::Leave(participant, name, by.clone(), thread);
+                    let leave = ActorChange::Leave(participant, name, by.clone(), threads);
                     Some(self.request(leave))
                 }
                 None => None,
@@ -176,22 +176,28 @@ impl ChannelLoop {
         running: ChannelActor,
         remover: &SecurityContext,
     ) -> Answer {
-        let ChannelActor { actor, thread, .. } = running;
+        let ChannelActor { actor, threads, .. } = running;
         let name = actor.name().to_string();
-        self.drop_actor(participant, &actor, thread);
-        self.request(ActorChange::Leave(participant, name, remover.clone(), thread))
+        self.drop_actor(participant, &actor, &threads);
+        self.request(ActorChange::Leave(participant, name, remover.clone(), threads))
     }
 
-    /// Takes `actor`, of `id`, out of the channel's actors, of `thread` it takes part in and of the
-    /// mentions, and makes it leave (`Actor::leave`): what letting it go means for the running
-    /// channel, a participant's actor (`leave_actor`) or a thread's delegate (`let_delegate_go`).
-    pub(super) fn drop_actor(&self, id: ActorId, actor: &Arc<dyn Actor>, thread: ThreadId) {
+    /// Takes `actor`, of `id`, out of the channel's actors, of the `threads` it takes part in and
+    /// of the mentions, and makes it leave (`Actor::leave`): what letting it go means for the
+    /// running channel, a participant's actor (`leave_actor`) or a thread's delegate
+    /// (`let_delegate_go`).
+    pub(super) fn drop_actor(
+        &self,
+        id: ActorId,
+        actor: &Arc<dyn Actor>,
+        threads: &BTreeSet<ThreadId>,
+    ) {
         self.actors.rcu(|actors| {
             let mut actors = HashMap::clone(actors);
             actors.remove(&id);
             actors
         });
-        if let Some(taking_part) = self.thread(thread) {
+        for taking_part in threads.iter().filter_map(|thread| self.thread(*thread)) {
             taking_part.remove_actor(id);
         }
         self.rebuild_mentions();

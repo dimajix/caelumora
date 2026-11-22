@@ -206,7 +206,7 @@ pub fn detached_actor_runtime(agent: AgentId) -> Arc<dyn ActorRuntime> {
 /// agents' texts (issue 57). The channel is, on purpose, the one a default `EventContext` names -
 /// unlike a channel the tests record a history for, whose line a default context never names -,
 /// so that its line is the thread a test of a default work fills (`ThreadId::default()`), the
-/// thread its agent takes part in (`ActorRuntime::thread_id`).
+/// thread its agent joined in and takes part in (`ActorRuntime::joined_thread_id`).
 pub fn detached_participant(agent: AgentId) -> ParticipantRuntime {
     let session = bare_session(SessionId::new());
     let channel = Channel { id: ChannelId::default(), ..bare_channel(session.id) };

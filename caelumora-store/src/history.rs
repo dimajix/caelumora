@@ -22,7 +22,7 @@ use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::query::{meeting, Filter};
 use caelumora_domain::store::StoreResult;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt::Debug;
 use std::ops::Range;
 
@@ -95,9 +95,12 @@ pub trait HistoryStore: Debug + Send + Sync {
     /// none if it never was one, the last open - to `Position::MAX` - while it is.
     async fn attendance(&self, channel: ChannelId, actor: ActorId) -> StoreResult<Vec<Attended>>;
 
-    /// Who takes part in the channel's history now, and where: each actor whose range of
-    /// attendance is still open, with the thread of that range (issue 590).
-    async fn attending(&self, channel: ChannelId) -> StoreResult<HashMap<ActorId, ThreadId>>;
+    /// Who takes part in the channel's history now, and where: each actor with a range of
+    /// attendance still open, with the threads of those ranges (issues 590, 602).
+    async fn attending(
+        &self,
+        channel: ChannelId,
+    ) -> StoreResult<HashMap<ActorId, BTreeSet<ThreadId>>>;
 
     /// Derives the items and the attendance anew from the chain: what
     /// repairs them, and what shows that they are derived.
@@ -189,13 +192,13 @@ impl Attendance {
             .collect()
     }
 
-    /// Who takes part now, each with the thread of its open range (`HistoryStore::attending`).
-    pub fn attending(&self) -> HashMap<ActorId, ThreadId> {
-        self.attended
-            .iter()
-            .filter(|(_, at)| at.range.end == Position::MAX)
-            .map(|(actor, at)| (*actor, at.thread))
-            .collect()
+    /// Who takes part now, each with the threads of its open ranges (`HistoryStore::attending`).
+    pub fn attending(&self) -> HashMap<ActorId, BTreeSet<ThreadId>> {
+        let mut attending: HashMap<ActorId, BTreeSet<ThreadId>> = HashMap::new();
+        for (actor, at) in self.attended.iter().filter(|(_, at)| at.range.end == Position::MAX) {
+            attending.entry(*actor).or_default().insert(at.thread);
+        }
+        attending
     }
 
     /// Where `reader` took part, which it reads by (`Recorded::seen_by`): a participant's own;
@@ -486,7 +489,8 @@ mod tests {
         let elsewhere = EventContext { thread_id: thread, ..context };
         assert!(history.enter(Recorded::new(joined(bob), bob, Audience::Everybody, &elsewhere)));
         let attending = Attendance::of(history.entries()).attending();
-        assert_eq!(attending, HashMap::from([(bob, thread)]), "bob, in the thread he joined");
+        let only_bob = HashMap::from([(bob, BTreeSet::from([thread]))]);
+        assert_eq!(attending, only_bob, "bob, in the thread he joined");
     }
 
     /// That `participant` joined, by their own act.

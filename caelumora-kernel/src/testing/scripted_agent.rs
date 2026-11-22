@@ -197,7 +197,7 @@ impl ScriptedAgent {
         }
         let runtime = &self.runtime;
         let (session, channel) = (runtime.session_id(), runtime.channel_id());
-        Answering::own(session, channel, runtime.thread_id(), self.id, self.name())
+        Answering::own(session, channel, runtime.joined_thread_id(), self.id, self.name())
             .send_all(vec![ActorEvent::StateChanged(state)], output)
             .await;
     }

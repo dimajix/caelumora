@@ -185,13 +185,13 @@ impl UserActor {
         })
     }
 
-    /// An envelope from this user, in the span `span_id`. Envelopes are only
-    /// ever built here, so the sender, session and channel are always this
-    /// actor's own (`Answering::own`), whatever the caller of
-    /// `send_message` is. Nothing of what a user says is for its owner
-    /// alone: it is sent as it is (`Answering::envelope`).
+    /// An envelope from this user, in the span `span_id`, in the thread they joined the channel in
+    /// (`ParticipantRuntime::joined_thread_id`, issue 602). Envelopes are only ever built here, so
+    /// the sender, session and channel are always this actor's own (`Answering::own`), whatever
+    /// the caller of `send_message` is. Nothing of what a user says is for its owner alone: it is
+    /// sent as it is (`Answering::envelope`).
     fn envelope(&self, event: ActorEvent, span_id: SpanId) -> Envelope {
-        let thread = self.participant_runtime.thread_id();
+        let thread = self.participant_runtime.joined_thread_id();
         Answering::own(self.session_id, self.channel_id, thread, self.id(), self.name())
             .with_span(span_id)
             .envelope(event)

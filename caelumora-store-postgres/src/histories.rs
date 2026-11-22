@@ -31,7 +31,7 @@ use caelumora_store::history::{
 use serde_json::Value;
 use sqlx::postgres::PgConnection;
 use sqlx::types::Json;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::ops::Range;
 
 /// The chains of the histories, by channel.
@@ -322,7 +322,10 @@ impl HistoryStore for PostgresStore {
         Ok(read_attendance(&mut conn, &key, &name).await?.of_participant(actor))
     }
 
-    async fn attending(&self, channel: ChannelId) -> StoreResult<HashMap<ActorId, ThreadId>> {
+    async fn attending(
+        &self,
+        channel: ChannelId,
+    ) -> StoreResult<HashMap<ActorId, BTreeSet<ThreadId>>> {
         let mut conn = self.connection.acquire().await?;
         let (key, name) = key(channel);
         Ok(read_attendance(&mut conn, &key, &name).await?.attending())

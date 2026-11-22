@@ -124,19 +124,7 @@ impl AgentBody {
             CommandSet::new(components.get_all::<dyn CommandProvider<dyn AgentCommand>>(None)?)?;
         let mut state = runtime.load_channel_state().await?;
         resume(&mut state);
-        // It resumes the turn stored under way, in whichever thread - one at a time (issue 557) -,
-        // or else stands where it stood in the thread it takes part in.
-        let resumed = state.threads.iter().find_map(|(thread, part)| {
-            let turn = part.turn.as_ref()?;
-            Some((part.processing_state, (*thread, turn.work.turn_id)))
-        });
-        let control = match resumed {
-            Some((standing, turn)) => RunControl::new(standing, Some(turn)),
-            None => {
-                let part = state.thread(runtime.thread_id());
-                RunControl::new(part.map(|part| part.processing_state).unwrap_or_default(), None)
-            }
-        };
+        let control = RunControl::resuming(&state, runtime.joined_thread_id());
         let body = Self {
             runtime,
             perceive_in_processors,
@@ -236,17 +224,16 @@ impl AgentBody {
 
     /// The thread whose branch of the agent's transcript `envelope` is taken in on, answered on or
     /// carried out on (issue 602): the thread it happens in (`EventContext::thread_id`) if the
-    /// agent takes part there, else the one it takes part in (`ActorRuntime::thread_id`). A nudge,
-    /// a request to answer again and a command reach it from any thread, until they are routed by
-    /// the thread they name; read on a branch of their own, a request to answer again would be
-    /// refused and a turn would begin empty.
+    /// agent takes part there (`ActorRuntime::threads`), else the one it joined in
+    /// (`ActorRuntime::joined_thread_id`). A nudge, a request to answer again and a command reach
+    /// it from any thread, until they are routed by the thread they name; read on a branch of
+    /// their own, a request to answer again would be refused and a turn would begin empty.
     pub(super) fn branch_of(&self, envelope: &Envelope) -> ThreadId {
-        let taking_part = self.runtime.thread_id();
         let happened_in = envelope.context.thread_id;
-        if happened_in == taking_part {
+        if self.runtime.threads().contains(&happened_in) {
             happened_in
         } else {
-            taking_part
+            self.runtime.joined_thread_id()
         }
     }
 
@@ -295,12 +282,10 @@ impl AgentBody {
         })
     }
 
-    /// Stores its `state` in the channel, with where its actor stands now: in the thread of the
-    /// turn that runs or ran last, else in the one it takes part in. A failure is logged: the actor
-    /// carries on with the state in memory.
+    /// Stores its `state` in the channel, with where its actor stands now, in the thread it stands
+    /// in (`standing_in`). A failure is logged: the actor carries on with the state in memory.
     pub(super) async fn store(&self, state: &mut AgentChannelState) {
-        let thread = self.control.thread().unwrap_or_else(|| self.runtime.thread_id());
-        state.thread_mut(thread).processing_state = self.control.state();
+        state.thread_mut(self.standing_in()).processing_state = self.control.state();
         if let Err(e) = self.runtime.store_channel_state(state).await {
             warn!(
                 "Agent {} cannot store its state in channel {}: {:#}",
@@ -351,37 +336,47 @@ impl AgentBody {
     }
 
     /// Tells the users that its actor stands at `state` (issue 243) - in
-    /// its own context (`own`): the state is the agent's, not a turn's. Not
-    /// sent is only logged.
+    /// its own context (`own`), in the thread it stands in (`standing_in`): the state is the
+    /// agent's, not a turn's. Not sent is only logged.
     pub(super) async fn announce(&self, state: ActorState, output: &dyn EventSender) {
-        if let Err(e) = self.own().send(ActorEvent::StateChanged(state), output).await {
+        let changed = ActorEvent::StateChanged(state);
+        if let Err(e) = self.own(self.standing_in()).send(changed, output).await {
             warn!("{:#}", e);
         }
     }
 
-    /// Tells its channel what the agent recorded since it last did - what
-    /// it was given to read, where it stopped reading a part given, a
-    /// compaction of its context (issues 417, 537) -, in
-    /// its own context, for the channel's history to hold what it saw
-    /// where it saw it. Not sent is only logged: the transcript holds it.
+    /// The thread its actor stands in (issue 602): the one of the turn that runs or ran last
+    /// (`RunControl::thread`), else - before its first turn - the one it joined in.
+    fn standing_in(&self) -> ThreadId {
+        self.control.thread().unwrap_or_else(|| self.runtime.joined_thread_id())
+    }
+
+    /// Tells its channel what the agent recorded since it last did - what it was given to read,
+    /// where it stopped reading a part given, a compaction of its context (issues 417, 537) -, in
+    /// its own context, each in the thread whose branch it was recorded on (issue 602), for the
+    /// channel's history to hold what it saw where it saw it. Not sent is only logged: the
+    /// transcript holds it.
     pub(super) async fn tell_recorded(
         &self,
         state: &mut AgentChannelState,
         output: &dyn EventSender,
     ) {
         let told = state.take_told();
-        if told.is_empty() {
-            return;
+        // What was recorded on one branch after another shares a span, as all of it did with one
+        // thread.
+        for run in told.chunk_by(|(one, _), (other, _)| one == other) {
+            let Some((thread, _)) = run.first() else { continue };
+            let events = run.iter().map(|(_, event)| event.clone()).collect();
+            self.own(*thread).send_all(events, output).await;
         }
-        self.own().send_all(told, output).await;
     }
 
-    /// The context the agent speaks in of itself, nobody having asked: in its channel, its own
-    /// initiator (`Answering::own`).
-    pub(super) fn own(&self) -> Answering {
+    /// The context the agent speaks in of itself in `thread`, nobody having asked: in its channel,
+    /// its own initiator (`Answering::own`).
+    pub(super) fn own(&self, thread: ThreadId) -> Answering {
         let runtime = &self.runtime;
         let (session, channel) = (runtime.session_id(), runtime.channel_id());
-        Answering::own(session, channel, runtime.thread_id(), self.id(), self.name())
+        Answering::own(session, channel, thread, self.id(), self.name())
     }
 }
 
@@ -422,7 +417,7 @@ pub(super) fn retry_target(retry: &Envelope) -> Option<RetryTarget> {
 mod testing {
     use super::*;
     use crate::prompt::external_context::ExternalContextProvider;
-    use crate::testing::{detached_actor_runtime, detached_participant};
+    use crate::testing::{agent_runtime, detached_actor_runtime, detached_participant};
     use caelumora_domain::agent::Personality;
     use caelumora_kernel::kernel::AgentRuntime;
 
@@ -461,5 +456,85 @@ mod testing {
             let runtime = AgentRuntime::in_test(runtime).with_personality(personality);
             Self { runtime: Arc::new(runtime), ..self }
         }
+
+        /// This body, its agent taking part in `thread` as well as in the one it joined in
+        /// (issue 602), with a runtime of its own: what `hearing` gave it before is gone.
+        pub(in crate::actor) fn taking_part_also_in(self, thread: ThreadId) -> Self {
+            let runtime = detached_participant(self.agent_id()).taking_part_also_in(thread);
+            Self { runtime: agent_runtime(runtime), ..self }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use caelumora_domain::actor::EventContext;
+    use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::message::MessageId;
+    use caelumora_domain::value::time_zone::TimeZone;
+    use caelumora_kernel::transport::InMemoryEventSender;
+    use chrono::Utc;
+    use tokio::sync::mpsc;
+
+    /// Issue 602: what happens in a thread the agent takes part in goes on that thread's branch,
+    /// what happens in another on the branch of the one it joined in.
+    #[test]
+    fn an_envelope_goes_on_the_branch_of_its_thread_where_the_agent_takes_part() {
+        let (joined, there, elsewhere) = (ThreadId::default(), ThreadId::new(), ThreadId::new());
+        let body = AgentBody::detached(Vec::new()).taking_part_also_in(there);
+        let in_thread = |thread_id| {
+            let context = EventContext { thread_id, ..EventContext::default() };
+            Envelope::new(context, ActorEvent::WakeupRequested)
+        };
+        assert_eq!(body.branch_of(&in_thread(joined)), joined, "the one it joined in");
+        assert_eq!(body.branch_of(&in_thread(there)), there, "a further one");
+        assert_eq!(body.branch_of(&in_thread(elsewhere)), joined, "one it takes no part in");
+    }
+
+    /// Issue 602: what the agent recorded is told in the thread of the branch it was recorded on,
+    /// what was recorded on one branch after another in one span.
+    #[tokio::test]
+    async fn what_it_recorded_is_told_in_the_thread_of_its_branch() {
+        let (joined, there) = (ThreadId::default(), ThreadId::new());
+        let body = AgentBody::detached(Vec::new()).taking_part_also_in(there);
+        let mut state = AgentChannelState::default();
+        let withdrawn =
+            |_| ActorEvent::MessageWithdrawn { message: MessageId::new(), at: Utc::now() };
+        state.to_tell = vec![(joined, withdrawn(1)), (joined, withdrawn(2)), (there, withdrawn(3))];
+        let (tx, mut rx) = mpsc::channel(8);
+        body.tell_recorded(&mut state, &InMemoryEventSender::new(tx)).await;
+
+        let mut told = Vec::new();
+        while let Ok(envelope) = rx.try_recv() {
+            told.push((envelope.context.thread_id, envelope.context.span_id));
+        }
+        let threads: Vec<_> = told.iter().map(|(thread, _)| *thread).collect();
+        assert_eq!(threads, [joined, joined, there], "each in its thread, in order");
+        assert_eq!(told[0].1, told[1].1, "one branch's in one span");
+        assert_ne!(told[1].1, told[2].1, "another's in a span of its own");
+        assert!(state.to_tell.is_empty(), "taken");
+    }
+
+    /// Issue 602: an agent's state is stored with where its actor stands in the thread of its turn,
+    /// and before its first turn in the thread it joined in.
+    #[tokio::test]
+    async fn where_it_stands_is_stored_in_the_thread_of_its_turn() {
+        let (joined, there) = (ThreadId::default(), ThreadId::new());
+        let body = AgentBody::detached(Vec::new()).taking_part_also_in(there);
+        let mut state = AgentChannelState::default();
+        body.control.go_to(ActorState::Sleeping);
+        body.store(&mut state).await;
+        let standing = |state: &AgentChannelState, thread| {
+            state.thread(thread).map(|part| part.processing_state)
+        };
+        assert_eq!(standing(&state, joined), Some(ActorState::Sleeping), "before its first turn");
+
+        let work = Work::new(EventContext::default(), None, Classification::PUBLIC, TimeZone::UTC);
+        body.begin_turn(&mut state, there, work);
+        body.control.go_to(ActorState::Planning);
+        body.store(&mut state).await;
+        assert_eq!(standing(&state, there), Some(ActorState::Planning), "in its turn's thread");
+        assert_eq!(standing(&state, joined), Some(ActorState::Sleeping), "not where it joined");
     }
 }

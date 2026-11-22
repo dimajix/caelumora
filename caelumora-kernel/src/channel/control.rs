@@ -37,7 +37,8 @@ impl ChannelLoop {
         for held in self.threads_in(thread) {
             held.set_quiet(true);
         }
-        let in_scope = |actor: &&ChannelActor| thread.is_none_or(|thread| actor.thread == thread);
+        let in_scope =
+            |actor: &&ChannelActor| thread.is_none_or(|thread| actor.threads.contains(&thread));
         for ChannelActor { actor, .. } in self.actors.load().values().filter(in_scope) {
             actor.cancel();
         }
@@ -66,7 +67,7 @@ impl ChannelLoop {
             .actors
             .load()
             .values()
-            .filter(|a| thread.is_none_or(|thread| a.thread == thread))
+            .filter(|a| thread.is_none_or(|thread| a.threads.contains(&thread)))
             .map(|a| &a.actor)
             .filter(|a| a.state() == ActorState::Sleeping)
             .map(|a| a.name().to_string())
@@ -165,14 +166,14 @@ impl ChannelLoop {
             "waking the agents of",
         )
         .await?;
-        let ChannelActor { actor, thread, .. } = self
+        let ChannelActor { actor, threads, .. } = self
             .actors
             .load()
             .get(&actor)
             .cloned()
             .ok_or(ChannelError::NotAParticipant { participant: actor, channel: self.id })?;
         let was_asleep = actor.state() == ActorState::Sleeping;
-        self.end_quiet(thread);
+        threads.iter().for_each(|thread| self.end_quiet(*thread));
         actor.wakeup();
         Ok(was_asleep)
     }
@@ -213,7 +214,8 @@ impl ChannelLoop {
         for held in self.threads_in(thread) {
             held.set_quiet(false);
         }
-        let in_scope = |actor: &&ChannelActor| thread.is_none_or(|thread| actor.thread == thread);
+        let in_scope =
+            |actor: &&ChannelActor| thread.is_none_or(|thread| actor.threads.contains(&thread));
         for ChannelActor { actor, .. } in self.actors.load().values().filter(in_scope) {
             actor.wakeup();
         }

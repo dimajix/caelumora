@@ -27,6 +27,7 @@ use caelumora_domain::tool::{ToolCall, ToolContent};
 use caelumora_domain::turn::StagedChanges;
 use caelumora_domain::type_map::{ErasedArc, TypeKey};
 use caelumora_domain::value::time_zone::TimeZone;
+use std::collections::BTreeSet;
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -57,9 +58,13 @@ pub trait ActorRuntime: Send + Sync + Debug {
     /// The channel the agent takes part in.
     fn channel_id(&self) -> ChannelId;
 
-    /// The thread of its channel the agent takes part in (issue 557): where what it says of itself
-    /// happens.
-    fn thread_id(&self) -> ThreadId;
+    /// The threads of its channel the agent takes part in (issues 557, 602): what of the channel it
+    /// is delivered, and whose branches of its transcript it keeps.
+    fn threads(&self) -> BTreeSet<ThreadId>;
+
+    /// The thread it joined its channel in (issue 602): where it says of itself what names no
+    /// thread of its own - the tools it would be offered, where it stands before its first turn.
+    fn joined_thread_id(&self) -> ThreadId;
 
     /// The agent as it is now, as its session holds it (issue 120).
     fn agent(&self) -> Arc<Agent>;

@@ -67,7 +67,7 @@ use caelumora_domain::workspace::{Workspace, WorkspaceId};
 use caelumora_security::{AccessPolicy, ActionType, OwnershipPolicy, SecurityContext, Verb};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::ops::Not;
 use std::sync::Arc;
 
@@ -1583,7 +1583,11 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
     );
     assert!(histories.attendance(key, stranger).await.unwrap().is_empty());
     let attending = histories.attending(key).await.unwrap();
-    assert_eq!(attending.get(&other), Some(&context.thread_id), "taking part now, and where");
+    assert_eq!(
+        attending.get(&other),
+        Some(&BTreeSet::from([context.thread_id])),
+        "taking part now, and where"
+    );
     assert!(!attending.contains_key(&stranger), "never was one");
     let last = |page: HistoryPage| {
         page.entries().filter_map(HistoryEntry::said).map(|m| m.id).collect::<Vec<_>>()

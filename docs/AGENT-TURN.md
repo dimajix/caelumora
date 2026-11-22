@@ -181,7 +181,9 @@ a plan may cost is bounded by its steps: `create_plan` refuses a plan of more th
 `Plan::MAX_STEPS`, those it is extended by included, and the plan in play stays as it was.
 
 The agent announces its state to the users as it changes (`StateChanged`), each state once, in its
-own context rather than a turn's: its state is the agent's, not part of an answer. One move is not
+own context rather than a turn's: its state is the agent's, not part of an answer. It announces it
+in the thread of the turn that runs or ran last, and before its first turn in the thread it joined
+in (`ActorRuntime::joined_thread_id`, issue 602). One move is not
 the run loop's: the channel wakes a sleeping agent itself, synchronously, because the moderator,
 deciding right after whom to ask, leaves the sleeping out; the run loop is notified and announces
 `Idle`.
@@ -409,19 +411,19 @@ The transcript is a tree of the same nodes, the one that branches:
     [What is held in memory](#what-is-held-in-memory)).
 
 The transcript has a head for every thread the agent takes part in (issue 602): the *branch* of a
-thread is the path from its root up to its head, and what the agent's model is given in that
-thread. Every method that reads or extends a branch names its thread; a change of a message is
-recorded on every branch that holds it. The transcript gives every position, on whichever branch,
-so that its threads never give one twice. An agent takes part in one thread for now, that of its
-runtime (`ActorRuntime::thread_id`). What it takes in, answers again or carries out goes on the
+thread is the path from its root up to its head, and what the agent's model is given in that thread.
+Every method that reads or extends a branch names its thread; a change of a message is recorded on
+every branch that holds it. The transcript gives every position, on whichever branch, so that its
+threads never give one twice. An agent takes part in the threads its runtime names
+(`ActorRuntime::threads`), one for now. What it takes in, answers again or carries out goes on the
 branch of the thread the envelope happens in where the agent takes part there, and else on the
-branch of the thread it takes part in (`AgentBody::branch_of`): a nudge, a request to answer again
-and a command reach it by name from any thread, and read on a branch of their own, a request to
-answer again would be refused and a turn would begin empty. A turn runs on the branch it was begun
-on (`Turn::of`, `Situation::branch_thread_id`), and the actor keeps the thread of the turn that
-runs or ran last (`RunControl::thread`). Taking in goes by branch: a request to respond on another
-branch than the one to be answered ends the batch and waits, unheard, for a turn of its own; during
-a turn and as it ends, what happens on another branch is passed over
+branch of the thread it joined in (`ActorRuntime::joined_thread_id`, `AgentBody::branch_of`): a
+nudge, a request to answer again and a command reach it by name from any thread, and read on a
+branch of their own, a request to answer again would be refused and a turn would begin empty. A turn
+runs on the branch it was begun on (`Turn::of`, `Situation::branch_thread_id`), and the actor keeps
+the thread of the turn that runs or ran last (`RunControl::thread`). Taking in goes by branch: a
+request to respond on another branch than the one to be answered ends the batch and waits, unheard,
+for a turn of its own; during a turn and as it ends, what happens on another branch is passed over
 (`AgentBody::take_in_during_turn`, `drop_answered`). With one thread, everything goes on its one
 branch.
 
@@ -471,7 +473,8 @@ An agent keeps no history of its own (issue 417): what it was offered and what i
 channel's history, which records every message it says - in full, with what it was produced from
 (`Message::produced_from`) - and what it was given to read, when it stopped reading a prompt part
 given, and when it compacted, as gone to nobody. Its actor tells the channel the latter after every
-step (`AgentChannelState::to_tell`, `MessageGiven`, `MessageWithdrawn`, `ContextCompacted`). What
+step, each in the thread whose branch it was recorded on (`AgentChannelState::to_tell`,
+`MessageGiven`, `MessageWithdrawn`, `ContextCompacted`). What
 a turn said is its answer, kept with the turn as it is said (`TurnState::answer`), since a
 compaction in the middle of it may leave nothing of it on the branch it reads. What
 reads further back - what the agent saw when it produced an old message, a page of what it was

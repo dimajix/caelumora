@@ -717,7 +717,7 @@ mod tests {
     use crate::turn::GivenUpReason;
     use crate::user::UserId;
     use crate::work::TurnId;
-    use std::collections::HashSet;
+    use std::collections::{BTreeSet, HashSet};
 
     /// Issue 557: an event made for a channel happens in its line, and what follows it in the
     /// thread it happened in.
@@ -849,12 +849,13 @@ mod tests {
             let envelope =
                 Envelope::new(EventContext { sender_id: sender, ..EventContext::default() }, event);
             let recipients = envelope.recipients();
+            let taking_part = BTreeSet::from([envelope.context.thread_id]);
             self.agents
                 .iter()
                 .chain(&self.users)
                 .chain([&self.approver])
                 .copied()
-                .filter(|id| recipients.goes_to(*id, envelope.context.thread_id, envelope.thread()))
+                .filter(|id| recipients.goes_to(*id, &taking_part, envelope.thread()))
                 .collect()
         }
 

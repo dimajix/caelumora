@@ -9,7 +9,7 @@ use caelumora_domain::actor::ActorId;
 use caelumora_domain::channel::{Channel, Opening, ThreadId, ThreadOrigin, ThreadState};
 use caelumora_domain::store::Stored;
 use caelumora_security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 use tracing::info;
 
@@ -38,22 +38,22 @@ impl ChannelLoop {
         self.thread(thread).is_some()
     }
 
-    /// The thread `participant`, as the channel lists it, takes part in: where its actor runs, or
-    /// else where its range of attendance is open, or else - one resting, a deleted agent - where
-    /// it would take part again as it is restored (`rejoining`); `None` for one the channel does
-    /// not list, or whose history cannot be read. For whoever lets them go or has them follow their
-    /// agent, to hold that thread meanwhile, so that nobody closes it (issue 593).
-    pub(crate) async fn thread_taken_part_in(&self, participant: ActorId) -> Option<ThreadId> {
+    /// The threads `participant`, as the channel lists it, takes part in: where its actor runs, or
+    /// else where its ranges of attendance are open, or else - one resting, a deleted agent - where
+    /// it would take part again as it is restored (`rejoining`); none for one the channel does not
+    /// list, or whose history cannot be read. For whoever lets them go or has them follow their
+    /// agent, to hold those threads meanwhile, so that nobody closes them (issues 593, 602).
+    pub(crate) async fn threads_taken_part_in(&self, participant: ActorId) -> BTreeSet<ThreadId> {
         if !self.channel().lists(participant) {
-            return None;
+            return BTreeSet::new();
         }
         if let Some(actor) = self.actors.load().get(&participant) {
-            return Some(actor.thread);
+            return actor.threads.clone();
         }
-        if let Some(&thread) = self.attending().await.get(&participant) {
-            return Some(thread);
+        if let Some(threads) = self.attending().await.remove(&participant) {
+            return threads;
         }
-        self.rejoining(participant).await.ok().map(|(_, thread)| thread)
+        self.rejoining(participant).await.ok().map(|(_, thread)| thread).into_iter().collect()
     }
 
     /// Opens thread `thread` of the channel at `origin` on behalf of `context`, if they may
@@ -118,14 +118,16 @@ impl ChannelLoop {
         }
         // Its delegate goes with it (issue 557).
         let delegate = ActorId::Delegate(thread);
-        let running =
-            self.actors.load().iter().any(|(id, actor)| actor.thread == thread && *id != delegate);
+        let running = self
+            .actors
+            .load()
+            .iter()
+            .any(|(id, actor)| actor.threads.contains(&thread) && *id != delegate);
         let attending = self.attending().await;
         let listed = self.channel();
-        let resting = listed
-            .participants
-            .iter()
-            .any(|participant| attending.get(&participant.actor_id()) == Some(&thread));
+        let resting = listed.participants.iter().any(|participant| {
+            attending.get(&participant.actor_id()).is_some_and(|there| there.contains(&thread))
+        });
         if running || resting {
             return Err(ChannelError::ThreadNotEmpty { thread, channel: self.id }.into());
         }

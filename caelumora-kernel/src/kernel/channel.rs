@@ -23,6 +23,7 @@ use caelumora_store::history::HistoryStore;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_store::transcript::TranscriptStore;
 use caelumora_store::StateStore;
+use std::collections::BTreeSet;
 use std::sync::{Arc, OnceLock, Weak};
 
 /// What a channel runs with, made by its session (`SessionLoop::channel_runtime`) as the channel
@@ -86,9 +87,9 @@ impl ChannelRuntime {
         }
     }
 
-    /// The runtime of the participant `resolved`, taking part in `thread` (issue 557), in the
-    /// channel this runtime is for: acting in the participant's context as the controllers hold it
-    /// now (issue 516).
+    /// The runtime of the participant `resolved`, joining in `thread` and taking part in it alone
+    /// (issues 557, 602), in the channel this runtime is for: acting in the participant's context
+    /// as the controllers hold it now (issue 516).
     pub(crate) fn participant_runtime(
         &self,
         resolved: &ResolvedParticipant,
@@ -111,7 +112,8 @@ impl ChannelRuntime {
             actor,
             session_id: self.session.id(),
             channel_id: self.channel.id(),
-            thread_id: thread,
+            threads: BTreeSet::from([thread]),
+            joined_thread_id: thread,
             acting,
         }
     }

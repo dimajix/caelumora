@@ -1202,8 +1202,9 @@ impl Actor for AgentActor {
                 return Vec::new();
             }
         };
-        // As the agent's own, nobody having asked.
-        let at = self.body.own().event_context;
+        // As the agent's own, nobody having asked, in the thread it joined in: the caller names
+        // none.
+        let at = self.body.own(runtime.joined_thread_id()).event_context;
         let work =
             Work::new(at, None, runtime.channel_classification(), runtime.session_time_zone());
         let thread = work.event_context.thread_id;

@@ -472,3 +472,17 @@ above. The position of a predecessor (C) is no step yet.
   with. An external agent keeps to its one thread. Testable only once an agent takes part in two
   threads, with step 2b: the batch ended by a request of another branch, `build` resuming and
   `store` writing in a thread other than the runtime's.
+- **2026-11-22** — Step 2a committed. Step 2b done: taking part is a set, of one thread
+  (`ChannelActor::threads`, `ActorRuntime::threads`, `ParticipantRuntime::threads`); `goes_to`
+  takes the set, `HistoryStore::attending` gives each actor the threads of its open ranges, and
+  `threads_taken_part_in` the threads to hold. A join is announced in the thread joined in, a
+  leave in each thread taken part in, which `Attendance` closes as one range until step 3; a nudge
+  and a request to answer again end the quiet of each thread. Named until step 3:
+  the thread one joined the channel in (`joined_thread_id`), where one says of oneself what names
+  no thread - what a user says, the tools an agent would be offered, an external agent's one
+  thread -; the channel picks it from the attendance in one place (`ChannelLoop::joined_in`), as
+  nobody is taken into a further thread yet, and an actor is still taken in in that one thread
+  alone (`adopt`). Where an agent stands is stored and announced in the thread of its turn, else
+  in the one it joined in (`AgentBody::standing_in`); what it recorded is told in the thread of
+  its branch (`to_tell`). With one thread nothing changes; the tests of 2a's rules with two
+  threads, which 2a could not have, are added.

@@ -191,7 +191,7 @@ async fn an_agent_asked_to_answer_again_takes_its_answer_back_and_answers_withou
 }
 
 /// Issue 602: asked to answer again from another thread of its channel, an agent answers again on
-/// the branch of the one thread it takes part in, whatever thread the request names.
+/// the branch of the thread it joined in, whatever thread the request names.
 #[tokio::test]
 async fn an_agent_asked_to_answer_again_from_another_thread_answers_again_on_its_branch() {
     use caelumora_domain::channel::Delegation;

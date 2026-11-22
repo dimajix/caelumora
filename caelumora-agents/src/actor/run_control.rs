@@ -5,6 +5,7 @@
 
 use crate::tool::Interruption;
 use caelumora_domain::actor::{ActorState, ProcessingStateHolder};
+use caelumora_domain::agent::AgentChannelState;
 use caelumora_domain::channel::ThreadId;
 use caelumora_domain::work::TurnId;
 use std::collections::HashMap;
@@ -94,6 +95,23 @@ impl RunControl {
             left: AtomicBool::new(false),
             interrupt: AtomicU8::new(NO_INTERRUPT),
             calls: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// The run control of an agent whose state in its channel is `state`, as it resumes: in the
+    /// turn stored under way, in whichever thread - one at a time (issue 557) -, standing where it
+    /// stood there, or else standing where it stood in `joined_in`, the thread it joined in.
+    pub(crate) fn resuming(state: &AgentChannelState, joined_in: ThreadId) -> Self {
+        let resumed = state.threads.iter().find_map(|(thread, part)| {
+            let turn = part.turn.as_ref()?;
+            Some((part.processing_state, (*thread, turn.work.turn_id)))
+        });
+        match resumed {
+            Some((standing, turn)) => Self::new(standing, Some(turn)),
+            None => {
+                let part = state.thread(joined_in);
+                Self::new(part.map(|part| part.processing_state).unwrap_or_default(), None)
+            }
         }
     }
 
@@ -341,8 +359,32 @@ fn ends_run(asked: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_domain::actor::EventContext;
+    use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::value::time_zone::TimeZone;
+    use caelumora_domain::work::Work;
     use std::time::Duration;
     use tokio::time;
+
+    /// Issue 602: an agent resumes the turn stored under way in whichever thread it runs, standing
+    /// where it stood there; without one, where it stood in the thread it joined in.
+    #[test]
+    fn it_resumes_the_turn_under_way_in_whichever_thread() {
+        let (joined, there) = (ThreadId::default(), ThreadId::new());
+        let mut state = AgentChannelState::default();
+        state.thread_mut(joined).processing_state = ActorState::Sleeping;
+        let control = RunControl::resuming(&state, joined);
+        assert_eq!(control.state(), ActorState::Sleeping, "where it stood in the one it joined in");
+        assert_eq!(control.thread(), None, "no turn");
+
+        let work = Work::new(EventContext::default(), None, Classification::PUBLIC, TimeZone::UTC);
+        let turn = state.begin_turn(there, work);
+        state.thread_mut(there).processing_state = ActorState::WaitingForUser;
+        let control = RunControl::resuming(&state, joined);
+        assert_eq!(control.thread(), Some(there), "the turn's thread");
+        assert_eq!(control.turn_under_way(), Some(turn), "the turn");
+        assert_eq!(control.state(), ActorState::WaitingForUser, "standing where it stood there");
+    }
 
     #[test]
     fn a_cancel_interrupts_only_a_turn_under_way() {

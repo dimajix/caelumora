@@ -17,6 +17,7 @@ use caelumora_domain::security::SecurityAttributes;
 use caelumora_domain::session::SessionId;
 use caelumora_domain::store::StoreResult;
 use caelumora_security::{AccessPolicy, SecurityContext};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 /// What a participant's actor runs with (issue 69): the context it acts in, built by the kernel at
@@ -35,8 +36,11 @@ pub struct ParticipantRuntime {
     pub(super) actor: ActorId,
     pub(super) session_id: SessionId,
     pub(super) channel_id: ChannelId,
-    /// The thread of its channel the actor takes part in (issue 557).
-    pub(super) thread_id: ThreadId,
+    /// The threads of its channel the actor takes part in (issues 557, 602): the one it joined in,
+    /// as nobody is taken into a further thread yet.
+    pub(super) threads: BTreeSet<ThreadId>,
+    /// The thread it joined its channel in (issue 602).
+    pub(super) joined_thread_id: ThreadId,
     /// In whose name it acts, which the kernel builds into a context at every call (issue 516).
     pub(super) acting: Acting,
 }
@@ -49,10 +53,15 @@ impl ParticipantRuntime {
         self.acting.context_for(initiator)
     }
 
-    /// The thread of its channel the actor takes part in (issue 557): where what it says of itself
-    /// happens.
-    pub(crate) fn thread_id(&self) -> ThreadId {
-        self.thread_id
+    /// The threads of its channel the actor takes part in (issues 557, 602).
+    pub(crate) fn threads(&self) -> BTreeSet<ThreadId> {
+        self.threads.clone()
+    }
+
+    /// The thread it joined its channel in (issue 602): where it says of itself what names no
+    /// thread of its own - what a user says, until they name the thread they write in.
+    pub(crate) fn joined_thread_id(&self) -> ThreadId {
+        self.joined_thread_id
     }
 
     /// The kernel of the process the participant runs in, which the runtime of its agent answers by
@@ -133,7 +142,7 @@ impl ParticipantRuntime {
 }
 
 /// What the tests make of a participant's runtime past its own API: one acting in a context they
-/// give it.
+/// give it, and one whose actor takes part in a further thread.
 #[cfg(any(test, feature = "test-support"))]
 impl ParticipantRuntime {
     /// This runtime, acting in `context` whatever its actor and its initiator are: for a test
@@ -141,6 +150,13 @@ impl ParticipantRuntime {
     /// (issue 516).
     pub fn acting_as(self, context: SecurityContext) -> Self {
         Self { acting: Acting(ActingKind::Given(context)), ..self }
+    }
+
+    /// This runtime, its actor taking part in `thread` as well: for a test of an actor in several
+    /// threads (issue 602), which nobody is taken into yet.
+    pub fn taking_part_also_in(mut self, thread: ThreadId) -> Self {
+        self.threads.insert(thread);
+        self
     }
 }
 

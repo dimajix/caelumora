@@ -4,7 +4,7 @@
 
 use super::run::RunningActor;
 use super::ResolvedParticipant;
-use super::{ActorChange, ChannelError, ChannelLoop};
+use super::{ActorChange, ChannelActor, ChannelError, ChannelLoop};
 use crate::actor::delegate::DelegateActor;
 use anyhow::{anyhow, Result};
 use caelumora_domain::actor::ActorId;
@@ -50,7 +50,7 @@ impl ChannelLoop {
         let origin = opening.origin.thread;
         let runs_in = |participant: ActorId, thread: ThreadId| {
             let actors = self.actors.load();
-            actors.get(&participant).is_some_and(|actor| actor.thread == thread)
+            actors.get(&participant).is_some_and(|actor| actor.threads.contains(&thread))
         };
         let not_in = |participant, thread| ChannelError::NotInThread {
             participant,
@@ -204,8 +204,9 @@ impl ChannelLoop {
         running: &mut HashMap<ActorId, RunningActor>,
     ) {
         let delegate = ActorId::Delegate(thread);
-        if let Some(actor) = self.actor(delegate) {
-            self.drop_actor(delegate, &actor, thread);
+        let taken_in = self.actors.load().get(&delegate).cloned();
+        if let Some(ChannelActor { actor, threads, .. }) = taken_in {
+            self.drop_actor(delegate, &actor, &threads);
         }
         running.remove(&delegate);
         if let Some(held) = self.state.lock().await.threads.get_mut(&thread) {

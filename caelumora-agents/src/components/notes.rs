@@ -498,10 +498,10 @@ mod tests {
     fn turn_of(agent: AgentId, state: &mut AgentChannelState) -> Turn<'_> {
         let runtime = agent_runtime(owned_runtime_of(agent));
         state.begin_turn(
-            runtime.thread_id(),
+            runtime.joined_thread_id(),
             Work::new(Default::default(), None, Default::default(), Default::default()),
         );
-        Turn::of(state, runtime.thread_id(), runtime).expect("a turn was begun")
+        Turn::of(state, runtime.joined_thread_id(), runtime).expect("a turn was begun")
     }
 
     fn note(id: u32, text: &str) -> Note {

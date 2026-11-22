@@ -209,22 +209,24 @@ What names a thread the channel does not have is not let in, nor what is sent in
 closed (see *The channel decides what enters it* below); the rejection is said, as every rejection,
 in the thread of what it rejects, and reaches its sender by name.
 
-Every participant takes part in one thread of the channel - its line, or a thread it founded -,
-which its actor
-knows from its runtime (`ParticipantRuntime::thread_id`, an agent's `ActorRuntime::thread_id`):
-what it says of itself happens there, its join and its leave are announced there, and only that
-thread's moderator may ask it. Whether something happens in one thread or in the whole channel is
-the kind of what the history records of it (`HistoryEntry::is_of_thread`): a message said, a turn's
-end, a request, an approval, and who joined or left, happen in a thread - the one the context names
+Every participant takes part in a set of threads of the channel - one for now: its line, or a
+thread it founded (issue 602) -, which its actor knows from its runtime
+(`ParticipantRuntime::threads`, an agent's `ActorRuntime::threads`): its leave is announced in
+each of them, and only their moderators may ask it. Its join, and what it says of itself without
+a thread to name, happen in the thread it joined the channel in (`joined_thread_id`): what a user
+says, until they name the thread they write in, and what an agent says of itself before its first
+turn. Whether something happens in one thread or in the whole channel is the kind of what the
+history records of it (`HistoryEntry::is_of_thread`): a message said, a turn's end, a request, an
+approval, and who joined or left, happen in a thread - the one the context names
 (`Recorded::thread`, `Envelope::thread`), for a join the one joined -; a change of a message and a
 classification of the channel happen in the whole channel. By one rule (`Recipients::goes_to`,
 `reaches`), what goes to every participant of a kind is delivered and read so: an agent is given
-what happens in its thread and in the whole channel - what it hears enters its context, and is paid
-for by every call after it -, a user everything of the channel, which a frontend sorts by thread;
-what goes to someone by name reaches them wherever it happens. The web UI and the TUI show the line
-(`Envelope::is_shown_in_line`, `ChannelView::shown_in_line`): what happens in it and in the whole
-channel, and of another thread its approvals and its questions, which its calls wait for, and what
-mentions the viewer.
+what happens in its threads and in the whole channel - what it hears enters its context, and is
+paid for by every call after it -, a user everything of the channel, which a frontend sorts by
+thread; what goes to someone by name reaches them wherever it happens. The web UI and the TUI show
+the line (`Envelope::is_shown_in_line`, `ChannelView::shown_in_line`): what happens in it and in
+the whole channel, and of another thread its approvals and its questions, which its calls wait for,
+and what mentions the viewer.
 
 A thread is **opened** at a message of another thread of its channel (`ThreadOrigin`), with its
 **founders** taking part in it alone (`procedure::thread::Open`, issue 593, which holds the new
@@ -236,10 +238,10 @@ the session. Whoever reads the channel may open a thread (`OpenThread`),
 founded with whom they act for or agents of their own - taken into the session and the channel in
 the kernel's name, without the right to change either, so that a participant who does not own a
 shared session can start a sub-agent (issue 558); a founder takes part in the channel not yet,
-since an actor takes part in one thread. A person opens a thread only at the line; deeper threads
-come from agents. Whether the origin's message is in its thread is not asked: a tool opens a thread
-while the message with its call may still be on its way into the channel, which takes what was
-sent first and so records it before the opening. The opening and the closing of a thread are
+since an actor takes part in one thread for now. A person opens a thread only at the line; deeper
+threads come from agents. Whether the origin's message is in its thread is not asked: a tool opens a
+thread while the message with its call may still be on its way into the channel, which takes what
+was sent first and so records it before the opening. The opening and the closing of a thread are
 announced in the line (`ThreadOpened`, `ThreadClosed`), of the whole channel and told to its users;
 every thread is kept in the channel's state (`ChannelState::threads`), the closed ones as closed,
 from which the channel builds the open ones again as it starts; every actor starts again in the
@@ -251,7 +253,7 @@ in the opener's name as a thread is closed, refused while anyone still takes par
 A thread is **closed** by whoever opened it, or whoever may change the channel
 (`procedure::thread::Close`, which holds it until the channel closed it), once nobody takes part in
 it - no actor runs in it, no participant listed without an actor attends it -, so that nobody is
-left in a thread closed: whoever takes part is let go first. Letting someone go holds the thread
+left in a thread closed: whoever takes part is let go first. Letting someone go holds the threads
 they take part in until they have left (`procedure::participant::LetGo`, issue 593), as having an
 agent follow its deletion or restoring does the thread it rejoins, so that the channel closes a
 thread only once whoever left it has left: what they still sent until their task ended enters the
@@ -615,8 +617,8 @@ naming a message or a turn.
     its turn under way or its last turn given up that may be answered again
     (`ChannelLoop::retryable_turn`), and rejects any other (`EventRejected`, issue 567) - the
     actor of the user reaches into no other actor to know. The moderator routes it to the agent
-    alone, which the channel wakes first - ending the quiet of the thread the agent takes part in,
-    as for a nudge; no `WakeupRequested` goes ahead of it, which would wake every agent. A turn
+    alone, which the channel wakes first - ending the quiet of the threads the agent takes part
+    in, as for a nudge; no `WakeupRequested` goes ahead of it, which would wake every agent. A turn
     under way is ended as the request is delivered (`Actor::retry_turn`), decided in one step under
     the turn's lock. Whether a retry is possible is decided before anything is interrupted: a
     request about an older message never ends the answer under way.
@@ -995,7 +997,7 @@ A quiet thread is woken in one of two ways:
 
 *   **Deliberately**: `ChannelLoop::wakeup` (`WakeChannel`), of a thread or of every one, as
     `/wakeup` does for the whole channel; `wakeup_actor` wakes a single actor under the same
-    permission, and ends the quiet of its thread. The channel moves a sleeping agent to `Idle`
+    permission, and ends the quiet of its threads. The channel moves a sleeping agent to `Idle`
     itself; the agent announces it (see [AGENT-TURN.md](AGENT-TURN.md#the-cognitive-cycle)).
 *   **Because something is on its way**: a `WakeupRequested` that a user's actor sends ahead of its
     next message, which wakes the thread the message is said in alone - what is said in the line
@@ -1007,8 +1009,8 @@ request to respond, so the channel wakes everyone a decision asks before it deli
 that decision. The policies never choose a sleeping agent, so this wakes only agents a message
 mentions; an agent that is not addressed keeps sleeping. It does not end a thread's being quiet,
 and in a quiet thread, which asks nobody, it wakes nobody - unless a user nudges the agent or asks
-it to answer again, which ends the quiet of that thread as deliberately as a nudge, and wakes that
-agent alone.
+it to answer again, which ends the quiet of that agent's threads as deliberately as a nudge, and
+wakes that agent alone.
 
 ### Nudging someone
 
@@ -1027,7 +1029,7 @@ message of the user had mentioned them - no policy consulted, no chain between a
 *   **No permission of its own.** Whoever may write in the channel can ask anyone to respond by
     mentioning them; the nudge asks the same, so it asks nothing of the policy. Nudging oneself is
     refused: nobody would be asked.
-*   **Deliberate, like a `/wakeup` of an agent.** The channel ends the quiet of the thread the one
+*   **Deliberate, like a `/wakeup` of an agent.** The channel ends the quiet of the threads the one
     it asks takes part in as it routes the nudge, and wakes them. No `WakeupRequested` goes ahead of
     it: that would wake every agent of the thread.
 *   **What remains of it** is the request to respond, recorded to the one asked (issue 417), and
@@ -1280,7 +1282,8 @@ The actor of an agent is on the agent side, and is given less (issue 516): its k
 `AgentRuntime` serves. It holds the agent's participant runtime and the controllers of the agent and
 of its personality, and answers what only an agent asks itself: who the agent
 and its personality are as they are now (`agent`, `personality`), the ids of its session and its
-channel, the thread it takes part in (`thread_id`, issue 557) and the channel's classification; its
+channel, the threads it takes part in and the one it joined in (`threads`, `joined_thread_id`,
+issues 557, 602) and the channel's classification; its
 state in the channel and its transcript; what a turn
 staged for a system service, handed to the writer that commits it (`commit_staged`, issue 518); the
 attachments of its messages; its session and its channel to read, as readers at the classification

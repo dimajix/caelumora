@@ -739,8 +739,8 @@ pub(crate) async fn let_go_where_not_running(
 /// Locks what letting `participant` go from `session` needs, `running` where it runs: the
 /// participant exclusively; the channel `from`, or every channel of the session - also one that
 /// does not run, whose document letting go changes, and one that lists them only once they were
-/// founded into it meanwhile - shared; and in each the thread they take part in shared, until they
-/// have left it, so that nobody closes it before (`thread::Close`). What `LetGo` locks, and a
+/// founded into it meanwhile - shared; and in each the threads they take part in shared, until they
+/// have left them, so that nobody closes one before (`thread::Close`). What `LetGo` locks, and a
 /// plugin's procedure that lets someone go within a change of its own (issue 558's sub-agents).
 /// Asks nothing; of a session that does not run, the participant and the channel named alone.
 ///
@@ -764,7 +764,7 @@ pub async fn lock_letting_go(
         let Some(running) = running.and_then(|running| running.channel(channel)) else {
             continue;
         };
-        if let Some(thread) = running.thread_taken_part_in(participant).await {
+        for thread in running.threads_taken_part_in(participant).await {
             locks.shared(Key::Thread(session, channel, thread))?;
         }
     }
@@ -837,11 +837,11 @@ impl Procedure for Follow {
             }
             for channel in &running.session().channels {
                 locks.shared(Key::Channel(id, *channel))?;
-                // The thread each takes part in: a deleted agent's actor leaves it (`LetGo`).
+                // The threads each takes part in: a deleted agent's actor leaves them (`LetGo`).
                 let Some(channel_loop) = running.channel(*channel) else { continue };
                 for agent in &agents {
                     let participant = ActorId::Agent(*agent);
-                    if let Some(thread) = channel_loop.thread_taken_part_in(participant).await {
+                    for thread in channel_loop.threads_taken_part_in(participant).await {
                         locks.shared(Key::Thread(id, *channel, thread))?;
                     }
                 }

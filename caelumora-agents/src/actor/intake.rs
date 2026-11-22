@@ -503,13 +503,12 @@ mod tests {
 
     /// Until a request names its thread, what reaches the agent from a thread it takes no part in -
     /// routed to it by name, as a nudge, a request to answer again or a command is - goes on the
-    /// branch of the thread it takes part in (issue 602): read on a branch of its own, a turn
-    /// would begin empty. Its requests and those of its thread are one branch's, the last
-    /// answering.
+    /// branch of the thread it joined in (issue 602): read on a branch of its own, a turn would
+    /// begin empty. Its requests and those of its thread are one branch's, the last answering.
     #[tokio::test]
-    async fn what_reaches_it_from_another_thread_goes_on_the_branch_it_takes_part_in() {
+    async fn what_reaches_it_from_another_thread_goes_on_the_branch_it_joined_in() {
         let body = AgentBody::detached(Vec::new());
-        // The thread the detached runtime's agent takes part in.
+        // The thread the detached runtime's agent joined in.
         let (taking_part, elsewhere) = (ThreadId::default(), ThreadId::new());
         let in_thread = |thread_id, event| {
             Envelope::new(EventContext { thread_id, ..EventContext::default() }, event)
@@ -538,10 +537,47 @@ mod tests {
         assert!(left_in(&mut rx).await.is_empty(), "nothing waits for another branch");
     }
 
+    /// Issue 602: a request to respond on another branch than the one to be answered ends the
+    /// batch and waits, unheard, with what follows it, for a turn of its own: the oldest request is
+    /// answered first, and nothing of the other branch has to be stored meanwhile.
+    #[tokio::test]
+    async fn a_request_of_another_branch_ends_the_batch_and_waits() {
+        let (joined, there) = (ThreadId::default(), ThreadId::new());
+        let body = AgentBody::detached(Vec::new()).taking_part_also_in(there);
+        let in_thread = |thread_id, event| {
+            Envelope::new(EventContext { thread_id, ..EventContext::default() }, event)
+        };
+        let asked = |thread| {
+            in_thread(thread, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned })
+        };
+        let heard = |thread, text: &str| {
+            let message = Message { sender_id: ActorId::User(UserId::new()), ..said(text) };
+            in_thread(thread, ActorEvent::CompleteMessageGenerated(message))
+        };
+        let (tx, rx) = mpsc::channel(8);
+        let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
+        for event in [heard(joined, "here"), asked(there), heard(joined, "after")] {
+            tx.try_send(event).expect("room");
+        }
+
+        let mut state = AgentChannelState::default();
+        let taken = body.take_in(&mut state, asked(joined), &mut rx).await;
+        let answered = taken.request.map(|request| request.context.thread_id);
+        assert_eq!(answered, Some(joined), "the oldest request");
+        assert_eq!(texts(&state.transcript.messages(joined)), ["here"], "up to the other's");
+        assert!(state.transcript.digest(there).is_none(), "nothing heard on the other branch");
+        let waiting: Vec<_> = left_in(&mut rx).await.into_iter().map(|(kind, _)| kind).collect();
+        assert_eq!(
+            waiting,
+            ["ResponseRequested", "CompleteMessageGenerated"],
+            "the other's request waits, with what follows it"
+        );
+    }
+
     /// What happens on another branch than the turn's is passed over, during the turn and as it
     /// ends (issue 602), for a turn there: a turn begun in a thread the agent takes no part in -
-    /// everything heard goes on the branch of the one it takes part in (`branch_of`) - takes in
-    /// none of it, and drops no request, which a turn on that branch takes and drops.
+    /// everything heard goes on the branch of the one it joined in (`branch_of`) - takes in none
+    /// of it, and drops no request, which a turn on that branch takes and drops.
     #[tokio::test]
     async fn a_turn_takes_in_nothing_of_another_branch() {
         let alice = ActorId::User(UserId::new());

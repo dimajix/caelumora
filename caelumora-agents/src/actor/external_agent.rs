@@ -132,11 +132,11 @@ impl ExternalAgentActor {
         TypeKey::of::<dyn CommandProvider<dyn AgentCommand>>(),
     ];
 
-    /// The one thread it takes part in, whose branch of its transcript all its work reads and
-    /// extends (issue 602): its remote agent keeps one conversation, so an external agent keeps to
-    /// one thread.
+    /// The one thread it takes part in, the one it joined in (`ActorRuntime::joined_thread_id`),
+    /// whose branch of its transcript all its work reads and extends (issue 602): its remote agent
+    /// keeps one conversation, so an external agent keeps to one thread.
     fn thread(&self) -> ThreadId {
-        self.body.runtime.thread_id()
+        self.body.runtime.joined_thread_id()
     }
 
     /// The actor of the external agent of `actor_runtime` (issue 516), built from its
@@ -660,7 +660,7 @@ impl ExternalAgentActor {
         let channel = self.body.runtime.channel_classification();
         let (answering, label) = match &work {
             Some(work) => (Answering::continuing(work), work.label()),
-            None => (self.body.own(), self.remote.classification().unwrap_or(channel)),
+            None => (self.body.own(self.thread()), self.remote.classification().unwrap_or(channel)),
         };
         let events = match outcome {
             // A task nobody asked for is work of its own.
@@ -912,7 +912,8 @@ impl Answer {
 /// was not given yet, by modifying that one, so that it is told once, of
 /// the message as it stands then. Nothing for a message never given or
 /// taken back where it was given, or while the remote agent keeps no
-/// conversation: then it is given everything anew.
+/// conversation: then it is given everything anew. In its one thread, the one it joined in
+/// (`ExternalAgentActor::thread`, issue 602).
 ///
 /// What the remote agent was given of the message is read from the store
 /// (`ActorRuntime::transcript_message`, issue 380): it lies on a branch no
@@ -929,7 +930,7 @@ fn tell<'a>(
             return;
         };
         match runtime.transcript_message(id).await {
-            Ok(was) => give_notice(state, runtime.thread_id(), change, was),
+            Ok(was) => give_notice(state, runtime.joined_thread_id(), change, was),
             Err(e) => warn!("External agent cannot read message {} as it was given, to tell of its change: {:#}", id, e),
         }
     })

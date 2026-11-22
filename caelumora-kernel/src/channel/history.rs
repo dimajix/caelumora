@@ -14,7 +14,7 @@ use caelumora_domain::store::StoreResult;
 use caelumora_security::SecurityContext;
 use caelumora_store::history::HistoryStore;
 use chrono::{DateTime, Utc};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use tracing::{info, warn};
 
 /// How many items a page holds that is read to find something in a history
@@ -112,11 +112,11 @@ impl ChannelLoop {
             .map_or((Position::START, ThreadId::line(self.id)), |at| (at.range.start, at.thread)))
     }
 
-    /// Who takes part in the channel's history now, and in which thread: whoever has a range of
+    /// Who takes part in the channel's history now, and in which threads: whoever has a range of
     /// attendance still open (`HistoryStore::attending`) - what the channel builds its threads and
     /// starts its actors by, and reconciles, as it is built; nobody if it cannot be read, which is
     /// logged.
-    pub(super) async fn attending(&self) -> HashMap<ActorId, ThreadId> {
+    pub(super) async fn attending(&self) -> HashMap<ActorId, BTreeSet<ThreadId>> {
         self.history_store.attending(self.id).await.unwrap_or_else(|e| {
             warn!("Cannot read who takes part in channel {}: {}", self.id, e);
             HashMap::new()
@@ -126,19 +126,20 @@ impl ChannelLoop {
     /// Brings the channel's history in line with its document as it is built (reconciling, issue
     /// 590): whoever the document keeps as a former participant with a range of attendance still
     /// open in its history - let go while the channel did not run, in its stored document - is
-    /// handed to `run` as leaving (`ActorChange::Leave`), in the kernel's name, in the thread of
-    /// that range, ahead of every actor it starts: `run` announces it before anything else, as
+    /// handed to `run` as leaving (`ActorChange::Leave`), in the kernel's name, in the threads of
+    /// those ranges, ahead of every actor it starts: `run` announces it before anything else, as
     /// though it had happened while the channel ran. Who let them go and when, the document keeps
     /// (`FormerParticipant::left`). Where the history was recorded on after they were let go - an
     /// actor removed whose task had not ended as its session stopped - their attendance ends only
     /// here.
-    pub(super) async fn reconcile(&self, attending: &HashMap<ActorId, ThreadId>) {
+    pub(super) async fn reconcile(&self, attending: &HashMap<ActorId, BTreeSet<ThreadId>>) {
         for former in &self.channel().former {
             let participant = former.participant.actor_id();
-            let Some(&thread) = attending.get(&participant) else { continue };
+            let Some(threads) = attending.get(&participant) else { continue };
             let name = self.name_of(participant).await;
             info!("{} left channel {} while it did not run: recorded now", participant, self.id);
-            let leave = ActorChange::Leave(participant, name, SecurityContext::system(), thread);
+            let system = SecurityContext::system();
+            let leave = ActorChange::Leave(participant, name, system, threads.clone());
             let _ = self.request(leave);
         }
     }

@@ -24,7 +24,7 @@ use caelumora_domain::user::{UserChannelState, UserId};
 use caelumora_domain::value::name::ScopedName;
 use caelumora_security::Admission;
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::mem;
 use std::ops::Range;
 use std::sync::{Arc, RwLock};
@@ -568,7 +568,10 @@ impl HistoryStore for MemoryStore {
         }))
     }
 
-    async fn attending(&self, channel: ChannelId) -> StoreResult<HashMap<ActorId, ThreadId>> {
+    async fn attending(
+        &self,
+        channel: ChannelId,
+    ) -> StoreResult<HashMap<ActorId, BTreeSet<ThreadId>>> {
         Ok(read_lock(&self.histories, |all| {
             all.get(&channel).map(|kept| kept.attendance.attending()).unwrap_or_default()
         }))

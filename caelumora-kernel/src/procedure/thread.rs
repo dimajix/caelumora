@@ -3,7 +3,7 @@
 //!
 //! Opening holds the new thread exclusively - its id chosen before -, the thread it is opened at
 //! shared, so that it is not closed meanwhile, and its founders; closing holds the thread
-//! exclusively. Whoever lets someone go holds the thread they take part in shared, until they have
+//! exclusively. Whoever lets someone go holds the threads they take part in shared, until they have
 //! left (`participant::LetGo`), so that a thread is closed only once whoever left it has left. Both
 //! open the session as opening it does; the `ChannelLoop` opens and closes the thread, enforcing
 //! who may (`ChannelLoop::open_thread`, `close_thread`) - as a plugin's procedures may have it,

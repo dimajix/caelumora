@@ -19,7 +19,7 @@ use caelumora_domain::message::Message;
 use caelumora_domain::store::StoreResult;
 use caelumora_security::confidentiality::ConfidentialityQuestions;
 use caelumora_security::{ActionType, Enforcement, Reclassified, SecurityContext};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::convert::Infallible;
 use std::iter;
 use std::sync::{self, Arc, Weak};
@@ -69,14 +69,14 @@ impl Ended {
 
 /// How an actor that was told to stop leaves the channel: on whose behalf it was removed, in whose
 /// name `run` announces it (issue 262), what it was called as it left, the position from which on
-/// nothing was delivered to it (issue 417), the thread it took part in, where it is announced
-/// (issue 557), and whom `run` answers once it announced it - each who asked for its leave while
-/// it was leaving (issue 593).
+/// nothing was delivered to it (issue 417), the threads it took part in, in each of which it is
+/// announced (issues 557, 602), and whom `run` answers once it announced it - each who asked for
+/// its leave while it was leaving (issue 593).
 struct Leaving {
     remover: SecurityContext,
     name: String,
     until: Position,
-    thread: ThreadId,
+    threads: BTreeSet<ThreadId>,
     carried_out: Vec<oneshot::Sender<()>>,
 }
 
@@ -168,7 +168,7 @@ impl ChannelLoop {
     ) {
         let Request { change, carried_out } = request;
         match change {
-            ActorChange::Start(started, from, joined) => {
+            ActorChange::Start(started, thread, from, joined) => {
                 // Removed again before `run` got to start it: never started,
                 // so that it cannot run next to whoever joins under its id
                 // after it (issue 171).
@@ -186,14 +186,13 @@ impl ChannelLoop {
                         self.task_ended(old, running).await;
                     }
                 }
-                // Who joined is announced before the newcomer runs, so that
-                // its join is recorded - and with it where its view of the
-                // history begins - before it reads (issue 223); also if it
-                // was removed again before it got to run: it was added, and
-                // its removal follows. Right before it, the part of the
-                // history it was given, to it alone and in the system's
-                // name, if it was given anything before its join (issue 417).
-                // An actor that starts again with its channel joins nothing.
+                // Who joined is announced before the newcomer runs, in the thread it joins in
+                // (issue 602), so that its join is recorded - and with it where its view of the
+                // history begins - before it reads (issue 223); also if it was removed again
+                // before it got to run: it was added, and its removal follows. Right before it,
+                // the part of the history it was given, to it alone and in the system's name, if
+                // it was given anything before its join (issue 417). An actor that starts again
+                // with its channel joins nothing.
                 let end = self.state.lock().await.history.end();
                 if let Some(adder) = joined.clone() {
                     if let Some(from) = from.filter(|from| *from < end) {
@@ -204,11 +203,11 @@ impl ChannelLoop {
                             by_name: self.name_of(adder.caller_id).await,
                         };
                         let system = SecurityContext::system();
-                        self.announce(shared, system, started.thread, running).await;
+                        self.announce(shared, system, thread, running).await;
                     }
                     let name = started.actor.name().to_string();
                     let joined = ActorEvent::ParticipantJoined { participant: id, name };
-                    self.announce(joined, adder, started.thread, running).await;
+                    self.announce(joined, adder, thread, running).await;
                 }
                 if still_taken_in {
                     let heard = Self::opening(
@@ -222,7 +221,7 @@ impl ChannelLoop {
                 }
                 let _ = carried_out.send(());
             }
-            ActorChange::Leave(id, name, remover, thread) => {
+            ActorChange::Leave(id, name, remover, threads) => {
                 // Dropping its inbox closes it; told to leave (`Actor::leave`),
                 // the actor ends its task itself once its state is stored
                 // consistent. Only if it does not - a tool that hangs - is it
@@ -233,7 +232,7 @@ impl ChannelLoop {
                 // Nothing is delivered to it from here on (issue 417).
                 let until = self.state.lock().await.history.end();
                 let carried_out = vec![carried_out];
-                let mut leaving = Leaving { remover, name, until, thread, carried_out };
+                let mut leaving = Leaving { remover, name, until, threads, carried_out };
                 match running.get_mut(&id) {
                     Some(handle) => {
                         handle.inbox = None;
@@ -338,19 +337,21 @@ impl ChannelLoop {
     }
 
     /// Announces that `participant` left as `leaving` says - called its name, in the name of its
-    /// remover's caller (`ParticipantLeft`, issue 162), in its thread (issue 557) - between the
-    /// events `run` routes, once the participant's task has ended: what it sent before is in the
-    /// channel, nothing of it follows (issue 262). Nothing was delivered to it from the position
-    /// `until` on (issue 417). Whoever asked for the leave is answered then (issue 593).
+    /// remover's caller (`ParticipantLeft`, issue 162), in each of its threads (issues 557, 602) -
+    /// between the events `run` routes, once the participant's task has ended: what it sent before
+    /// is in the channel, nothing of it follows (issue 262). Nothing was delivered to it from the
+    /// position `until` on (issue 417). Whoever asked for the leave is answered then (issue 593).
     async fn announce_removal(
         &self,
         participant: ActorId,
         leaving: Leaving,
         running: &HashMap<ActorId, RunningActor>,
     ) {
-        let Leaving { remover, name, until, thread, carried_out } = leaving;
-        let removed = ActorEvent::ParticipantLeft { participant, name, until };
-        self.announce(removed, remover, thread, running).await;
+        let Leaving { remover, name, until, threads, carried_out } = leaving;
+        for thread in threads {
+            let removed = ActorEvent::ParticipantLeft { participant, name: name.clone(), until };
+            self.announce(removed, remover.clone(), thread, running).await;
+        }
         for asked in carried_out {
             let _ = asked.send(());
         }
@@ -366,8 +367,8 @@ impl ChannelLoop {
     }
 
     /// Announces `event` in the channel in the name of `by`'s caller, in the thread `thread`: a
-    /// change of who takes part (issue 408) in the thread the participant takes part in (issue
-    /// 557) - which makes its attendance there -, a thread opened or closed in the line. The
+    /// change of who takes part (issue 408) in a thread the participant takes part in (issues 557,
+    /// 602) - which makes its attendance there -, a thread opened or closed in the line. The
     /// channel's own word, which enters it without `admission` - that lets no actor say it -, is
     /// recorded in its history and told to whom it goes.
     async fn announce(
@@ -858,7 +859,8 @@ impl ChannelLoop {
                 gives && event.context.initiator_id == delegation.initiator
             })
         };
-        let running_there = self.actors.load().get(&recipient).is_some_and(|r| r.thread == thread);
+        let running_there =
+            self.actors.load().get(&recipient).is_some_and(|r| r.threads.contains(&thread));
         let text = message.attachments.is_empty()
             && message.tool_calls.is_empty()
             && message.tool_results.is_empty();
@@ -961,16 +963,18 @@ impl ChannelLoop {
         if matches!(event.event, ActorEvent::WakeupRequested) {
             self.wake(Some(event.context.thread_id));
         }
-        // A nudge is deliberate, as `wakeup_actor` is (issue 278), and so is a
-        // request to answer again (issue 567): the thread of whom it asks is
-        // quiet no longer (issue 557), so that the request is delivered, and
-        // whom it asks is woken with it, alone (`route_event_impl`).
+        // A nudge is deliberate, as `wakeup_actor` is (issue 278), and so is a request to answer
+        // again (issue 567): the threads of whom it asks are quiet no longer (issues 557, 602), so
+        // that the request is delivered, and whom it asks is woken with it, alone
+        // (`route_event_impl`).
         if let ActorEvent::NudgeRequested { participant: asked }
         | ActorEvent::RetryRequested { author: asked, .. } = event.event
         {
             let actors = self.actors.load();
-            let thread = actors.get(&asked).map_or(event.context.thread_id, |a| a.thread);
-            self.end_quiet(thread);
+            match actors.get(&asked) {
+                Some(asked) => asked.threads.iter().for_each(|thread| self.end_quiet(*thread)),
+                None => self.end_quiet(event.context.thread_id),
+            }
         }
 
         if let Some(routing) = routing {
@@ -1074,7 +1078,7 @@ impl ChannelLoop {
                 self.actors
                     .load()
                     .iter()
-                    .filter(|(id, actor)| recipients.goes_to(**id, actor.thread, happened_in))
+                    .filter(|(id, actor)| recipients.goes_to(**id, &actor.threads, happened_in))
                     .map(|(id, _)| *id)
                     .collect()
             }
@@ -2553,9 +2557,13 @@ mod tests {
         assert!(given_up, "the turn it gave up entered the channel");
     }
 
-    /// An actor told to stop whose task has not ended: no inbox, who removed it, and the thread
+    /// An actor told to stop whose task has not ended: no inbox, who removed it, and the threads
     /// it took part in.
-    fn leaving_actor(id: ActorId, remover: SecurityContext, thread: ThreadId) -> RunningActor {
+    fn leaving_actor(
+        id: ActorId,
+        remover: SecurityContext,
+        threads: BTreeSet<ThreadId>,
+    ) -> RunningActor {
         let name = "helper".to_string();
         RunningActor {
             id,
@@ -2566,7 +2574,7 @@ mod tests {
                 remover,
                 name,
                 until: Position::START,
-                thread,
+                threads,
                 carried_out: Vec::new(),
             }),
             ended: Vec::new(),
@@ -2600,7 +2608,8 @@ mod tests {
         let mut join_set = JoinSet::new();
         let line = ThreadId::line(channel.id);
         let gone = ActorId::Agent(AgentId::new());
-        let leave = ActorChange::Leave(gone, "gone".to_string(), system.clone(), line);
+        let in_line = BTreeSet::from([line]);
+        let leave = ActorChange::Leave(gone, "gone".to_string(), system.clone(), in_line);
         let left = channel.request(leave);
         let origin = ThreadOrigin { thread: line, message: MessageId::new() };
         let thread = ThreadId::new();
@@ -2621,6 +2630,34 @@ mod tests {
         let close = channel.request(ActorChange::Close(thread, system.clone()));
         carry_out_requests(&channel, &mut running, &event_tx, &mut join_set).await;
         assert!(close.carried_out().await, "a closing, announced");
+    }
+
+    /// Issue 602: a leave is announced in every thread the participant took part in.
+    #[tokio::test]
+    async fn a_leave_is_announced_in_every_thread_taken_part_in() {
+        let alice = make_user("alice");
+        let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
+        let mut events = channel.observe();
+        let (event_tx, _event_rx) = mpsc::channel(10);
+        let mut join_set = JoinSet::new();
+        let (line, thread) = (ThreadId::line(channel.id), ThreadId::new());
+        let system = SecurityContext::system();
+        let origin = ThreadOrigin { thread: line, message: MessageId::new() };
+        channel.open_thread(&system, thread, origin).await.expect("opened");
+        let gone = ActorId::Agent(AgentId::new());
+        let both = BTreeSet::from([line, thread]);
+        let left = channel.request(ActorChange::Leave(gone, "gone".to_string(), system, both));
+        carry_out_requests(&channel, &mut HashMap::new(), &event_tx, &mut join_set).await;
+        assert!(left.carried_out().await, "announced");
+
+        let mut announced = BTreeSet::new();
+        while let Ok(event) = events.try_recv() {
+            if let ActorEvent::ParticipantLeft { participant, .. } = event.event {
+                assert_eq!(participant, gone, "who left");
+                announced.insert(event.context.thread_id);
+            }
+        }
+        assert_eq!(announced, BTreeSet::from([line, thread]), "in each");
     }
 
     /// Issue 593: `run` runs on, empty, until it is aborted; then it has run once, and a request
@@ -2645,7 +2682,7 @@ mod tests {
             gone,
             "gone".to_string(),
             SecurityContext::system(),
-            line,
+            BTreeSet::from([line]),
         ));
         let answered = time::timeout(Duration::from_secs(1), late.carried_out()).await;
         assert!(!answered.expect("answered at once"), "with nothing");
@@ -2663,9 +2700,12 @@ mod tests {
         let (event_tx, _event_rx) = mpsc::channel(10);
         let mut join_set = JoinSet::new();
         let helper = ActorId::Agent(AgentId::new());
-        let mut running = HashMap::from([(helper, leaving_actor(helper, system.clone(), line))]);
+        let in_line = BTreeSet::from([line]);
+        let leaving = leaving_actor(helper, system.clone(), in_line.clone());
+        let mut running = HashMap::from([(helper, leaving)]);
 
-        let leave = || ActorChange::Leave(helper, "helper".to_string(), system.clone(), line);
+        let leave =
+            || ActorChange::Leave(helper, "helper".to_string(), system.clone(), in_line.clone());
         let left = tokio::spawn(channel.request(leave()).carried_out());
         let again = tokio::spawn(channel.request(leave()).carried_out());
         carry_out_requests(&channel, &mut running, &event_tx, &mut join_set).await;
@@ -2696,9 +2736,9 @@ mod tests {
         );
 
         // Told to stop, its task still runs: what it says is its own (issue 262).
-        let line = ThreadId::line(channel.id);
-        let running =
-            HashMap::from([(going, leaving_actor(going, SecurityContext::default(), line))]);
+        let in_line = BTreeSet::from([ThreadId::line(channel.id)]);
+        let leaving = leaving_actor(going, SecurityContext::default(), in_line);
+        let running = HashMap::from([(going, leaving)]);
         channel.handle_actor_event(farewell, &running).await;
 
         let heard = events.try_recv().expect("the farewell enters the channel");
@@ -2721,12 +2761,13 @@ mod tests {
         let (event_tx, _event_rx) = mpsc::channel(10);
         let mut join_set = JoinSet::new();
         let (left, old_leave) = oneshot::channel();
-        let mut old = leaving_actor(participant, context.clone(), joined.thread);
+        let mut old = leaving_actor(participant, context.clone(), joined.threads.clone());
         if let Some(leaving) = &mut old.leaving {
             leaving.carried_out.push(left);
         }
         let mut running = HashMap::from([(participant, old)]);
-        let change = ActorChange::Start(joined, Some(Position::START), Some(context.clone()));
+        let line = ThreadId::line(channel.id);
+        let change = ActorChange::Start(joined, line, Some(Position::START), Some(context.clone()));
         let (carried_out, started) = oneshot::channel();
         channel
             .apply_change(Request { change, carried_out }, &mut running, &event_tx, &mut join_set)
