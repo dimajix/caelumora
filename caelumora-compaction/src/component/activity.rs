@@ -28,7 +28,8 @@ impl ActivityProvider for CompactionComponent {
         // A text that cannot be had fails the next call of the model, not this.
         let Ok(Some((positions, true))) = situation.token_positions() else { return false };
         let tokens = positions.last().copied().unwrap_or(0);
-        let size = situation.agent_channel_state().used.and_then(|usage| usage.context_size);
+        let part = situation.agent_channel_state().thread(situation.branch_thread_id());
+        let size = part.and_then(|part| part.used).and_then(|usage| usage.context_size);
         let Some(size) = size.filter(|size| *size > 0) else {
             if !self.told_no_size.swap(true, Ordering::Relaxed) {
                 info!("Agent {}: its model reports no context size; it does not compact its context on its own", situation.agent_id());

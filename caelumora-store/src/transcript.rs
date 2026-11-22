@@ -4,7 +4,7 @@
 //! only what its heads reach. The `TranscriptStore` is the read side, for
 //! whoever reads what lies on an older branch - and of the prompt texts and
 //! tool sets placed beside it (issue 383), which are written by the same
-//! put, and held by the actor only while its turn under way names them, and
+//! put, and held by the actor only while its turns under way name them, and
 //! of the frames the contexts of its messages had (issue 426), held only
 //! until they are stored.
 
@@ -103,41 +103,49 @@ pub trait TranscriptStore: Debug + Send + Sync {
         Ok(self.frame(agent, channel, frame).await?.map(|frame| ContextRef { transcript, frame }))
     }
 
-    /// The prompt texts and the tool sets `reference` names, of `agent` in
-    /// `channel`, with nothing pending (issue 383): what a context is
-    /// resolved with besides its transcript (`ContextResolver`). What it
-    /// names and is not kept is not there.
+    /// The prompt texts and the tool sets `references` name, of `agent` in `channel`, with nothing
+    /// pending (issue 383): what a context is resolved with besides its transcript
+    /// (`ContextResolver`). What they name and is not kept is not there.
     async fn named_by(
         &self,
         agent: AgentId,
         channel: ChannelId,
-        reference: &ContextRef,
+        references: &[&ContextRef],
     ) -> StoreResult<(Kept<String>, Kept<Vec<ToolSet>>)> {
-        let digests: Vec<Digest> =
-            reference.frame.prompts.iter().map(|prompt| prompt.text).collect();
+        let digests: Vec<Digest> = references
+            .iter()
+            .flat_map(|reference| reference.frame.prompts.iter().map(|prompt| prompt.text))
+            .collect();
         let prompts = self.prompts(agent, channel, &digests).await?;
-        let offered = match reference.frame.tools {
-            Some(digest) => {
-                self.offered_tools(agent, channel, digest).await?.map(|sets| (digest, sets))
+        let mut offered = Vec::new();
+        for digest in references.iter().filter_map(|reference| reference.frame.tools) {
+            if let Some(sets) = self.offered_tools(agent, channel, digest).await? {
+                offered.push((digest, sets));
             }
-            None => None,
-        };
+        }
         Ok((Kept::stored(prompts), Kept::stored(offered)))
     }
 }
 
-/// Reads into `state`, that of `agent` in `channel` as a store loaded it,
-/// the prompt texts and the tool sets its turn under way names (issue
-/// 383): what a turn cut off by a crash is resumed with. A state between
-/// turns holds none.
-pub async fn load_named_by_turn(
+/// Reads into `state`, that of `agent` in `channel` as a store loaded it, the prompt texts and the
+/// tool sets its turns under way name, in all its threads (issues 383, 602): what a turn cut off by
+/// a crash is resumed with. A state between turns holds none.
+pub async fn load_named_by_turns(
     transcripts: &dyn TranscriptStore,
     agent: AgentId,
     channel: ChannelId,
     state: &mut AgentChannelState,
 ) -> StoreResult<()> {
-    let Some(turn) = &state.turn else { return Ok(()) };
-    let (prompts, offered_tools) = transcripts.named_by(agent, channel, &turn.work.context).await?;
+    let contexts: Vec<&ContextRef> = state
+        .threads
+        .values()
+        .filter_map(|part| part.turn.as_ref())
+        .map(|turn| &turn.work.context)
+        .collect();
+    if contexts.is_empty() {
+        return Ok(());
+    }
+    let (prompts, offered_tools) = transcripts.named_by(agent, channel, &contexts).await?;
     state.prompts = prompts;
     state.offered_tools = offered_tools;
     Ok(())

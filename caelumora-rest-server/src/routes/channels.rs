@@ -1274,7 +1274,7 @@ mod tests {
         };
         let states = state.kernel.state_store();
         let mut agent_state = states.get_agent_channel_state(helper.id, channel_id).await.unwrap();
-        agent_state.used = Some(used);
+        agent_state.thread_mut(ThreadId::line(channel_id)).used = Some(used);
         states.put_agent_channel_state(helper.id, channel_id, &mut agent_state).await.unwrap();
         let participants =
             format!("/sessions/{}/channels/{}/participants", session_id.0, channel_id.0);

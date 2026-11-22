@@ -184,7 +184,11 @@ impl AgentBody {
         rx: &mut Box<dyn EventReceiver>,
     ) -> bool {
         let hears = self.hears_during_turn();
-        let Some(under_way) = state.turn.as_ref().filter(|_| hears.from != HearsFrom::None) else {
+        let Some(under_way) = state
+            .thread(self.runtime.thread_id())
+            .and_then(|part| part.turn.as_ref())
+            .filter(|_| hears.from != HearsFrom::None)
+        else {
             return false;
         };
         let work = under_way.work.clone();
@@ -564,7 +568,10 @@ mod tests {
             ["one", "two"],
             "what was said before the command"
         );
-        let turn = state.turn.as_ref().expect("still under way");
+        let turn = state
+            .thread(ThreadId::default())
+            .and_then(|part| part.turn.as_ref())
+            .expect("still under way");
         assert_eq!(
             turn.work.context.transcript,
             state.transcript.digest(ThreadId::default()),

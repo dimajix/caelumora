@@ -155,7 +155,11 @@ async fn an_agent_whose_context_fills_up_compacts_it_on_its_own_before_its_next_
             && !now.iter().any(|c| c == "@helper hello" || c == "Hi."),
         "the older messages replaced: {now:?}"
     );
-    assert_eq!(stored.used.map(|u| u.calls), Some(4), "the summary's call counts as used");
+    assert_eq!(
+        stored.thread(ThreadId::line(main.id())).and_then(|part| part.used).map(|u| u.calls),
+        Some(4),
+        "the summary's call counts as used"
+    );
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

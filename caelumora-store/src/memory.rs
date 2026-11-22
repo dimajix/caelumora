@@ -3,7 +3,7 @@ use crate::history::{
     answer_of, page_of, seen, seen_nodes, Attendance, HistoryStore, StandingItems,
 };
 use crate::kept_chain::KeptChain;
-use crate::transcript::{load_named_by_turn, transcript_of, TranscriptStore};
+use crate::transcript::{load_named_by_turns, transcript_of, TranscriptStore};
 use crate::{PersistenceBackend, Presence, StateStore};
 use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
@@ -388,7 +388,7 @@ impl StateStore for MemoryStore {
             read_lock(&self.agent_channel_states, |v| v.get(&(agent_id, channel_id)).cloned())
                 .unwrap_or_default();
         state.transcript = self.load_transcript(agent_id, channel_id)?;
-        load_named_by_turn(self, agent_id, channel_id, &mut state).await?;
+        load_named_by_turns(self, agent_id, channel_id, &mut state).await?;
         Ok(state)
     }
 

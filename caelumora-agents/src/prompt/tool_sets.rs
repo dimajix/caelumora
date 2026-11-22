@@ -111,7 +111,7 @@ mod tests {
                 Default::default(),
             ),
         );
-        state.offer_tools(sets);
+        state.offer_tools(ThreadId::default(), sets);
         let turn = Turn::under_way(AgentId::new(), &mut state);
         let provider =
             ToolSetsComponent { position: PromptPosition::Start, prompts: testing::prompts() };

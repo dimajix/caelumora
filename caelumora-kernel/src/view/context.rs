@@ -189,7 +189,7 @@ impl AgentContextView {
         };
         let (prompts, offered_tools) = self
             .transcripts
-            .named_by(self.agent, self.channel, &reference)
+            .named_by(self.agent, self.channel, &[&reference])
             .await
             .map_err(|source| self.failed(message, source))?;
         ContextResolver::on_path(&path, &prompts, &offered_tools, &self.prompts)

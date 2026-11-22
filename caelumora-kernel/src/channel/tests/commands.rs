@@ -533,7 +533,7 @@ async fn agent_usage_tells_the_context_and_the_calls_of_each_agent_and_their_tot
     let main = Arc::clone(&session.channels()[0]);
     let states = world.kernel.state_store();
     let mut state = states.get_agent_channel_state(helper, main.id()).await.unwrap();
-    state.used = Some(TokenUsage {
+    state.thread_mut(ThreadId::line(main.id())).used = Some(TokenUsage {
         calls: 3,
         prompt_tokens: 9000,
         completion_tokens: 600,
@@ -543,7 +543,7 @@ async fn agent_usage_tells_the_context_and_the_calls_of_each_agent_and_their_tot
     states.put_agent_channel_state(helper, main.id(), &mut state).await.unwrap();
     // One whose model does not say how large its context is.
     let mut state = states.get_agent_channel_state(runner, main.id()).await.unwrap();
-    state.used = Some(TokenUsage {
+    state.thread_mut(ThreadId::line(main.id())).used = Some(TokenUsage {
         calls: 1,
         prompt_tokens: 500,
         completion_tokens: 20,

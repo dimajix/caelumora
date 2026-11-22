@@ -133,7 +133,8 @@ impl Compactor {
             situation.token_positions()?.ok_or(CompactionError::TranscriptUnreadable)?;
         let state = situation.agent_channel_state();
         let size = state
-            .used
+            .thread(situation.branch_thread_id())
+            .and_then(|part| part.used)
             .and_then(|usage| usage.context_size)
             .or(positions.last().copied())
             .unwrap_or(0);
@@ -345,7 +346,13 @@ mod tests {
             turn.give(message, Some(known));
         }
         drop(turn);
-        let given = state.turn.take().unwrap().work.turn_id;
+        let given = state
+            .thread_mut(ThreadId::line(world.session.channels()[0].id()))
+            .turn
+            .take()
+            .unwrap()
+            .work
+            .turn_id;
         state.finish_turn(
             ThreadId::line(world.session.channels()[0].id()),
             given,
@@ -361,7 +368,13 @@ mod tests {
                 ..heard(A1)
             },
         );
-        let answered = state.turn.take().unwrap().work.turn_id;
+        let answered = state
+            .thread_mut(ThreadId::line(world.session.channels()[0].id()))
+            .turn
+            .take()
+            .unwrap()
+            .work
+            .turn_id;
         state.finish_turn(
             ThreadId::line(world.session.channels()[0].id()),
             answered,
@@ -495,13 +508,14 @@ mod tests {
             read("a.txt", "[File: a.txt]\nagain"),
         ];
         an_agent_given(&world, &mut state, gifts);
-        state.used = Some(TokenUsage {
-            calls: 1,
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            context_size: Some(100),
-            context_tokens: 0,
-        });
+        state.thread_mut(ThreadId::line(world.session.channels()[0].id())).used =
+            Some(TokenUsage {
+                calls: 1,
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                context_size: Some(100),
+                context_tokens: 0,
+            });
         let strategy = Arc::new(Scripted::default());
         // 15 tokens to give again: three files of 4 each, not `big.txt`.
         let files: Vec<Arc<dyn KnowledgeRestorer>> = vec![Arc::new(Files)];
@@ -575,7 +589,10 @@ mod tests {
         assert!(state.transcript.prefix(&before).is_some(), "what it saw before stays");
         let replacement =
             state.transcript.messages(ThreadId::line(world.session.channels()[0].id()));
-        let under_way = state.turn.as_ref().map(|t| t.work.turn_id);
+        let under_way = state
+            .thread(ThreadId::line(world.session.channels()[0].id()))
+            .and_then(|part| part.turn.as_ref())
+            .map(|t| t.work.turn_id);
         assert_eq!(
             replacement[0].turn_id, None,
             "a summary of what precedes the turn alone is no turn's (issue 284)"
@@ -595,14 +612,24 @@ mod tests {
                 && replacement[1].sender_name == "alice",
             "as alice's, who gave it (issue 539)"
         );
-        let knowledge = &state.turn.as_ref().unwrap().work.context.frame.knowledge;
+        let knowledge = &state
+            .thread(ThreadId::line(world.session.channels()[0].id()))
+            .and_then(|part| part.turn.as_ref())
+            .unwrap()
+            .work
+            .context
+            .frame
+            .knowledge;
         assert!(
             knowledge
                 .iter()
                 .any(|k| k.source.about::<Workspace>().is_some_and(|(s, _)| s == skill)),
             "the turn has read it"
         );
-        let usage = state.used.expect("the replacement's call");
+        let usage = state
+            .thread(ThreadId::line(world.session.channels()[0].id()))
+            .and_then(|part| part.used)
+            .expect("the replacement's call");
         assert_eq!(
             (usage.prompt_tokens, usage.completion_tokens),
             (40, 8),
@@ -640,7 +667,13 @@ mod tests {
                 ..heard("a1")
             },
         );
-        let answered = state.turn.take().unwrap().work.turn_id;
+        let answered = state
+            .thread_mut(ThreadId::line(world.session.channels()[0].id()))
+            .turn
+            .take()
+            .unwrap()
+            .work
+            .turn_id;
         state.finish_turn(
             ThreadId::line(world.session.channels()[0].id()),
             answered,

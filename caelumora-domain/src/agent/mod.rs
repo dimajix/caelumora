@@ -5,19 +5,22 @@
 //!   and how it hears during a turn, read through the agent so that a change
 //!   of the personality reaches it (issue 176).
 //! - An `AgentChannelState` (`channel_state`) is the agent in one channel:
-//!   its transcript, its notes, the turn under way, and the numbers its
-//!   transcript gives attachments (`AttachmentIndex`, issue 282). What it
-//!   remembers across its channels is the memory plugin's (issue 518).
+//!   its transcript, its notes, its part of each thread - the turn under way
+//!   there (`AgentThreadState`, issue 602) -, and the numbers its transcript
+//!   gives attachments (`AttachmentIndex`, issue 282). What it remembers
+//!   across its channels is the memory plugin's (issue 518).
 
 mod attachments;
 mod channel_state;
 mod personality;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
+mod thread_state;
 
 pub use attachments::AttachmentIndex;
 pub use channel_state::{AgentChannelState, AgentChannelStateChange, RetryRefused};
 pub use personality::{HearsDuringTurn, HearsFrom, OthersWords, Personality, PersonalityKind};
+pub use thread_state::AgentThreadState;
 
 use crate::actor::ActorId;
 use crate::removal::Removal;

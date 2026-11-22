@@ -1132,7 +1132,8 @@ mod tests {
     fn the_context_is_measured_by_the_calls_made_on_it_and_estimated_as_the_model_is_given_it() {
         let agent = ActorId::Agent(AgentId::new());
         let measure = |state: &AgentChannelState| {
-            let turn = state.turn.as_ref().unwrap();
+            let turn =
+                state.thread(ThreadId::default()).and_then(|part| part.turn.as_ref()).unwrap();
             ContextResolver::of(state, ThreadId::default(), kernel_catalogue())
                 .token_positions(&turn.work.context, turn.work.turn_id, agent)
                 .unwrap()
@@ -1163,8 +1164,16 @@ mod tests {
         );
         assert_eq!(measure(&state), (vec![98, 100, 101, 111], true),
             "before the call as it measured, back from it and on from it estimated - the call as the model is given it, without its reasoning");
-        state.turn.as_mut().unwrap().work.context.frame.profile.reasoning_history =
-            ReasoningHistory::CurrentTurn;
+        state
+            .thread_mut(ThreadId::default())
+            .turn
+            .as_mut()
+            .unwrap()
+            .work
+            .context
+            .frame
+            .profile
+            .reasoning_history = ReasoningHistory::CurrentTurn;
         assert_eq!(measure(&state).0[2], 201, "with it where it is given back");
 
         let kept_from = state
@@ -1205,7 +1214,7 @@ mod tests {
             ThreadId::default(),
             Message { sender_id: ActorId::Agent(AgentId::new()), ..call(70, "theirs") },
         );
-        others.turn.as_mut().unwrap().work.context.transcript =
+        others.thread_mut(ThreadId::default()).turn.as_mut().unwrap().work.context.transcript =
             others.transcript.digest(ThreadId::default());
         assert!(
             !measure(&others).1,
@@ -1220,14 +1229,15 @@ mod tests {
             frame: FrameRef { profile, ..FrameRef::default() },
         };
         let work = Work { turn_id: TurnId::new(), context, ..Default::default() };
-        state.turn = Some(TurnState { work, ..TurnState::default() });
+        state.thread_mut(ThreadId::default()).turn =
+            Some(TurnState { work, ..TurnState::default() });
     }
 
     /// A prompt part `text` in `role` after the end of `state`'s turn so
     /// far, its text kept.
     fn place(state: &mut AgentChannelState, role: MessageRole, text: &str) {
         state.prompts.keep(prompt(text), || text.to_string());
-        let turn = state.turn.as_mut().unwrap();
+        let turn = state.thread_mut(ThreadId::default()).turn.as_mut().unwrap();
         turn.work.context.frame.prompts.push(PromptRef {
             text: prompt(text),
             role,
@@ -1246,19 +1256,41 @@ mod tests {
         state.transcript.push(ThreadId::default(), text("question"));
         begin(&mut state, ModelProfile::default());
         state.prompts.keep(prompt("[Time]"), || "[Time]".to_string());
-        state.turn.as_mut().unwrap().work.context.frame.prompts.push(PromptRef {
-            text: prompt("[Time]"),
-            role: MessageRole::User,
-            at: PromptAt::End,
-            classification: None,
-        });
+        state
+            .thread_mut(ThreadId::default())
+            .turn
+            .as_mut()
+            .unwrap()
+            .work
+            .context
+            .frame
+            .prompts
+            .push(PromptRef {
+                text: prompt("[Time]"),
+                role: MessageRole::User,
+                at: PromptAt::End,
+                classification: None,
+            });
         place(&mut state, MessageRole::User, "step 1");
         let resolved = |state: &AgentChannelState, context: &ContextRef| {
-            let turn_id = state.turn.as_ref().unwrap().work.turn_id;
+            let turn_id = state
+                .thread(ThreadId::default())
+                .and_then(|part| part.turn.as_ref())
+                .unwrap()
+                .work
+                .turn_id;
             let resolver = ContextResolver::of(state, ThreadId::default(), kernel_catalogue());
             contents(&resolver.resolve(context, turn_id, agent).unwrap().expect("resolved").items)
         };
-        let next = |state: &AgentChannelState| state.turn.as_ref().unwrap().work.context.clone();
+        let next = |state: &AgentChannelState| {
+            state
+                .thread(ThreadId::default())
+                .and_then(|part| part.turn.as_ref())
+                .unwrap()
+                .work
+                .context
+                .clone()
+        };
         assert_eq!(
             resolved(&state, &next(&state)),
             ["question", "prompt:step 1", "prompt:[Time]"],
@@ -1278,7 +1310,12 @@ mod tests {
             "what the message was produced from had it last"
         );
 
-        let turn_id = state.turn.as_ref().unwrap().work.turn_id;
+        let turn_id = state
+            .thread(ThreadId::default())
+            .and_then(|part| part.turn.as_ref())
+            .unwrap()
+            .work
+            .turn_id;
         let positions = |context: &ContextRef| {
             let resolver = ContextResolver::of(&state, ThreadId::default(), kernel_catalogue());
             resolver.token_positions(context, turn_id, agent).unwrap().expect("measured").0
@@ -1312,8 +1349,11 @@ mod tests {
         place(&mut state, MessageRole::User, "step 2");
         let second = state.said(ThreadId::default(), own("second"));
 
-        let (next, turn_id) =
-            state.turn.as_ref().map(|t| (t.work.context.clone(), t.work.turn_id)).unwrap();
+        let (next, turn_id) = state
+            .thread(ThreadId::default())
+            .and_then(|part| part.turn.as_ref())
+            .map(|t| (t.work.context.clone(), t.work.turn_id))
+            .unwrap();
         let current = ContextResolver::of(&state, ThreadId::default(), kernel_catalogue())
             .resolve(&next, turn_id, agent)
             .unwrap()
@@ -1351,7 +1391,7 @@ mod tests {
             next.transcript,
             "the turn's context names the transcript's head"
         );
-        state.turn = None;
+        state.thread_mut(ThreadId::default()).turn = None;
         assert_eq!(seen(&state, &first), ["earlier", "question", "prompt:step 1"]);
         assert_eq!(
             seen(&state, &second),
@@ -1370,7 +1410,11 @@ mod tests {
             ..text("answer")
         };
         let mut state = AgentChannelState::default();
-        assert_eq!(state.used, None, "no call yet");
+        assert_eq!(
+            state.thread(ThreadId::default()).and_then(|part| part.used),
+            None,
+            "no call yet"
+        );
 
         begin(&mut state, ModelProfile::default());
         state.said(ThreadId::default(), call(agent, 100, 10, Some(4096)));
@@ -1392,7 +1436,7 @@ mod tests {
         begin(&mut state, ModelProfile::default());
         state.said(ThreadId::default(), call(agent, 300, 30, None));
 
-        assert_eq!(state.used, Some(TokenUsage {
+        assert_eq!(state.thread(ThreadId::default()).and_then(|part| part.used), Some(TokenUsage {
             calls: 3,
             prompt_tokens: 600,
             completion_tokens: 60,
@@ -1507,14 +1551,29 @@ mod tests {
             let mut state = state.clone();
             state.prompts.keep(prompt("system prompt"), || "system prompt".to_string());
             begin(&mut state, ModelProfile { system_messages, ..ModelProfile::default() });
-            state.turn.as_mut().unwrap().work.context.frame.prompts.push(PromptRef {
-                text: prompt("system prompt"),
-                role: MessageRole::System,
-                at: PromptAt::Start,
-                classification: None,
-            });
+            state
+                .thread_mut(ThreadId::default())
+                .turn
+                .as_mut()
+                .unwrap()
+                .work
+                .context
+                .frame
+                .prompts
+                .push(PromptRef {
+                    text: prompt("system prompt"),
+                    role: MessageRole::System,
+                    at: PromptAt::Start,
+                    classification: None,
+                });
             place(&mut state, MessageRole::System, "instruction");
-            let next = state.turn.as_ref().unwrap().work.context.clone();
+            let next = state
+                .thread(ThreadId::default())
+                .and_then(|part| part.turn.as_ref())
+                .unwrap()
+                .work
+                .context
+                .clone();
             ContextResolver::of(&state, ThreadId::default(), kernel_catalogue())
                 .resolve(&next, TurnId::new(), ActorId::None)
                 .unwrap()
@@ -1561,14 +1620,29 @@ mod tests {
             let mut state = state.clone();
             state.prompts.keep(prompt("system prompt"), || "system prompt".to_string());
             begin(&mut state, ModelProfile { system_messages, ..ModelProfile::default() });
-            state.turn.as_mut().unwrap().work.context.frame.prompts.push(PromptRef {
-                text: prompt("system prompt"),
-                role: MessageRole::System,
-                at: PromptAt::Start,
-                classification: None,
-            });
+            state
+                .thread_mut(ThreadId::default())
+                .turn
+                .as_mut()
+                .unwrap()
+                .work
+                .context
+                .frame
+                .prompts
+                .push(PromptRef {
+                    text: prompt("system prompt"),
+                    role: MessageRole::System,
+                    at: PromptAt::Start,
+                    classification: None,
+                });
             place(&mut state, MessageRole::System, "the plan");
-            let next = state.turn.as_ref().unwrap().work.context.clone();
+            let next = state
+                .thread(ThreadId::default())
+                .and_then(|part| part.turn.as_ref())
+                .unwrap()
+                .work
+                .context
+                .clone();
             let resolver = ContextResolver::of(&state, ThreadId::default(), kernel_catalogue());
             let items = resolver.resolve(&next, TurnId::new(), agent).unwrap().expect("resolved");
             items.items.iter().map(ContextItem::role).collect::<Vec<_>>()

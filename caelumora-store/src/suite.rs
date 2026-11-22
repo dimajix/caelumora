@@ -992,7 +992,7 @@ pub async fn state_store_behaves(store: &dyn StateStore) {
         .get_agent_channel_state(agent, channel)
         .await
         .expect("a missing agent channel state is no error")
-        .turn
+        .thread(ThreadId::default())
         .is_none());
     let missing = store.get_channel_state(channel).await;
     assert!(
@@ -1000,8 +1000,8 @@ pub async fn state_store_behaves(store: &dyn StateStore) {
         "a missing channel state is NotFound, got {missing:?}"
     );
 
-    let mut in_turn =
-        AgentChannelState { turn: Some(TurnState::default()), ..AgentChannelState::default() };
+    let mut in_turn = AgentChannelState::default();
+    in_turn.thread_mut(ThreadId::default()).turn = Some(TurnState::default());
     store
         .put_agent_channel_state(agent, channel, &mut in_turn)
         .await
@@ -1019,8 +1019,8 @@ pub async fn state_store_behaves(store: &dyn StateStore) {
             .get_agent_channel_state(agent, channel)
             .await
             .expect("get agent channel state")
-            .turn
-            .is_some(),
+            .thread(ThreadId::default())
+            .is_some_and(|part| part.turn.is_some()),
         "the stored state comes back"
     );
 
@@ -1144,15 +1144,30 @@ pub async fn state_store_behaves(store: &dyn StateStore) {
         "other channels keep theirs"
     );
     assert!(
-        store.get_agent_channel_state(agent, channel).await.expect("get").turn.is_none(),
+        store
+            .get_agent_channel_state(agent, channel)
+            .await
+            .expect("get")
+            .thread(ThreadId::default())
+            .is_none(),
         "the agents' states in the channel are gone"
     );
     assert!(
-        store.get_agent_channel_state(other_agent, channel).await.expect("get").turn.is_none(),
+        store
+            .get_agent_channel_state(other_agent, channel)
+            .await
+            .expect("get")
+            .thread(ThreadId::default())
+            .is_none(),
         "the agents' states in the channel are gone"
     );
     assert!(
-        store.get_agent_channel_state(agent, other_channel).await.expect("get").turn.is_some(),
+        store
+            .get_agent_channel_state(agent, other_channel)
+            .await
+            .expect("get")
+            .thread(ThreadId::default())
+            .is_some(),
         "other channels keep theirs"
     );
 
@@ -1162,11 +1177,21 @@ pub async fn state_store_behaves(store: &dyn StateStore) {
         .expect("put agent channel state");
     store.delete_agent_channel_states(agent).await.expect("delete agent states");
     assert!(
-        store.get_agent_channel_state(agent, channel).await.expect("get").turn.is_none(),
+        store
+            .get_agent_channel_state(agent, channel)
+            .await
+            .expect("get")
+            .thread(ThreadId::default())
+            .is_none(),
         "the agent's states in every channel are gone"
     );
     assert!(
-        store.get_agent_channel_state(agent, other_channel).await.expect("get").turn.is_none(),
+        store
+            .get_agent_channel_state(agent, other_channel)
+            .await
+            .expect("get")
+            .thread(ThreadId::default())
+            .is_none(),
         "the agent's states in every channel are gone"
     );
     assert!(
@@ -1211,10 +1236,12 @@ pub async fn work_under_way_is_indexed(store: &dyn StateStore) {
     };
     assert!(listed().await.is_empty(), "nothing stored, nothing under way");
 
-    let in_turn = |processing_state: ActorState| AgentChannelState {
-        processing_state,
-        turn: Some(TurnState::default()),
-        ..AgentChannelState::default()
+    let in_turn = |processing_state: ActorState| {
+        let mut state = AgentChannelState::default();
+        let part = state.thread_mut(ThreadId::default());
+        part.processing_state = processing_state;
+        part.turn = Some(TurnState::default());
+        state
     };
     let mut planning = in_turn(ActorState::Planning);
     store.put_agent_channel_state(agent, channel, &mut planning).await.expect("put");
@@ -1903,8 +1930,8 @@ async fn transcripts_go_with_their_states(
 /// 383), and the frames of its contexts (issue 426): written by the put of
 /// its state, apart from its document, each once by its digest - written
 /// again as the same -, read by digest; a state loaded holds the texts and
-/// sets its turn under way names, none between turns, and no frame; gone
-/// with the state.
+/// sets its turns under way name, in every thread, none between turns, and
+/// no frame; gone with the state.
 #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
 pub async fn given_store_behaves(states: &dyn StateStore, transcripts: &dyn TranscriptStore) {
     let (channel, agent) = (ChannelId::new(), AgentId::new());
@@ -1925,12 +1952,41 @@ pub async fn given_store_behaves(states: &dyn StateStore, transcripts: &dyn Tran
             Default::default(),
         ),
     );
-    state.offer_tools(sets.clone());
+    state.offer_tools(ThreadId::default(), sets.clone());
     let system =
         state.keep_prompt(MessageRole::System, "system".to_string(), PromptAt::Start, None);
-    state.turn.as_mut().expect("a turn").work.context.frame.prompts.push(system.clone());
-    let context = state.turn.as_ref().expect("a turn").work.context.clone();
+    state
+        .thread_mut(ThreadId::default())
+        .turn
+        .as_mut()
+        .expect("a turn")
+        .work
+        .context
+        .frame
+        .prompts
+        .push(system.clone());
+    let context = state
+        .thread(ThreadId::default())
+        .and_then(|part| part.turn.as_ref())
+        .expect("a turn")
+        .work
+        .context
+        .clone();
     let frame = state.keep_frame(&context.frame);
+    // A turn in another thread, offered tools of its own (issue 602).
+    let elsewhere = ThreadId::new();
+    let other_sets = vec![ToolSet::new("search", "searches", Vec::new())];
+    let other_offer = digest::tool_sets(&other_sets);
+    state.begin_turn(
+        elsewhere,
+        Work::new(
+            EventContext::default(),
+            None,
+            Classification::CHANNEL_DEFAULT,
+            Default::default(),
+        ),
+    );
+    state.offer_tools(elsewhere, other_sets.clone());
     states.put_agent_channel_state(agent, channel, &mut state).await.expect("put");
     assert!(state.offered_tools.changes().is_empty(), "the tool sets are marked stored");
     assert!(state.frames.changes().is_empty(), "the frames too");
@@ -1976,6 +2032,11 @@ pub async fn given_store_behaves(states: &dyn StateStore, transcripts: &dyn Tran
     );
     assert!(loaded.prompts.get(&before.text).is_none(), "and nothing else");
     assert_eq!(loaded.offered_tools.get(&offer), Some(&sets));
+    assert_eq!(
+        loaded.offered_tools.get(&other_offer),
+        Some(&other_sets),
+        "and what the turn of another thread names"
+    );
     assert!(
         loaded.prompts.changes().is_empty() && loaded.offered_tools.changes().is_empty(),
         "nothing to write again"

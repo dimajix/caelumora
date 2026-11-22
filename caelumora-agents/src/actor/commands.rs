@@ -97,7 +97,7 @@ impl AgentBody {
                 drop(turn);
                 // Never begun, as far as anything shows: nothing was said or
                 // applied, so the turn leaves no end behind.
-                state.turn = None;
+                state.thread_mut(self.runtime.thread_id()).turn = None;
                 match &e {
                     CommandError::Failed { .. } => warn!(
                         "Agent {} {} could not carry out /{} for {}: {}",

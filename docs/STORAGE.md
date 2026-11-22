@@ -494,13 +494,14 @@ The `StateStore` (in `caelumora-store`) stores the runtime state of channels and
 *   **`ChannelState`**: the channel's history (see [Histories](#histories)), and the threads open
     in it, from which it builds them again as it starts, each with what was delegated into it and
     is not done (`threads`, `Delegation`, issue 557).
-*   **`AgentChannelState`**: an agent in one channel, of either kind - processing state,
-    transcript, notes, prompt texts and tool sets, and the turn under way (see
-    [AGENT-TURN.md](AGENT-TURN.md)); its transcript, its prompt texts and its tool sets kept apart
-    (see [Transcripts](#transcripts), [Prompt texts and tool sets](#prompt-texts-and-tool-sets)). It
-    keeps no history of its own: what it was offered and said is its channel's history, as it saw
-    it (issue 417) - and where it stands in it (`heard`, issue 223), written as it takes in and so
-    stored with what it took in: what its inbox opens at when it runs again.
+*   **`AgentChannelState`**: an agent in one channel, of either kind - transcript, notes, prompt
+    texts and tool sets, and its part of each thread: the processing state, the turn under way and
+    the tokens its calls used (`AgentThreadState`, issue 602, see [AGENT-TURN.md](AGENT-TURN.md));
+    its transcript, its prompt texts and its tool sets kept apart (see [Transcripts](#transcripts),
+    [Prompt texts and tool sets](#prompt-texts-and-tool-sets)). It keeps no history of its own:
+    what it was offered and said is its channel's history, as it saw it (issue 417) - and where it
+    stands in it (`heard`, issue 223), written as it takes in and so stored with what it took in:
+    what its inbox opens at when it runs again.
     An external agent keeps instead what it keeps of the remote side: the remote conversation and
     the tasks not yet ended.
 *   **`UserChannelState`**: a user in one channel - up to where they read it (see
@@ -521,13 +522,14 @@ against an update of the entity.
     across every branch of a transcript, written as its number -, and so is everything that
     addresses entries by one: a page and its cursor, a delivery, a mark of what was read, a
     participant's range, where a window begins.
-*   A small part - the processing state, the turn under way, the tokens the agent's calls used, an
-    external agent's open tasks and the classifications it was given, where an agent stands in its
-    channel's history and the last message it took in - is recorded whole: it is changed in place
-    and bounded by one turn, one exchange, or the labels in use. What would be summed over a whole
-    chain is kept as such a part instead, so that a chain is never read whole for it. Every part a
-    state stores is among its changes: one left out is stored only with the next snapshot, and a
-    state loaded again stands where that left it (issue 440).
+*   A small part - an agent's part of each thread, with its processing state, its turn under way
+    and the tokens its calls used there, an external agent's open tasks and the classifications it
+    was given, where an agent stands in its channel's history and the last message it took in - is
+    recorded whole: it is changed in place and bounded by a turn per thread, one exchange, or the
+    labels in use. What would be summed over a whole chain is kept as such a part instead, so that
+    a chain is never read whole for it. Every part a state stores is among its changes: one left
+    out is stored only with the next snapshot, and a state loaded again stands where that left it
+    (issue 440).
 
 Replaying is idempotent, and nothing replayed is a change to store again. Every reference between
 parts is a digest or an id, resolved when read and never while replaying, so the order across parts
@@ -683,12 +685,12 @@ document as the transcript is (issue 383):
     written as the same: a digest there already is not written again. A text nothing names any
     more, that of a turn cut off before it said anything, stays.
 *   **Read by digest, through the `TranscriptStore`**: the texts of some digests, the sets of an
-    offer, a frame, a message's context with its frame (`context`), and the texts and sets of a
-    `ContextRef` (`named_by`) - what the context of an older message is resolved with.
-*   **The holder keeps what its turn under way names**, and lets go of the rest after every put
-    (`keep_window`); between turns it holds none, and a state loaded holds those its turn names, so
-    that a turn cut off by a crash is resumed with them. A frame it lets go of at once: the turn
-    under way holds its own whole, in its context.
+    offer, a frame, a message's context with its frame (`context`), and the texts and sets some
+    `ContextRef`s name (`named_by`) - what the context of an older message is resolved with.
+*   **The holder keeps what its turns under way name**, and lets go of the rest after every put
+    (`keep_window`); between turns it holds none, and a state loaded holds those its turns name
+    (`load_named_by_turns`), so that a turn cut off by a crash is resumed with them. A frame it lets
+    go of at once: the turn under way holds its own whole, in its context.
 *   **`JsonStates`** keeps them in `<agent>.given/` beside the agent's snapshot, one file per
     digest (`prompt-<digest>.json`, `tools-<digest>.json`, `frame-<digest>.json`), and looks for
     the file before it writes one. In Postgres each is a table keyed by agent, channel and digest,

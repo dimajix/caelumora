@@ -122,8 +122,11 @@ impl AgentBody {
             CommandSet::new(components.get_all::<dyn CommandProvider<dyn AgentCommand>>(None)?)?;
         let mut state = runtime.load_channel_state().await?;
         resume(&mut state);
-        let control =
-            RunControl::new(state.processing_state, state.turn.as_ref().map(|t| t.work.turn_id));
+        let part = state.thread(runtime.thread_id());
+        let control = RunControl::new(
+            part.map(|part| part.processing_state).unwrap_or_default(),
+            part.and_then(|part| part.turn.as_ref()).map(|turn| turn.work.turn_id),
+        );
         let body = Self {
             runtime,
             perceive_in_processors,
@@ -245,7 +248,7 @@ impl AgentBody {
     /// Stores its `state` in the channel, with where its actor stands now.
     /// A failure is logged: the actor carries on with the state in memory.
     pub(super) async fn store(&self, state: &mut AgentChannelState) {
-        state.processing_state = self.control.state();
+        state.thread_mut(self.runtime.thread_id()).processing_state = self.control.state();
         if let Err(e) = self.runtime.store_channel_state(state).await {
             warn!(
                 "Agent {} cannot store its state in channel {}: {:#}",

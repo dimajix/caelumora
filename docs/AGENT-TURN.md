@@ -193,11 +193,16 @@ works on the state itself, and taking a turn over or giving it up uses the handl
 
 What a turn does to the state - beginning, saying something, finishing, giving up - is a rule of the
 state, kept with it in the domain (`AgentChannelState::begin_turn`, `offer_tools`, `said`,
-`finish_turn`, `give_up_turn`). `Turn` calls these and does what runs around them.
+`finish_turn`, `give_up_turn`), each given the thread it happens in: the transcript holds the branch
+of every thread, so these stay on `AgentChannelState`. `Turn` calls these and does what runs around
+them.
 
-The working state of a turn is one value, `AgentChannelState::turn`, `None` between turns. Its
-`Work` is what every piece of work of an agent has, a turn as much as an external agent's exchange
-with its remote agent (`caelumora_domain::work`):
+The working state of a turn is one value per thread, the `turn` of the agent's part of the thread
+(`AgentThreadState`, issue 602), `None` between turns - beside where the actor stands there
+(`processing_state`) and what its calls there used (`used`). What reads them without a thread reads
+every thread's: the approvals and questions waiting, the work under way, what a state lets go of
+(`keep_window`). Its `Work` is what every piece of work of an agent has, a turn as much as an
+external agent's exchange with its remote agent (`caelumora_domain::work`):
 
 *   which turn it is (`TurnId`),
 *   the envelope it answers, why it was asked to (see [Why the agent was
@@ -476,16 +481,17 @@ from the store (`TranscriptStore`): the path to a digest, for the context of an 
 which messages reached the transcript, for a page of the agent's history; and, for an external
 agent, a message as its remote agent was given it, before it tells of a change (`tell`, through
 `ActorRuntime::transcript_message`). Its sums are parts of its state, not read over the branches:
-the tokens used (`used`), the classifications the remote agent was given (`RemoteState`), and the
-numbers its transcript gave attachments (`attachments`, see [attachments](#attachments)).
+the tokens used in each thread (`AgentThreadState::used`), the classifications the remote agent was
+given (`RemoteState`), and the numbers its transcript gave attachments (`attachments`, see
+[attachments](#attachments)).
 
-Of the prompt texts and the tool sets, kept once by digest, the actor holds those its turn under way
-names, and between turns none (issue 383): the turn's calls, how full its context is and the tools
-its calls are checked against read them, and nothing reads them between turns - how full the context
-is then is kept, not read (issue 390), answering again begins a turn that assembles its parts anew,
-and an external agent tells what it gave by digest. A text kept again in the next turn is written as
-the same. What the context of an older message names is read from the store, with the path of its
-transcript (see [STORAGE.md](STORAGE.md#prompt-texts-and-tool-sets)).
+Of the prompt texts and the tool sets, kept once by digest, the actor holds those its turns under
+way name, and between turns none (issue 383): the turn's calls, how full its context is and the
+tools its calls are checked against read them, and nothing reads them between turns - how full the
+context is then is kept, not read (issue 390), answering again begins a turn that assembles its
+parts anew, and an external agent tells what it gave by digest. A text kept again in the next turn
+is written as the same. What the context of an older message names is read from the store, with the
+path of its transcript (see [STORAGE.md](STORAGE.md#prompt-texts-and-tool-sets)).
 
 ### What is recorded
 
@@ -622,11 +628,13 @@ of the agent's transcript.
 ### Tokens used
 
 Every message the model produces carries the tokens of its call and the size of the context the call
-had. What an agent used in a channel is a running total kept with its state, counted as each of its
-calls' messages is recorded - said in a turn, or written as a summary in a compaction - so that a
-call is counted once, on whichever branch, the turn under way's included; it is not summed over the
-transcript, whose older branches need not be at hand (`AgentChannelState::used`). Two groups mean
-different things:
+had. What an agent used in a thread of a channel is a running total kept with its part of the
+thread, counted as each of its calls' messages is recorded - said in a turn, or written as a summary
+in a compaction - so that a call is counted once, the turn under way's included; it is not summed
+over the transcript, whose older branches need not be at hand (`AgentThreadState::used`). What it
+used in the channel, as a view and `/agent usage` show it, is the totals of all its threads with the
+context of the thread whose context is fullest (`AgentChannelState::used`, issue 602). Two groups
+mean different things:
 
 *   **context** - how full the context is against its size (`TokenUsage::context_tokens`): the
     last call's prompt and answer, as counted. A compaction replaces it once, when it is made:

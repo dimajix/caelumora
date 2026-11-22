@@ -635,7 +635,7 @@ mod tests {
             [READ_ATTACHMENT, COPY_ATTACHMENT, ATTACH],
             "before anything is numbered too: a tool may give one in the turn under way"
         );
-        state.turn = None;
+        state.thread_mut(ThreadId::line(session.channels()[0].id())).turn = None;
         let said = said_with_attachments(&world, &session, b"line one\nline two\n").await;
         state.perceive(
             ThreadId::line(session.channels()[0].id()),
@@ -719,8 +719,14 @@ mod tests {
             .execute(&json!({ "ref": "a1" }), None, &mut turn)
             .await
             .unwrap();
-        let aside: Vec<ContentRef> =
-            turn.situation().agent_channel_state().turn.as_ref().unwrap().attachments.clone();
+        let aside: Vec<ContentRef> = turn
+            .situation()
+            .agent_channel_state()
+            .thread(turn.situation().branch_thread_id())
+            .and_then(|part| part.turn.as_ref())
+            .unwrap()
+            .attachments
+            .clone();
         assert_eq!(aside.len(), 1);
         assert!(
             aside[0].id != notes.id && aside[0].key != notes.key && aside[0].digest == notes.digest,
@@ -767,7 +773,9 @@ mod tests {
 
         // A model that sees is offered to look at an image again.
         drop(testing::turn(&session, helper, world.alice, &mut state));
-        if let Some(begun) = state.turn.as_mut() {
+        if let Some(begun) =
+            state.thread_mut(ThreadId::line(session.channels()[0].id())).turn.as_mut()
+        {
             begun.work.context.frame.profile =
                 ModelProfile { max_images: 4, ..ModelProfile::default() };
         }

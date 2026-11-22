@@ -108,8 +108,12 @@ mod tests {
             ),
         );
         let tools = tools.iter().map(|name| make_tool_description(name)).collect();
-        state.offer_tools(vec![ToolSet::new("stop", "", tools)]);
-        let work: Work = state.turn.as_ref().map(|turn| turn.work.clone()).expect("begun");
+        state.offer_tools(ThreadId::default(), vec![ToolSet::new("stop", "", tools)]);
+        let work: Work = state
+            .thread(ThreadId::default())
+            .and_then(|part| part.turn.as_ref())
+            .map(|turn| turn.work.clone())
+            .expect("begun");
         let provider = RequestReasonComponent {
             position: PromptPosition::BeforeTurnInput,
             prompts: testing::prompts(),

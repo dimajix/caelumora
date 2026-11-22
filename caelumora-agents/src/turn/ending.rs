@@ -65,7 +65,8 @@ impl Turn<'_> {
         let answering = self.answering();
         let initiator = self.situation().initiator();
         let classification = self.situation().classification();
-        let turn = self.agent_channel_state.turn.take().unwrap_or_default();
+        let thread = self.thread();
+        let turn = self.agent_channel_state.thread_mut(thread).turn.take().unwrap_or_default();
         let turn_id = turn.work.turn_id;
         // Every part is used up exactly once; what it said is its answer
         // (issue 417), whatever a compaction left of it in the transcript
@@ -111,8 +112,9 @@ impl Turn<'_> {
     ) -> (Answering, Vec<ToolCallState>) {
         let abandoned_calls = self.abandon_tool_calls(TurnEnd::GivenUp(&reason), output).await;
         let answering = self.answering();
-        let turn = self.agent_channel_state.turn.take().unwrap_or_default();
-        self.agent_channel_state.give_up_turn(self.thread(), turn.work.turn_id, reason);
+        let thread = self.thread();
+        let turn = self.agent_channel_state.thread_mut(thread).turn.take().unwrap_or_default();
+        self.agent_channel_state.give_up_turn(thread, turn.work.turn_id, reason);
         (answering, abandoned_calls)
     }
 
@@ -133,7 +135,10 @@ impl Turn<'_> {
     ) -> Vec<ToolCallState> {
         let internal = self.in_plan_step();
         let texts = self.situation().texts();
-        let Some(turn) = self.agent_channel_state.turn.as_mut() else { return Vec::new() };
+        let thread = self.thread();
+        let Some(turn) = self.agent_channel_state.thread_mut(thread).turn.as_mut() else {
+            return Vec::new();
+        };
         let (abandoned, message) =
             ToolCalls::new(turn, &self.agent_name, texts).abandon(end, internal);
         if let Some(message) = message {
@@ -227,7 +232,10 @@ mod tests {
         let turn = a_turn_that_called(&mut state, "send_mail", false);
         turn.give_up(GivenUpReason::Left, &Discard).await;
 
-        assert!(state.turn.is_none(), "the turn is over");
+        assert!(
+            state.thread(ThreadId::default()).is_none_or(|part| part.turn.is_none()),
+            "the turn is over"
+        );
         assert_eq!(
             state.transcript.messages(ThreadId::default()).len(),
             3,
@@ -435,7 +443,7 @@ mod tests {
             "but of the transcript"
         );
         assert!(
-            agent_channel_state.turn.is_none(),
+            agent_channel_state.thread(ThreadId::default()).is_none_or(|part| part.turn.is_none()),
             "nothing of the turn's work is stored with the state"
         );
     }

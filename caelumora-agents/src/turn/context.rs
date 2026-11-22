@@ -123,7 +123,8 @@ impl Turn<'_> {
     /// before its context is set (`AgentChannelState::offer_tools`, issue
     /// 290): what the agent's tool providers offer for the turn's work.
     pub(crate) fn offer_tools(&mut self, tool_sets: Vec<ToolSet>) {
-        self.agent_channel_state.offer_tools(tool_sets);
+        let thread = self.thread();
+        self.agent_channel_state.offer_tools(thread, tool_sets);
     }
 
     /// Sets what the `ContextProvider` assembled for the turn - once, at its
@@ -533,7 +534,7 @@ mod tests {
                     ThreadId::default(),
                     Work::new(Default::default(), None, Default::default(), Default::default()),
                 );
-                state.offer_tools(sets);
+                state.offer_tools(ThreadId::default(), sets);
                 let mut turn = Turn::under_way(agent, state);
                 let (_, offered) = executor::block_on(turn.full_context()).unwrap();
                 assert_eq!(offered, tools, "the model is offered what the turn began with");
@@ -656,7 +657,7 @@ mod tests {
             "unchanged, it stays where it was"
         );
         drop(turn);
-        state.turn = None;
+        state.thread_mut(ThreadId::default()).turn = None;
 
         state.perceive(ThreadId::default(), vec![heard("once more")]);
         let mut turn = Turn::begun(agent, &mut state);

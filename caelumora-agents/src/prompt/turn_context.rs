@@ -374,7 +374,7 @@ mod tests {
             ..message("[Rules]\nBe brief.")
         };
         agent_channel_state.give_parts(ThreadId::default(), vec![("rules".to_string(), rules)]);
-        agent_channel_state.turn = None;
+        agent_channel_state.thread_mut(ThreadId::default()).turn = None;
 
         let provider = TurnContextProvider {
             prompt_providers: vec![

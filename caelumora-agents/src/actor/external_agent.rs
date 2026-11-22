@@ -151,7 +151,9 @@ impl ExternalAgentActor {
         };
         // It resumes no answer: the remote agent's tasks are followed again
         // (`follow_open_tasks`), and it starts idle.
-        let resume = |state: &mut AgentChannelState| state.processing_state = ActorState::Idle;
+        let resume = |state: &mut AgentChannelState| {
+            state.threads.values_mut().for_each(|part| part.processing_state = ActorState::Idle);
+        };
         let (body, components) =
             AgentBody::build(Self::COMPONENT_FACETS, &defaults, actor_runtime, resume).await?;
         let remote = components.one::<dyn ExternalAgent>().await?;

@@ -438,3 +438,20 @@ above. The position of a predecessor (C) is no step yet.
   since nothing outside tests moved their heads; their stored form is unchanged, the head kept
   beside the nodes. The transcript is the one tree.
 
+- **2026-11-22** — The chain step committed. Decided by the maintainer for step 1: 557's split as
+  decided - a turn and `processing_state` per thread -, since a turn that waits for a person is to
+  be set aside while the agent answers in another thread, which settles that point of *To decide*:
+  one turn at a time that works, the rule itself with step 3. The transcript stays on
+  `AgentChannelState`, a head per thread (D7), and with it what touches both the transcript and a
+  turn, given the thread; `remote` stays too, until an external agent has a state per thread. Also
+  decided: `thread_mut` begins a thread's part where there is none, a part goes with step 3 as
+  someone is let go from a thread; what reads without a thread reads every thread's, and what the
+  agent used in the channel is the totals of its threads with the context of the fullest; whether
+  `Sleeping` leaves `ActorState` for the actor as a whole is decided with step 3. Step 1b done:
+  `AgentThreadState` holds a thread's `processing_state`, `turn` and `used`, in
+  `AgentChannelState::threads`; `prepare_resume` and `has_work_under_way` are its own, read over
+  every thread by the channel's; `offer_tools` is given the thread; the journal records every
+  thread's part whole (`Threads`); a store loads what the turns of all threads name
+  (`load_named_by_turns`, `TranscriptStore::named_by` of several contexts). The actor reads and
+  writes the part of its runtime's thread until step 2, `RunControl` one per actor until step 3.
+  The stored agents' states are to be deleted.

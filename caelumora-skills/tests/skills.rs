@@ -188,7 +188,9 @@ async fn the_catalogue_lists_what_may_be_loaded_and_load_skill_gives_its_text_as
         "classified as the skill, as the catalogue names it"
     );
     drop(turn);
-    let read = state.turn.as_ref().unwrap().work.context.frame.knowledge.clone();
+    let line = ThreadId::line(session.channels()[0].id());
+    let turn = state.thread(line).and_then(|part| part.turn.as_ref());
+    let read = turn.unwrap().work.context.frame.knowledge.clone();
     let as_read = |source: &KnowledgeSource| {
         source.about::<Skill>() == Some((made.id, Some(skill::digest("1. Collect.\n2. Group."))))
     };

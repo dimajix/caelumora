@@ -2233,7 +2233,7 @@ mod tests {
         // The agent's turn waits for one call, the other was approved.
         let calls = vec![make_tool_call("delete")];
         let mut state = waiting_for_approval(session.id, channel.id, helper.id, calls);
-        let turn = state.turn.as_mut().expect("a turn");
+        let turn = state.thread_mut(ThreadId::line(channel.id)).turn.as_mut().expect("a turn");
         let waiting = turn.tool_calls.first().and_then(ToolCallState::approval_id);
         turn.tool_calls.push(ToolCallState::approved(make_tool_call("echo")));
         kernel
@@ -2283,10 +2283,8 @@ mod tests {
             ..Message::new(Classification::CHANNEL_DEFAULT)
         };
         let calls = vec![make_tool_call("delete")];
-        let mut state = AgentChannelState {
-            used: TokenUsage::counted(None, &answer),
-            ..waiting_for_approval(session.id, channel.id, helper.id, calls)
-        };
+        let mut state = waiting_for_approval(session.id, channel.id, helper.id, calls);
+        state.thread_mut(ThreadId::line(channel.id)).used = TokenUsage::counted(None, &answer);
         state.transcript.push(ThreadId::default(), answer);
         state.notes.push(
             Change::Add {

@@ -1159,6 +1159,7 @@ mod tests {
     use caelumora_domain::approval::{ApprovalRule, RuleDecision};
     use caelumora_domain::channel::Channel;
     use caelumora_domain::channel::ChannelId;
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::config::{AppConfig, ApprovalsConfig};
     use caelumora_domain::content::testing::make_content_ref;
     use caelumora_domain::content::ContentId;
@@ -1903,7 +1904,7 @@ mod tests {
     fn offering(work: Work, tool_sets: Vec<ToolSet>) -> AgentChannelState {
         let mut state = AgentChannelState::default();
         let tools = state.keep_offer(tool_sets);
-        state.turn = Some(TurnState {
+        state.thread_mut(ThreadId::default()).turn = Some(TurnState {
             work: Work {
                 context: ContextRef {
                     frame: FrameRef { tools, ..work.context.frame },
@@ -2134,7 +2135,14 @@ mod tests {
         assert_eq!(kept, vec![history.clone()], "on the result, for the transcript");
 
         drop(turn);
-        let recorded = &agent_channel_state.turn.as_ref().unwrap().work.context.frame.knowledge;
+        let recorded = &agent_channel_state
+            .thread(ThreadId::default())
+            .and_then(|part| part.turn.as_ref())
+            .unwrap()
+            .work
+            .context
+            .frame
+            .knowledge;
         assert!(
             matches!(recorded.as_slice(), [k] if k.source == history),
             "and with the turn, but what was withheld: {recorded:?}"
@@ -2197,7 +2205,8 @@ mod tests {
             executor.tool_sets(&turn.situation()).await
         };
         let tools = state.keep_offer(tool_sets);
-        state.turn.as_mut().unwrap().work.context.frame.tools = tools;
+        let line = ThreadId::line(session.channels()[0].id());
+        state.thread_mut(line).turn.as_mut().unwrap().work.context.frame.tools = tools;
         let mut turn = Turn::of(
             &mut state,
             agent_runtime(participant_runtime_in(main, ActorId::Agent(helper))),
@@ -2239,7 +2248,7 @@ mod tests {
     async fn a_result_classified_by_the_tool_is_kept_where_the_channel_admits_it() {
         let executor = with_hr().await;
         let mut agent_channel_state = agent_turn(&executor).await;
-        if let Some(turn) = agent_channel_state.turn.as_mut() {
+        if let Some(turn) = agent_channel_state.thread_mut(ThreadId::default()).turn.as_mut() {
             turn.work.classification = hr();
         }
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);

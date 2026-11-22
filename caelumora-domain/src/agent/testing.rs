@@ -2,9 +2,9 @@
 //! state past its API, for the tests of this crate and of others; agents stored with a
 //! personality of their own are `caelumora_store::testing::stored_agent`.
 
-use super::{AgentChannelState, AgentId, Personality, PersonalityId};
+use super::{AgentChannelState, AgentId, AgentThreadState, Personality, PersonalityId};
 use crate::actor::{ActorId, ActorState, EventContext};
-use crate::channel::ChannelId;
+use crate::channel::{ChannelId, ThreadId};
 use crate::context::ContextRef;
 use crate::message::Message;
 use crate::scope::Scope;
@@ -13,6 +13,7 @@ use crate::session::SessionId;
 use crate::tool::{ToolCall, ToolCallState};
 use crate::turn::TurnState;
 use crate::value::name::ScopedName;
+use std::collections::BTreeMap;
 
 /// A personality `name` of the global scope, the system's as a seed's is, and naming nothing
 /// else: internal, without roles, description or introduction, with the default components,
@@ -40,9 +41,10 @@ pub fn make_personality(name: &str) -> Personality {
     }
 }
 
-/// The state of `agent` in the channel `channel_id` of the session `session_id`, whose turn waits
-/// for the approval of `calls` (issue 172), each described as `call <function name>`, none
-/// suggesting a rule: what it stores while it waits, from which the approvals pending are read.
+/// The state of `agent` in the channel `channel_id` of the session `session_id`, whose turn in the
+/// channel's line waits for the approval of `calls` (issue 172), each described as
+/// `call <function name>`, none suggesting a rule: what it stores while it waits, from which the
+/// approvals pending are read.
 pub fn waiting_for_approval(
     session_id: SessionId,
     channel_id: ChannelId,
@@ -59,9 +61,13 @@ pub fn waiting_for_approval(
             ToolCallState::pending(ToolCall { description, ..call }, false, None, None)
         })
         .collect();
-    AgentChannelState {
+    let waiting = AgentThreadState {
         processing_state: ActorState::WaitingForUser,
         turn: Some(turn),
+        used: None,
+    };
+    AgentChannelState {
+        threads: BTreeMap::from([(ThreadId::line(channel_id), waiting)]),
         ..AgentChannelState::default()
     }
 }

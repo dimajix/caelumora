@@ -256,10 +256,13 @@ mod testing {
     use caelumora_domain::agent::AgentChannelState;
     use caelumora_domain::context::KnowledgeRef;
 
+    /// What the turn under way in `state` - the one a test began, in whichever thread - was
+    /// given to know.
     pub(super) fn knowledge(state: &AgentChannelState) -> Vec<KnowledgeRef> {
         state
-            .turn
-            .as_ref()
+            .threads
+            .values()
+            .find_map(|part| part.turn.as_ref())
             .map(|turn| turn.work.context.frame.knowledge.clone())
             .unwrap_or_default()
     }

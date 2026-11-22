@@ -17,7 +17,7 @@ use caelumora_domain::agent::{AgentChannelState, AgentId};
 use caelumora_domain::channel::{ChannelId, ChannelState};
 use caelumora_domain::store::{Journaled, StoreError, StoreResult};
 use caelumora_domain::user::{UserChannelState, UserId};
-use caelumora_store::transcript::load_named_by_turn;
+use caelumora_store::transcript::load_named_by_turns;
 use caelumora_store::StateStore;
 use serde::Serialize;
 use std::collections::HashSet;
@@ -244,7 +244,7 @@ impl StateStore for JsonStates {
         debug!("Reading agent channel state from {}", path.display());
         let mut state: AgentChannelState = load_state(&path).await?.unwrap_or_default();
         state.transcript = self.load_transcript(agent_id, channel_id).await?;
-        load_named_by_turn(self, agent_id, channel_id, &mut state).await?;
+        load_named_by_turns(self, agent_id, channel_id, &mut state).await?;
         Ok(state)
     }
 
@@ -456,11 +456,10 @@ mod tests {
         // Read from the files: a store opened anew over them, as after a
         // restart, finds what was under way.
         let (agent, channel) = (AgentId::new(), ChannelId::new());
-        let mut planning = AgentChannelState {
-            processing_state: ActorState::Planning,
-            turn: Some(TurnState::default()),
-            ..AgentChannelState::default()
-        };
+        let mut planning = AgentChannelState::default();
+        let part = planning.thread_mut(ThreadId::default());
+        part.processing_state = ActorState::Planning;
+        part.turn = Some(TurnState::default());
         states(dir.path()).put_agent_channel_state(agent, channel, &mut planning).await.unwrap();
         assert_eq!(states(dir.path()).channels_with_work_under_way().await.unwrap(), [channel]);
     }
@@ -523,7 +522,7 @@ mod tests {
 
         said(&mut state, 3, 5);
         opened.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
-        state.processing_state = ActorState::WaitingForUser;
+        state.thread_mut(ThreadId::default()).processing_state = ActorState::WaitingForUser;
         opened.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
         assert_eq!(journal_lines(&opened, agent, channel).await, Some(2), "one line per put");
         assert_eq!(
@@ -559,7 +558,6 @@ mod tests {
         // Small puts go to the journal until it is as large as the snapshot.
         let mut puts = 0;
         while journal_lines(&states, agent, channel).await.is_some() || puts == 0 {
-            state.processing_state = ActorState::Idle;
             states.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
             puts += 1;
             assert!(puts < 1000, "the journal is never folded");

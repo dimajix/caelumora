@@ -1,18 +1,16 @@
 //! The turn of an agent: what one cognitive cycle of an `AgentActor` works
 //! with (see `docs/AGENT-TURN.md`).
 //!
-//! A [`Turn`] is the handle an agent's actor and its components work through:
-//! on the agent's state in its channel, and while a turn runs on that turn's
-//! working state, `AgentChannelState::turn` (issue 85) - the context and
-//! prompt parts the model is given and where they came from, pending tool
-//! calls and the plan, the changes not yet taken over; what it says goes
-//! into the transcript and the history at once (issue 260) -, and stages
-//! what it changes of a system service - the agent's memory -, which the
-//! kernel commits when it completes (issue 518). What those states hold is
-//! the business of wrappers such as `crate::notes::AgentNotes`, and of the
-//! components of the services. A turn is begun on the agent's state
-//! (`AgentChannelState::begin_turn`); a `Turn` is had only while one is
-//! under way (`Turn::of`), and ending it uses it up.
+//! A [`Turn`] is the handle an agent's actor and its components work through: on the agent's state
+//! in its channel, and while a turn runs on that turn's working state, the `turn` of the agent's
+//! part of its thread (`AgentThreadState::turn`, issues 85, 602) - the context and prompt parts the
+//! model is given and where they came from, pending tool calls and the plan, the changes not yet
+//! taken over; what it says goes into the transcript and the history at once (issue 260) -, and
+//! stages what it changes of a system service - the agent's memory -, which the kernel commits when
+//! it completes (issue 518). What those states hold is the business of wrappers such as
+//! `crate::notes::AgentNotes`, and of the components of the services. A turn is begun on the
+//! agent's state (`AgentChannelState::begin_turn`); a `Turn` is had only while one is under way
+//! (`Turn::of`), and ending it uses it up.
 //!
 //! This file holds the handle and what components work with; the rest of a
 //! turn's logic is in a file per subject:
@@ -84,16 +82,15 @@ pub struct Turn<'a> {
 }
 
 impl<'a> Turn<'a> {
-    /// The turn under way in `agent_channel_state` of the agent of `runtime`,
-    /// as a step of its run loop works with it; `None` between turns. A
-    /// turn is begun on the state (`AgentChannelState::begin_turn`), and
-    /// ended through its handle (`commit`, `give_up`). It acts through the
-    /// actor's `runtime`, by the agent's name as it is when it is had.
+    /// The turn under way in `agent_channel_state` of the agent of `runtime`, in its thread, as a
+    /// step of its run loop works with it; `None` between turns. A turn is begun on the state
+    /// (`AgentChannelState::begin_turn`), and ended through its handle (`commit`, `give_up`). It
+    /// acts through the actor's `runtime`, by the agent's name as it is when it is had.
     pub fn of(
         agent_channel_state: &'a mut AgentChannelState,
         runtime: Arc<dyn ActorRuntime>,
     ) -> Option<Self> {
-        agent_channel_state.turn.as_ref()?;
+        agent_channel_state.thread(runtime.thread_id())?.turn.as_ref()?;
         let agent = runtime.agent();
         let (agent_id, agent_name) = (agent.id, agent.name.to_string());
         Some(Self { agent_id, agent_name, agent_channel_state, runtime })
@@ -173,18 +170,18 @@ impl<'a> Turn<'a> {
     /// The working state of the turn under way. A `Turn` is only had while
     /// one is (`of`); the empty one it falls back to cannot be reached.
     fn current(&self) -> &TurnState {
-        self.agent_channel_state.turn.as_ref().unwrap_or(&NO_TURN)
+        let part = self.agent_channel_state.thread(self.thread());
+        part.and_then(|part| part.turn.as_ref()).unwrap_or(&NO_TURN)
     }
 
     /// The working state of the turn under way, to change. That there is
     /// one is checked in tests; in a release build it would start from an
     /// empty turn rather than fail.
     fn current_mut(&mut self) -> &mut TurnState {
-        debug_assert!(
-            self.agent_channel_state.turn.is_some(),
-            "a turn's working state changed while no turn runs"
-        );
-        self.agent_channel_state.turn.get_or_insert_with(TurnState::default)
+        let thread = self.thread();
+        let turn = &mut self.agent_channel_state.thread_mut(thread).turn;
+        debug_assert!(turn.is_some(), "a turn's working state changed while no turn runs");
+        turn.get_or_insert_with(TurnState::default)
     }
 
     /// Records that the turn has seen what is classified `classification`:
@@ -326,12 +323,11 @@ impl<'a> Turn<'a> {
     /// their bookkeeping off `Turn`. Short-lived on purpose - running a call
     /// needs the whole turn in between.
     pub(crate) fn tool_calls(&mut self) -> ToolCalls<'_> {
-        debug_assert!(
-            self.agent_channel_state.turn.is_some(),
-            "a turn's working state changed while no turn runs"
-        );
         let texts = self.situation().texts();
-        let turn = self.agent_channel_state.turn.get_or_insert_with(TurnState::default);
+        let thread = self.thread();
+        let turn = &mut self.agent_channel_state.thread_mut(thread).turn;
+        debug_assert!(turn.is_some(), "a turn's working state changed while no turn runs");
+        let turn = turn.get_or_insert_with(TurnState::default);
         ToolCalls::new(turn, &self.agent_name, texts)
     }
 
@@ -509,10 +505,16 @@ mod tests {
         assert!(!turn.may_call_model(), "the limit holds across the restart");
 
         let mut stored = serde_json::to_value(&state).unwrap();
-        stored["turn"].as_object_mut().unwrap().remove("model_calls");
+        let thread = serde_json::to_value(ThreadId::default()).unwrap();
+        let part = &mut stored["threads"][thread.as_str().unwrap()];
+        part["turn"].as_object_mut().unwrap().remove("model_calls");
         let state: AgentChannelState = serde_json::from_value(stored).unwrap();
         assert_eq!(
-            state.turn.unwrap().model_calls,
+            state
+                .thread(ThreadId::default())
+                .and_then(|part| part.turn.as_ref())
+                .unwrap()
+                .model_calls,
             0,
             "a turn stored before the count was kept starts from 0"
         );
@@ -722,8 +724,8 @@ mod tests {
         assert_eq!(
             turn.situation()
                 .agent_channel_state()
-                .turn
-                .as_ref()
+                .thread(turn.situation().branch_thread_id())
+                .and_then(|part| part.turn.as_ref())
                 .unwrap()
                 .work
                 .context

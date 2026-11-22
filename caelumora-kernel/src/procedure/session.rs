@@ -2686,7 +2686,10 @@ mod tests {
         assert!(manager.purge(&ctx, id).await.unwrap());
         let working = |agent: AgentId| {
             let states = Arc::clone(&states);
-            async move { states.get_agent_channel_state(agent, elsewhere).await.unwrap().turn.is_some() }
+            async move {
+                let state = states.get_agent_channel_state(agent, elsewhere).await.unwrap();
+                state.thread(ThreadId::default()).is_some_and(|part| part.turn.is_some())
+            }
         };
         assert!(!working(sessions.id).await, "its state is purged with it");
         assert!(working(users.id).await, "the user's agent keeps its own");
@@ -2887,10 +2890,12 @@ mod tests {
         }
         let [interrupted, waiting, idle, deleted] =
             sessions.map(|session| (session.id, session.channels[0]));
-        let in_turn = |processing_state| AgentChannelState {
-            processing_state,
-            turn: Some(TurnState::default()),
-            ..AgentChannelState::default()
+        let in_turn = |processing_state| {
+            let mut state = AgentChannelState::default();
+            let part = state.thread_mut(ThreadId::default());
+            part.processing_state = processing_state;
+            part.turn = Some(TurnState::default());
+            state
         };
         let states = kernel.state_store();
         for agent in [AgentId::new(), AgentId::new()] {

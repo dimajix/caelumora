@@ -79,10 +79,11 @@ impl AgentActor {
         let agent_id = actor_runtime.agent().id;
         // A turn stored under way is resumed (issue 75).
         let prompts = Arc::clone(actor_runtime.prompts());
+        let thread = actor_runtime.thread_id();
         let resume = |state: &mut AgentChannelState| {
             // In the variant the turn was begun with.
-            let profile =
-                state.turn.as_ref().map(|turn| turn.work.context.frame.profile).unwrap_or_default();
+            let turn = state.thread(thread).and_then(|part| part.turn.as_ref());
+            let profile = turn.map(|turn| turn.work.context.frame.profile).unwrap_or_default();
             let not_executed = state.prepare_resume(&not_executed_result(&profile.texts(&prompts)));
             if not_executed > 0 {
                 warn!("Agent {} in channel {}: {} approved tool calls were not executed before it stopped; the model is told", agent_id, channel_id, not_executed);
@@ -183,7 +184,10 @@ impl AgentActor {
         rx: &mut Box<dyn EventReceiver>,
         output: &dyn EventSender,
     ) -> Result<ActorState> {
-        let initiator = state.turn.as_ref().map(|turn| turn.work.event_context.initiator_id);
+        let initiator = state
+            .thread(self.body.runtime.thread_id())
+            .and_then(|part| part.turn.as_ref())
+            .map(|turn| turn.work.event_context.initiator_id);
         let next = self.end_turn(state, false, output).await?;
         if let Some(initiator) = initiator {
             self.body.drop_answered(state, initiator, rx).await;
@@ -419,7 +423,11 @@ impl AgentActor {
         reason: GivenUpReason,
         output: &dyn EventSender,
     ) {
-        let Some(under_way) = state.turn.as_ref() else { return };
+        let Some(under_way) =
+            state.thread(self.body.runtime.thread_id()).and_then(|part| part.turn.as_ref())
+        else {
+            return;
+        };
         // A turn that no longer flows into its channel is recorded as
         // lowered, whatever ended it: its model is then given only which
         // tools it called (issue 258). What its users are told follows from
@@ -1057,13 +1065,20 @@ impl Actor for AgentActor {
                 self.body.agent_id(),
                 &self.body.scoped_name(),
                 current_state,
-                state.turn.as_ref().map(|t| &t.work.event_context),
+                state
+                    .thread(self.body.runtime.thread_id())
+                    .and_then(|part| part.turn.as_ref())
+                    .map(|t| &t.work.event_context),
             );
 
             // Before every step of a turn: a turn that no longer flows into
             // its channel - lowered meanwhile - is given up, whatever it was
             // about to do; nothing of it is run or taken over (issue 141).
-            if let Some(under_way) = state.turn.as_ref().filter(|_| current_state.in_turn()) {
+            if let Some(under_way) = state
+                .thread(self.body.runtime.thread_id())
+                .and_then(|part| part.turn.as_ref())
+                .filter(|_| current_state.in_turn())
+            {
                 if let Some(channel) = self.lowered(under_way) {
                     info!(
                         "Agent {} {} gives up its turn: the channel was lowered to {}",
@@ -1152,7 +1167,10 @@ impl Actor for AgentActor {
             // then finds its turn over.
             if interrupt == Some(Interrupt::Retry) && next_state.is_some_and(|next| next.in_turn())
             {
-                given_up_for = state.turn.as_ref().map(|t| t.work.turn_id);
+                given_up_for = state
+                    .thread(self.body.runtime.thread_id())
+                    .and_then(|part| part.turn.as_ref())
+                    .map(|t| t.work.turn_id);
                 self.give_up(&mut state, GivenUpReason::Retried, &*output)
                     .instrument(span.clone())
                     .await;
@@ -1328,14 +1346,17 @@ mod tests {
             ThreadId::default(),
             Work::new(Default::default(), None, channel.clone(), Default::default()),
         );
-        agent_channel_state.offer_tools(vec![ToolSet::new(
-            "tools",
-            "some tools",
-            vec![
-                tool("shown", ToolVisibility::SHOWN),
-                tool("call_only", ToolVisibility::CALL_ONLY),
-            ],
-        )]);
+        agent_channel_state.offer_tools(
+            ThreadId::default(),
+            vec![ToolSet::new(
+                "tools",
+                "some tools",
+                vec![
+                    tool("shown", ToolVisibility::SHOWN),
+                    tool("call_only", ToolVisibility::CALL_ONLY),
+                ],
+            )],
+        );
         let mut turn = Turn::under_way(agent, &mut agent_channel_state);
 
         let mut partial = answer(&[]);
@@ -1399,7 +1420,8 @@ mod tests {
                     Default::default(),
                 ),
             );
-            agent_channel_state.offer_tools(vec![ToolSet::new("tools", "some tools", tools)]);
+            agent_channel_state
+                .offer_tools(ThreadId::default(), vec![ToolSet::new("tools", "some tools", tools)]);
             let mut turn = Turn::under_way(agent, &mut agent_channel_state);
             if private_knowledge {
                 turn.record_knowledge(KnowledgeRef {

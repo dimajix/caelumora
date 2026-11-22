@@ -1017,7 +1017,7 @@ impl ParticipantView {
     /// `Failed` if the agent's state cannot be read.
     pub async fn usage(&self) -> ViewResult<Option<TokenUsage>> {
         let Some(agent) = self.state.agent() else { return Ok(None) };
-        Ok(agent.stored().await?.used)
+        Ok(agent.stored().await?.used())
     }
 
     /// Of the notes the agent published, as its `state` holds them, those
@@ -1142,7 +1142,7 @@ impl ParticipantView {
         let (mut pending_approvals, mut pending_questions) = (Vec::new(), Vec::new());
         if let Some(state) = &state {
             if wanted.contains(Detail::USAGE) {
-                usage = state.used;
+                usage = state.used();
             }
             if wanted.contains(Detail::NOTES) {
                 notes = self.notes_in(state).await;
