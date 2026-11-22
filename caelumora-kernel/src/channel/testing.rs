@@ -14,13 +14,14 @@ use crate::channel::{ChannelLoop, Ending};
 use crate::controller::SessionController;
 use crate::kernel::{ChannelRuntime, Kernel, ParticipantRuntime};
 use crate::procedure::channel::Reclassify;
-use crate::procedure::participant::{let_go_from_channel, Exit, LetGo, TakeIn};
+use crate::procedure::participant::{let_go_from_channel, Exit, LetGo, TakeIn, TakeIntoThread};
 use crate::procedure::thread;
 use crate::procedure::{Compensation, Deferred, Key, Locks, Procedure, ProcedureExecutor};
 use crate::session::SessionError;
 use crate::testing::shown;
 use crate::view::AgentContextView;
 use anyhow::{Error, Result};
+use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use caelumora_api::actor::Actor;
 use caelumora_api::command::CommandError;
@@ -55,7 +56,7 @@ use caelumora_store::testing::record_users;
 use caelumora_store::testing::stored_agent;
 use caelumora_store::{EntityStores, Persistence};
 use futures::future::BoxFuture;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::convert::Infallible;
 use std::future::Future;
 use std::mem;
@@ -277,7 +278,8 @@ impl ChannelLoop {
         let delegate = ActorId::Delegate(thread);
         let resolved = ResolvedParticipant::delegate(thread, self.session_id, self.id);
         let forger = Forger::sending(delegate, envelopes(thread));
-        self.adopt(forger, resolved, thread, None, None).await;
+        let threads = Arc::new(ArcSwap::from_pointee(BTreeSet::from([thread])));
+        self.adopt(forger, resolved, threads, None, None).await;
         thread
     }
 
@@ -512,8 +514,7 @@ impl ChannelLoop {
     pub(crate) fn new_participant_runtime(&self, actor: ActorId) -> ParticipantRuntime {
         match self.actors.load().get(&actor) {
             Some(taking_part) => {
-                let joined = self.joined_in(Some(&taking_part.threads));
-                self.runtime.participant_runtime(&taking_part.participant, joined)
+                self.runtime.participant_runtime(&taking_part.participant, &taking_part.threads)
             }
             None => self.runtime.new_participant_runtime(actor),
         }
@@ -637,6 +638,31 @@ impl ChannelLoop {
         let opened = ThreadId::new();
         self.holding(async move { channel.open_thread(&context, opened, origin).await }).await?;
         Ok(opened)
+    }
+
+    /// Takes `participant` into `thread` on behalf of `context` by the procedure that does it
+    /// (`TakeIntoThread::added`), as an entry point does; in a channel of no session by the
+    /// channel's building block under a hold of the channel.
+    ///
+    /// # Errors
+    /// As `TakeIntoThread`, else as `ChannelLoop::take_into_thread`.
+    pub async fn take_into_thread_by_procedure(
+        self: &Arc<Self>,
+        context: &SecurityContext,
+        thread: ThreadId,
+        participant: ActorId,
+    ) -> Result<()> {
+        if let Some(session) = self.session_loop() {
+            let taking_in =
+                TakeIntoThread::added(context, session.id(), self.id, thread, participant);
+            return session.procedures().run(taking_in).await.map_err(SessionError::untyped);
+        }
+        let (channel, context) = (Arc::clone(self), context.clone());
+        self.holding(async move {
+            channel.take_into_thread(participant, thread, &context).await?.carried_out().await;
+            Ok(())
+        })
+        .await
     }
 
     /// Closes `thread` on behalf of `context` by the procedure that does it (`thread::Close`), as

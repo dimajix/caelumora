@@ -6,13 +6,14 @@ use super::ActingKind;
 use super::{Acting, ChannelRuntime, Kernel};
 use crate::actor::ActorManager;
 use crate::attachment::AttachmentManager;
-use crate::channel::ChannelLoop;
+use crate::channel::{self, ChannelLoop};
 use crate::command::CommandExecutor;
 use crate::controller::{ChannelController, SessionController};
 use crate::event::EventSubscription;
+use arc_swap::ArcSwap;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::AgentId;
-use caelumora_domain::channel::{Channel, ChannelId, ThreadId};
+use caelumora_domain::channel::{Channel, ChannelId, ThreadId, ThreadOrigin};
 use caelumora_domain::security::SecurityAttributes;
 use caelumora_domain::session::SessionId;
 use caelumora_domain::store::StoreResult;
@@ -36,11 +37,10 @@ pub struct ParticipantRuntime {
     pub(super) actor: ActorId,
     pub(super) session_id: SessionId,
     pub(super) channel_id: ChannelId,
-    /// The threads of its channel the actor takes part in (issues 557, 602): the one it joined in,
-    /// as nobody is taken into a further thread yet.
-    pub(super) threads: BTreeSet<ThreadId>,
-    /// The thread it joined its channel in (issue 602).
-    pub(super) joined_thread_id: ThreadId,
+    /// The threads of its channel the actor takes part in (issues 557, 602): shared with the
+    /// channel, which changes them as it takes the actor into a further thread or lets it go from
+    /// one (`ChannelActor::threads`), and read as they are now.
+    pub(super) threads: Arc<ArcSwap<BTreeSet<ThreadId>>>,
     /// In whose name it acts, which the kernel builds into a context at every call (issue 516).
     pub(super) acting: Acting,
 }
@@ -53,15 +53,23 @@ impl ParticipantRuntime {
         self.acting.context_for(initiator)
     }
 
-    /// The threads of its channel the actor takes part in (issues 557, 602).
+    /// The threads of its channel the actor takes part in now (issues 557, 602).
     pub(crate) fn threads(&self) -> BTreeSet<ThreadId> {
-        self.threads.clone()
+        BTreeSet::clone(&self.threads.load())
     }
 
-    /// The thread it joined its channel in (issue 602): where it says of itself what names no
-    /// thread of its own - what a user says, until they name the thread they write in.
+    /// Where the thread `thread` of its channel hangs (issue 602): the message of another thread it
+    /// was opened at; `None` for its line, a thread the channel does not hold open, or once the
+    /// channel is gone.
+    pub(crate) fn origin_of(&self, thread: ThreadId) -> Option<ThreadOrigin> {
+        self.channel_loop()?.origin_of(thread)
+    }
+
+    /// The thread it counts as joined its channel in, of those it takes part in now (issue 602,
+    /// `channel::joined_in`): where it says of itself what names no thread of its own - what a
+    /// user says, until they name the thread they write in.
     pub(crate) fn joined_thread_id(&self) -> ThreadId {
-        self.joined_thread_id
+        channel::joined_in(self.channel_id, &self.threads.load())
     }
 
     /// The kernel of the process the participant runs in, which the runtime of its agent answers by
@@ -153,9 +161,13 @@ impl ParticipantRuntime {
     }
 
     /// This runtime, its actor taking part in `thread` as well: for a test of an actor in several
-    /// threads (issue 602), which nobody is taken into yet.
-    pub fn taking_part_also_in(mut self, thread: ThreadId) -> Self {
-        self.threads.insert(thread);
+    /// threads (issue 602) that runs in no channel, which would take it in.
+    pub fn taking_part_also_in(self, thread: ThreadId) -> Self {
+        self.threads.rcu(|threads| {
+            let mut threads = BTreeSet::clone(threads);
+            threads.insert(thread);
+            threads
+        });
         self
     }
 }

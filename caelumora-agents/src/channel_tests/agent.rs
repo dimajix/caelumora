@@ -3722,3 +3722,72 @@ async fn a_part_given_into_the_transcript_is_recorded_as_given_and_as_withdrawn(
     );
     running.abort();
 }
+
+/// Issue 602: an agent of the line taken into a thread begins its branch there where it stands in
+/// the line - forked, what it heard there before on it -, its join noted after; its branch of the
+/// line goes on without it.
+#[tokio::test]
+async fn an_agent_taken_into_a_thread_forks_its_branch_from_where_it_stands_in_the_line() {
+    use caelumora_domain::channel::ThreadOrigin;
+    use caelumora_domain::message::MessageId;
+    let (channel, context, agent, _) =
+        agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(NeverAnswers), Default::default())
+            .await;
+    let line = ThreadId::line(channel.id());
+    let before = Message {
+        id: MessageId::new(),
+        sender_id: ActorId::Agent(AgentId::new()),
+        sender_name: "hermes".to_string(),
+        role: MessageRole::Assistant,
+        content: Some("said before".to_string()),
+        ..Message::new(Classification::CHANNEL_DEFAULT)
+    };
+    channel.record_said(vec![before.clone()]).await;
+    let running = tokio::spawn({
+        let channel = Arc::clone(&channel);
+        async move { channel.run().await }
+    });
+    let stored_once = |done: Box<dyn Fn(&AgentChannelState) -> bool>| {
+        let channel = Arc::clone(&channel);
+        async move {
+            time::timeout(Duration::from_secs(5), async {
+                loop {
+                    if let Ok(state) = channel.stored_agent_channel_state(agent).await {
+                        if done(&state) {
+                            break state;
+                        }
+                    }
+                    time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("the agent's state comes to stand so")
+        }
+    };
+    stored_once(Box::new(move |state| state.last_message == Some(before.id))).await;
+
+    let origin = ThreadOrigin { thread: line, message: before.id };
+    let thread = channel.open_thread_by_procedure(&context, origin, &[]).await.expect("opened");
+    let helper = ActorId::Agent(agent);
+    channel.take_into_thread_by_procedure(&context, thread, helper).await.expect("taken in");
+    let joined = move |state: &AgentChannelState| {
+        state.transcript.entries(thread).any(|node| joined_entry(&node.entry, helper))
+    };
+    let state = stored_once(Box::new(joined)).await;
+
+    let contents = |thread| -> Vec<String> {
+        state.transcript.messages(thread).into_iter().filter_map(|m| m.content).collect()
+    };
+    assert_eq!(contents(thread), contents(line), "what it heard in the line, forked");
+    assert!(contents(thread).contains(&"said before".to_string()), "{:?}", contents(thread));
+    let joins = |thread| {
+        state.transcript.entries(thread).filter(|node| joined_entry(&node.entry, helper)).count()
+    };
+    assert_eq!(joins(thread), joins(line) + 1, "its join of the thread on that branch alone");
+    running.abort();
+}
+
+/// Whether `entry` notes that `participant` joined.
+fn joined_entry(entry: &TranscriptEntry, participant: ActorId) -> bool {
+    matches!(entry, TranscriptEntry::ParticipantJoined { participant: p, .. } if *p == participant)
+}

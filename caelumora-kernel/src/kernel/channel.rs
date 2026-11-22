@@ -10,6 +10,7 @@ use crate::command::CommandExecutor;
 use crate::component::ComponentRegistry;
 use crate::controller::{ChannelController, ControllerManager, SessionController};
 use crate::session::SessionLoop;
+use arc_swap::ArcSwap;
 use caelumora_api::component::Services;
 use caelumora_domain::actor::ActorId;
 #[cfg(any(test, feature = "test-support"))]
@@ -87,33 +88,32 @@ impl ChannelRuntime {
         }
     }
 
-    /// The runtime of the participant `resolved`, joining in `thread` and taking part in it alone
-    /// (issues 557, 602), in the channel this runtime is for: acting in the participant's context
-    /// as the controllers hold it now (issue 516).
+    /// The runtime of the participant `resolved`, taking part in `threads` - shared with the
+    /// channel, which changes them (issues 557, 602) -, in the channel this runtime is for: acting
+    /// in the participant's context as the controllers hold it now (issue 516).
     pub(crate) fn participant_runtime(
         &self,
         resolved: &ResolvedParticipant,
-        thread: ThreadId,
+        threads: &Arc<ArcSwap<BTreeSet<ThreadId>>>,
     ) -> ParticipantRuntime {
         let participant = resolved.clone();
         let channel = Arc::clone(self.channel_controller());
         let acting = Acting(ActingKind::Participant { participant, channel });
-        self.runtime_acting(resolved.actor_id(), acting, thread)
+        self.runtime_acting(resolved.actor_id(), acting, Arc::clone(threads))
     }
 
     fn runtime_acting(
         &self,
         actor: ActorId,
         acting: Acting,
-        thread: ThreadId,
+        threads: Arc<ArcSwap<BTreeSet<ThreadId>>>,
     ) -> ParticipantRuntime {
         ParticipantRuntime {
             runtime: self.clone(),
             actor,
             session_id: self.session.id(),
             channel_id: self.channel.id(),
-            threads: BTreeSet::from([thread]),
-            joined_thread_id: thread,
+            threads,
             acting,
         }
     }
@@ -251,7 +251,8 @@ impl ChannelRuntime {
     pub fn new_participant_runtime(&self, actor: ActorId) -> ParticipantRuntime {
         let (session_id, channel_id) = (self.session.id(), self.channel.id());
         let acting = Acting(ActingKind::Itself { actor, session_id, channel_id });
-        self.runtime_acting(actor, acting, ThreadId::line(channel_id))
+        let threads = Arc::new(ArcSwap::from_pointee(BTreeSet::from([ThreadId::line(channel_id)])));
+        self.runtime_acting(actor, acting, threads)
     }
 
     /// Where the transcripts of the agents' contexts are kept, for the tests' views.

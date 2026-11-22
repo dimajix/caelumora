@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::{Agent, AgentChannelState, Personality};
 use caelumora_domain::approval::ApprovalRuleId;
-use caelumora_domain::channel::{ChannelId, ThreadId};
+use caelumora_domain::channel::{ChannelId, ThreadId, ThreadOrigin};
 use caelumora_domain::component::ComponentConfig;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::content::{ContentId, ContentRef};
@@ -62,7 +62,12 @@ pub trait ActorRuntime: Send + Sync + Debug {
     /// is delivered, and whose branches of its transcript it keeps.
     fn threads(&self) -> BTreeSet<ThreadId>;
 
-    /// The thread it joined its channel in (issue 602): where it says of itself what names no
+    /// Where the thread `thread` of its channel hangs (issue 602): the message of another thread
+    /// it was opened at; `None` for its line, or a thread its channel does not hold open.
+    fn origin_of(&self, thread: ThreadId) -> Option<ThreadOrigin>;
+
+    /// The thread it counts as joined its channel in, of those it takes part in now (issue 602):
+    /// its line if it takes part there, else the first. Where it says of itself what names no
     /// thread of its own - the tools it would be offered, where it stands before its first turn.
     fn joined_thread_id(&self) -> ThreadId;
 

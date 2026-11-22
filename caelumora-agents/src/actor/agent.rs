@@ -23,6 +23,7 @@ use caelumora_domain::actor::{
 };
 use caelumora_domain::agent::{AgentChannelState, RetryRefused};
 use caelumora_domain::approval::{ApprovalStatus, ApprovalVerdict};
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::command::CommandDescription;
 use caelumora_domain::component::ComponentConfig;
 use caelumora_domain::confidentiality::{Classification, Visibility};
@@ -1261,18 +1262,19 @@ impl Actor for AgentActor {
         hit
     }
 
-    fn cancel(&self) {
-        match self.body.control.turn_under_way() {
+    fn cancel(&self, thread: Option<ThreadId>) {
+        let there = thread.is_none_or(|thread| self.body.control.thread() == Some(thread));
+        match self.body.control.turn_under_way().filter(|_| there) {
             Some(turn) => {
                 info!("Cancelling agent {} {} in turn {}", self.id(), self.body.scoped_name(), turn)
             }
             None => info!(
-                "Cancelling agent {} {}: no turn is under way",
+                "Cancelling agent {} {}: no turn is under way there",
                 self.id(),
                 self.body.scoped_name()
             ),
         }
-        self.body.control.cancel();
+        self.body.control.cancel(thread);
     }
 
     fn stop(&self) {

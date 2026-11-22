@@ -28,14 +28,15 @@ use caelumora_kernel::actor::user::{ChannelWatch, Lagged, UserActor};
 use caelumora_kernel::actor::Shown;
 use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::procedure::channel::{Create, Delete, Reclassify, Restore};
-use caelumora_kernel::procedure::participant::{LetGo, TakeIn};
+use caelumora_kernel::procedure::participant::{LetGo, LetGoFromThread, TakeIn, TakeIntoThread};
 use caelumora_kernel::session::ChannelSpec;
 use caelumora_kernel::view::{Reached, SessionView, Views};
 use caelumora_rest_api::actor::ActorPath;
 use caelumora_rest_api::channel::{
     AddParticipantRequest, AnswerQuestionsRequest, ChannelParticipantResponse, ChannelResponse,
     ChannelSnapshot, CommandReplyResponse, CreateChannelRequest, ExecuteCommandRequest,
-    MessageRequest, PublishedNotesResponse, ReadRequest, SendApprovalRequest, TurnRequest,
+    MessageRequest, PublishedNotesResponse, ReadRequest, SendApprovalRequest,
+    ThreadParticipantRequest, TurnRequest,
 };
 use caelumora_rest_api::context::{
     AgentComponentsResponse, AgentToolsResponse, KnowledgeRefResponse, MessageContextResponse,
@@ -429,6 +430,75 @@ pub(super) async fn leave(
     let context = user.security_context();
     let from = Some(channel_id);
     let leaving = LetGo::leaving(&context, session_id, participant, from);
+    state.procedures.run(leaving).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Takes participant `participant` of the channel into its thread `tid` as well (issue 602). Only
+/// who may change the channel may do it.
+pub(super) async fn add_thread_participant(
+    State(state): State<Arc<AppState>>,
+    Path((session_id, channel_id, thread)): Path<(SessionId, ChannelId, ThreadId)>,
+    user: AuthenticatedUser,
+    Json(payload): Json<ThreadParticipantRequest>,
+) -> Result<StatusCode, ApiError> {
+    let context = user.security_context();
+    let participant = payload.participant;
+    let adding = TakeIntoThread::added(&context, session_id, channel_id, thread, participant);
+    state.procedures.run(adding).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Lets participant `aid` go from the thread `tid` of the channel alone (issue 602), staying in its
+/// other threads. Only who may change the channel may do it.
+pub(super) async fn remove_thread_participant(
+    State(state): State<Arc<AppState>>,
+    Path((session_id, channel_id, thread, ActorPath(participant))): Path<(
+        SessionId,
+        ChannelId,
+        ThreadId,
+        ActorPath,
+    )>,
+    user: AuthenticatedUser,
+) -> Result<StatusCode, ApiError> {
+    let context = user.security_context();
+    let removing = LetGoFromThread::removed(&context, session_id, channel_id, thread, participant);
+    state.procedures.run(removing).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Takes participant `aid` - the authenticated user, or an agent of theirs - into the thread `tid`
+/// of the channel by their own act (issue 602).
+pub(super) async fn join_thread(
+    State(state): State<Arc<AppState>>,
+    Path((session_id, channel_id, thread, ActorPath(participant))): Path<(
+        SessionId,
+        ChannelId,
+        ThreadId,
+        ActorPath,
+    )>,
+    user: AuthenticatedUser,
+) -> Result<StatusCode, ApiError> {
+    let context = user.security_context();
+    let joining = TakeIntoThread::joining(&context, session_id, channel_id, thread, participant);
+    state.procedures.run(joining).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Takes participant `aid` - the authenticated user, or an agent of theirs - out of the thread
+/// `tid` of the channel by their own act (issue 602), staying in its other threads.
+pub(super) async fn leave_thread(
+    State(state): State<Arc<AppState>>,
+    Path((session_id, channel_id, thread, ActorPath(participant))): Path<(
+        SessionId,
+        ChannelId,
+        ThreadId,
+        ActorPath,
+    )>,
+    user: AuthenticatedUser,
+) -> Result<StatusCode, ApiError> {
+    let context = user.security_context();
+    let leaving = LetGoFromThread::leaving(&context, session_id, channel_id, thread, participant);
     state.procedures.run(leaving).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1300,6 +1370,50 @@ mod tests {
             "a bare UUID names no actor"
         );
         state.session_manager.stop(&SecurityContext::system(), session_id).await.unwrap();
+    }
+
+    /// Issue 602: a participant of the channel is taken into a further thread of it and let go
+    /// from it alone; taken in twice, or let go from the last thread it takes part in, it is told
+    /// why.
+    #[tokio::test]
+    async fn a_participant_is_taken_into_a_thread_and_let_go_from_it_alone() {
+        use caelumora_domain::channel::ThreadOrigin;
+        let state = state();
+        let api = api(Arc::clone(&state), &[]);
+        let cookie = login(&api, "alice").await;
+        let alice_id = user_id(&api, &cookie).await;
+        let alice = ActorId::User(alice_id);
+        let (session_id, channel_id) = session_of(&state, alice_id, &[]).await;
+        let system = SecurityContext::system();
+        let session = state.session_manager.open(&system, session_id).await.unwrap();
+        let line = ThreadId::line(channel_id);
+        let origin = ThreadOrigin { thread: line, message: MessageId::new() };
+        let thread = session.open_thread(&system, channel_id, origin, vec![]).await.unwrap();
+        let threads = format!("/sessions/{}/channels/{}/threads", session_id.0, channel_id.0);
+        let participants = |thread: ThreadId| format!("{threads}/{}/participants", thread.0);
+        let taking_in = Some(json!({ "participant": alice }));
+
+        let (status, _) =
+            send(&api, &cookie, Method::POST, &participants(thread), taking_in.clone()).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "taken in");
+        let (status, refused) =
+            send(&api, &cookie, Method::POST, &participants(thread), taking_in).await;
+        assert_eq!(
+            (status, refused["code"].clone()),
+            (StatusCode::CONFLICT, json!("already_in_thread"))
+        );
+        let leave = |thread| format!("{}/{}/leave", participants(thread), ActorPath(alice));
+        let (status, _) = send(&api, &cookie, Method::POST, &leave(thread), None).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "out of the thread by her own act");
+        let (status, refused) = send(&api, &cookie, Method::POST, &leave(line), None).await;
+        assert_eq!((status, refused["code"].clone()), (StatusCode::CONFLICT, json!("last_thread")));
+        let hers = |thread| format!("{}/{}", participants(thread), ActorPath(alice));
+        let join = format!("{}/join", hers(thread));
+        let (status, _) = send(&api, &cookie, Method::POST, &join, None).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "into the thread again by her own act");
+        let (status, _) = send(&api, &cookie, Method::DELETE, &hers(thread), None).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "let go by the channel's owner");
+        state.session_manager.stop(&system, session_id).await.unwrap();
     }
 
     /// Who takes no part in a channel cannot follow it, whether it runs or

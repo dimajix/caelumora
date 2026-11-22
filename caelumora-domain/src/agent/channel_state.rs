@@ -33,7 +33,7 @@ use crate::turn::{AfterStep, CommandRequest, TurnState};
 use crate::work::{TurnId, Work};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::mem;
 use std::sync::Arc;
 use tracing::warn;
@@ -121,6 +121,31 @@ impl AgentChannelState {
     /// The agent's part of `thread`, to change it; begun empty if it has none yet.
     pub fn thread_mut(&mut self, thread: ThreadId) -> &mut AgentThreadState {
         self.threads.entry(thread).or_default()
+    }
+
+    /// The threads it holds a part or a branch of (issue 602).
+    pub fn threads_held(&self) -> BTreeSet<ThreadId> {
+        self.threads.keys().copied().chain(self.transcript.threads()).collect()
+    }
+
+    /// Takes in that it was taken into `thread` (issue 602): its branch there, new to it, begins
+    /// where its branch of `from` - the thread `thread` was opened from - stands, forked
+    /// (`Transcript::fork`), or at the root without one there. Nothing for a thread it holds
+    /// already.
+    pub fn join_thread(&mut self, thread: ThreadId, from: Option<ThreadId>) {
+        if self.threads_held().contains(&thread) {
+            return;
+        }
+        if let Some(from) = from {
+            self.transcript.fork(thread, from);
+        }
+    }
+
+    /// Takes in that it was let go from `thread` (issue 602): its part and its branch there go -
+    /// what it held stays in its store, what its calls there used with it.
+    pub fn leave_thread(&mut self, thread: ThreadId) {
+        self.threads.remove(&thread);
+        self.transcript.start_anew(thread);
     }
 
     /// The turn under way in `thread`, `None` between turns there.
@@ -893,6 +918,7 @@ mod tests {
     use crate::confidentiality::Confidentiality;
     use crate::context::{ContextResolver, KnowledgeSource};
     use crate::digest;
+    use crate::message::testing::{id, make_message};
     use crate::note::NoteId;
     use crate::prompt_catalogue::testing::kernel_catalogue;
     use crate::question::{Addressee, Question, Questions};
@@ -954,6 +980,31 @@ mod tests {
             let answered = turn.tool_calls[0].result().expect("answered");
             assert_eq!(answered.content, told(turn), "as its own turn says");
         }
+    }
+
+    /// Issue 602: a thread the agent is taken into begins forked from where it stands in the
+    /// thread it was opened from, or empty without a branch there, and one it holds already is
+    /// not forked again; a thread it is let go from goes, its part and its branch.
+    #[test]
+    fn it_joins_and_leaves_threads() {
+        let line = ThreadId::default();
+        let (side, fresh, left) = (ThreadId::new(), ThreadId::new(), ThreadId::new());
+        let mut state = in_thread(left, ActorState::Idle, None);
+        state.transcript.push(line, make_message(id(1)));
+        state.transcript.push(left, make_message(id(2)));
+        state.join_thread(side, Some(line));
+        state.join_thread(fresh, None);
+        assert_eq!(state.transcript.digest(side), state.transcript.digest(line), "forked");
+        assert_eq!(state.transcript.digest(fresh), None, "begun empty");
+        state.leave_thread(left);
+        assert!(state.thread(left).is_none(), "its part of the thread it left gone");
+        assert_eq!(state.transcript.digest(left), None, "and its branch");
+        assert_eq!(state.threads_held(), BTreeSet::from([line, side]), "what it holds");
+
+        state.transcript.push(side, make_message(id(3)));
+        let before = state.transcript.digest(side);
+        state.join_thread(side, Some(line));
+        assert_eq!(state.transcript.digest(side), before, "a thread it holds is not forked again");
     }
 
     #[test]

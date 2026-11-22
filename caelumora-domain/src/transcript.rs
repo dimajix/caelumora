@@ -372,11 +372,25 @@ impl Transcript {
         previous
     }
 
+    /// The threads it holds a branch of.
+    pub fn threads(&self) -> impl Iterator<Item = ThreadId> + '_ {
+        self.branches.keys().copied()
+    }
+
+    /// Begins the branch of `thread` where the branch of `from` stands now (issue 602): forked, for
+    /// a thread opened at a message of `from` that the agent is taken into. Nothing if `from` has
+    /// no branch: the branch of `thread` begins at the root with its first entry.
+    pub fn fork(&mut self, thread: ThreadId, from: ThreadId) {
+        if let Some(branch) = self.branches.get(&from).cloned() {
+            self.branches.insert(thread, branch);
+        }
+    }
+
     /// Begins the branch of `thread` anew, and returns the digest of what it
-    /// held (issue 205): for a receiver that keeps what it was given - a
-    /// remote agent - once the branch was given to it. What was given stays,
-    /// which the digest names, and what comes after is what the receiver is
-    /// given next.
+    /// held: for a receiver that keeps what it was given - a remote agent -
+    /// once the branch was given to it (issue 205), and for a thread the
+    /// agent no longer takes part in (issue 602). What it held stays, which
+    /// the digest names, and what comes after is a branch of its own.
     pub fn start_anew(&mut self, thread: ThreadId) -> Option<Digest> {
         let given = self.digest(thread);
         self.branches.remove(&thread);
@@ -873,6 +887,30 @@ mod tests {
             (transcript.digest(line), transcript.digest(side)),
             "and so it is loaded"
         );
+    }
+
+    /// Issue 602: a branch forked from another begins where that one stands, goes on its own way
+    /// from there, and is stored and loaded with a head of its own; forked from a thread without a
+    /// branch, it begins at the root.
+    #[test]
+    fn a_branch_forked_begins_where_the_other_stands_and_goes_on_its_own_way() {
+        let (line, side, fresh) = (ThreadId::new(), ThreadId::new(), ThreadId::new());
+        let mut transcript = Transcript::default();
+        transcript.extend(line, vec![make_message(id(1)), make_message(id(2))]);
+        transcript.fork(side, line);
+        assert_eq!(transcript.digest(side), transcript.digest(line), "where the line stands");
+        transcript.push(side, make_message(id(3)));
+        transcript.push(line, make_message(id(4)));
+        let ids = |transcript: &Transcript, thread| {
+            transcript.messages(thread).iter().map(|m| m.id).collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&transcript, side), [id(1), id(2), id(3)], "the line's, then its own");
+        assert_eq!(ids(&transcript, line), [id(1), id(2), id(4)], "nothing of the side");
+        let loaded = reloaded(&transcript);
+        assert_eq!(ids(&loaded, side), ids(&transcript, side), "loaded from its own head");
+
+        transcript.fork(fresh, ThreadId::new());
+        assert_eq!(transcript.threads().count(), 2, "nothing to fork from: no branch yet");
     }
 
     /// Issue 602: a change of a message is recorded on every branch that holds it, and on no

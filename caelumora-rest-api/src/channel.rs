@@ -104,6 +104,12 @@ pub struct AddParticipantRequest {
     pub history: HistoryAccess,
 }
 
+/// A participant of a channel to take into a further thread of it (issue 602).
+#[derive(Debug, Deserialize)]
+pub struct ThreadParticipantRequest {
+    pub participant: ActorId,
+}
+
 /// A channel to create in a running session (issue 09).
 #[derive(Debug, Deserialize)]
 pub struct CreateChannelRequest {

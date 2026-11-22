@@ -107,12 +107,13 @@ pub trait HistoryStore: Debug + Send + Sync {
     async fn rebuild(&self, channel: ChannelId) -> StoreResult<()>;
 }
 
-/// Who took part in a channel when and where (issues 417, 557): each participant's ranges of
-/// positions in which it was given what went to every participant, oldest first, each from the
-/// `from` of the `HistoryShared` before its `ParticipantJoined`, or else from its join, up to the
-/// `until` of its `ParticipantLeft`, in the thread the context of its join names (`Attended`). At
-/// most one range of a participant is open: a join recorded while it is - an actor started again
-/// without a leave recorded before, issue 568 - continues it.
+/// Who took part in a channel when and where (issues 417, 557, 602): each participant's ranges of
+/// positions in which it was given what went to every participant, oldest first, each in the thread
+/// the context of its `ParticipantJoined` names, from the `from` of the `HistoryShared` before that
+/// join, or else from the join, up to the `until` of its `ParticipantLeft` in that thread
+/// (`Attended`). At most one range of a participant is open in a thread, and several in several
+/// threads: a join recorded in a thread while it is - an actor started again without a leave
+/// recorded before, issue 568 - continues it.
 /// Derived from the chain beside the items, by `take`, and rebuilt with them; kept whole beside the
 /// chain - also by a database (issue 04), which would otherwise rebuild in SQL what a share before
 /// a join gives.
@@ -137,9 +138,9 @@ impl Attendance {
     }
 
     /// Takes `node`, the next of the chain, in - once: a node before the end of what was taken in
-    /// is not taken in again. A share is kept for the join that follows it, a join opens a range -
-    /// or, while one of its participant is open, moves its start back to where the join's share
-    /// begins, if that lies before -, a leave closes the open one.
+    /// is not taken in again. A share is kept for the join that follows it, a join opens a range in
+    /// its thread - or, while one of its participant is open there, moves its start back to where
+    /// the join's share begins, if that lies before -, a leave closes the one open in its thread.
     pub fn take(&mut self, node: &Node<Recorded>) {
         if node.seq < self.end {
             return;
@@ -156,17 +157,17 @@ impl Attendance {
                     .iter()
                     .position(|(of, _)| of == participant)
                     .map_or(node.seq, |at| self.shared.remove(at).1);
-                match self.open_range(*participant) {
+                let thread = node.entry.context.thread_id;
+                match self.open_range(*participant, thread) {
                     Some(open) => open.start = open.start.min(from),
                     None => {
-                        let thread = node.entry.context.thread_id;
                         let range = from..Position::MAX;
                         self.attended.push((*participant, Attended { thread, range }));
                     }
                 }
             }
             HistoryEntry::ParticipantLeft { participant, until, .. } => {
-                if let Some(open) = self.open_range(*participant) {
+                if let Some(open) = self.open_range(*participant, node.entry.context.thread_id) {
                     open.end = (*until).max(open.start);
                 }
             }
@@ -174,12 +175,18 @@ impl Attendance {
         }
     }
 
-    /// The open range of `participant`, if it takes part.
-    fn open_range(&mut self, participant: ActorId) -> Option<&mut Range<Position>> {
+    /// The open range of `participant` in `thread`, if it takes part there.
+    fn open_range(
+        &mut self,
+        participant: ActorId,
+        thread: ThreadId,
+    ) -> Option<&mut Range<Position>> {
         self.attended
             .iter_mut()
             .rev()
-            .find(|(of, at)| *of == participant && at.range.end == Position::MAX)
+            .find(|(of, at)| {
+                *of == participant && at.thread == thread && at.range.end == Position::MAX
+            })
             .map(|(_, at)| &mut at.range)
     }
 
@@ -1095,5 +1102,44 @@ mod tests {
             .map(|at| (at.range.start.get(), at.range.end.get()))
             .collect();
         assert_eq!(ranges, [(1, 8)], "one range, from what was shared to where she left");
+    }
+
+    /// Issue 602: a participant takes part in two threads at once, with a range in each, and a
+    /// leave in one thread closes the range there alone.
+    #[test]
+    fn a_participant_takes_part_in_threads_each_with_a_range_of_its_own() {
+        let context = context_in(ChannelId::new());
+        let line = context.thread_id;
+        let thread = ThreadId::new();
+        let there = EventContext { thread_id: thread, ..context.clone() };
+        let alice = ActorId::User(UserId::new());
+        let left = HistoryEntry::ParticipantLeft {
+            participant: alice,
+            name: String::new(),
+            by: alice,
+            by_name: String::new(),
+            until: Position::new(3),
+            at: Utc::now(),
+        };
+        let mut history = History::default();
+        for (entry, context) in [
+            (joined(alice), &context), // 0: in the line
+            (joined(alice), &there),   // 1: in the thread as well
+            (joined(alice), &there),   // 2: again there, which goes on
+            (left, &there),            // 3: out of the thread alone
+        ] {
+            assert!(history.enter(Recorded::new(entry, alice, Audience::Everybody, context)));
+        }
+        let attendance = Attendance::of(history.entries());
+        assert_eq!(
+            attendance.of_participant(alice),
+            [
+                Attended { thread: line, range: Position::START..Position::MAX },
+                Attended { thread, range: Position::new(1)..Position::new(3) },
+            ],
+            "a range in each thread, the thread's closed by its leave"
+        );
+        let attending = HashMap::from([(alice, BTreeSet::from([line]))]);
+        assert_eq!(attendance.attending(), attending, "in the line still");
     }
 }

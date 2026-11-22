@@ -185,11 +185,12 @@ impl RunControl {
         self.turn.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Asks for the turn under way to end and be taken over. Outside a turn
-    /// there is nothing to cancel, and a turn already ending is ended
-    /// anyway.
-    pub(crate) fn cancel(&self) {
-        if self.interruptible() {
+    /// Asks for the turn under way to end and be taken over, if it runs in `thread` - wherever it
+    /// runs if `None` (issue 602). Outside a turn there is nothing to cancel, and a turn already
+    /// ending is ended anyway.
+    pub(crate) fn cancel(&self, thread: Option<ThreadId>) {
+        let there = thread.is_none_or(|thread| self.thread() == Some(thread));
+        if there && self.interruptible() {
             self.interrupt(Interrupt::Cancel);
         }
     }
@@ -392,36 +393,47 @@ mod tests {
             [ActorState::Idle, ActorState::Sleeping, ActorState::Reflecting, ActorState::Cancelling]
         {
             let control = RunControl::new(state, None);
-            control.cancel();
+            control.cancel(None);
             assert_eq!(control.take_interrupt(), None, "{state:?}");
             assert!(!control.token().is_cancelled(), "{state:?}");
         }
         for state in [ActorState::Planning, ActorState::ExecutingTools, ActorState::WaitingForUser]
         {
             let control = RunControl::new(state, None);
-            control.cancel();
+            control.cancel(None);
             assert!(control.token().is_cancelled(), "{state:?}");
             assert_eq!(control.take_interrupt(), Some(Interrupt::Cancel), "{state:?}");
             assert_eq!(control.take_interrupt(), None, "taken once: {state:?}");
         }
     }
 
+    /// Issue 602: a cancel of a thread interrupts the turn under way only if it runs there.
+    #[test]
+    fn a_cancel_of_a_thread_interrupts_only_a_turn_running_there() {
+        let (here, there) = (ThreadId::default(), ThreadId::new());
+        let control = RunControl::new(ActorState::Planning, Some((here, TurnId::new())));
+        control.cancel(Some(there));
+        assert_eq!(control.take_interrupt(), None, "the turn runs in another thread");
+        control.cancel(Some(here));
+        assert_eq!(control.take_interrupt(), Some(Interrupt::Cancel), "it runs here");
+    }
+
     #[test]
     fn a_stop_wins_over_a_cancel_whichever_comes_first_and_leaving_over_both() {
         let control = RunControl::new(ActorState::Planning, None);
-        control.cancel();
+        control.cancel(None);
         control.stop();
         assert_eq!(control.take_interrupt(), Some(Interrupt::Stop));
 
         let control = RunControl::new(ActorState::Planning, None);
         control.stop();
-        control.cancel();
+        control.cancel(None);
         assert_eq!(control.take_interrupt(), Some(Interrupt::Stop));
 
         let control = RunControl::new(ActorState::Planning, None);
         control.leave();
         control.stop();
-        control.cancel();
+        control.cancel(None);
         assert_eq!(control.take_interrupt(), Some(Interrupt::Leave));
 
         let control = RunControl::new(ActorState::Planning, None);
@@ -433,7 +445,7 @@ mod tests {
     #[test]
     fn a_new_turn_drops_a_leftover_cancel_but_not_a_stop_nor_leaving() {
         let control = RunControl::new(ActorState::Planning, None);
-        control.cancel();
+        control.cancel(None);
         control.begin_turn(ThreadId::default(), TurnId::new());
         assert!(!control.token().is_cancelled(), "the new turn has a token of its own");
         assert_eq!(control.take_interrupt(), None);
@@ -508,13 +520,13 @@ mod tests {
     fn of_a_cancel_and_a_retry_the_first_wins_and_a_stop_over_both() {
         let turn = TurnId::new();
         let control = RunControl::new(ActorState::Planning, Some((ThreadId::default(), turn)));
-        control.cancel();
+        control.cancel(None);
         assert!(control.retry(turn), "the turn was the one under way");
         assert_eq!(control.take_interrupt(), Some(Interrupt::Cancel), "but the cancel came first");
 
         let control = RunControl::new(ActorState::Planning, Some((ThreadId::default(), turn)));
         assert!(control.retry(turn));
-        control.cancel();
+        control.cancel(None);
         assert_eq!(control.take_interrupt(), Some(Interrupt::Retry));
 
         let control = RunControl::new(ActorState::Planning, Some((ThreadId::default(), turn)));
@@ -559,7 +571,7 @@ mod tests {
             RunControl::new(ActorState::ExecutingTools, Some((ThreadId::default(), turn)));
         let mut calls = control.begin_calls(["a".to_string()]);
         assert!(control.interrupt_call(turn, "a", "alice".to_string()));
-        control.cancel();
+        control.cancel(None);
         assert_eq!(
             control.interruption(control.token(), calls.remove("a")).await,
             Interruption::TurnEnded

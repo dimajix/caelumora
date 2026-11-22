@@ -568,8 +568,9 @@ impl HistoryEntry {
     /// channel delivers by (issue 417, `Envelope::recipients`): a message to
     /// every participant who is a user, and to every agent too if there is
     /// something to hear in it; a change of a message and who joined or left
-    /// to every user and agent; how a turn went, what it carried out and
-    /// what came of what it did of its own accord to the users; what
+    /// to every user and agent, who left to them as well (issue 602); how a
+    /// turn went, what it carried out and what came of what it did of its
+    /// own accord to the users; what
     /// answers a command to the user it answers; the part of the history
     /// shared with a newcomer to the newcomer alone; what a delegate gives to read to its
     /// recipient and to every user (issue 557); what an agent was given,
@@ -596,8 +597,12 @@ impl HistoryEntry {
             | HistoryEntry::Revoked { .. }
             | HistoryEntry::Reclassified { .. }
             | HistoryEntry::Fitted { .. }
-            | HistoryEntry::ParticipantJoined { .. }
-            | HistoryEntry::ParticipantLeft { .. } => Recipients::participants(true),
+            | HistoryEntry::ParticipantJoined { .. } => Recipients::participants(true),
+            // To whoever left as well (issue 602): one let go from a thread goes on in its others,
+            // and takes its leave in, as it took its join.
+            HistoryEntry::ParticipantLeft { participant, .. } => {
+                Recipients { named: vec![*participant], ..Recipients::participants(true) }
+            }
             HistoryEntry::TurnFinished { .. }
             | HistoryEntry::TurnGivenUp { .. }
             | HistoryEntry::PlanStepStarted { .. }

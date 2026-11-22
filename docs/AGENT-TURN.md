@@ -182,8 +182,8 @@ a plan may cost is bounded by its steps: `create_plan` refuses a plan of more th
 
 The agent announces its state to the users as it changes (`StateChanged`), each state once, in its
 own context rather than a turn's: its state is the agent's, not part of an answer. It announces it
-in the thread of the turn that runs or ran last, and before its first turn in the thread it joined
-in (`ActorRuntime::joined_thread_id`, issue 602). One move is not
+in the thread of the turn that runs or ran last, and before its first turn in the thread it counts
+as joined in (`ActorRuntime::joined_thread_id`, issue 602). One move is not
 the run loop's: the channel wakes a sleeping agent itself, synchronously, because the moderator,
 deciding right after whom to ask, leaves the sleeping out; the run loop is notified and announces
 `Idle`.
@@ -415,17 +415,28 @@ thread is the path from its root up to its head, and what the agent's model is g
 Every method that reads or extends a branch names its thread; a change of a message is recorded on
 every branch that holds it. The transcript gives every position, on whichever branch, so that its
 threads never give one twice. An agent takes part in the threads its runtime names
-(`ActorRuntime::threads`), one for now. What it takes in, answers again or carries out goes on the
-branch of the thread the envelope happens in where the agent takes part there, and else on the
-branch of the thread it joined in (`ActorRuntime::joined_thread_id`, `AgentBody::branch_of`): a
-nudge, a request to answer again and a command reach it by name from any thread, and read on a
-branch of their own, a request to answer again would be refused and a turn would begin empty. A turn
-runs on the branch it was begun on (`Turn::of`, `Situation::branch_thread_id`), and the actor keeps
-the thread of the turn that runs or ran last (`RunControl::thread`). Taking in goes by branch: a
-request to respond on another branch than the one to be answered ends the batch and waits, unheard,
-for a turn of its own; during a turn and as it ends, what happens on another branch is passed over
-(`AgentBody::take_in_during_turn`, `drop_answered`). With one thread, everything goes on its one
-branch.
+(`ActorRuntime::threads`), which the channel changes as it takes the agent into a further thread or
+lets it go from one, announcing it there; the agent follows them as it takes its own join or leave
+in, in the order of what reaches it (`AgentBody::follow`): its branch of a thread it joined forks
+from where it stands in the thread that one hangs at (`ActorRuntime::origin_of`,
+`AgentChannelState::join_thread`, `Transcript::fork`), or begins at the root without a branch there,
+and its part and its branch of a thread it left go where it no longer takes part there
+(`AgentBody::leaves`, `AgentChannelState::leave_thread`) - a leave of the channel ends its actor,
+and one read back as it joins again, of a thread it takes part in again, leaves its state as it was
+kept -, with what it was asked there and has not answered yet. During a turn its own join stops what
+the turn takes in, and its leave waits after what came before it of the thread. What it takes in,
+answers again or carries out goes on the branch of the thread the envelope happens in where the
+agent follows it, and else on the branch of the thread it counts as joined in
+(`ActorRuntime::joined_thread_id`, `AgentBody::branch_of`) - so what was delivered of a thread
+before its leave goes on that thread's branch, though taken in after the channel announced the
+leave: a nudge, a request to answer again and a command reach it by name from any thread, and read
+on a branch of their own, a request to answer again would be refused and a turn would begin empty. A
+turn runs on the branch it was begun on (`Turn::of`, `Situation::branch_thread_id`), and the actor
+keeps the thread of the turn that runs or ran last (`RunControl::thread`). Taking in goes by branch:
+a request to respond on another branch than the one to be answered ends the batch and waits,
+unheard, for a turn of its own; during a turn and as it ends, what happens on another branch is
+passed over (`AgentBody::take_in_during_turn`, `drop_answered`). With one thread, everything goes on
+its one branch.
 
 Neither ending a turn nor changing a message moves a head: each is an entry after what it is about.
 Nor does the end of what a compaction wrote, which is an entry of the transcript after it (see

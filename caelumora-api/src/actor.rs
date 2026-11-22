@@ -98,10 +98,16 @@ pub trait Actor: Any + Debug + Send + Sync {
     /// purpose: it is called from other tasks and must take effect at once.
     fn wakeup(&self) {}
 
-    /// Ends the actor's current turn. Synchronous and infallible on
-    /// purpose: a cancel comes from another task and must reach a running
-    /// model call without waiting for anything.
-    fn cancel(&self) {}
+    /// Ends the actor's current turn if it runs in `thread`, wherever it runs if `None` (issue
+    /// 602). Synchronous and infallible on purpose: a cancel comes from another task and must
+    /// reach a running model call without waiting for anything.
+    fn cancel(&self, _thread: Option<ThreadId>) {}
+
+    /// Whether it can take part in several threads of its channel (issue 602): every actor but an
+    /// external agent's, which keeps one remote state in its channel.
+    fn takes_part_in_several_threads(&self) -> bool {
+        true
+    }
 
     /// Interrupts its tool call `call` of the turn `turn` alone (issue 276),
     /// on behalf of `by`, called so, if that call runs or waits to run in

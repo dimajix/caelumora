@@ -17,7 +17,7 @@ use caelumora_api::staging::{CommitError, CommitResult};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::{Agent, AgentChannelState, Personality};
 use caelumora_domain::approval::{ApprovalRule, ApprovalRuleId, RuleDecision};
-use caelumora_domain::channel::{self, Channel, ChannelId, ThreadId};
+use caelumora_domain::channel::{self, Channel, ChannelId, ThreadId, ThreadOrigin};
 use caelumora_domain::component::ComponentConfig;
 use caelumora_domain::confidentiality::{Classification, Place};
 use caelumora_domain::content::{ContentId, ContentRef};
@@ -211,6 +211,10 @@ impl ActorRuntime for AgentRuntime {
 
     fn threads(&self) -> BTreeSet<ThreadId> {
         self.participant.threads()
+    }
+
+    fn origin_of(&self, thread: ThreadId) -> Option<ThreadOrigin> {
+        self.participant.origin_of(thread)
     }
 
     fn joined_thread_id(&self) -> ThreadId {

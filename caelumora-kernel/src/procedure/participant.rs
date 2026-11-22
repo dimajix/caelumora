@@ -1,7 +1,8 @@
 //! The procedures of a participant's lifecycle (issue 593): taking someone into a session - and
-//! into a channel of it -, added or joining, letting them go, removed or leaving, from the session
-//! with every channel of it or from one channel, and following an agent's deletion and restoring
-//! in the channels that list it.
+//! into a channel of it -, or a participant of a channel into a further thread of it (issue 602),
+//! added or joining, letting them go, removed or leaving, from the session with every channel of
+//! it, from one channel or from one thread, and following an agent's deletion and restoring in the
+//! channels that list it.
 //!
 //! Each locks the participant exclusively (`Key::Participant`) and the channels it changes shared.
 //! Taking in and letting go lock the session as opening it does, shared where it runs, exclusively
@@ -27,7 +28,7 @@ use caelumora_domain::session::{Session, SessionId};
 use caelumora_domain::store::{StoreError, Stored};
 use caelumora_security::{ActionType, Enforcement, SecurityContext, JOIN};
 use futures::future;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::slice;
 use std::sync::Arc;
 use tracing::info;
@@ -253,6 +254,158 @@ impl Procedure for LetGo {
             None => let_go_from_session(kernel, &session, &context, participant, exit).await,
         }
     }
+}
+
+/// Takes a participant of a channel into a further thread of it (issue 602) - added by whoever may
+/// change the channel, or joining by their own act -, starting the session where it does not run,
+/// as opening it does.
+pub struct TakeIntoThread {
+    context: SecurityContext,
+    session: SessionId,
+    channel: ChannelId,
+    thread: ThreadId,
+    participant: ActorId,
+    entry: ThreadEntry,
+}
+
+impl TakeIntoThread {
+    /// Takes `participant` into `thread` of `channel` of `session` on behalf of `context`, who may
+    /// change the channel (`take_into_thread`).
+    pub fn added(
+        context: &SecurityContext,
+        session: SessionId,
+        channel: ChannelId,
+        thread: ThreadId,
+        participant: ActorId,
+    ) -> Self {
+        let context = context.clone();
+        Self { context, session, channel, thread, participant, entry: ThreadEntry::Added }
+    }
+
+    /// Takes `participant` - whom `context` acts for, or their own agent - into `thread` of
+    /// `channel` of `session` by their own act (`take_into_thread`).
+    pub fn joining(
+        context: &SecurityContext,
+        session: SessionId,
+        channel: ChannelId,
+        thread: ThreadId,
+        participant: ActorId,
+    ) -> Self {
+        let context = context.clone();
+        Self { context, session, channel, thread, participant, entry: ThreadEntry::Joining }
+    }
+}
+
+#[async_trait]
+impl Procedure for TakeIntoThread {
+    type Plan = ();
+    type Output = ();
+    type Error = SessionError;
+
+    async fn enumerate(&self, kernel: &Kernel, locks: &mut Locks<'_>) -> Result<(), Deferred> {
+        lock_to_open(kernel, locks, self.session)?;
+        lock_thread_change(locks, self.session, self.channel, self.thread, self.participant)
+    }
+
+    /// # Errors
+    /// As `session::open`, `SessionLoop::channel_for` and `take_into_thread`.
+    async fn carry_out(
+        self,
+        (): (),
+        kernel: &Kernel,
+        log: &mut Compensation,
+    ) -> Result<(), SessionError> {
+        let Self { context, session, channel, thread, participant, entry } = self;
+        let session = session::open(kernel, &context, session).await?;
+        let channel = session.channel_for(&context, channel).await?;
+        require_thread_entry(kernel, &channel, &context, participant, entry).await?;
+        take_into_thread(log, &channel, &context, participant, thread).await
+    }
+}
+
+/// Lets a participant of a channel go from one thread of it alone (issue 602) - removed by whoever
+/// may change the channel, or leaving by their own act -, staying in its other threads; starting
+/// the session where it does not run, as opening it does.
+pub struct LetGoFromThread {
+    context: SecurityContext,
+    session: SessionId,
+    channel: ChannelId,
+    thread: ThreadId,
+    participant: ActorId,
+    exit: Exit,
+}
+
+impl LetGoFromThread {
+    /// Lets `participant` go from `thread` of `channel` of `session` on behalf of `context`, who
+    /// may change the channel (`let_go_from_thread`).
+    pub fn removed(
+        context: &SecurityContext,
+        session: SessionId,
+        channel: ChannelId,
+        thread: ThreadId,
+        participant: ActorId,
+    ) -> Self {
+        let context = context.clone();
+        Self { context, session, channel, thread, participant, exit: Exit::Removed }
+    }
+
+    /// Takes `participant` - whom `context` acts for, or their own agent - out of `thread` of
+    /// `channel` of `session` by their own act (`let_go_from_thread`).
+    pub fn leaving(
+        context: &SecurityContext,
+        session: SessionId,
+        channel: ChannelId,
+        thread: ThreadId,
+        participant: ActorId,
+    ) -> Self {
+        let context = context.clone();
+        Self { context, session, channel, thread, participant, exit: Exit::Leaving }
+    }
+}
+
+#[async_trait]
+impl Procedure for LetGoFromThread {
+    type Plan = ();
+    type Output = ();
+    type Error = SessionError;
+
+    async fn enumerate(&self, kernel: &Kernel, locks: &mut Locks<'_>) -> Result<(), Deferred> {
+        lock_to_open(kernel, locks, self.session)?;
+        lock_thread_change(locks, self.session, self.channel, self.thread, self.participant)
+    }
+
+    /// # Errors
+    /// As `session::open`, `SessionLoop::channel_for` and `let_go_from_thread`.
+    async fn carry_out(
+        self,
+        (): (),
+        kernel: &Kernel,
+        _: &mut Compensation,
+    ) -> Result<(), SessionError> {
+        let Self { context, session, channel, thread, participant, exit } = self;
+        let session = session::open(kernel, &context, session).await?;
+        let channel = session.channel_for(&context, channel).await?;
+        let_go_from_thread(kernel, &channel, &context, participant, thread, exit).await
+    }
+}
+
+/// Locks what taking `participant` into `thread` of `channel` of `session`, or letting them go from
+/// it, needs (issue 602): the participant exclusively, so that nobody takes them in or lets them go
+/// meanwhile; the channel and the thread shared, so that nobody closes the thread before they have
+/// joined or left it.
+///
+/// # Errors
+/// `Deferred` if anything of it is held otherwise.
+fn lock_thread_change(
+    locks: &mut Locks<'_>,
+    session: SessionId,
+    channel: ChannelId,
+    thread: ThreadId,
+    participant: ActorId,
+) -> Result<(), Deferred> {
+    locks.exclusive(Key::Participant(session, participant))?;
+    locks.shared(Key::Channel(session, channel))?;
+    locks.shared(Key::Thread(session, channel, thread))
 }
 
 /// How someone comes into a session and its channels: the one way in, asked for in four ways.
@@ -509,7 +662,8 @@ pub(crate) async fn take_into_channel(
             Ok(channel.controller().roll_back_participant_addition(participant, &before).await?)
         });
     }
-    let started = channel.add_actor(resolved, thread, from, Some(context)).await?;
+    let threads = BTreeSet::from([thread]);
+    let started = channel.add_actor(resolved, threads, from, Some(context)).await?;
     {
         let channel = Arc::clone(channel);
         log.record("starting someone in a channel", async move {
@@ -667,19 +821,14 @@ async fn require_exit_from_channel(
     participant: ActorId,
     exit: Exit,
 ) -> Result<()> {
-    let id = channel.id();
-    let document = channel.channel();
-    let listed = document.participants.iter().find(|p| p.actor_id() == participant);
-    let Some(found) = listed else {
-        return Err(ChannelError::NotAParticipant { participant, channel: id }.into());
-    };
+    let listed = listed_in(channel, participant)?;
     if exit == Exit::Leaving {
-        let leaving = ActionType::LeaveChannel(&document.security_attributes);
+        let id = channel.id();
+        let resolved = resolve_in(kernel, channel, &listed).await?;
+        let attributes = channel.security_attributes();
+        let leaving = ActionType::LeaveChannel(&attributes);
         let refusal = |refused| ChannelError::Forbidden { action: "leaving", channel: id, refused };
-        let controllers = kernel.controller_manager();
-        let resolving =
-            ResolvedParticipant::resolve(controllers, found, channel.session_id(), Some(id));
-        let Some(resolved) = resolving.await? else {
+        let Some(resolved) = resolved else {
             return Err(refusal(leaving.refused()).into());
         };
         kernel.participation().require_own_act(&resolved, context, leaving, refusal).await?;
@@ -708,6 +857,159 @@ async fn let_go_out_of(
     }
     channel.controller().remove_participant(storing, participant, context.caller_id).await?;
     channel.remove_actor(participant, context).await;
+    Ok(())
+}
+
+/// How a participant of a channel comes into a further thread of it (issue 602): the one way in,
+/// asked for in three ways.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ThreadEntry {
+    /// Added by whoever may change the channel (`UpdateChannel`).
+    Added,
+    /// By their own act, where they may read the channel (`GetChannel`).
+    Joining,
+    /// As a founder of a thread just opened, named by whoever opened it: opening it
+    /// (`OpenThread`) was what was asked, and the founder is whom they act for, or an agent of
+    /// their own.
+    Founding,
+}
+
+/// Takes `participant`, who takes part in `channel`, into its thread `thread` as well on behalf of
+/// `context` (issue 602), once taking them in was asked (`require_thread_entry`), for a procedure
+/// that holds them and the thread (`lock_thread_change`) - `TakeIntoThread`, or `thread::open` for
+/// a founder who takes part in the channel already: their actor taken into the thread
+/// (`ChannelLoop::take_into_thread`) and waited for until its join is announced; taken back by
+/// `log` if a later step fails - let go from the thread again, in the kernel's name. The channel's
+/// document is not changed: it lists who takes part in the channel, not where.
+///
+/// # Errors
+/// As `ChannelLoop::take_into_thread`; `ChannelError::Stopped` if the channel stopped, or their
+/// actor ended, before it announced the join.
+pub(crate) async fn take_into_thread(
+    log: &mut Compensation,
+    channel: &Arc<ChannelLoop>,
+    context: &SecurityContext,
+    participant: ActorId,
+    thread: ThreadId,
+) -> Result<(), SessionError> {
+    let joined = channel.take_into_thread(participant, thread, context).await?;
+    {
+        let channel = Arc::clone(channel);
+        log.record("taking someone into a thread", async move {
+            let system = SecurityContext::system();
+            channel.let_go_from_thread(participant, thread, &system)?.carried_out().await;
+            Ok(())
+        });
+    }
+    if !joined.carried_out().await {
+        let stopped = ChannelError::Stopped { participant, channel: channel.id() };
+        return Err(Error::from(stopped).into());
+    }
+    info!("{} joined thread {} of channel {}", participant, thread, channel.id());
+    Ok(())
+}
+
+/// Nothing if `participant`, whom `channel` lists, may be taken into a thread of it on behalf of
+/// `context` by the way `entry` says (`take_into_thread`), asked before anything is stored: added,
+/// whether `context` may change the channel (`UpdateChannel`), before anything of the participant
+/// is looked at; by their own act, whether they may
+/// read the channel (`GetChannel`) in the participant's own context, an agent's by its owner, as
+/// joining is asked (`require_entry`); founding a thread, whether they are whom `context` acts for
+/// or an agent of their own, opening the thread being permitted (`OpenThread`).
+///
+/// # Errors
+/// `ChannelError::NotAParticipant` for one the channel does not list, or that cannot be resolved -
+/// a deleted agent resting in it; `StoreError::PermissionDenied` if they may not.
+pub(crate) async fn require_thread_entry(
+    kernel: &Kernel,
+    channel: &ChannelLoop,
+    context: &SecurityContext,
+    participant: ActorId,
+    entry: ThreadEntry,
+) -> Result<()> {
+    let attributes = channel.security_attributes();
+    let refusal = StoreError::PermissionDenied;
+    if entry == ThreadEntry::Added {
+        let changing = ActionType::update(Channel::KIND, &attributes);
+        kernel.access_policy().require(context, changing, refusal).await?;
+    }
+    let not_taking_part = || ChannelError::NotAParticipant { participant, channel: channel.id() };
+    let resolved = resolve_in(kernel, channel, &listed_in(channel, participant)?).await?;
+    let resolved = resolved.ok_or_else(not_taking_part)?;
+    let participation = kernel.participation();
+    match entry {
+        ThreadEntry::Added => {}
+        ThreadEntry::Joining => {
+            let reading = ActionType::get(Channel::KIND, &attributes);
+            participation.require_own_act(&resolved, context, reading, refusal).await?;
+        }
+        ThreadEntry::Founding => {
+            let founding = ActionType::OpenThread(&attributes);
+            participation.require_own(&resolved, context, founding, refusal)?;
+        }
+    }
+    Ok(())
+}
+
+/// `participant` as `channel` lists them: who is asked whether they may come into a thread of it,
+/// or go out of it or of the channel.
+///
+/// # Errors
+/// `ChannelError::NotAParticipant` for one the channel does not list.
+fn listed_in(channel: &ChannelLoop, participant: ActorId) -> Result<Participant> {
+    let document = channel.channel();
+    let listed = document.participants.iter().find(|p| p.actor_id() == participant).cloned();
+    listed
+        .ok_or_else(|| ChannelError::NotAParticipant { participant, channel: channel.id() }.into())
+}
+
+/// `listed`, a participant of `channel`, resolved (`ResolvedParticipant::resolve`); `None` for one
+/// that cannot be resolved - a deleted agent resting in the channel.
+///
+/// # Errors
+/// What resolving them reports.
+async fn resolve_in(
+    kernel: &Kernel,
+    channel: &ChannelLoop,
+    listed: &Participant,
+) -> Result<Option<ResolvedParticipant>> {
+    let controllers = kernel.controller_manager();
+    ResolvedParticipant::resolve(controllers, listed, channel.session_id(), Some(channel.id()))
+        .await
+}
+
+/// Lets `participant` go from `thread` of `channel` alone on behalf of `context`, by the way `exit`
+/// says (issue 602), for a procedure that holds them and the thread (`lock_thread_change`): asked
+/// as leaving the channel is asked (`require_exit_from_channel`) - whoever removes them, whether
+/// they may change the channel (`UpdateChannel`) -, then their actor let go from the thread
+/// (`ChannelLoop::let_go_from_thread`), its turn there ended, and waited for until its leave is
+/// announced. Nothing is rolled back.
+///
+/// # Errors
+/// As `require_exit_from_channel` and `ChannelLoop::let_go_from_thread`;
+/// `StoreError::PermissionDenied` if whoever removes them may not change the channel;
+/// `ChannelError::Stopped` if the channel stopped, or their actor ended, before it announced the
+/// leave.
+pub(crate) async fn let_go_from_thread(
+    kernel: &Kernel,
+    channel: &ChannelLoop,
+    context: &SecurityContext,
+    participant: ActorId,
+    thread: ThreadId,
+    exit: Exit,
+) -> Result<(), SessionError> {
+    if exit == Exit::Removed {
+        let attributes = channel.security_attributes();
+        let changing = ActionType::update(Channel::KIND, &attributes);
+        kernel.access_policy().require(context, changing, StoreError::PermissionDenied).await?;
+    }
+    require_exit_from_channel(kernel, channel, context, participant, exit).await?;
+    let left = channel.let_go_from_thread(participant, thread, context)?;
+    if !left.carried_out().await {
+        let stopped = ChannelError::Stopped { participant, channel: channel.id() };
+        return Err(Error::from(stopped).into());
+    }
+    info!("{} left thread {} of channel {}", participant, thread, channel.id());
     Ok(())
 }
 

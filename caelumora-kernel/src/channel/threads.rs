@@ -1,6 +1,6 @@
 //! Opening and closing the threads of a running channel (issue 557): a thread is opened at a
-//! message of another, with its founders taking part in it alone, closed once nobody takes part in
-//! it any more, and built again from the channel's state as the channel starts.
+//! message of another, with its founders, closed once nobody takes part in it any more, and built
+//! again from the channel's state as the channel starts.
 
 use super::thread::Thread;
 use super::{ActorChange, ChannelError, ChannelLoop};
@@ -32,6 +32,12 @@ impl ChannelLoop {
         Ok(())
     }
 
+    /// Where `thread` hangs (issue 602): the message of another thread it was opened at; `None` for
+    /// the line, or a thread the channel does not hold open.
+    pub(crate) fn origin_of(&self, thread: ThreadId) -> Option<ThreadOrigin> {
+        self.thread(thread)?.opening().map(|opening| opening.origin)
+    }
+
     /// Whether `thread` is open in the channel: something may be said in it, and a thread opened at
     /// it. Whoever closes it holds it until `run` closed it (`procedure::thread::Close`).
     pub(crate) fn is_open(&self, thread: ThreadId) -> bool {
@@ -48,12 +54,12 @@ impl ChannelLoop {
             return BTreeSet::new();
         }
         if let Some(actor) = self.actors.load().get(&participant) {
-            return actor.threads.clone();
+            return BTreeSet::clone(&actor.threads.load());
         }
         if let Some(threads) = self.attending().await.remove(&participant) {
             return threads;
         }
-        self.rejoining(participant).await.ok().map(|(_, thread)| thread).into_iter().collect()
+        self.rejoining(participant).await.map(|(_, threads)| threads).unwrap_or_default()
     }
 
     /// Opens thread `thread` of the channel at `origin` on behalf of `context`, if they may
@@ -122,7 +128,7 @@ impl ChannelLoop {
             .actors
             .load()
             .iter()
-            .any(|(id, actor)| actor.threads.contains(&thread) && *id != delegate);
+            .any(|(id, actor)| actor.threads.load().contains(&thread) && *id != delegate);
         let attending = self.attending().await;
         let listed = self.channel();
         let resting = listed.participants.iter().any(|participant| {

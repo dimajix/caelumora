@@ -13,7 +13,7 @@ use caelumora_domain::message::{Message, MessageId, MessageRole};
 use caelumora_domain::store::Stored;
 use caelumora_security::{ActionType, SecurityContext};
 use std::any::Any;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::Arc;
 use tracing::{debug, warn};
 
@@ -50,7 +50,7 @@ impl ChannelLoop {
         let origin = opening.origin.thread;
         let runs_in = |participant: ActorId, thread: ThreadId| {
             let actors = self.actors.load();
-            actors.get(&participant).is_some_and(|actor| actor.threads.contains(&thread))
+            actors.get(&participant).is_some_and(|actor| actor.threads.load().contains(&thread))
         };
         let not_in = |participant, thread| ChannelError::NotInThread {
             participant,
@@ -162,7 +162,7 @@ impl ChannelLoop {
     /// Starts the delegate of `thread`, in it.
     async fn start_delegate(&self, thread: ThreadId) {
         let resolved = ResolvedParticipant::delegate(thread, self.session_id, self.id);
-        if let Err(e) = self.add_actor(resolved, thread, None, None).await {
+        if let Err(e) = self.add_actor(resolved, BTreeSet::from([thread]), None, None).await {
             warn!("The delegate of thread {} of channel {} cannot start: {:#}", thread, self.id, e);
         }
     }
@@ -206,7 +206,7 @@ impl ChannelLoop {
         let delegate = ActorId::Delegate(thread);
         let taken_in = self.actors.load().get(&delegate).cloned();
         if let Some(ChannelActor { actor, threads, .. }) = taken_in {
-            self.drop_actor(delegate, &actor, &threads);
+            self.drop_actor(delegate, &actor, &threads.load());
         }
         running.remove(&delegate);
         if let Some(held) = self.state.lock().await.threads.get_mut(&thread) {

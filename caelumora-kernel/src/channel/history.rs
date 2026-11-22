@@ -94,22 +94,24 @@ impl ChannelLoop {
     }
 
     /// Where `participant`, a participant before - an agent restored, which rested in the channel
-    /// (issue 314) -, takes part again: the position from which on it is given the history, where
-    /// its last range of attendance began, as when it joined (issue 417), and the thread of that
-    /// range (issue 557); all of the history, in the line, if it never took part.
+    /// (issue 314) -, takes part again: in the threads of its last ranges of attendance - those
+    /// that ended where its last one ended, as its leave ended them in every thread at once (issues
+    /// 557, 602) -, given the history from where the oldest of them began, as when it joined (issue
+    /// 417); all of the history, in the line, if it never took part.
     ///
     /// # Errors
     /// If the store cannot be read.
     pub(crate) async fn rejoining(
         &self,
         participant: ActorId,
-    ) -> StoreResult<(Position, ThreadId)> {
-        Ok(self
-            .history_store
-            .attendance(self.id, participant)
-            .await?
-            .last()
-            .map_or((Position::START, ThreadId::line(self.id)), |at| (at.range.start, at.thread)))
+    ) -> StoreResult<(Position, BTreeSet<ThreadId>)> {
+        let attended = self.history_store.attendance(self.id, participant).await?;
+        let Some(last) = attended.iter().map(|at| at.range.end).max() else {
+            return Ok((Position::START, BTreeSet::from([ThreadId::line(self.id)])));
+        };
+        let ended_last: Vec<_> = attended.iter().filter(|at| at.range.end == last).collect();
+        let from = ended_last.iter().map(|at| at.range.start).min().unwrap_or(Position::START);
+        Ok((from, ended_last.iter().map(|at| at.thread).collect()))
     }
 
     /// Who takes part in the channel's history now, and in which threads: whoever has a range of

@@ -486,3 +486,29 @@ above. The position of a predecessor (C) is no step yet.
   in the one it joined in (`AgentBody::standing_in`); what it recorded is told in the thread of
   its branch (`to_tell`). With one thread nothing changes; the tests of 2a's rules with two
   threads, which 2a could not have, are added.
+- **2026-11-22** — Step 2b committed. Decided on the maintainer's word to decide for a clean and
+  consistent architecture and the behaviour expected: step 3 goes in four - 3a, taking a participant
+  of a channel into a further thread and letting them go from one; 3b, saying something, nudging,
+  asking to answer again and a command name the thread they happen in, over REST as well; 3c, who is
+  taken into a thread when, from 557's proposal; 3d, a turn that waits for a person set aside while
+  the agent answers elsewhere, where the agent stands outside a turn its own as a whole (`Sleeping`
+  with it), and `joined_thread_id` gone. Step 3a done: `Attendance` keeps a range per participant
+  and thread; the threads an actor takes part in are shared by the channel and its runtime and
+  changed by the channel alone (`ChannelActor::threads`); `TakeIntoThread` and `LetGoFromThread` -
+  added, or joining by one's own act where one may read the channel; removed, or leaving as leaving
+  the channel is asked - have the channel take the actor into the thread or let it go from it
+  (`take_into_thread`, `let_go_from_thread`) and announce the join or the leave there; refused are a
+  thread one takes part in already, the last thread one takes part in, a thread delegated into and
+  an external agent's second thread (`Actor::takes_part_in_several_threads`). Opening a thread takes
+  a founder who takes part in the channel into it as well. Its join or its leave of the thread
+  changes where it takes part right where `run` announces it, and a leave reaches whoever left. One
+  taken in hears the thread from its join on; an agent follows its threads as it takes its own join
+  or leave in, in the order of what reaches it (`AgentBody::follow`): its branch of a thread it
+  joined forks from where it stands in the thread's origin (`Transcript::fork`,
+  `ActorRuntime::origin_of`), or begins at the root, and its part and branch of a thread it left go.
+  Cancelling a thread ends the turns that run there alone (`Actor::cancel` of a thread). After a
+  restart an actor starts in every open thread of its attendance; `joined_thread_id` is the line
+  where one takes part there, else the first thread (`channel::joined_in`). Who takes part in the
+  channel joins a further thread of it by their own act where they may read the channel: a thread
+  asks nothing beyond it. REST takes a participant into a thread and lets them go from one, and lets
+  one join and leave a thread by one's own act.

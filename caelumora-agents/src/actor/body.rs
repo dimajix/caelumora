@@ -36,8 +36,9 @@ use caelumora_domain::type_map::TypeKey;
 use caelumora_domain::value::name::Name;
 use caelumora_domain::work::{TurnId, Work};
 use futures::future::BoxFuture;
+use std::collections::BTreeSet;
 use std::future::ready;
-use std::sync::Arc;
+use std::sync::{self, Arc};
 use tokio::sync::Mutex;
 use tracing::warn;
 
@@ -58,6 +59,14 @@ fn hand_over_nothing<'a>(
     _: TranscriptEntry,
 ) -> BoxFuture<'a, ()> {
     Box::pin(ready(()))
+}
+
+/// The agent's own join or leave of a thread (issue 602), as it takes it in: what changes the
+/// threads it follows (`AgentBody::follow`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum OwnChange {
+    Joined(ThreadId),
+    Left(ThreadId),
 }
 
 /// The body of one agent in one channel (issue 355): its runtime, its
@@ -94,6 +103,12 @@ pub(super) struct AgentBody {
     /// Where its actor's run loop stands, and what `cancel`, `stop` and
     /// `wakeup` asked of it (issue 363).
     pub(super) control: RunControl,
+    /// The threads it follows, as far as it has taken in (issue 602): those its runtime named and
+    /// its state held as it was built, then changed as it takes in its own join or leave of a
+    /// thread (`AgentBody::follow`). What reaches it of a thread goes on that thread's branch from
+    /// its join on up to its leave, also what was delivered before its leave and waited to be
+    /// taken in; the threads its runtime names change already as the channel announces them.
+    followed: sync::Mutex<BTreeSet<ThreadId>>,
 }
 
 impl AgentBody {
@@ -125,6 +140,8 @@ impl AgentBody {
         let mut state = runtime.load_channel_state().await?;
         resume(&mut state);
         let control = RunControl::resuming(&state, runtime.joined_thread_id());
+        let followed =
+            sync::Mutex::new(runtime.threads().union(&state.threads_held()).copied().collect());
         let body = Self {
             runtime,
             perceive_in_processors,
@@ -135,6 +152,7 @@ impl AgentBody {
             built_from: components.components(),
             state: Mutex::new(state),
             control,
+            followed,
         };
         Ok((body, components))
     }
@@ -224,17 +242,71 @@ impl AgentBody {
 
     /// The thread whose branch of the agent's transcript `envelope` is taken in on, answered on or
     /// carried out on (issue 602): the thread it happens in (`EventContext::thread_id`) if the
-    /// agent takes part there (`ActorRuntime::threads`), else the one it joined in
+    /// agent follows it (`followed`), else the one it joined in
     /// (`ActorRuntime::joined_thread_id`). A nudge, a request to answer again and a command reach
     /// it from any thread, until they are routed by the thread they name; read on a branch of
     /// their own, a request to answer again would be refused and a turn would begin empty.
     pub(super) fn branch_of(&self, envelope: &Envelope) -> ThreadId {
         let happened_in = envelope.context.thread_id;
-        if self.runtime.threads().contains(&happened_in) {
+        if self.lock_followed().contains(&happened_in) {
             happened_in
         } else {
             self.runtime.joined_thread_id()
         }
+    }
+
+    /// The agent's own join or leave of a thread that `envelope` announces (issue 602): what
+    /// changes the threads it follows (`follow`).
+    pub(super) fn own_change(&self, envelope: &Envelope) -> Option<OwnChange> {
+        let thread = envelope.context.thread_id;
+        let (participant, change) = match envelope.event {
+            ActorEvent::ParticipantJoined { participant, .. } => {
+                (participant, OwnChange::Joined(thread))
+            }
+            ActorEvent::ParticipantLeft { participant, .. } => {
+                (participant, OwnChange::Left(thread))
+            }
+            _ => return None,
+        };
+        (participant == self.id()).then_some(change)
+    }
+
+    /// The thread the agent leaves by `change`, if it leaves one (issue 602): one it left and no
+    /// longer takes part in (`ActorRuntime::threads`). A leave of the channel ends its actor, and
+    /// one read back as it joins the channel again, of a thread it takes part in again, leaves
+    /// nothing.
+    pub(super) fn leaves(&self, change: Option<OwnChange>) -> Option<ThreadId> {
+        match change {
+            Some(OwnChange::Left(thread)) => {
+                (!self.runtime.threads().contains(&thread)).then_some(thread)
+            }
+            _ => None,
+        }
+    }
+
+    /// Follows its own join or leave of a thread, `change`, in `state` and in the threads it
+    /// follows (issue 602): its branch of a thread it joined forks from where it stands in the
+    /// thread that one hangs at (`ActorRuntime::origin_of`, `AgentChannelState::join_thread`),
+    /// and its part and its branch of a thread it leaves go (`leaves`,
+    /// `AgentChannelState::leave_thread`), what it kept there for when it joins again.
+    pub(super) fn follow(&self, state: &mut AgentChannelState, change: OwnChange) {
+        match change {
+            OwnChange::Joined(thread) => {
+                let from = self.runtime.origin_of(thread).map(|origin| origin.thread);
+                state.join_thread(thread, from);
+                self.lock_followed().insert(thread);
+            }
+            OwnChange::Left(_) => {
+                if let Some(thread) = self.leaves(Some(change)) {
+                    self.lock_followed().remove(&thread);
+                    state.leave_thread(thread);
+                }
+            }
+        }
+    }
+
+    fn lock_followed(&self) -> sync::MutexGuard<'_, BTreeSet<ThreadId>> {
+        self.followed.lock().unwrap_or_else(sync::PoisonError::into_inner)
     }
 
     /// The context `request` is answered in, continued in the agent's name
@@ -346,9 +418,11 @@ impl AgentBody {
     }
 
     /// The thread its actor stands in (issue 602): the one of the turn that runs or ran last
-    /// (`RunControl::thread`), else - before its first turn - the one it joined in.
-    fn standing_in(&self) -> ThreadId {
-        self.control.thread().unwrap_or_else(|| self.runtime.joined_thread_id())
+    /// (`RunControl::thread`) while it follows that thread, else - before its first turn, or once
+    /// it left that thread - the one it counts as joined in.
+    pub(super) fn standing_in(&self) -> ThreadId {
+        let followed = |thread: &ThreadId| self.lock_followed().contains(thread);
+        self.control.thread().filter(followed).unwrap_or_else(|| self.runtime.joined_thread_id())
     }
 
     /// Tells its channel what the agent recorded since it last did - what it was given to read,
@@ -442,7 +516,15 @@ mod testing {
                 built_from: ComponentConfig::default(),
                 state: Mutex::new(AgentChannelState::default()),
                 control: RunControl::new(ActorState::Idle, None),
+                followed: sync::Mutex::new(BTreeSet::new()),
             }
+            .following_its_threads()
+        }
+
+        /// This body, following the threads its runtime names.
+        fn following_its_threads(self) -> Self {
+            let followed = sync::Mutex::new(self.runtime.threads());
+            Self { followed, ..self }
         }
 
         /// This body, of a personality that hears between the steps of a
@@ -461,7 +543,7 @@ mod testing {
         /// (issue 602), with a runtime of its own: what `hearing` gave it before is gone.
         pub(in crate::actor) fn taking_part_also_in(self, thread: ThreadId) -> Self {
             let runtime = detached_participant(self.agent_id()).taking_part_also_in(thread);
-            Self { runtime: agent_runtime(runtime), ..self }
+            Self { runtime: agent_runtime(runtime), ..self }.following_its_threads()
         }
     }
 }
@@ -470,6 +552,7 @@ mod testing {
 mod tests {
     use super::*;
     use caelumora_domain::actor::EventContext;
+    use caelumora_domain::chain::Position;
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::message::MessageId;
     use caelumora_domain::value::time_zone::TimeZone;
@@ -536,5 +619,37 @@ mod tests {
         body.store(&mut state).await;
         assert_eq!(standing(&state, there), Some(ActorState::Planning), "in its turn's thread");
         assert_eq!(standing(&state, joined), Some(ActorState::Sleeping), "not where it joined");
+    }
+
+    /// Issue 602: let go from the thread of its last turn, the agent stands in the one it counts as
+    /// joined in, and nothing of the thread it left comes back as its state is stored; a leave of a
+    /// thread it takes part in again - one read back as it joins the channel again - leaves what
+    /// it kept there as it was.
+    #[tokio::test]
+    async fn let_go_from_the_thread_of_its_last_turn_it_stands_where_it_joined() {
+        let (joined, there) = (ThreadId::default(), ThreadId::new());
+        let body = AgentBody::detached(Vec::new());
+        let in_thread = |thread_id, event| {
+            Envelope::new(EventContext { thread_id, ..EventContext::default() }, event)
+        };
+        let name = "helper".to_string();
+        let its_join = ActorEvent::ParticipantJoined { participant: body.id(), name: name.clone() };
+        let until = Position::START;
+        let its_leave =
+            || ActorEvent::ParticipantLeft { participant: body.id(), name: name.clone(), until };
+        let mut state = AgentChannelState::default();
+        body.take_in_said(&mut state, in_thread(there, its_join)).await;
+        let work = Work::new(EventContext::default(), None, Classification::PUBLIC, TimeZone::UTC);
+        body.begin_turn(&mut state, there, work);
+        body.store(&mut state).await;
+        assert!(state.thread(there).is_some(), "its part of the thread of its turn");
+
+        body.take_in_said(&mut state, in_thread(there, its_leave())).await;
+        body.store(&mut state).await;
+        assert!(state.thread(there).is_none(), "nothing of the thread it left comes back");
+        assert_eq!(body.standing_in(), joined, "it stands where it joined");
+
+        body.take_in_said(&mut state, in_thread(joined, its_leave())).await;
+        assert!(state.thread(joined).is_some(), "a thread it takes part in keeps its part");
     }
 }

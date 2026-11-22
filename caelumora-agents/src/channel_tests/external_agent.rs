@@ -216,6 +216,31 @@ async fn an_external_agent_does_not_answer_again() {
     running.abort();
 }
 
+/// Issue 602: an external agent keeps one remote state in its channel, and so takes part in one
+/// thread of it alone: taken into a further thread, it is refused.
+#[tokio::test]
+async fn an_external_agent_is_not_taken_into_a_further_thread() {
+    use caelumora_domain::channel::ThreadOrigin;
+    use caelumora_domain::message::MessageId;
+    use caelumora_kernel::channel::ChannelError;
+    let remote = Arc::new(ScriptedExternalAgent::answering(Vec::new()));
+    let Stuck { channel, context, agent, running, .. } = with_an_external_agent(remote).await;
+    let origin = ThreadOrigin { thread: ThreadId::line(channel.id()), message: MessageId::new() };
+    let thread = channel.open_thread_by_procedure(&context, origin, &[]).await.expect("opened");
+    let refused = channel
+        .take_into_thread_by_procedure(&context, thread, ActorId::Agent(agent))
+        .await
+        .expect_err("one thread alone");
+    assert!(
+        matches!(
+            refused.downcast_ref::<ChannelError>(),
+            Some(ChannelError::InOneThreadAlone { .. })
+        ),
+        "{refused}"
+    );
+    running.abort();
+}
+
 #[tokio::test]
 async fn an_external_agent_s_answer_under_way_is_not_asked_for_again() {
     let remote = Arc::new(ScriptedExternalAgent::default());

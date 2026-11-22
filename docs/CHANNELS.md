@@ -209,46 +209,47 @@ What names a thread the channel does not have is not let in, nor what is sent in
 closed (see *The channel decides what enters it* below); the rejection is said, as every rejection,
 in the thread of what it rejects, and reaches its sender by name.
 
-Every participant takes part in a set of threads of the channel - one for now: its line, or a
-thread it founded (issue 602) -, which its actor knows from its runtime
-(`ParticipantRuntime::threads`, an agent's `ActorRuntime::threads`): its leave is announced in
-each of them, and only their moderators may ask it. Its join, and what it says of itself without
-a thread to name, happen in the thread it joined the channel in (`joined_thread_id`): what a user
-says, until they name the thread they write in, and what an agent says of itself before its first
-turn. Whether something happens in one thread or in the whole channel is the kind of what the
-history records of it (`HistoryEntry::is_of_thread`): a message said, a turn's end, a request, an
-approval, and who joined or left, happen in a thread - the one the context names
-(`Recorded::thread`, `Envelope::thread`), for a join the one joined -; a change of a message and a
-classification of the channel happen in the whole channel. By one rule (`Recipients::goes_to`,
-`reaches`), what goes to every participant of a kind is delivered and read so: an agent is given
-what happens in its threads and in the whole channel - what it hears enters its context, and is
-paid for by every call after it -, a user everything of the channel, which a frontend sorts by
-thread; what goes to someone by name reaches them wherever it happens. The web UI and the TUI show
-the line (`Envelope::is_shown_in_line`, `ChannelView::shown_in_line`): what happens in it and in
-the whole channel, and of another thread its approvals and its questions, which its calls wait for,
-and what mentions the viewer.
+Every participant takes part in a set of threads of the channel (issue 602): its line or a thread it
+founded, and those it was taken into since (see below). The channel and the participant's actor
+share the set (`ChannelActor::threads`, `ParticipantRuntime::threads`, an agent's
+`ActorRuntime::threads`), which the channel alone changes: only their moderators may ask it, and its
+join and its leave are announced in each of them. What it says of itself without a thread to name
+happens in the thread it counts as joined in (`joined_thread_id`, `channel::joined_in`): its line if
+it takes part there, else the first of its threads - where it joined the channel, but for one taken
+into the line since -: what a user says, until they name the thread they write in, and what an agent
+says of itself before its first turn. Whether something happens in one thread or in the whole
+channel is the kind of what the history records of it (`HistoryEntry::is_of_thread`): a message
+said, a turn's end, a request, an approval, and who joined or left, happen in a thread - the one the
+context names (`Recorded::thread`, `Envelope::thread`), for a join the one joined -; a change of a
+message and a classification of the channel happen in the whole channel. By one rule
+(`Recipients::goes_to`, `reaches`), what goes to every participant of a kind is delivered and read
+so: an agent is given what happens in its threads and in the whole channel - what it hears enters
+its context, and is paid for by every call after it -, a user everything of the channel, which a
+frontend sorts by thread; what goes to someone by name reaches them wherever it happens. The web UI
+and the TUI show the line (`Envelope::is_shown_in_line`, `ChannelView::shown_in_line`): what happens
+in it and in the whole channel, and of another thread its approvals and its questions, which its
+calls wait for, and what mentions the viewer.
 
 A thread is **opened** at a message of another thread of its channel (`ThreadOrigin`), with its
-**founders** taking part in it alone (`procedure::thread::Open`, issue 593, which holds the new
-thread, the one it is opened at and its founders until they are taken in). Opening goes through the
-session,
-as every way into a channel does (see
-[Taking someone into the session](#taking-someone-into-the-session)): a founder is mostly new to
-the session. Whoever reads the channel may open a thread (`OpenThread`),
-founded with whom they act for or agents of their own - taken into the session and the channel in
-the kernel's name, without the right to change either, so that a participant who does not own a
-shared session can start a sub-agent (issue 558); a founder takes part in the channel not yet,
-since an actor takes part in one thread for now. A person opens a thread only at the line; deeper
-threads come from agents. Whether the origin's message is in its thread is not asked: a tool opens a
-thread while the message with its call may still be on its way into the channel, which takes what
-was sent first and so records it before the opening. The opening and the closing of a thread are
-announced in the line (`ThreadOpened`, `ThreadClosed`), of the whole channel and told to its users;
-every thread is kept in the channel's state (`ChannelState::threads`), the closed ones as closed,
-from which the channel builds the open ones again as it starts; every actor starts again in the
-thread its range of attendance names, in the line if that thread was closed. Every founder is asked
-before the thread is there; one that cannot be taken in after all - whose actor cannot start - rolls
-the opening back: whoever was taken in is taken out again as if never taken in, the thread closed
-in the opener's name as a thread is closed, refused while anyone still takes part in it.
+**founders** (`procedure::thread::Open`, issue 593, which holds the new thread, the one it is
+opened at and its founders until they are taken in): a founder new to the channel takes part in
+the thread alone, one who takes part in the channel already takes part in it as well (issue 602).
+Opening goes through the session, as every way into a channel does (see [Taking someone into the
+session](#taking-someone-into-the-session)): a founder is mostly new to the session. Whoever reads
+the channel may open a thread (`OpenThread`), founded with whom they act for or agents of their
+own - taken into the session and the channel in the kernel's name, without the right to change
+either, so that a participant who does not own a shared session can start a sub-agent (issue 558).
+A person opens a thread only at the line; deeper threads come from agents. Whether the origin's
+message is in its thread is not asked: a tool opens a thread while the message with its call may
+still be on its way into the channel, which takes what was sent first and so records it before the
+opening. The opening and the closing of a thread are announced in the line (`ThreadOpened`,
+`ThreadClosed`), of the whole channel and told to its users; every thread is kept in the channel's
+state (`ChannelState::threads`), the closed ones as closed, from which the channel builds the open
+ones again as it starts; every actor starts again in the threads its ranges of attendance hold
+open, in the line if each of them was closed. Every founder new to the channel is asked before the
+thread is there; one that cannot be taken in after all - whose actor cannot start - rolls the
+opening back: whoever was taken in is taken out again as if never taken in, the thread closed in
+the opener's name as a thread is closed, refused while anyone still takes part in it.
 
 A thread is **closed** by whoever opened it, or whoever may change the channel
 (`procedure::thread::Close`, which holds it until the channel closed it), once nobody takes part in
@@ -257,8 +258,27 @@ left in a thread closed: whoever takes part is let go first. Letting someone go 
 they take part in until they have left (`procedure::participant::LetGo`, issue 593), as having an
 agent follow its deletion or restoring does the thread it rejoins, so that the channel closes a
 thread only once whoever left it has left: what they still sent until their task ended enters the
-thread, and their leave is recorded
-there; from then on what is sent into it is not let in. The line is never closed.
+thread, and their leave is recorded there; from then on what is sent into it is not let in. The line
+is never closed.
+
+A participant of the channel is **taken into a further thread** of it, and **let go from one
+thread** alone, staying in its others (issue 602): `procedure::participant::TakeIntoThread` - added
+by whoever may change the channel, or joining by their own act where they may read it - and
+`LetGoFromThread` - removed, or leaving as leaving the channel is asked -, each holding the
+participant, the channel and the thread; the channel's document is not changed, which lists who
+takes part in the channel, not where. The channel's `run` takes the actor into the thread's
+moderator and its threads, or out of them, right where it announces its join or its leave in that
+thread, which its range of attendance there follows (`Attendance`: a range per participant and
+thread); a leave reaches whoever left as well. It hears the thread from its join on; what was said
+there before, it is not given. An agent's branch of the thread forks from where it stands in the
+thread's origin (`Transcript::fork`), or begins at the root without a branch there; let go, its turn
+running there ends (`Actor::cancel` of the thread), and what it kept of the thread goes - both as
+the agent takes its own join or leave in (`AgentBody::follow`, see [AGENT-TURN.md](AGENT-TURN.md)).
+Refused are a thread it takes part in already (`AlreadyInThread`), the last thread it takes part in,
+which it leaves by leaving the channel (`LastThread`), a thread delegated into, a closed circle of
+its founders (`ClosedCircle`), and a further thread for an external agent, which keeps one remote
+state in its channel (`InOneThreadAlone`, `Actor::takes_part_in_several_threads`). Letting someone
+go from the channel lets them go from every thread, and their leave is announced in each.
 
 ### Building a channel
 
@@ -867,8 +887,9 @@ then - from the position shared with them, or else from their join, up to where 
 to it while it took part, and nothing after. A join recorded while a participant's range is still
 open - an agent left out as its channel started, without a leave, whose actor starts again as it is
 added, followed or restored - is kept in the history, since the actor comes only then, but opens no
-second range: the open one goes on, from where the join's share begins if that lies before, and
-the next leave ends it.
+second range in its thread: the open one goes on, from where the join's share begins if that lies
+before, and the next leave there ends it. In several threads a participant has a range in each
+(issue 602).
 
 *   A **joining actor** reads what it was given through its inbox (issue 223, see
     [Actors and envelopes](#actors-and-envelopes)): the inbox opens behind, at where its view
@@ -958,11 +979,11 @@ decision for the whole channel rather than one per actor.
 
 ### Cancelling
 
-`ChannelLoop::cancel` (`CancelChannel`) ends the current turn of every actor taking part in a
-thread, or in every thread of the channel - the web UI's stop button, which cancels them all (issue
-557). It is an operation on the channel, like renaming or deleting it, not an act of taking part:
-the policy decides who may, and nobody has to be a participant for it; a thread is part of its
-channel, and asks the same.
+`ChannelLoop::cancel` (`CancelChannel`) ends the turns that run in a thread - not the turn an
+actor taking part in it runs in another (issue 602) -, or in every thread of the channel - the web
+UI's stop button, which cancels them all (issue 557). It is an operation on the channel, like
+renaming or deleting it, not an act of taking part: the policy decides who may, and nobody has to
+be a participant for it; a thread is part of its channel, and asks the same.
 
 It is not a kill. The agent takes its turn over, so that observers stop waiting even when the turn
 said nothing, and returns to a normal state with its history intact. But nothing under way is waited
@@ -1282,8 +1303,8 @@ The actor of an agent is on the agent side, and is given less (issue 516): its k
 `AgentRuntime` serves. It holds the agent's participant runtime and the controllers of the agent and
 of its personality, and answers what only an agent asks itself: who the agent
 and its personality are as they are now (`agent`, `personality`), the ids of its session and its
-channel, the threads it takes part in and the one it joined in (`threads`, `joined_thread_id`,
-issues 557, 602) and the channel's classification; its
+channel, the threads it takes part in, where each hangs and the one it joined in (`threads`,
+`origin_of`, `joined_thread_id`, issues 557, 602) and the channel's classification; its
 state in the channel and its transcript; what a turn
 staged for a system service, handed to the writer that commits it (`commit_staged`, issue 518); the
 attachments of its messages; its session and its channel to read, as readers at the classification

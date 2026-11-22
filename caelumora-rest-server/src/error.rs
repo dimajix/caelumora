@@ -575,6 +575,10 @@ impl From<ChannelError> for ApiError {
                 Self::conflict("delegated_otherwise", detail)
             }
             ChannelError::ThreadQuiet { .. } => Self::conflict("thread_quiet", detail),
+            ChannelError::AlreadyInThread { .. } => Self::conflict("already_in_thread", detail),
+            ChannelError::InOneThreadAlone { .. } => Self::conflict("in_one_thread_alone", detail),
+            ChannelError::LastThread { .. } => Self::conflict("last_thread", detail),
+            ChannelError::ClosedCircle { .. } => Self::conflict("closed_circle", detail),
         }
     }
 }

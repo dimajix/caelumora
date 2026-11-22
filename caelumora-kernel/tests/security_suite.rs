@@ -832,6 +832,63 @@ async fn taking_someone_in_is_for_whoever_may_change_the_session_and_the_channel
     world.manager.stop(&alice, session.id()).await.unwrap();
 }
 
+/// Issue 602: whoever may change a channel takes a participant into a further thread of it and
+/// lets them go from one (`UpdateChannel`); a participant joins a thread by their own act where
+/// they may read the channel (`GetChannel` in their own context) and leaves one where they may
+/// leave the channel (`LeaveChannel`), never for another; and a founder who takes part in the
+/// channel already is the opener's own, asked before the thread is there.
+#[tokio::test]
+async fn a_participant_is_taken_into_a_thread_and_let_go_from_it_as_the_channel_lets_them() {
+    use caelumora_domain::history::HistoryEntry;
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
+    let (hers, his) = (ActorId::User(world.alice), ActorId::User(world.bob));
+    let (id, line) = (main.id(), ThreadId::line(main.id()));
+    let at_the_line = ThreadOrigin { thread: line, message: MessageId::new() };
+    let thread = session.open_thread(&alice, id, at_the_line, vec![]).await.expect("opened");
+
+    // The session opened and the channel reached, as every procedure of a thread does (issue
+    // 593); then what the way in or out asks.
+    let asking = |who: &str, last: &[&str]| -> Vec<String> {
+        let reached = ["GetSession(alice's) yes", "GetChannel(alice's) yes", "Cleared(..) yes"];
+        let reached = reached.map(|check| format!("{who}: {}", check.replace("..", who)));
+        reached.into_iter().chain(last.iter().map(|check| check.to_string())).collect()
+    };
+    let (refused, asked) = world.asked(session.take_into_thread(&bob, id, thread, hers)).await;
+    assert!(denied(&refused.expect_err("bob may not change the channel")));
+    assert_eq!(asked, asking("bob", &["bob: UpdateChannel(alice's) no"]), "{asked:#?}");
+    let (taken, asked) = world.asked(session.take_into_thread(&alice, id, thread, his)).await;
+    taken.expect("alice may change it");
+    assert_eq!(asked, asking("alice", &["alice: UpdateChannel(alice's) yes"]), "{asked:#?}");
+
+    let (left, asked) = world.asked(session.let_go_from_thread(&bob, id, thread, his)).await;
+    assert!(denied(&left.expect_err("bob may not change the channel")));
+    assert_eq!(asked, asking("bob", &["bob: UpdateChannel(alice's) no"]), "{asked:#?}");
+    let (left, asked) = world.asked(session.leave_thread(&bob, id, thread, his)).await;
+    left.expect("bob leaves it by his own act");
+    assert_eq!(asked, asking("bob", &["bob: LeaveChannel(alice's) yes"]), "{asked:#?}");
+
+    let (refused, asked) = world.asked(session.join_thread(&bob, id, thread, hers)).await;
+    assert!(denied(&refused.expect_err("alice is not bob's own")));
+    assert_eq!(asked, asking("bob", &[]), "refused without asking: {asked:#?}");
+    let (joined, asked) = world.asked(session.join_thread(&bob, id, thread, his)).await;
+    joined.expect("bob joins it by his own act");
+    // Reading the channel, asked in his own context.
+    assert_eq!(asked, asking("bob", &["bob: GetChannel(alice's) yes"]), "{asked:#?}");
+    let (removed, asked) = world.asked(session.let_go_from_thread(&alice, id, thread, his)).await;
+    removed.expect("alice may change the channel");
+    assert_eq!(asked, asking("alice", &["alice: UpdateChannel(alice's) yes"]), "{asked:#?}");
+
+    let refused = session.open_thread(&bob, id, at_the_line, vec![hers]).await;
+    assert!(denied(&refused.expect_err("alice is not bob's own")));
+    let opened = |e: &HistoryEntry| matches!(e, HistoryEntry::ThreadOpened { .. });
+    let threads_opened = main.history_entries().await.iter().filter(|e| opened(e)).count();
+    assert_eq!(threads_opened, 1, "asked before the thread is there");
+    world.manager.stop(&alice, session.id()).await.unwrap();
+}
+
 /// Issue 557: whoever reads a channel opens a thread in it (`OpenThread`), founded with their own
 /// agents - taken into the session and the channel without the right to change either, so that a
 /// participant who does not own the session can start a sub-agent - and never with another's. A

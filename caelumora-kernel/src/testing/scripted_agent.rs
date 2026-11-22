@@ -13,6 +13,7 @@ use caelumora_api::runtime::ActorRuntime;
 use caelumora_api::transport::{EventReceiver, EventSender};
 use caelumora_domain::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_domain::agent::PersonalityKind;
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::message::{Message, MessageId, MessageRole};
 use caelumora_domain::turn::GivenUpReason;
 use caelumora_domain::value::name::Name;
@@ -251,8 +252,11 @@ impl Actor for ScriptedAgent {
         self.woken.store(true, Ordering::SeqCst);
     }
 
-    fn cancel(&self) {
-        self.ask(Interrupt::Cancel);
+    fn cancel(&self, thread: Option<ThreadId>) {
+        // Its turns answer in the thread it joined in.
+        if thread.is_none_or(|thread| thread == self.runtime.joined_thread_id()) {
+            self.ask(Interrupt::Cancel);
+        }
     }
 
     fn turn_under_way(&self) -> Option<TurnId> {
