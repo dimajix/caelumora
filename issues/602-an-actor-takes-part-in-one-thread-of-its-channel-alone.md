@@ -512,3 +512,12 @@ above. The position of a predecessor (C) is no step yet.
   channel joins a further thread of it by their own act where they may read the channel: a thread
   asks nothing beyond it. REST takes a participant into a thread and lets them go from one, and lets
   one join and leave a thread by one's own act.
+- **2026-11-22** — Step 3a committed. Decided by the maintainer: a thread knows the message it hangs
+  at, and an agent's branch of it forks there, stable however far the branch of the thread it hangs
+  at went on since - which settles 557's forked thread for a thread an agent is taken into later;
+  joining a thread asks no permission of its own beyond the channel's; a leave reaching whoever
+  left, and `joined_thread_id` changing as one is let go from the thread one joined in, stand. Done
+  as a step of its own: `Transcript::fork` forks a branch up to and including the last entry of the
+  thread's message (`ThreadOrigin`), or whole where the branch does not hold it - not taken in yet,
+  and so nothing after it either; never heard, or replaced by a compaction, where what came after it
+  is forked with it.

@@ -270,15 +270,17 @@ takes part in the channel, not where. The channel's `run` takes the actor into t
 moderator and its threads, or out of them, right where it announces its join or its leave in that
 thread, which its range of attendance there follows (`Attendance`: a range per participant and
 thread); a leave reaches whoever left as well. It hears the thread from its join on; what was said
-there before, it is not given. An agent's branch of the thread forks from where it stands in the
-thread's origin (`Transcript::fork`), or begins at the root without a branch there; let go, its turn
-running there ends (`Actor::cancel` of the thread), and what it kept of the thread goes - both as
-the agent takes its own join or leave in (`AgentBody::follow`, see [AGENT-TURN.md](AGENT-TURN.md)).
-Refused are a thread it takes part in already (`AlreadyInThread`), the last thread it takes part in,
-which it leaves by leaving the channel (`LastThread`), a thread delegated into, a closed circle of
-its founders (`ClosedCircle`), and a further thread for an external agent, which keeps one remote
-state in its channel (`InOneThreadAlone`, `Actor::takes_part_in_several_threads`). Letting someone
-go from the channel lets them go from every thread, and their leave is announced in each.
+there before, it is not given. An agent's branch of the thread forks as its branch of the thread's
+origin stood at the message the thread hangs at (`ThreadOrigin`, `Transcript::fork`) - stable,
+however far that branch went on since -, or begins at the root without a branch there; let go, its
+turn running there ends (`Actor::cancel` of the thread), and what it kept of the thread goes - both
+as the agent takes its own join or leave in (`AgentBody::follow`, see
+[AGENT-TURN.md](AGENT-TURN.md)). Refused are a thread it takes part in already (`AlreadyInThread`),
+the last thread it takes part in, which it leaves by leaving the channel (`LastThread`), a thread
+delegated into, a closed circle of its founders (`ClosedCircle`), and a further thread for an
+external agent, which keeps one remote state in its channel (`InOneThreadAlone`,
+`Actor::takes_part_in_several_threads`). Letting someone go from the channel lets them go from every
+thread, and their leave is announced in each.
 
 ### Building a channel
 

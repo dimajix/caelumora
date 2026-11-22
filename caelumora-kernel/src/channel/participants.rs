@@ -174,7 +174,7 @@ impl ChannelLoop {
     /// (`procedure::participant::take_into_thread`): `run` has it take part there - the thread's
     /// moderator may ask it, and what happens there is delivered to it - as it announces its join
     /// there in the name of `by`'s caller (`ParticipantJoined`). Of an agent, its branch of the
-    /// thread forks from where it stands in the thread's origin, as the agent takes its join in.
+    /// thread forks at the message the thread hangs at, as the agent takes its join in.
     /// What `run` answers once it announced it. Asks nothing of `by`: the procedure did.
     ///
     /// # Errors

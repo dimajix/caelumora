@@ -5,7 +5,7 @@ use super::{AgentThreadState, AttachmentIndex};
 use crate::actor::{ActorEvent, ActorId};
 use crate::approval::ApprovalRequest;
 use crate::chain::Stored;
-use crate::channel::ThreadId;
+use crate::channel::{ThreadId, ThreadOrigin};
 use crate::confidentiality::Classification;
 use crate::content::ContentId;
 use crate::context::{
@@ -129,15 +129,15 @@ impl AgentChannelState {
     }
 
     /// Takes in that it was taken into `thread` (issue 602): its branch there, new to it, begins
-    /// where its branch of `from` - the thread `thread` was opened from - stands, forked
-    /// (`Transcript::fork`), or at the root without one there. Nothing for a thread it holds
-    /// already.
-    pub fn join_thread(&mut self, thread: ThreadId, from: Option<ThreadId>) {
+    /// as its branch of the thread `thread` hangs at stood at `origin`'s message, forked
+    /// (`Transcript::fork`), or at the root without such a branch - or for the line, which hangs
+    /// nowhere. Nothing for a thread it holds already.
+    pub fn join_thread(&mut self, thread: ThreadId, origin: Option<ThreadOrigin>) {
         if self.threads_held().contains(&thread) {
             return;
         }
-        if let Some(from) = from {
-            self.transcript.fork(thread, from);
+        if let Some(origin) = origin {
+            self.transcript.fork(thread, origin);
         }
     }
 
@@ -982,8 +982,8 @@ mod tests {
         }
     }
 
-    /// Issue 602: a thread the agent is taken into begins forked from where it stands in the
-    /// thread it was opened from, or empty without a branch there, and one it holds already is
+    /// Issue 602: a thread the agent is taken into begins forked as its branch of the thread it
+    /// hangs at stood at its message, or empty without a branch there, and one it holds already is
     /// not forked again; a thread it is let go from goes, its part and its branch.
     #[test]
     fn it_joins_and_leaves_threads() {
@@ -992,7 +992,8 @@ mod tests {
         let mut state = in_thread(left, ActorState::Idle, None);
         state.transcript.push(line, make_message(id(1)));
         state.transcript.push(left, make_message(id(2)));
-        state.join_thread(side, Some(line));
+        let at_the_line = Some(ThreadOrigin { thread: line, message: id(1) });
+        state.join_thread(side, at_the_line);
         state.join_thread(fresh, None);
         assert_eq!(state.transcript.digest(side), state.transcript.digest(line), "forked");
         assert_eq!(state.transcript.digest(fresh), None, "begun empty");
@@ -1003,7 +1004,7 @@ mod tests {
 
         state.transcript.push(side, make_message(id(3)));
         let before = state.transcript.digest(side);
-        state.join_thread(side, Some(line));
+        state.join_thread(side, at_the_line);
         assert_eq!(state.transcript.digest(side), before, "a thread it holds is not forked again");
     }
 

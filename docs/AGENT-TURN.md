@@ -417,16 +417,16 @@ every branch that holds it. The transcript gives every position, on whichever br
 threads never give one twice. An agent takes part in the threads its runtime names
 (`ActorRuntime::threads`), which the channel changes as it takes the agent into a further thread or
 lets it go from one, announcing it there; the agent follows them as it takes its own join or leave
-in, in the order of what reaches it (`AgentBody::follow`): its branch of a thread it joined forks
-from where it stands in the thread that one hangs at (`ActorRuntime::origin_of`,
-`AgentChannelState::join_thread`, `Transcript::fork`), or begins at the root without a branch there,
-and its part and its branch of a thread it left go where it no longer takes part there
-(`AgentBody::leaves`, `AgentChannelState::leave_thread`) - a leave of the channel ends its actor,
-and one read back as it joins again, of a thread it takes part in again, leaves its state as it was
-kept -, with what it was asked there and has not answered yet. During a turn its own join stops what
-the turn takes in, and its leave waits after what came before it of the thread. What it takes in,
-answers again or carries out goes on the branch of the thread the envelope happens in where the
-agent follows it, and else on the branch of the thread it counts as joined in
+in, in the order of what reaches it (`AgentBody::follow`): its branch of a thread it joined forks as
+its branch of the thread that one hangs at stood at the message it hangs at, however far that branch
+went on since (`ActorRuntime::origin_of`, `AgentChannelState::join_thread`, `Transcript::fork`), or
+begins at the root without a branch there, and its part and its branch of a thread it left go where
+it no longer takes part there (`AgentBody::leaves`, `AgentChannelState::leave_thread`) - a leave of
+the channel ends its actor, and one read back as it joins again, of a thread it takes part in again,
+leaves its state as it was kept -, with what it was asked there and has not answered yet. During a
+turn its own join stops what the turn takes in, and its leave waits after what came before it of the
+thread. What it takes in, answers again or carries out goes on the branch of the thread the envelope
+happens in where the agent follows it, and else on the branch of the thread it counts as joined in
 (`ActorRuntime::joined_thread_id`, `AgentBody::branch_of`) - so what was delivered of a thread
 before its leave goes on that thread's branch, though taken in after the channel announced the
 leave: a nudge, a request to answer again and a command reach it by name from any thread, and read

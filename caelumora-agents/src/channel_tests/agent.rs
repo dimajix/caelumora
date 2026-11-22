@@ -3723,11 +3723,11 @@ async fn a_part_given_into_the_transcript_is_recorded_as_given_and_as_withdrawn(
     running.abort();
 }
 
-/// Issue 602: an agent of the line taken into a thread begins its branch there where it stands in
-/// the line - forked, what it heard there before on it -, its join noted after; its branch of the
-/// line goes on without it.
+/// Issue 602: an agent of the line taken into a thread begins its branch there as its branch of
+/// the line stood at the message the thread hangs at - forked, what it heard up to it on it, not
+/// what came after -, its join noted after; its branch of the line goes on without it.
 #[tokio::test]
-async fn an_agent_taken_into_a_thread_forks_its_branch_from_where_it_stands_in_the_line() {
+async fn an_agent_taken_into_a_thread_forks_its_branch_at_the_message_the_thread_hangs_at() {
     use caelumora_domain::channel::ThreadOrigin;
     use caelumora_domain::message::MessageId;
     let (channel, context, agent, _) =
@@ -3742,7 +3742,9 @@ async fn an_agent_taken_into_a_thread_forks_its_branch_from_where_it_stands_in_t
         content: Some("said before".to_string()),
         ..Message::new(Classification::CHANNEL_DEFAULT)
     };
-    channel.record_said(vec![before.clone()]).await;
+    let after =
+        Message { id: MessageId::new(), content: Some("said after".to_string()), ..before.clone() };
+    channel.record_said(vec![before.clone(), after.clone()]).await;
     let running = tokio::spawn({
         let channel = Arc::clone(&channel);
         async move { channel.run().await }
@@ -3764,7 +3766,7 @@ async fn an_agent_taken_into_a_thread_forks_its_branch_from_where_it_stands_in_t
             .expect("the agent's state comes to stand so")
         }
     };
-    stored_once(Box::new(move |state| state.last_message == Some(before.id))).await;
+    stored_once(Box::new(move |state| state.last_message == Some(after.id))).await;
 
     let origin = ThreadOrigin { thread: line, message: before.id };
     let thread = channel.open_thread_by_procedure(&context, origin, &[]).await.expect("opened");
@@ -3778,8 +3780,8 @@ async fn an_agent_taken_into_a_thread_forks_its_branch_from_where_it_stands_in_t
     let contents = |thread| -> Vec<String> {
         state.transcript.messages(thread).into_iter().filter_map(|m| m.content).collect()
     };
-    assert_eq!(contents(thread), contents(line), "what it heard in the line, forked");
-    assert!(contents(thread).contains(&"said before".to_string()), "{:?}", contents(thread));
+    assert_eq!(contents(thread), ["said before"], "what it heard up to the thread's message");
+    assert_eq!(contents(line), ["said before", "said after"], "the line went on");
     let joins = |thread| {
         state.transcript.entries(thread).filter(|node| joined_entry(&node.entry, helper)).count()
     };

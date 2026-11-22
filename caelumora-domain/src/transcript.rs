@@ -7,7 +7,7 @@
 
 use crate::actor::ActorId;
 use crate::chain::{Node, Position};
-use crate::channel::ThreadId;
+use crate::channel::{ThreadId, ThreadOrigin};
 use crate::confidentiality::Classification;
 use crate::context::KnowledgeSource;
 use crate::digest;
@@ -377,13 +377,20 @@ impl Transcript {
         self.branches.keys().copied()
     }
 
-    /// Begins the branch of `thread` where the branch of `from` stands now (issue 602): forked, for
-    /// a thread opened at a message of `from` that the agent is taken into. Nothing if `from` has
-    /// no branch: the branch of `thread` begins at the root with its first entry.
-    pub fn fork(&mut self, thread: ThreadId, from: ThreadId) {
-        if let Some(branch) = self.branches.get(&from).cloned() {
-            self.branches.insert(thread, branch);
-        }
+    /// Begins the branch of `thread` as the branch of the thread it hangs at stood at its message,
+    /// `origin` (issue 602): forked, up to and including the last entry of that message, for a
+    /// thread the agent is taken into - however far that branch went on since. A branch that does
+    /// not hold the message is forked whole: the agent has not taken it in yet, and so nothing
+    /// after it either - or never heard it, or a compaction replaced it, where what came after it
+    /// is forked with it. Nothing if that thread has no branch: the branch of `thread` begins at
+    /// the root with its first entry.
+    pub fn fork(&mut self, thread: ThreadId, origin: ThreadOrigin) {
+        let Some(branch) = self.branches.get(&origin.thread) else { return };
+        let holds =
+            |at: &Position| self.nodes[at].entry.message().map(|m| m.id) == Some(origin.message);
+        let end = branch.iter().rposition(holds).map_or(branch.len(), |at| at + 1);
+        let forked = branch[..end].to_vec();
+        self.branches.insert(thread, forked);
     }
 
     /// Begins the branch of `thread` anew, and returns the digest of what it
@@ -889,28 +896,36 @@ mod tests {
         );
     }
 
-    /// Issue 602: a branch forked from another begins where that one stands, goes on its own way
-    /// from there, and is stored and loaded with a head of its own; forked from a thread without a
-    /// branch, it begins at the root.
+    /// Issue 602: a branch forked from another begins as that one stood at the message its thread
+    /// hangs at, however far it went on since, goes on its own way from there, and is stored and
+    /// loaded with a head of its own; at a message the other does not hold, it is forked whole;
+    /// forked from a thread without a branch, it begins at the root.
     #[test]
-    fn a_branch_forked_begins_where_the_other_stands_and_goes_on_its_own_way() {
-        let (line, side, fresh) = (ThreadId::new(), ThreadId::new(), ThreadId::new());
+    fn a_branch_forked_begins_as_the_other_stood_at_its_message_and_goes_on_its_own_way() {
+        let (line, side) = (ThreadId::new(), ThreadId::new());
+        let (later, fresh) = (ThreadId::new(), ThreadId::new());
         let mut transcript = Transcript::default();
-        transcript.extend(line, vec![make_message(id(1)), make_message(id(2))]);
-        transcript.fork(side, line);
-        assert_eq!(transcript.digest(side), transcript.digest(line), "where the line stands");
-        transcript.push(side, make_message(id(3)));
-        transcript.push(line, make_message(id(4)));
+        let messages = [1, 2, 3].map(|n| make_message(id(n)));
+        transcript.extend(line, messages.to_vec());
+        transcript.fork(side, ThreadOrigin { thread: line, message: id(2) });
+        transcript.push(side, make_message(id(4)));
+        transcript.push(line, make_message(id(5)));
         let ids = |transcript: &Transcript, thread| {
             transcript.messages(thread).iter().map(|m| m.id).collect::<Vec<_>>()
         };
-        assert_eq!(ids(&transcript, side), [id(1), id(2), id(3)], "the line's, then its own");
-        assert_eq!(ids(&transcript, line), [id(1), id(2), id(4)], "nothing of the side");
+        assert_eq!(
+            ids(&transcript, side),
+            [id(1), id(2), id(4)],
+            "up to its message, then its own"
+        );
+        assert_eq!(ids(&transcript, line), [id(1), id(2), id(3), id(5)], "nothing of the side");
         let loaded = reloaded(&transcript);
         assert_eq!(ids(&loaded, side), ids(&transcript, side), "loaded from its own head");
 
-        transcript.fork(fresh, ThreadId::new());
-        assert_eq!(transcript.threads().count(), 2, "nothing to fork from: no branch yet");
+        transcript.fork(later, ThreadOrigin { thread: line, message: id(9) });
+        assert_eq!(transcript.digest(later), transcript.digest(line), "not taken in yet: whole");
+        transcript.fork(fresh, ThreadOrigin { thread: ThreadId::new(), message: id(1) });
+        assert_eq!(transcript.digest(fresh), None, "nothing to fork from: no branch yet");
     }
 
     /// Issue 602: a change of a message is recorded on every branch that holds it, and on no

@@ -285,15 +285,15 @@ impl AgentBody {
     }
 
     /// Follows its own join or leave of a thread, `change`, in `state` and in the threads it
-    /// follows (issue 602): its branch of a thread it joined forks from where it stands in the
-    /// thread that one hangs at (`ActorRuntime::origin_of`, `AgentChannelState::join_thread`),
+    /// follows (issue 602): its branch of a thread it joined forks as its branch of the thread
+    /// that one hangs at stood at its message (`ActorRuntime::origin_of`,
+    /// `AgentChannelState::join_thread`),
     /// and its part and its branch of a thread it leaves go (`leaves`,
     /// `AgentChannelState::leave_thread`), what it kept there for when it joins again.
     pub(super) fn follow(&self, state: &mut AgentChannelState, change: OwnChange) {
         match change {
             OwnChange::Joined(thread) => {
-                let from = self.runtime.origin_of(thread).map(|origin| origin.thread);
-                state.join_thread(thread, from);
+                state.join_thread(thread, self.runtime.origin_of(thread));
                 self.lock_followed().insert(thread);
             }
             OwnChange::Left(_) => {
