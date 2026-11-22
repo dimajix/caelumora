@@ -5,6 +5,7 @@
 
 use crate::tool::Interruption;
 use caelumora_domain::actor::{ActorState, ProcessingStateHolder};
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::work::TurnId;
 use std::collections::HashMap;
 use std::future::pending;
@@ -52,14 +53,13 @@ pub(crate) struct RunControl {
     /// Tells the run loop, waiting between turns, that `wakeup` woke it:
     /// the channel moves the state itself, and the run loop announces it.
     woken: Notify,
-    /// The turn that runs or ran last, by its id (issue 235), and its
-    /// token, both replaced when the next one begins. The token is cancelled
-    /// by `cancel`, `stop` and `leave` while the turn runs: the streaming loop waits
-    /// on it next to the model's stream, so that a cancel drops the request
-    /// instead of waiting for its next chunk, and so does waiting for an
-    /// approval. `None` before the first turn. A `std` mutex, because
-    /// `cancel` is synchronous. Every token is a child of `ending`.
-    turn: Mutex<(Option<TurnId>, CancellationToken)>,
+    /// The turn that runs or ran last, by its thread (issue 602) and its id (issue 235), and its
+    /// token, all replaced when the next one begins. The token is cancelled by `cancel`, `stop` and
+    /// `leave` while the turn runs: the streaming loop waits on it next to the model's stream, so
+    /// that a cancel drops the request instead of waiting for its next chunk, and so does waiting
+    /// for an approval. `None` before the first turn. A `std` mutex, because `cancel` is
+    /// synchronous. Every token is a child of `ending`.
+    turn: Mutex<(Option<(ThreadId, TurnId)>, CancellationToken)>,
     /// Cancelled by `stop` and `leave`: the run loop is to end. A turn begun
     /// after it finds its token cancelled already; a run loop that waits for
     /// more than a turn - for its input, or an external agent following its
@@ -81,9 +81,9 @@ pub(crate) struct RunControl {
 }
 
 impl RunControl {
-    /// The run control of an agent that stands at `state`, in the turn
-    /// `turn` if it resumes one.
-    pub(crate) fn new(state: ActorState, turn: Option<TurnId>) -> Self {
+    /// The run control of an agent that stands at `state`, in the turn `turn` of its thread if it
+    /// resumes one.
+    pub(crate) fn new(state: ActorState, turn: Option<(ThreadId, TurnId)>) -> Self {
         let ending = CancellationToken::new();
         Self {
             state: ProcessingStateHolder::new(state),
@@ -129,11 +129,10 @@ impl RunControl {
         (self.announced.swap(state) != state).then_some(state)
     }
 
-    /// The turn `turn` begins: it gets a token of its own, and a cancel or
-    /// a retry that came as the turn before ended has nothing to end here;
-    /// a stop or leaving still has.
-    pub(crate) fn begin_turn(&self, turn: TurnId) {
-        *self.lock_turn() = (Some(turn), self.ending.child_token());
+    /// The turn `turn` begins in `thread`: it gets a token of its own, and a cancel or a retry that
+    /// came as the turn before ended has nothing to end here; a stop or leaving still has.
+    pub(crate) fn begin_turn(&self, thread: ThreadId, turn: TurnId) {
+        *self.lock_turn() = (Some((thread, turn)), self.ending.child_token());
         let _ = self.interrupt.try_update(Ordering::SeqCst, Ordering::SeqCst, |asked| {
             (!ends_run(asked)).then_some(NO_INTERRUPT)
         });
@@ -144,7 +143,13 @@ impl RunControl {
     /// retry would find over.
     pub(crate) fn turn_under_way(&self) -> Option<TurnId> {
         let (turn, _) = *self.lock_turn();
-        turn.filter(|_| self.interruptible())
+        turn.map(|(_, turn)| turn).filter(|_| self.interruptible())
+    }
+
+    /// The thread of the turn that runs or ran last (issue 602): whose part of the agent's state
+    /// its steps work with. `None` before the first turn.
+    pub(crate) fn thread(&self) -> Option<ThreadId> {
+        self.lock_turn().0.map(|(thread, _)| thread)
     }
 
     /// Whether the run loop is in a turn that an interrupt can still end.
@@ -158,7 +163,7 @@ impl RunControl {
         self.lock_turn().1.clone()
     }
 
-    fn lock_turn(&self) -> MutexGuard<'_, (Option<TurnId>, CancellationToken)> {
+    fn lock_turn(&self) -> MutexGuard<'_, (Option<(ThreadId, TurnId)>, CancellationToken)> {
         self.turn.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
@@ -179,7 +184,7 @@ impl RunControl {
     /// turn is taken over - but the turn was the one under way all the same.
     pub(crate) fn retry(&self, turn: TurnId) -> bool {
         let under_way = self.lock_turn();
-        if under_way.0 != Some(turn) || !self.interruptible() {
+        if under_way.0.map(|(_, under_way)| under_way) != Some(turn) || !self.interruptible() {
             return false;
         }
         let _ = self.interrupt.compare_exchange(
@@ -273,7 +278,7 @@ impl RunControl {
     /// so that no turn begins in between. The turn goes on.
     pub(crate) fn interrupt_call(&self, turn: TurnId, call: &str, by: String) -> bool {
         let under_way = self.lock_turn();
-        if under_way.0 != Some(turn) || !self.interruptible() {
+        if under_way.0.map(|(_, under_way)| under_way) != Some(turn) || !self.interruptible() {
             return false;
         }
         let Some(interrupt) = self.lock_calls().remove(call) else { return false };
@@ -387,19 +392,19 @@ mod tests {
     fn a_new_turn_drops_a_leftover_cancel_but_not_a_stop_nor_leaving() {
         let control = RunControl::new(ActorState::Planning, None);
         control.cancel();
-        control.begin_turn(TurnId::new());
+        control.begin_turn(ThreadId::default(), TurnId::new());
         assert!(!control.token().is_cancelled(), "the new turn has a token of its own");
         assert_eq!(control.take_interrupt(), None);
 
         control.stop();
-        control.begin_turn(TurnId::new());
+        control.begin_turn(ThreadId::default(), TurnId::new());
         assert_eq!(control.take_interrupt(), Some(Interrupt::Stop));
         assert!(control.token().is_cancelled(), "a turn begun after a stop has nothing to run for");
         assert!(control.is_ending() && !control.has_left(), "stopped, it did not leave");
 
         let control = RunControl::new(ActorState::Planning, None);
         control.leave();
-        control.begin_turn(TurnId::new());
+        control.begin_turn(ThreadId::default(), TurnId::new());
         assert_eq!(control.take_interrupt(), Some(Interrupt::Leave));
         assert!(control.token().is_cancelled());
         assert!(control.is_ending());
@@ -419,24 +424,28 @@ mod tests {
 
     #[test]
     fn the_turn_under_way_is_known_while_it_runs() {
-        let resumed = TurnId::new();
-        let control = RunControl::new(ActorState::ExecutingTools, Some(resumed));
+        assert_eq!(RunControl::new(ActorState::Idle, None).thread(), None, "before the first turn");
+        let (resumed, there) = (TurnId::new(), ThreadId::new());
+        let control = RunControl::new(ActorState::ExecutingTools, Some((there, resumed)));
         assert_eq!(control.turn_under_way(), Some(resumed), "a resumed turn is the one it was");
+        assert_eq!(control.thread(), Some(there), "in the thread it was");
 
-        let next = TurnId::new();
+        let (next, elsewhere) = (TurnId::new(), ThreadId::new());
         control.go_to(ActorState::Idle);
         assert_eq!(control.turn_under_way(), None, "between turns");
-        control.begin_turn(next);
+        control.begin_turn(elsewhere, next);
         control.go_to(ActorState::Planning);
         assert_eq!(control.turn_under_way(), Some(next));
+        assert_eq!(control.thread(), Some(elsewhere), "the next turn's thread");
         control.go_to(ActorState::Reflecting);
         assert_eq!(control.turn_under_way(), None, "nor once it ends");
+        assert_eq!(control.thread(), Some(elsewhere), "its steps still work with its thread");
     }
 
     #[test]
     fn a_retry_interrupts_only_the_turn_it_names_while_it_can_still_be_ended() {
         let (turn, other) = (TurnId::new(), TurnId::new());
-        let control = RunControl::new(ActorState::Planning, Some(turn));
+        let control = RunControl::new(ActorState::Planning, Some((ThreadId::default(), turn)));
         assert!(!control.retry(other), "another turn");
         assert!(
             !control.token().is_cancelled() && control.take_interrupt().is_none(),
@@ -447,7 +456,7 @@ mod tests {
         assert_eq!(control.take_interrupt(), Some(Interrupt::Retry));
 
         for state in [ActorState::Idle, ActorState::Reflecting, ActorState::Cancelling] {
-            let control = RunControl::new(state, Some(turn));
+            let control = RunControl::new(state, Some((ThreadId::default(), turn)));
             assert!(!control.retry(turn), "not under way any more: {state:?}");
             assert_eq!(control.take_interrupt(), None, "{state:?}");
         }
@@ -456,32 +465,33 @@ mod tests {
     #[test]
     fn of_a_cancel_and_a_retry_the_first_wins_and_a_stop_over_both() {
         let turn = TurnId::new();
-        let control = RunControl::new(ActorState::Planning, Some(turn));
+        let control = RunControl::new(ActorState::Planning, Some((ThreadId::default(), turn)));
         control.cancel();
         assert!(control.retry(turn), "the turn was the one under way");
         assert_eq!(control.take_interrupt(), Some(Interrupt::Cancel), "but the cancel came first");
 
-        let control = RunControl::new(ActorState::Planning, Some(turn));
+        let control = RunControl::new(ActorState::Planning, Some((ThreadId::default(), turn)));
         assert!(control.retry(turn));
         control.cancel();
         assert_eq!(control.take_interrupt(), Some(Interrupt::Retry));
 
-        let control = RunControl::new(ActorState::Planning, Some(turn));
+        let control = RunControl::new(ActorState::Planning, Some((ThreadId::default(), turn)));
         assert!(control.retry(turn));
         control.stop();
         assert_eq!(control.take_interrupt(), Some(Interrupt::Stop));
 
         // One that came as the turn ended has nothing to end in the next.
-        let control = RunControl::new(ActorState::Planning, Some(turn));
+        let control = RunControl::new(ActorState::Planning, Some((ThreadId::default(), turn)));
         assert!(control.retry(turn));
-        control.begin_turn(TurnId::new());
+        control.begin_turn(ThreadId::default(), TurnId::new());
         assert_eq!(control.take_interrupt(), None);
     }
 
     #[tokio::test]
     async fn a_call_is_interrupted_alone_only_in_the_turn_it_runs_in_and_only_once() {
         let (turn, other) = (TurnId::new(), TurnId::new());
-        let control = RunControl::new(ActorState::ExecutingTools, Some(turn));
+        let control =
+            RunControl::new(ActorState::ExecutingTools, Some((ThreadId::default(), turn)));
         let mut calls = control.begin_calls(["a".to_string(), "b".to_string()]);
         assert!(!control.interrupt_call(other, "a", "alice".to_string()), "not of another turn");
         assert!(!control.interrupt_call(turn, "c", "alice".to_string()), "not a call of the step");
@@ -503,7 +513,8 @@ mod tests {
     #[tokio::test]
     async fn the_turn_s_end_interrupts_every_call_and_wins() {
         let turn = TurnId::new();
-        let control = RunControl::new(ActorState::ExecutingTools, Some(turn));
+        let control =
+            RunControl::new(ActorState::ExecutingTools, Some((ThreadId::default(), turn)));
         let mut calls = control.begin_calls(["a".to_string()]);
         assert!(control.interrupt_call(turn, "a", "alice".to_string()));
         control.cancel();
@@ -517,7 +528,7 @@ mod tests {
             "also a call without an id"
         );
 
-        let control = RunControl::new(ActorState::Cancelling, Some(turn));
+        let control = RunControl::new(ActorState::Cancelling, Some((ThreadId::default(), turn)));
         let _calls = control.begin_calls(["a".to_string()]);
         assert!(
             !control.interrupt_call(turn, "a", "alice".to_string()),
@@ -530,7 +541,8 @@ mod tests {
     #[tokio::test]
     async fn a_stop_interrupts_every_call_as_stopped_and_leaving_as_ended() {
         let turn = TurnId::new();
-        let control = RunControl::new(ActorState::ExecutingTools, Some(turn));
+        let control =
+            RunControl::new(ActorState::ExecutingTools, Some((ThreadId::default(), turn)));
         let mut calls = control.begin_calls(["a".to_string()]);
         control.stop();
         assert_eq!(
@@ -538,7 +550,8 @@ mod tests {
             Interruption::Stopped
         );
 
-        let control = RunControl::new(ActorState::ExecutingTools, Some(turn));
+        let control =
+            RunControl::new(ActorState::ExecutingTools, Some((ThreadId::default(), turn)));
         control.stop();
         control.leave();
         assert_eq!(control.interruption(control.token(), None).await, Interruption::TurnEnded);

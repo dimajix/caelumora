@@ -722,8 +722,7 @@ mod tests {
         let aside: Vec<ContentRef> = turn
             .situation()
             .agent_channel_state()
-            .thread(turn.situation().branch_thread_id())
-            .and_then(|part| part.turn.as_ref())
+            .turn(turn.situation().branch_thread_id())
             .unwrap()
             .attachments
             .clone();
@@ -781,6 +780,7 @@ mod tests {
         }
         let seeing = Turn::of(
             &mut state,
+            ThreadId::line(session.channels()[0].id()),
             agent_runtime(participant_runtime_in(&session.channels()[0], ActorId::Agent(helper))),
         )
         .unwrap();

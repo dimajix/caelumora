@@ -318,7 +318,7 @@ async fn stored_once_answered(
     time::timeout(Duration::from_secs(10), async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
-            if state.threads.values().all(|part| part.turn.is_none())
+            if state.turns().next().is_none()
                 && contents_of(&state, ThreadId::line(channel.id()), MessageRole::Assistant).len()
                     == answers
             {
@@ -1072,10 +1072,7 @@ async fn what_a_turn_heard_before_a_restart_is_neither_delivered_nor_answered_ag
         "the next step is given it"
     );
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
-    assert!(
-        stored.thread(ThreadId::line(channel.id())).is_some_and(|part| part.turn.is_some()),
-        "the turn is under way"
-    );
+    assert!(stored.turn(ThreadId::line(channel.id())).is_some(), "the turn is under way");
     assert_eq!(
         contents_of(&stored, ThreadId::line(channel.id()), MessageRole::User),
         ["hello", "and this too"],
@@ -1399,7 +1396,7 @@ async fn the_calls_of_a_message_dropped_on_its_way_out_are_not_run() {
     answered(&mut events, agent).await;
     let line = ThreadId::line(channel.id());
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
-    assert!(stored.threads.values().all(|part| part.turn.is_none()), "the turn ended");
+    assert!(stored.turns().next().is_none(), "the turn ended");
     let said = stored.transcript.messages(line);
     assert!(
         said.iter().all(|m| m.tool_calls.is_empty() && m.role != MessageRole::Tool),
@@ -1628,7 +1625,7 @@ async fn an_agent_that_calls_stop_ends_its_turn_with_the_call_and_sleeps() {
     // the agent sleeps, as the tool asked; no turn is left behind.
     settled(&helper, ActorState::Sleeping).await;
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
-    assert!(stored.threads.values().all(|part| part.turn.is_none()), "the turn was taken over");
+    assert!(stored.turns().next().is_none(), "the turn was taken over");
     assert!(
         channel
             .visible_messages(ActorId::Agent(agent))
@@ -2040,15 +2037,13 @@ async fn a_turn_is_stored_with_the_step_that_comes_next() {
     let stored = time::timeout(Duration::from_secs(5), async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
-            let has_result =
+            let has_result = state.turn(ThreadId::line(channel.id())).is_some_and(|t| {
                 state
-                    .thread(ThreadId::line(channel.id()))
-                    .and_then(|part| part.turn.as_ref())
-                    .is_some_and(|t| {
-                        state.transcript.messages(line).iter().any(|m| {
-                            m.turn_id == Some(t.work.turn_id) && !m.tool_results.is_empty()
-                        })
-                    });
+                    .transcript
+                    .messages(line)
+                    .iter()
+                    .any(|m| m.turn_id == Some(t.work.turn_id) && !m.tool_results.is_empty())
+            });
             if has_result
                 && state
                     .thread(ThreadId::line(channel.id()))
@@ -2062,10 +2057,7 @@ async fn a_turn_is_stored_with_the_step_that_comes_next() {
     .await
     .expect("stored in Planning, with the tool's result");
     assert!(
-        stored
-            .thread(ThreadId::line(channel.id()))
-            .and_then(|part| part.turn.as_ref())
-            .is_some_and(|t| t.tool_calls.is_empty()),
+        stored.turn(ThreadId::line(channel.id())).is_some_and(|t| t.tool_calls.is_empty()),
         "the calls of the step are done"
     );
     running.abort();
@@ -2385,17 +2377,13 @@ async fn an_agent_removed_during_a_turn_gives_it_up() {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
             let line = ThreadId::line(channel.id());
-            if state
-                .thread(ThreadId::line(channel.id()))
-                .and_then(|part| part.turn.as_ref())
-                .is_some_and(|t| {
-                    state
-                        .transcript
-                        .messages(line)
-                        .iter()
-                        .any(|m| m.turn_id == Some(t.work.turn_id) && !m.tool_results.is_empty())
-                })
-            {
+            if state.turn(ThreadId::line(channel.id())).is_some_and(|t| {
+                state
+                    .transcript
+                    .messages(line)
+                    .iter()
+                    .any(|m| m.turn_id == Some(t.work.turn_id) && !m.tool_results.is_empty())
+            }) {
                 break;
             }
             time::sleep(Duration::from_millis(10)).await;
@@ -2485,17 +2473,13 @@ async fn lowering_the_channel_gives_up_a_running_turn() {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
             let line = ThreadId::line(channel.id());
-            if state
-                .thread(ThreadId::line(channel.id()))
-                .and_then(|part| part.turn.as_ref())
-                .is_some_and(|t| {
-                    state
-                        .transcript
-                        .messages(line)
-                        .iter()
-                        .any(|m| m.turn_id == Some(t.work.turn_id) && !m.tool_results.is_empty())
-                })
-            {
+            if state.turn(ThreadId::line(channel.id())).is_some_and(|t| {
+                state
+                    .transcript
+                    .messages(line)
+                    .iter()
+                    .any(|m| m.turn_id == Some(t.work.turn_id) && !m.tool_results.is_empty())
+            }) {
                 break;
             }
             time::sleep(Duration::from_millis(10)).await;
@@ -2739,8 +2723,7 @@ async fn a_turn_waiting_for_approval_can_be_decided_after_a_restart() {
     // The turn is the record of what it waits for (issue 172).
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     let pending: Vec<_> = stored
-        .thread(ThreadId::line(channel.id()))
-        .and_then(|part| part.turn.as_ref())
+        .turn(ThreadId::line(channel.id()))
         .expect("a turn under way")
         .pending_approvals()
         .into_iter()
@@ -3011,7 +2994,7 @@ async fn an_agent_removed_while_a_tool_runs_gives_up_its_turn_and_keeps_the_call
     let stored = time::timeout(STOP_GRACE, async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
-            if state.threads.values().all(|part| part.turn.is_none())
+            if state.turns().next().is_none()
                 && !given_up_turns(&state, ThreadId::line(channel.id())).is_empty()
             {
                 break state;
@@ -3086,10 +3069,7 @@ async fn an_agent_stopped_in_a_model_call_keeps_its_turn_and_asks_again_when_its
         Some(ActorState::Planning),
         "stored at the step it stood at"
     );
-    assert!(
-        stored.thread(ThreadId::line(channel.id())).is_some_and(|part| part.turn.is_some()),
-        "the turn is kept"
-    );
+    assert!(stored.turn(ThreadId::line(channel.id())).is_some(), "the turn is kept");
     assert!(given_up_turns(&stored, ThreadId::line(channel.id())).is_empty(), "not given up");
 
     let (_restarted, mut events, running) = run_again(&channel).await;
@@ -3157,7 +3137,7 @@ async fn an_idle_agent_stopped_ends_at_once_where_it_stands() {
         Some(ActorState::Idle)
     );
     assert!(
-        stored.threads.values().all(|part| part.turn.is_none())
+        stored.turns().next().is_none()
             && given_up_turns(&stored, ThreadId::line(channel.id())).is_empty(),
         "nothing under way, nothing given up"
     );
@@ -3171,7 +3151,7 @@ async fn an_agent_whose_channel_is_deleted_while_a_tool_runs_gives_its_turn_up()
     channel.leave_all_actors().await;
     assert!(leaving.elapsed() < STOP_GRACE, "the actors ended by themselves");
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
-    assert!(stored.threads.values().all(|part| part.turn.is_none()), "the turn is not kept");
+    assert!(stored.turns().next().is_none(), "the turn is not kept");
     assert_eq!(
         given_up_turns(&stored, ThreadId::line(channel.id()))
             .iter()
@@ -3197,7 +3177,7 @@ async fn an_agent_removed_while_waiting_for_approval_gives_up_its_turn() {
     let stored = time::timeout(Duration::from_secs(5), async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
-            if state.threads.values().all(|part| part.turn.is_none())
+            if state.turns().next().is_none()
                 && !given_up_turns(&state, ThreadId::line(channel.id())).is_empty()
             {
                 break state;
@@ -3382,10 +3362,7 @@ async fn a_removed_agent_gives_its_turn_up_says_so_and_leaves_an_idle_state_behi
     })
     .await
     .expect("the idle state is stored");
-    assert!(
-        stored.threads.values().all(|part| part.turn.is_none()),
-        "the turn was abandoned, not stored"
-    );
+    assert!(stored.turns().next().is_none(), "the turn was abandoned, not stored");
     assert!(
         stored.transcript.messages(line).iter().all(|m| m.sender_id != ActorId::Agent(agent)),
         "nothing of it was recorded"
@@ -3670,8 +3647,7 @@ async fn an_activity_cut_short_by_a_stop_is_carried_out_again_as_the_turn_resume
     );
     assert!(
         stored
-            .thread(ThreadId::line(channel.id()))
-            .and_then(|part| part.turn.as_ref())
+            .turn(ThreadId::line(channel.id()))
             .is_some_and(|turn| turn.activities_tried.is_empty()),
         "not tried, since it was not done"
     );

@@ -2135,14 +2135,8 @@ mod tests {
         assert_eq!(kept, vec![history.clone()], "on the result, for the transcript");
 
         drop(turn);
-        let recorded = &agent_channel_state
-            .thread(ThreadId::default())
-            .and_then(|part| part.turn.as_ref())
-            .unwrap()
-            .work
-            .context
-            .frame
-            .knowledge;
+        let recorded =
+            &agent_channel_state.turn(ThreadId::default()).unwrap().work.context.frame.knowledge;
         assert!(
             matches!(recorded.as_slice(), [k] if k.source == history),
             "and with the turn, but what was withheld: {recorded:?}"
@@ -2209,6 +2203,7 @@ mod tests {
         state.thread_mut(line).turn.as_mut().unwrap().work.context.frame.tools = tools;
         let mut turn = Turn::of(
             &mut state,
+            line,
             agent_runtime(participant_runtime_in(main, ActorId::Agent(helper))),
         )
         .unwrap();

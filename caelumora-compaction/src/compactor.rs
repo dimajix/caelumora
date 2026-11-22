@@ -589,10 +589,8 @@ mod tests {
         assert!(state.transcript.prefix(&before).is_some(), "what it saw before stays");
         let replacement =
             state.transcript.messages(ThreadId::line(world.session.channels()[0].id()));
-        let under_way = state
-            .thread(ThreadId::line(world.session.channels()[0].id()))
-            .and_then(|part| part.turn.as_ref())
-            .map(|t| t.work.turn_id);
+        let under_way =
+            state.turn(ThreadId::line(world.session.channels()[0].id())).map(|t| t.work.turn_id);
         assert_eq!(
             replacement[0].turn_id, None,
             "a summary of what precedes the turn alone is no turn's (issue 284)"
@@ -613,8 +611,7 @@ mod tests {
             "as alice's, who gave it (issue 539)"
         );
         let knowledge = &state
-            .thread(ThreadId::line(world.session.channels()[0].id()))
-            .and_then(|part| part.turn.as_ref())
+            .turn(ThreadId::line(world.session.channels()[0].id()))
             .unwrap()
             .work
             .context
@@ -906,7 +903,8 @@ mod tests {
         let strategy = Arc::new(Scripted::default());
         let compactor = compactor(&strategy, Vec::new());
         let runtime = agent_runtime(participant_runtime_in(channel, ActorId::Agent(world.agent)));
-        let mut turn = Turn::of(&mut state, runtime).expect("a turn was begun");
+        let line = ThreadId::line(channel.id());
+        let mut turn = Turn::of(&mut state, line, runtime).expect("a turn was begun");
         two_calls(&mut turn, world.agent);
         compactor.compact(&mut turn).await.expect("compacted");
         drop(turn);

@@ -501,7 +501,7 @@ mod tests {
             runtime.thread_id(),
             Work::new(Default::default(), None, Default::default(), Default::default()),
         );
-        Turn::of(state, runtime).expect("a turn was begun")
+        Turn::of(state, runtime.thread_id(), runtime).expect("a turn was begun")
     }
 
     fn note(id: u32, text: &str) -> Note {

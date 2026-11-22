@@ -364,8 +364,7 @@ async fn what_an_agent_waiting_for_an_approval_stored_survives_a_restart() {
     restarted.open().await.expect("opened again");
     let loaded = restarted.get_agent_channel_state(agent, channel).await.unwrap();
     let pending: Vec<_> = loaded
-        .thread(ThreadId::default())
-        .and_then(|part| part.turn.as_ref())
+        .turn(ThreadId::default())
         .expect("the turn under way")
         .pending_approvals()
         .into_iter()

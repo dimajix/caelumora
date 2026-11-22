@@ -97,7 +97,7 @@ async fn an_agent_carries_out_a_command_in_a_turn_of_its_own_and_answers_the_iss
         ["marked twice"],
         "what it staged is applied"
     );
-    assert!(state.threads.values().all(|part| part.turn.is_none()), "the turn is over");
+    assert!(state.turns().next().is_none(), "the turn is over");
     assert!(
         matches!(state.transcript.last(line).map(|node| &node.entry), Some(TranscriptEntry::TurnFinished { turn_id: t, .. }) if Some(*t) == turn_id),
         "its transcript records the turn's end"
@@ -152,7 +152,7 @@ async fn a_command_its_issuer_may_see_but_not_ask_for_is_rejected_at_the_door() 
     );
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(
-        state.notes.current().is_empty() && state.threads.values().all(|part| part.turn.is_none()),
+        state.notes.current().is_empty() && state.turns().next().is_none(),
         "nothing reached the agent"
     );
     let recorded = channel.history_entries().await.split_off(before);
@@ -189,7 +189,7 @@ async fn a_command_that_fails_is_told_to_the_issuer_and_leaves_nothing_behind() 
 
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(state.notes.current().is_empty(), "nothing it staged is applied");
-    assert!(state.threads.values().all(|part| part.turn.is_none()));
+    assert!(state.turns().next().is_none());
     assert_eq!(
         state.transcript.end(),
         ends_at,

@@ -79,12 +79,11 @@ impl AgentActor {
         let agent_id = actor_runtime.agent().id;
         // A turn stored under way is resumed (issue 75).
         let prompts = Arc::clone(actor_runtime.prompts());
-        let thread = actor_runtime.thread_id();
         let resume = |state: &mut AgentChannelState| {
-            // In the variant the turn was begun with.
-            let turn = state.thread(thread).and_then(|part| part.turn.as_ref());
-            let profile = turn.map(|turn| turn.work.context.frame.profile).unwrap_or_default();
-            let not_executed = state.prepare_resume(&not_executed_result(&profile.texts(&prompts)));
+            // In the variant each turn was begun with.
+            let not_executed = state.prepare_resume(|turn| {
+                not_executed_result(&turn.work.context.frame.profile.texts(&prompts))
+            });
             if not_executed > 0 {
                 warn!("Agent {} in channel {}: {} approved tool calls were not executed before it stopped; the model is told", agent_id, channel_id, not_executed);
             }
@@ -119,10 +118,10 @@ impl AgentActor {
         Ok((!output.is_empty()).then(|| output.remove(0)))
     }
 
-    /// The turn under way in `state`, as its steps work with it; `None`
-    /// between turns.
+    /// The turn under way in `state`, as its steps work with it, in the thread of the turn that
+    /// runs or ran last (`RunControl::thread`); `None` between turns.
     fn turn<'s>(&self, state: &'s mut AgentChannelState) -> Option<Turn<'s>> {
-        self.body.turn(state)
+        self.body.turn(state, self.body.control.thread()?)
     }
 
     /// The turn under way in `state`, for a step of a turn. Without one -
@@ -147,9 +146,8 @@ impl AgentActor {
         output: &dyn EventSender,
     ) -> Result<()> {
         let (_, work) = self.body.work_for(request);
-        let turn_id =
-            state.begin_turn(self.body.runtime.thread_id(), work.given_as(self.body.profile));
-        self.body.control.begin_turn(turn_id);
+        let thread = self.body.branch_of(request);
+        let turn_id = self.body.begin_turn(state, thread, work.given_as(self.body.profile));
         let mut turn = self.turn_under_way(state)?;
         // Judged for whoever asked, in the channel as the turn begins.
         let tool_sets = self.tool_executor.tool_sets(&turn.situation()).await;
@@ -184,13 +182,14 @@ impl AgentActor {
         rx: &mut Box<dyn EventReceiver>,
         output: &dyn EventSender,
     ) -> Result<ActorState> {
-        let initiator = state
-            .thread(self.body.runtime.thread_id())
-            .and_then(|part| part.turn.as_ref())
-            .map(|turn| turn.work.event_context.initiator_id);
+        let ended = self
+            .body
+            .control
+            .thread()
+            .zip(self.body.under_way(state).map(|turn| turn.work.event_context.initiator_id));
         let next = self.end_turn(state, false, output).await?;
-        if let Some(initiator) = initiator {
-            self.body.drop_answered(state, initiator, rx).await;
+        if let Some((thread, initiator)) = ended {
+            self.body.drop_answered(state, thread, initiator, rx).await;
         }
         Ok(next)
     }
@@ -341,14 +340,13 @@ impl AgentActor {
     }
 
     /// Answers the `RetryRequested` in `request` (issues 234, 235), in its context continued in the
-    /// agent's name, on the branch of the one thread the agent takes part in, whatever thread the
-    /// request names (issue 602). The turn `given_up_for` it can be answered again, its answer
-    /// being gone already; another turn is over (`Ended`); a message can be if it is the agent's
-    /// last answer (`AgentChannelState::retried`). If it can, the agent says so with
-    /// `RetryAccepted`, takes back what the retry replaces - in its transcript, and announced with
-    /// `MessageRevoked`, since its channel's history holds every message it said (issue 417) - and
-    /// returns `true`: a turn is to begin, given the transcript as it stands. Otherwise it says why
-    /// with `RetryRefused`.
+    /// agent's name, on the branch of the request (`AgentBody::branch_of`, issue 602). The turn
+    /// `given_up_for` it can be answered again, its answer being gone already; another turn is over
+    /// (`Ended`); a message can be if it is the agent's last answer (`AgentChannelState::retried`).
+    /// If it can, the agent says so with `RetryAccepted`, takes back what the retry replaces - in
+    /// its transcript, and announced with `MessageRevoked`, since its channel's history holds every
+    /// message it said (issue 417) - and returns `true`: a turn is to begin, given the transcript
+    /// as it stands. Otherwise it says why with `RetryRefused`.
     async fn retry(
         &self,
         state: &mut AgentChannelState,
@@ -358,16 +356,13 @@ impl AgentActor {
     ) -> Result<bool> {
         let Some(target) = retry_target(request) else { return Ok(false) };
         let answering = Answering::to(request, self.id(), self.body.scoped_name());
+        let thread = self.body.branch_of(request);
         let can = match target {
             RetryTarget::Turn(turn) if Some(turn) == given_up_for => Ok(Vec::new()),
             // Its last turn given up: answered anew after it, nothing taken
             // back (issue 259).
-            RetryTarget::Turn(turn) => {
-                state.answers_again_after(self.body.runtime.thread_id(), turn).map(|()| Vec::new())
-            }
-            RetryTarget::Message(message) => {
-                state.retried(self.body.runtime.thread_id(), message, self.id())
-            }
+            RetryTarget::Turn(turn) => state.answers_again_after(thread, turn).map(|()| Vec::new()),
+            RetryTarget::Message(message) => state.retried(thread, message, self.id()),
         };
         let taken_back = match can {
             Ok(taken_back) => taken_back,
@@ -423,9 +418,7 @@ impl AgentActor {
         reason: GivenUpReason,
         output: &dyn EventSender,
     ) {
-        let Some(under_way) =
-            state.thread(self.body.runtime.thread_id()).and_then(|part| part.turn.as_ref())
-        else {
+        let Some(under_way) = self.body.under_way(state) else {
             return;
         };
         // A turn that no longer flows into its channel is recorded as
@@ -1065,19 +1058,13 @@ impl Actor for AgentActor {
                 self.body.agent_id(),
                 &self.body.scoped_name(),
                 current_state,
-                state
-                    .thread(self.body.runtime.thread_id())
-                    .and_then(|part| part.turn.as_ref())
-                    .map(|t| &t.work.event_context),
+                self.body.under_way(&state).map(|t| &t.work.event_context),
             );
 
             // Before every step of a turn: a turn that no longer flows into
             // its channel - lowered meanwhile - is given up, whatever it was
             // about to do; nothing of it is run or taken over (issue 141).
-            if let Some(under_way) = state
-                .thread(self.body.runtime.thread_id())
-                .and_then(|part| part.turn.as_ref())
-                .filter(|_| current_state.in_turn())
+            if let Some(under_way) = self.body.under_way(&state).filter(|_| current_state.in_turn())
             {
                 if let Some(channel) = self.lowered(under_way) {
                     info!(
@@ -1167,10 +1154,7 @@ impl Actor for AgentActor {
             // then finds its turn over.
             if interrupt == Some(Interrupt::Retry) && next_state.is_some_and(|next| next.in_turn())
             {
-                given_up_for = state
-                    .thread(self.body.runtime.thread_id())
-                    .and_then(|part| part.turn.as_ref())
-                    .map(|t| t.work.turn_id);
+                given_up_for = self.body.under_way(&state).map(|t| t.work.turn_id);
                 self.give_up(&mut state, GivenUpReason::Retried, &*output)
                     .instrument(span.clone())
                     .await;
@@ -1222,7 +1206,8 @@ impl Actor for AgentActor {
         let at = self.body.own().event_context;
         let work =
             Work::new(at, None, runtime.channel_classification(), runtime.session_time_zone());
-        self.tool_executor.tool_sets(&self.body.situation(&work, &state)).await
+        let thread = work.event_context.thread_id;
+        self.tool_executor.tool_sets(&self.body.situation(&work, thread, &state)).await
     }
 
     fn wakeup(&self) {

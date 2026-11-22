@@ -479,7 +479,7 @@ mod tests {
         ));
         let work = Work::default().given_as(Gemma.profile());
         let state = AgentChannelState::default();
-        let situation = Situation::new(&work, &state, &*actor_runtime);
+        let situation = Situation::new(&work, actor_runtime.thread_id(), &state, &*actor_runtime);
         let time = built.get_all::<dyn PromptProvider>(None).unwrap().remove(0);
         assert!(
             time.get_prompt(&situation).await.unwrap().text.starts_with("[Now]\n"),
@@ -491,8 +491,11 @@ mod tests {
         );
         let elsewhere = Work::default();
         assert!(
-            denied_result(&Situation::new(&elsewhere, &state, &*actor_runtime).texts())
-                .contains("The user declined"),
+            denied_result(
+                &Situation::new(&elsewhere, actor_runtime.thread_id(), &state, &*actor_runtime)
+                    .texts()
+            )
+            .contains("The user declined"),
             "work of another profile, as it"
         );
     }

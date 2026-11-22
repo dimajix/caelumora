@@ -1019,8 +1019,8 @@ pub async fn state_store_behaves(store: &dyn StateStore) {
             .get_agent_channel_state(agent, channel)
             .await
             .expect("get agent channel state")
-            .thread(ThreadId::default())
-            .is_some_and(|part| part.turn.is_some()),
+            .turn(ThreadId::default())
+            .is_some(),
         "the stored state comes back"
     );
 
@@ -1965,13 +1965,7 @@ pub async fn given_store_behaves(states: &dyn StateStore, transcripts: &dyn Tran
         .frame
         .prompts
         .push(system.clone());
-    let context = state
-        .thread(ThreadId::default())
-        .and_then(|part| part.turn.as_ref())
-        .expect("a turn")
-        .work
-        .context
-        .clone();
+    let context = state.turn(ThreadId::default()).expect("a turn").work.context.clone();
     let frame = state.keep_frame(&context.frame);
     // A turn in another thread, offered tools of its own (issue 602).
     let elsewhere = ThreadId::new();

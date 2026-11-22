@@ -40,13 +40,14 @@ impl AgentThreadState {
     ///
     /// `ExecutingTools` is the exception: a tool may have run without its result being stored, and
     /// running it again would repeat its effect (issue 20). Every approved call without a result
-    /// is answered as not executed, with `not_executed` - what the model is told of it -, so that
-    /// the next step builds the tool message and the model decides again; results already stored
-    /// stay. Returns how many calls were answered so.
+    /// is answered as not executed, with what `not_executed` gives of the turn - what the model is
+    /// told of it, in the variant the turn was begun with -, so that the next step builds the tool
+    /// message and the model decides again; results already stored stay. Returns how many calls
+    /// were answered so.
     ///
     /// A state in the middle of a turn without the turn's working state cannot be resumed; it
     /// starts idle.
-    pub fn prepare_resume(&mut self, not_executed: &str) -> usize {
+    pub fn prepare_resume(&mut self, not_executed: impl Fn(&TurnState) -> String) -> usize {
         // A command turn is carried out between two stores and never stored under way (issue
         // 269); one found is dropped as its request would have been, unanswered - and so is
         // carrying it out (issue 299).
@@ -65,13 +66,14 @@ impl AgentThreadState {
             return 0;
         };
         let mut answered = 0;
+        let not_executed = not_executed(turn);
         let classification = turn.work.classification.clone();
         for call in &mut turn.tool_calls {
             if matches!(call.status, ToolCallStatus::Ready { .. }) {
                 call.status = ToolCallStatus::Finished(ToolCallResult::of(
                     &call.tool_call,
                     ToolResultStatus::NotExecuted,
-                    not_executed.to_string(),
+                    not_executed.clone(),
                     classification.clone(),
                 ));
                 answered += 1;
@@ -136,7 +138,11 @@ mod tests {
         };
 
         let mut executing = state_in(ActorState::ExecutingTools);
-        assert_eq!(executing.prepare_resume("not executed"), 1, "one approved call had no result");
+        assert_eq!(
+            executing.prepare_resume(|_| "not executed".to_string()),
+            1,
+            "one approved call had no result"
+        );
         let executing = calls(&executing);
         let [unfinished, finished, pending] = executing.as_slice() else { panic!("three calls") };
         let unfinished = unfinished.result().expect("answered");
@@ -152,7 +158,7 @@ mod tests {
         // Every other state resumes as it is.
         for other in [ActorState::Planning, ActorState::WaitingForUser, ActorState::Reflecting] {
             let mut state = state_in(other);
-            assert_eq!(state.prepare_resume("not executed"), 0, "{other:?}");
+            assert_eq!(state.prepare_resume(|_| "not executed".to_string()), 0, "{other:?}");
             assert!(matches!(calls(&state)[0].status, ToolCallStatus::Ready { .. }));
             assert_eq!(state.processing_state, other);
         }
@@ -160,7 +166,7 @@ mod tests {
         // A turn state without the turn cannot be resumed.
         let mut lost =
             AgentThreadState { processing_state: ActorState::Planning, ..Default::default() };
-        lost.prepare_resume("not executed");
+        lost.prepare_resume(|_| "not executed".to_string());
         assert_eq!(lost.processing_state, ActorState::Idle);
 
         // A command turn is never resumed, nor carrying it out.
@@ -169,7 +175,7 @@ mod tests {
             turn: Some(TurnState { command: Some(a_command()), ..Default::default() }),
             used: None,
         };
-        command.prepare_resume("not executed");
+        command.prepare_resume(|_| "not executed".to_string());
         assert!(command.turn.is_none());
         assert_eq!(command.processing_state, ActorState::Idle);
     }

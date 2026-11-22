@@ -189,7 +189,7 @@ async fn the_catalogue_lists_what_may_be_loaded_and_load_skill_gives_its_text_as
     );
     drop(turn);
     let line = ThreadId::line(session.channels()[0].id());
-    let turn = state.thread(line).and_then(|part| part.turn.as_ref());
+    let turn = state.turn(line);
     let read = turn.unwrap().work.context.frame.knowledge.clone();
     let as_read = |source: &KnowledgeSource| {
         source.about::<Skill>() == Some((made.id, Some(skill::digest("1. Collect.\n2. Group."))))

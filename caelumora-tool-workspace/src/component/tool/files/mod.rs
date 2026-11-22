@@ -260,9 +260,8 @@ mod testing {
     /// given to know.
     pub(super) fn knowledge(state: &AgentChannelState) -> Vec<KnowledgeRef> {
         state
-            .threads
-            .values()
-            .find_map(|part| part.turn.as_ref())
+            .turns()
+            .next()
             .map(|turn| turn.work.context.frame.knowledge.clone())
             .unwrap_or_default()
     }

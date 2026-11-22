@@ -109,17 +109,19 @@ mod tests {
         );
         let tools = tools.iter().map(|name| make_tool_description(name)).collect();
         state.offer_tools(ThreadId::default(), vec![ToolSet::new("stop", "", tools)]);
-        let work: Work = state
-            .thread(ThreadId::default())
-            .and_then(|part| part.turn.as_ref())
-            .map(|turn| turn.work.clone())
-            .expect("begun");
+        let work: Work =
+            state.turn(ThreadId::default()).map(|turn| turn.work.clone()).expect("begun");
         let provider = RequestReasonComponent {
             position: PromptPosition::BeforeTurnInput,
             prompts: testing::prompts(),
         };
         let prompt = provider
-            .get_prompt(&Situation::new(&work, &state, &*detached_actor_runtime(AgentId::new())))
+            .get_prompt(&Situation::new(
+                &work,
+                ThreadId::default(),
+                &state,
+                &*detached_actor_runtime(AgentId::new()),
+            ))
             .await
             .unwrap();
         assert_eq!(prompt.classification, Some(Classification::PUBLIC));

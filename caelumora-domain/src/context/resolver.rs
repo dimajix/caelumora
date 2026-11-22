@@ -1132,8 +1132,7 @@ mod tests {
     fn the_context_is_measured_by_the_calls_made_on_it_and_estimated_as_the_model_is_given_it() {
         let agent = ActorId::Agent(AgentId::new());
         let measure = |state: &AgentChannelState| {
-            let turn =
-                state.thread(ThreadId::default()).and_then(|part| part.turn.as_ref()).unwrap();
+            let turn = state.turn(ThreadId::default()).unwrap();
             ContextResolver::of(state, ThreadId::default(), kernel_catalogue())
                 .token_positions(&turn.work.context, turn.work.turn_id, agent)
                 .unwrap()
@@ -1273,23 +1272,12 @@ mod tests {
             });
         place(&mut state, MessageRole::User, "step 1");
         let resolved = |state: &AgentChannelState, context: &ContextRef| {
-            let turn_id = state
-                .thread(ThreadId::default())
-                .and_then(|part| part.turn.as_ref())
-                .unwrap()
-                .work
-                .turn_id;
+            let turn_id = state.turn(ThreadId::default()).unwrap().work.turn_id;
             let resolver = ContextResolver::of(state, ThreadId::default(), kernel_catalogue());
             contents(&resolver.resolve(context, turn_id, agent).unwrap().expect("resolved").items)
         };
         let next = |state: &AgentChannelState| {
-            state
-                .thread(ThreadId::default())
-                .and_then(|part| part.turn.as_ref())
-                .unwrap()
-                .work
-                .context
-                .clone()
+            state.turn(ThreadId::default()).unwrap().work.context.clone()
         };
         assert_eq!(
             resolved(&state, &next(&state)),
@@ -1310,12 +1298,7 @@ mod tests {
             "what the message was produced from had it last"
         );
 
-        let turn_id = state
-            .thread(ThreadId::default())
-            .and_then(|part| part.turn.as_ref())
-            .unwrap()
-            .work
-            .turn_id;
+        let turn_id = state.turn(ThreadId::default()).unwrap().work.turn_id;
         let positions = |context: &ContextRef| {
             let resolver = ContextResolver::of(&state, ThreadId::default(), kernel_catalogue());
             resolver.token_positions(context, turn_id, agent).unwrap().expect("measured").0
@@ -1350,8 +1333,7 @@ mod tests {
         let second = state.said(ThreadId::default(), own("second"));
 
         let (next, turn_id) = state
-            .thread(ThreadId::default())
-            .and_then(|part| part.turn.as_ref())
+            .turn(ThreadId::default())
             .map(|t| (t.work.context.clone(), t.work.turn_id))
             .unwrap();
         let current = ContextResolver::of(&state, ThreadId::default(), kernel_catalogue())
@@ -1567,13 +1549,7 @@ mod tests {
                     classification: None,
                 });
             place(&mut state, MessageRole::System, "instruction");
-            let next = state
-                .thread(ThreadId::default())
-                .and_then(|part| part.turn.as_ref())
-                .unwrap()
-                .work
-                .context
-                .clone();
+            let next = state.turn(ThreadId::default()).unwrap().work.context.clone();
             ContextResolver::of(&state, ThreadId::default(), kernel_catalogue())
                 .resolve(&next, TurnId::new(), ActorId::None)
                 .unwrap()
@@ -1636,13 +1612,7 @@ mod tests {
                     classification: None,
                 });
             place(&mut state, MessageRole::System, "the plan");
-            let next = state
-                .thread(ThreadId::default())
-                .and_then(|part| part.turn.as_ref())
-                .unwrap()
-                .work
-                .context
-                .clone();
+            let next = state.turn(ThreadId::default()).unwrap().work.context.clone();
             let resolver = ContextResolver::of(&state, ThreadId::default(), kernel_catalogue());
             let items = resolver.resolve(&next, TurnId::new(), agent).unwrap().expect("resolved");
             items.items.iter().map(ContextItem::role).collect::<Vec<_>>()

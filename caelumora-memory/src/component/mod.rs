@@ -403,6 +403,7 @@ mod tests {
         memory.begin(&mut state, &at);
         let mut turn = Turn::of(
             &mut state,
+            ThreadId::line(at.0 .1),
             Arc::new(AgentRuntime::in_test(memory.runtime_in(sessions, &at, agent))),
         )
         .expect("a turn was begun");
@@ -421,6 +422,7 @@ mod tests {
         memory.begin(&mut state, &at);
         let turn = Turn::of(
             &mut state,
+            ThreadId::line(at.0 .1),
             Arc::new(AgentRuntime::in_test(memory.runtime_in(sessions, &at, agent))),
         )
         .expect("a turn was begun");
@@ -452,6 +454,7 @@ mod tests {
             memory.begin(&mut state, &team);
             let mut turn = Turn::of(
                 &mut state,
+                ThreadId::line(team.0 .1),
                 Arc::new(AgentRuntime::in_test(memory.runtime_in(&sessions, &team, agent))),
             )
             .expect("a turn was begun");
@@ -493,6 +496,7 @@ mod tests {
         memory.begin(&mut state, &elsewhere);
         let mut turn = Turn::of(
             &mut state,
+            ThreadId::line(elsewhere.0 .1),
             Arc::new(AgentRuntime::in_test(memory.runtime_in(&sessions, &elsewhere, agent))),
         )
         .expect("a turn was begun");
@@ -504,6 +508,7 @@ mod tests {
         memory.begin(&mut state, &team);
         let mut turn = Turn::of(
             &mut state,
+            ThreadId::line(team.0 .1),
             Arc::new(AgentRuntime::in_test(memory.runtime_in(&sessions, &team, agent))),
         )
         .expect("a turn was begun");
@@ -527,6 +532,7 @@ mod tests {
         memory.begin(&mut state, &at);
         let mut turn = Turn::of(
             &mut state,
+            ThreadId::line(at.0 .1),
             Arc::new(AgentRuntime::in_test(memory.runtime_in(sessions, &at, agent))),
         )
         .expect("a turn was begun");
@@ -590,6 +596,7 @@ mod tests {
         memory.begin(&mut state, &elsewhere);
         let mut turn = Turn::of(
             &mut state,
+            ThreadId::line(elsewhere.0 .1),
             Arc::new(AgentRuntime::in_test(memory.runtime_in(&sessions, &elsewhere, agent))),
         )
         .expect("a turn was begun");
@@ -606,6 +613,7 @@ mod tests {
         memory.begin(&mut state, &confidential);
         let mut turn = Turn::of(
             &mut state,
+            ThreadId::line(confidential.0 .1),
             Arc::new(AgentRuntime::in_test(memory.runtime_in(&sessions, &confidential, agent))),
         )
         .expect("a turn was begun");
@@ -648,6 +656,7 @@ mod tests {
         memory.begin(&mut state, &team);
         let mut turn = Turn::of(
             &mut state,
+            ThreadId::line(team.0 .1),
             Arc::new(AgentRuntime::in_test(memory.runtime_in(&sessions, &team, agent))),
         )
         .expect("a turn was begun");
@@ -695,8 +704,9 @@ mod tests {
         let runtime = detached_participant_in(kernel, session, channel, ActorId::Agent(agent));
         let mut state = AgentChannelState::default();
         memory.begin(&mut state, &at);
-        let mut turn = Turn::of(&mut state, Arc::new(AgentRuntime::in_test(runtime)))
-            .expect("a turn was begun");
+        let mut turn =
+            Turn::of(&mut state, ThreadId::line(at.0 .1), Arc::new(AgentRuntime::in_test(runtime)))
+                .expect("a turn was begun");
         let refused = memory
             .tool(REMEMBER_TOOL_NAME)
             .execute(&serde_json::json!({ "text": "alone" }), None, &mut turn)
@@ -811,6 +821,7 @@ mod tests {
             memory.begin(&mut state, &confidential);
             let mut turn = Turn::of(
                 &mut state,
+                ThreadId::line(confidential.0 .1),
                 Arc::new(AgentRuntime::in_test(memory.runtime_in(&sessions, &confidential, agent))),
             )
             .expect("a turn was begun");
@@ -889,6 +900,7 @@ mod tests {
         memory.begin(&mut state, &hr);
         let mut turn = Turn::of(
             &mut state,
+            ThreadId::line(hr.0 .1),
             Arc::new(AgentRuntime::in_test(memory.runtime_in(&sessions, &hr, agent))),
         )
         .expect("a turn was begun");

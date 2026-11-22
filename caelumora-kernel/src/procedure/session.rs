@@ -2688,7 +2688,7 @@ mod tests {
             let states = Arc::clone(&states);
             async move {
                 let state = states.get_agent_channel_state(agent, elsewhere).await.unwrap();
-                state.thread(ThreadId::default()).is_some_and(|part| part.turn.is_some())
+                state.turn(ThreadId::default()).is_some()
             }
         };
         assert!(!working(sessions.id).await, "its state is purged with it");

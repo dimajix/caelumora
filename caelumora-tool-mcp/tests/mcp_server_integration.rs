@@ -159,7 +159,7 @@ async fn executed(
         runtime.thread_id(),
         Work::new(Default::default(), None, Default::default(), Default::default()),
     );
-    let mut turn = Turn::of(&mut state, runtime).expect("a turn was begun");
+    let mut turn = Turn::of(&mut state, runtime.thread_id(), runtime).expect("a turn was begun");
     tool_named(provider, name).execute(&params, None, &mut turn).await
 }
 

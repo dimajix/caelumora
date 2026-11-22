@@ -136,12 +136,7 @@ pub async fn load_named_by_turns(
     channel: ChannelId,
     state: &mut AgentChannelState,
 ) -> StoreResult<()> {
-    let contexts: Vec<&ContextRef> = state
-        .threads
-        .values()
-        .filter_map(|part| part.turn.as_ref())
-        .map(|turn| &turn.work.context)
-        .collect();
+    let contexts: Vec<&ContextRef> = state.turns().map(|turn| &turn.work.context).collect();
     if contexts.is_empty() {
         return Ok(());
     }

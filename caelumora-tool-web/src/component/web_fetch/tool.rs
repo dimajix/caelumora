@@ -233,7 +233,9 @@ mod tests {
             ThreadId::default(),
             Work::new(Default::default(), None, Default::default(), Default::default()),
         );
-        let mut turn = Turn::of(&mut state, detached_actor_runtime(AgentId::new())).unwrap();
+        let mut turn =
+            Turn::of(&mut state, ThreadId::default(), detached_actor_runtime(AgentId::new()))
+                .unwrap();
         tool.execute(&params, None, &mut turn).await
     }
 

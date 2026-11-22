@@ -73,6 +73,9 @@ pub struct Turn<'a> {
     agent_id: AgentId,
     agent_name: String,
     agent_channel_state: &'a mut AgentChannelState,
+    /// The thread it runs in: whose part of `agent_channel_state` holds it, and whose branch of the
+    /// transcript it reads and extends (`Situation::branch_thread_id`, issue 602).
+    thread: ThreadId,
     /// The runtime of the agent's actor, in whose name the turn acts: what
     /// it asks of its channel and what it navigates (issue 163), and the
     /// system services bound to its work, which the turn reads and stages
@@ -82,18 +85,20 @@ pub struct Turn<'a> {
 }
 
 impl<'a> Turn<'a> {
-    /// The turn under way in `agent_channel_state` of the agent of `runtime`, in its thread, as a
-    /// step of its run loop works with it; `None` between turns. A turn is begun on the state
-    /// (`AgentChannelState::begin_turn`), and ended through its handle (`commit`, `give_up`). It
-    /// acts through the actor's `runtime`, by the agent's name as it is when it is had.
+    /// The turn under way in `thread` of `agent_channel_state` of the agent of `runtime`, as a
+    /// step of its run loop works with it; `None` between turns there. A turn is begun on the
+    /// state (`AgentChannelState::begin_turn`), and ended through its handle (`commit`,
+    /// `give_up`). It acts through the actor's `runtime`, by the agent's name as it is when it is
+    /// had.
     pub fn of(
         agent_channel_state: &'a mut AgentChannelState,
+        thread: ThreadId,
         runtime: Arc<dyn ActorRuntime>,
     ) -> Option<Self> {
-        agent_channel_state.thread(runtime.thread_id())?.turn.as_ref()?;
+        agent_channel_state.turn(thread)?;
         let agent = runtime.agent();
         let (agent_id, agent_name) = (agent.id, agent.name.to_string());
-        Some(Self { agent_id, agent_name, agent_channel_state, runtime })
+        Some(Self { agent_id, agent_name, agent_channel_state, thread, runtime })
     }
 
     /// The situation of the turn, to read (issues 204, 399): what the turn
@@ -101,7 +106,7 @@ impl<'a> Turn<'a> {
     /// what components that only read are given, as an external agent's
     /// work gives it too.
     pub fn situation(&self) -> Situation<'_> {
-        Situation::new(&self.current().work, self.agent_channel_state, &*self.runtime)
+        Situation::new(&self.current().work, self.thread, self.agent_channel_state, &*self.runtime)
     }
 
     /// The writer `T` a plugin or the kernel binds to the turn's work (`ActorRuntime::writer`,
@@ -159,7 +164,7 @@ impl<'a> Turn<'a> {
             return None;
         }
         let turn_id = self.turn_id();
-        let messages = self.agent_channel_state.transcript.messages(self.thread());
+        let messages = self.agent_channel_state.transcript.messages(self.thread);
         let calling = messages
             .iter()
             .rev()
@@ -170,15 +175,14 @@ impl<'a> Turn<'a> {
     /// The working state of the turn under way. A `Turn` is only had while
     /// one is (`of`); the empty one it falls back to cannot be reached.
     fn current(&self) -> &TurnState {
-        let part = self.agent_channel_state.thread(self.thread());
-        part.and_then(|part| part.turn.as_ref()).unwrap_or(&NO_TURN)
+        self.agent_channel_state.turn(self.thread).unwrap_or(&NO_TURN)
     }
 
     /// The working state of the turn under way, to change. That there is
     /// one is checked in tests; in a release build it would start from an
     /// empty turn rather than fail.
     fn current_mut(&mut self) -> &mut TurnState {
-        let thread = self.thread();
+        let thread = self.thread;
         let turn = &mut self.agent_channel_state.thread_mut(thread).turn;
         debug_assert!(turn.is_some(), "a turn's working state changed while no turn runs");
         turn.get_or_insert_with(TurnState::default)
@@ -225,7 +229,7 @@ impl<'a> Turn<'a> {
     /// any more. `false`, and nothing given but the knowledge recorded, if the same knowledge
     /// stands given already (issue 541).
     pub fn give(&mut self, message: Message, knowledge: Option<KnowledgeRef>) -> bool {
-        let thread = self.thread();
+        let thread = self.thread;
         self.agent_channel_state.given(thread, message, knowledge)
     }
 
@@ -250,7 +254,7 @@ impl<'a> Turn<'a> {
         let replaced = replacement.len();
         let wording = self.plan_wording()?;
         let Some(heads) = self.agent_channel_state.compact(
-            self.thread(),
+            self.thread,
             ActorId::Agent(self.agent_id),
             replacement,
             keep_from,
@@ -260,7 +264,7 @@ impl<'a> Turn<'a> {
         };
         let replacement_end = replaced
             .checked_sub(1)
-            .and_then(|last| self.agent_channel_state.transcript.entries(self.thread()).nth(last))
+            .and_then(|last| self.agent_channel_state.transcript.entries(self.thread).nth(last))
             .map(|node| node.digest);
         self.name_plan_again(replacement_end, wording);
         Ok(Some(heads))
@@ -270,14 +274,8 @@ impl<'a> Turn<'a> {
     /// at once (`AgentChannelState::said`, issue 260). Returns it as it is
     /// sent: with what it was produced from (issue 417).
     pub(crate) fn push_message(&mut self, message: Message) -> Message {
-        let thread = self.thread();
+        let thread = self.thread;
         self.agent_channel_state.said(thread, message)
-    }
-
-    /// The thread whose branch of the transcript the turn reads and extends
-    /// (`Situation::branch_thread_id`).
-    fn thread(&self) -> ThreadId {
-        self.runtime.thread_id()
     }
 
     /// Whether the turn may still call its model: not once it made
@@ -324,7 +322,7 @@ impl<'a> Turn<'a> {
     /// needs the whole turn in between.
     pub(crate) fn tool_calls(&mut self) -> ToolCalls<'_> {
         let texts = self.situation().texts();
-        let thread = self.thread();
+        let thread = self.thread;
         let turn = &mut self.agent_channel_state.thread_mut(thread).turn;
         debug_assert!(turn.is_some(), "a turn's working state changed while no turn runs");
         let turn = turn.get_or_insert_with(TurnState::default);
@@ -462,6 +460,24 @@ mod tests {
         }
     }
 
+    /// A turn runs on the branch it was begun on (issue 602), whatever thread its agent takes part
+    /// in: its situation reads that branch, and what it says goes there.
+    #[test]
+    fn a_turn_reads_and_extends_the_branch_it_was_begun_on() {
+        let (agent, elsewhere) = (AgentId::new(), ThreadId::new());
+        let mut state = AgentChannelState::default();
+        state.begin_turn(elsewhere, Work::default());
+        let runtime = testing::detached_actor_runtime(agent);
+        let mut turn = Turn::of(&mut state, elsewhere, runtime).expect("a turn was begun");
+        assert_eq!(turn.situation().branch_thread_id(), elsewhere);
+        turn.push_message(Message { sender_id: ActorId::Agent(agent), ..message("said") });
+        drop(turn);
+        assert_eq!(state.transcript.messages(elsewhere).len(), 1, "on its branch");
+        assert!(state.transcript.messages(ThreadId::default()).is_empty(), "on no other");
+        assert!(Turn::of(&mut state, ThreadId::default(), testing::detached_actor_runtime(agent))
+            .is_none());
+    }
+
     fn message_classified(classification: &Classification) -> Message {
         Message {
             id: MessageId::new(),
@@ -510,11 +526,7 @@ mod tests {
         part["turn"].as_object_mut().unwrap().remove("model_calls");
         let state: AgentChannelState = serde_json::from_value(stored).unwrap();
         assert_eq!(
-            state
-                .thread(ThreadId::default())
-                .and_then(|part| part.turn.as_ref())
-                .unwrap()
-                .model_calls,
+            state.turn(ThreadId::default()).unwrap().model_calls,
             0,
             "a turn stored before the count was kept starts from 0"
         );
@@ -724,8 +736,7 @@ mod tests {
         assert_eq!(
             turn.situation()
                 .agent_channel_state()
-                .thread(turn.situation().branch_thread_id())
-                .and_then(|part| part.turn.as_ref())
+                .turn(turn.situation().branch_thread_id())
                 .unwrap()
                 .work
                 .context

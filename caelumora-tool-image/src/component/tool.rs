@@ -223,8 +223,9 @@ mod tests {
             ThreadId::default(),
             Work::new(Default::default(), None, Default::default(), Default::default()),
         );
-        let mut turn = Turn::of(&mut state, detached_actor_runtime(AgentId::default()))
-            .expect("a turn was begun");
+        let mut turn =
+            Turn::of(&mut state, ThreadId::default(), detached_actor_runtime(AgentId::default()))
+                .expect("a turn was begun");
         tool_named(tool, GENERATE_IMAGE).execute(&params, None, &mut turn).await
     }
 

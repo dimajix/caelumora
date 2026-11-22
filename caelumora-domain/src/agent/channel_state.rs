@@ -124,6 +124,21 @@ impl AgentChannelState {
         self.threads.entry(thread).or_default()
     }
 
+    /// The turn under way in `thread`, `None` between turns there.
+    pub fn turn(&self, thread: ThreadId) -> Option<&TurnState> {
+        self.thread(thread).and_then(|part| part.turn.as_ref())
+    }
+
+    /// As `turn`, to change it.
+    pub fn turn_mut(&mut self, thread: ThreadId) -> Option<&mut TurnState> {
+        self.threads.get_mut(&thread).and_then(|part| part.turn.as_mut())
+    }
+
+    /// The turns under way in all its threads.
+    pub fn turns(&self) -> impl Iterator<Item = &TurnState> {
+        self.threads.values().filter_map(|part| part.turn.as_ref())
+    }
+
     /// What its calls used in all its threads (issue 602): the calls and tokens summed, the
     /// context of the thread whose context is fullest (`TokenUsage::filled`). `None` while no call
     /// reported its tokens.
@@ -151,12 +166,7 @@ impl AgentChannelState {
     /// (issue 426): a turn under way holds its own.
     pub fn keep_window(&mut self) {
         self.transcript.keep_window();
-        let contexts: Vec<_> = self
-            .threads
-            .values()
-            .filter_map(|part| part.turn.as_ref())
-            .map(|turn| &turn.work.context)
-            .collect();
+        let contexts: Vec<_> = self.turns().map(|turn| &turn.work.context).collect();
         let named: HashSet<Digest> = contexts
             .iter()
             .flat_map(|context| context.frame.prompts.iter().map(|prompt| prompt.text))
@@ -169,10 +179,10 @@ impl AgentChannelState {
     }
 
     /// Makes a loaded state fit to run from (issue 75): its part of every thread
-    /// (`AgentThreadState::prepare_resume`). Returns how many calls were answered as not executed,
-    /// with `not_executed`.
-    pub fn prepare_resume(&mut self, not_executed: &str) -> usize {
-        self.threads.values_mut().map(|part| part.prepare_resume(not_executed)).sum()
+    /// (`AgentThreadState::prepare_resume`), each told what its model is given of a call not
+    /// executed by `not_executed` of its turn. Returns how many calls were answered so.
+    pub fn prepare_resume(&mut self, not_executed: impl Fn(&TurnState) -> String) -> usize {
+        self.threads.values_mut().map(|part| part.prepare_resume(&not_executed)).sum()
     }
 
     /// Whether the agent has work under way that goes on by itself once its
@@ -194,9 +204,10 @@ impl AgentChannelState {
         self.transcript.extend(thread, perceived.clone());
         // A turn under way in the thread has seen it, and its next message
         // is produced from the transcript with it (issue 260).
-        if let Some(turn) = self.threads.get_mut(&thread).and_then(|part| part.turn.as_mut()) {
+        let head = self.transcript.digest(thread);
+        if let Some(turn) = self.turn_mut(thread) {
             perceived.iter().for_each(|m| turn.work.see_message(m));
-            turn.work.context.transcript = self.transcript.digest(thread);
+            turn.work.context.transcript = head;
         }
     }
 
@@ -225,12 +236,7 @@ impl AgentChannelState {
             warn!("An entry of the history that is not announced was to be noted");
             return;
         };
-        if let Some(turn) = self
-            .threads
-            .get_mut(&thread)
-            .and_then(|part| part.turn.as_mut())
-            .filter(|turn| !turn.tool_calls.is_empty())
-        {
+        if let Some(turn) = self.turn_mut(thread).filter(|turn| !turn.tool_calls.is_empty()) {
             turn.after_step.push(AfterStep::Announced { entry: told });
             return;
         }
@@ -241,8 +247,9 @@ impl AgentChannelState {
     /// moves the turn under way there, if any, on past it.
     fn note(&mut self, thread: ThreadId, told: TranscriptEntry) {
         self.transcript.record(thread, told);
-        if let Some(turn) = self.threads.get_mut(&thread).and_then(|part| part.turn.as_mut()) {
-            turn.work.context.transcript = self.transcript.digest(thread);
+        let head = self.transcript.digest(thread);
+        if let Some(turn) = self.turn_mut(thread) {
+            turn.work.context.transcript = head;
         }
     }
 
@@ -271,7 +278,8 @@ impl AgentChannelState {
         let mut numbered = message.clone();
         self.attachments.number(&mut numbered);
         self.transcript.push(thread, numbered);
-        let Some(turn) = self.threads.get_mut(&thread).and_then(|part| part.turn.as_mut()) else {
+        let head = self.transcript.digest(thread);
+        let Some(turn) = self.turn_mut(thread) else {
             tracing::warn!("A message was said by an agent without a turn under way");
             return message;
         };
@@ -279,7 +287,7 @@ impl AgentChannelState {
         if !message.internal {
             turn.answer.push(message.clone());
         }
-        turn.work.context.transcript = self.transcript.digest(thread);
+        turn.work.context.transcript = head;
         if turn.tool_calls.is_empty() {
             for put_aside in mem::take(&mut turn.after_step) {
                 match put_aside {
@@ -319,20 +327,13 @@ impl AgentChannelState {
     ) -> bool {
         let stands =
             knowledge.as_ref().is_some_and(|k| self.stands_given(thread, &message, &k.source));
-        if let Some(turn) = self
-            .threads
-            .get_mut(&thread)
-            .and_then(|part| part.turn.as_mut())
-            .filter(|turn| !turn.tool_calls.is_empty())
-        {
+        if let Some(turn) = self.turn_mut(thread).filter(|turn| !turn.tool_calls.is_empty()) {
             turn.after_step.push(AfterStep::Given { message, knowledge });
             return !stands;
         }
         let source =
             knowledge.as_ref().map(|knowledge| GivenSource::Knowledge(knowledge.source.clone()));
-        if let (Some(turn), Some(knowledge)) =
-            (self.threads.get_mut(&thread).and_then(|part| part.turn.as_mut()), knowledge)
-        {
+        if let (Some(turn), Some(knowledge)) = (self.turn_mut(thread), knowledge) {
             turn.work.record_knowledge(knowledge);
         }
         if !stands {
@@ -349,7 +350,7 @@ impl AgentChannelState {
         let on_path = given_as_they_stand(self.transcript.entries(thread))
             .into_iter()
             .any(|(node, given)| node.entry.knowledge() == Some(source) && alike(&given, message));
-        let turn = self.thread(thread).and_then(|part| part.turn.as_ref());
+        let turn = self.turn(thread);
         let put_aside = turn.iter().flat_map(|turn| &turn.after_step).any(|put| {
             matches!(put, AfterStep::Given { message: given, knowledge: Some(k) }
                 if k.source == *source && alike(given, message))
@@ -371,7 +372,7 @@ impl AgentChannelState {
     ) -> Option<Digest> {
         let path = knowledge_as_seen_whole(self.transcript.entries(thread));
         let mut known: Vec<KnowledgeSource> = path.into_iter().flat_map(|(_, k)| k).collect();
-        if let Some(turn) = self.thread(thread).and_then(|part| part.turn.as_ref()) {
+        if let Some(turn) = self.turn(thread) {
             let results = turn.tool_calls.iter().filter_map(ToolCallState::result);
             known.extend(results.flat_map(|r| &r.knowledge).map(|k| k.source.clone()));
             let put_aside = turn.after_step.iter().filter_map(|put| match put {
@@ -416,23 +417,25 @@ impl AgentChannelState {
                 self.give_as(thread, message, Some(GivenSource::Part(component)));
             }
         }
-        if let Some(turn) = self.threads.get_mut(&thread).and_then(|part| part.turn.as_mut()) {
-            turn.work.context.transcript = self.transcript.digest(thread);
+        let head = self.transcript.digest(thread);
+        if let Some(turn) = self.turn_mut(thread) {
+            turn.work.context.transcript = head;
         }
     }
 
     /// Records `message`, given to the agent as `source`, as `given` describes: the turn's, seen
     /// by it, into the transcript, for the channel to be told.
     fn give_as(&mut self, thread: ThreadId, mut message: Message, source: Option<GivenSource>) {
-        if let Some(turn) = self.threads.get_mut(&thread).and_then(|part| part.turn.as_mut()) {
+        if let Some(turn) = self.turn_mut(thread) {
             message.turn_id = Some(turn.work.turn_id);
             turn.work.see_message(&message);
         }
         self.transcript.give(thread, message.clone(), source);
         self.last_message = Some(message.id);
         self.to_tell.push(ActorEvent::MessageGiven { message });
-        if let Some(turn) = self.threads.get_mut(&thread).and_then(|part| part.turn.as_mut()) {
-            turn.work.context.transcript = self.transcript.digest(thread);
+        let head = self.transcript.digest(thread);
+        if let Some(turn) = self.turn_mut(thread) {
+            turn.work.context.transcript = head;
         }
     }
 
@@ -509,8 +512,7 @@ impl AgentChannelState {
         // turn's model is given next (issue 390) - a text that cannot be had
         // leaves it unestimated, and fails the next call of the model.
         let estimated = self
-            .thread(thread)
-            .and_then(|part| part.turn.as_ref())
+            .turn(thread)
             .and_then(|turn| {
                 ContextResolver::of(self, thread, catalogue)
                     .token_positions(&turn.work.context, turn.work.turn_id, actor)
@@ -671,13 +673,13 @@ impl AgentChannelState {
     /// one resumed after the agent's tools changed. A turn offered tools already keeps them;
     /// without a turn, nothing is offered.
     pub fn offer_tools(&mut self, thread: ThreadId, tool_sets: Vec<ToolSet>) {
-        let turn = self.thread(thread).and_then(|part| part.turn.as_ref());
+        let turn = self.turn(thread);
         if turn.is_none_or(|turn| turn.work.context.frame.tools.is_some()) {
             tracing::warn!("Tools were offered with no turn under way, or to a turn offered tools already; nothing is offered");
             return;
         }
         let offered = self.keep_offer(tool_sets);
-        if let Some(turn) = self.threads.get_mut(&thread).and_then(|part| part.turn.as_mut()) {
+        if let Some(turn) = self.turn_mut(thread) {
             turn.work.context.frame.tools = offered;
         }
     }
@@ -693,7 +695,7 @@ impl AgentChannelState {
         request: CommandRequest,
     ) -> TurnId {
         let turn_id = self.begin_turn(thread, work);
-        if let Some(turn) = self.threads.get_mut(&thread).and_then(|part| part.turn.as_mut()) {
+        if let Some(turn) = self.turn_mut(thread) {
             turn.command = Some(request);
         }
         turn_id
@@ -773,20 +775,12 @@ impl AgentChannelState {
 
     /// The approvals its turns wait for (issue 172), in all its threads.
     pub fn pending_approvals(&self) -> Vec<ApprovalRequest> {
-        self.threads
-            .values()
-            .filter_map(|part| part.turn.as_ref())
-            .flat_map(TurnState::pending_approvals)
-            .collect()
+        self.turns().flat_map(TurnState::pending_approvals).collect()
     }
 
     /// The questions its turns wait for the answers to (issue 165), in all its threads.
     pub fn pending_questions(&self) -> Vec<QuestionRequest> {
-        self.threads
-            .values()
-            .filter_map(|part| part.turn.as_ref())
-            .flat_map(TurnState::pending_questions)
-            .collect()
+        self.turns().flat_map(TurnState::pending_questions).collect()
     }
 }
 
@@ -908,13 +902,8 @@ mod tests {
     use crate::user::UserId;
     use crate::workspace::{Workspace, WorkspaceId};
 
-    /// The turn under way in the thread the tests run in, `ThreadId::default()`.
-    fn under_way(state: &AgentChannelState) -> Option<&TurnState> {
-        state.thread(ThreadId::default())?.turn.as_ref()
-    }
-
-    /// As `under_way`, to change it.
-    fn under_way_mut(state: &mut AgentChannelState) -> &mut Option<TurnState> {
+    /// The turn under way in the thread the tests run in, `ThreadId::default()`, to change it.
+    fn turn_slot(state: &mut AgentChannelState) -> &mut Option<TurnState> {
         &mut state.thread_mut(ThreadId::default()).turn
     }
 
@@ -937,7 +926,7 @@ mod tests {
             AgentThreadState { processing_state: ActorState::Planning, ..Default::default() };
         let mut state = in_thread(ThreadId::default(), ActorState::Idle, None);
         state.threads.insert(ThreadId::new(), lost);
-        state.prepare_resume("not executed");
+        state.prepare_resume(|_| "not executed".to_string());
         assert!(
             state.threads.values().all(|part| part.processing_state == ActorState::Idle),
             "a turn state without the turn starts idle, in whichever thread"
@@ -953,9 +942,17 @@ mod tests {
             }
         };
         let mut state = AgentChannelState::default();
-        state.threads.insert(ThreadId::default(), executing());
-        state.threads.insert(ThreadId::new(), executing());
-        assert_eq!(state.prepare_resume("not executed"), 2, "a call answered in each thread");
+        let (one, other) = (ThreadId::default(), ThreadId::new());
+        state.threads.insert(one, executing());
+        state.threads.insert(other, executing());
+        // Each told as its own turn says, in the variant it was begun with.
+        let told = |turn: &TurnState| format!("not executed in turn {}", turn.work.turn_id);
+        assert_eq!(state.prepare_resume(told), 2, "a call answered in each thread");
+        for thread in [one, other] {
+            let turn = state.turn(thread).expect("a turn");
+            let answered = turn.tool_calls[0].result().expect("answered");
+            assert_eq!(answered.content, told(turn), "as its own turn says");
+        }
     }
 
     #[test]
@@ -1010,7 +1007,8 @@ mod tests {
             decoded.thread(thread).map(|part| part.processing_state),
             Some(ActorState::WaitingForUser)
         );
-        let turn_id = under_way(&decoded)
+        let turn_id = decoded
+            .turn(ThreadId::default())
             .map(|t| t.work.turn_id)
             .expect("the turn is resumed from what was stored");
         assert_eq!(
@@ -1019,11 +1017,12 @@ mod tests {
             "with what it said, in the transcript (issue 260)"
         );
         assert_eq!(
-            under_way(&decoded).map(|t| t.work.context.transcript),
+            decoded.turn(ThreadId::default()).map(|t| t.work.context.transcript),
             Some(decoded.transcript.digest(thread)),
             "its context names the transcript's head"
         );
-        let context = under_way(&decoded).map(|t| t.work.context.clone()).unwrap_or_default();
+        let context =
+            decoded.turn(ThreadId::default()).map(|t| t.work.context.clone()).unwrap_or_default();
         assert!(
             ContextResolver::of(&decoded, thread, kernel_catalogue())
                 .resolve(&context, turn_id, ActorId::default())
@@ -1032,8 +1031,8 @@ mod tests {
             "so a resumed turn's next call resolves"
         );
         assert_eq!(
-            under_way(&decoded).map(|t| t.work.turn_id),
-            under_way(&waiting).map(|t| t.work.turn_id),
+            decoded.turn(ThreadId::default()).map(|t| t.work.turn_id),
+            waiting.turn(ThreadId::default()).map(|t| t.work.turn_id),
             "as the same turn"
         );
     }
@@ -1109,7 +1108,7 @@ mod tests {
                 ..said("", Classification::PUBLIC)
             },
         );
-        under_way_mut(state).as_mut().unwrap().tool_calls =
+        turn_slot(state).as_mut().unwrap().tool_calls =
             calls.iter().cloned().map(ToolCallState::approved).collect();
         calls
     }
@@ -1124,7 +1123,7 @@ mod tests {
         };
         begin(&mut state, vec![tool.clone()]);
         begin(&mut state, vec![tool]);
-        let turn = under_way(&state).expect("a turn was begun");
+        let turn = state.turn(ThreadId::default()).expect("a turn was begun");
         assert_eq!(turn.work.label(), internal, "it has seen the transcript");
         assert_eq!(
             turn.work.context.transcript,
@@ -1139,14 +1138,14 @@ mod tests {
         state
             .offer_tools(ThreadId::default(), vec![ToolSet::new("more", "more tools", Vec::new())]);
         assert_eq!(
-            under_way(&state).and_then(|t| t.work.context.frame.tools),
+            state.turn(ThreadId::default()).and_then(|t| t.work.context.frame.tools),
             offered,
             "a turn offered tools keeps them"
         );
 
         begin(&mut state, Vec::new());
         assert!(
-            under_way(&state).is_some_and(|t| t.work.context.frame.tools.is_none()),
+            state.turn(ThreadId::default()).is_some_and(|t| t.work.context.frame.tools.is_none()),
             "no tools, no set"
         );
     }
@@ -1155,12 +1154,12 @@ mod tests {
     fn a_turn_says_into_the_transcript_and_its_answer_and_ends_finished() {
         let mut state = a_state_that_heard("add 1 and 2", Classification::CHANNEL_DEFAULT);
         begin(&mut state, Vec::new());
-        let turn_id = under_way(&state).expect("a turn was begun").work.turn_id;
+        let turn_id = state.turn(ThreadId::default()).expect("a turn was begun").work.turn_id;
         let step = state.said(
             ThreadId::default(),
             Message { internal: true, ..said("thinking", Classification::CHANNEL_DEFAULT) },
         );
-        let produced_from = under_way(&state).unwrap().work.context.clone();
+        let produced_from = state.turn(ThreadId::default()).unwrap().work.context.clone();
         let answer = said("3", Classification::CHANNEL_DEFAULT);
         assert!(answer.turn_id.is_none(), "built without it");
         let sent = state.said(ThreadId::default(), answer.clone());
@@ -1170,7 +1169,7 @@ mod tests {
             "said after the step, from the transcript with it"
         );
         assert_eq!(
-            under_way(&state).unwrap().work.context.transcript,
+            state.turn(ThreadId::default()).unwrap().work.context.transcript,
             state.transcript.digest(ThreadId::default()),
             "the context moved on to the head"
         );
@@ -1190,7 +1189,8 @@ mod tests {
             "kept without it: the transcript is what the model is given"
         );
         assert_eq!(
-            under_way(&state)
+            state
+                .turn(ThreadId::default())
                 .unwrap()
                 .answer
                 .iter()
@@ -1205,7 +1205,7 @@ mod tests {
             classification: Classification::CHANNEL_DEFAULT,
         };
 
-        *under_way_mut(&mut state) = None;
+        *turn_slot(&mut state) = None;
         assert!(
             state.finish_turn(ThreadId::default(), turn_id, vec![note], Vec::new()),
             "a note changed"
@@ -1244,7 +1244,7 @@ mod tests {
         };
         let mut state = a_state_that_heard("hello", Classification::PUBLIC);
         begin(&mut state, Vec::new());
-        let turn_id = under_way(&state).unwrap().work.turn_id;
+        let turn_id = state.turn(ThreadId::default()).unwrap().work.turn_id;
         state.give_parts(
             ThreadId::default(),
             vec![
@@ -1320,14 +1320,14 @@ mod tests {
         let rules = || ("rules".to_string(), said("[Rules]\nBe brief.", Classification::PUBLIC));
         let mut state = a_state_that_heard("hello", Classification::PUBLIC);
         begin(&mut state, Vec::new());
-        let lowered = under_way(&state).unwrap().work.turn_id;
+        let lowered = state.turn(ThreadId::default()).unwrap().work.turn_id;
         state.give_parts(ThreadId::default(), vec![rules()]);
         state.give_up_turn(
             ThreadId::default(),
             lowered,
             GivenUpReason::Lowered { channel: Classification::PUBLIC },
         );
-        *under_way_mut(&mut state) = None;
+        *turn_slot(&mut state) = None;
 
         begin(&mut state, Vec::new());
         state.give_parts(ThreadId::default(), vec![rules()]);
@@ -1337,7 +1337,7 @@ mod tests {
             .collect();
         assert_eq!(
             given,
-            [Some(under_way(&state).unwrap().work.turn_id)],
+            [Some(state.turn(ThreadId::default()).unwrap().work.turn_id)],
             "given again, in the turn after"
         );
     }
@@ -1348,7 +1348,7 @@ mod tests {
     fn knowledge_given_in_a_turn_given_up_as_lowered_is_given_again() {
         let mut state = a_state_that_heard("hello", Classification::PUBLIC);
         begin(&mut state, Vec::new());
-        let lowered = under_way(&state).unwrap().work.turn_id;
+        let lowered = state.turn(ThreadId::default()).unwrap().work.turn_id;
         let skill = a_workspace_read();
         let text = || said("Collect.", Classification::PUBLIC);
         assert!(state.given(ThreadId::default(), text(), Some(skill.clone())));
@@ -1357,7 +1357,7 @@ mod tests {
             lowered,
             GivenUpReason::Lowered { channel: Classification::PUBLIC },
         );
-        *under_way_mut(&mut state) = None;
+        *turn_slot(&mut state) = None;
 
         begin(&mut state, Vec::new());
         assert!(
@@ -1370,7 +1370,7 @@ mod tests {
     fn a_message_given_in_a_turn_is_read_not_said() {
         let mut state = a_state_that_heard("hello", Classification::PUBLIC);
         begin(&mut state, Vec::new());
-        let turn_id = under_way(&state).unwrap().work.turn_id;
+        let turn_id = state.turn(ThreadId::default()).unwrap().work.turn_id;
         let skill = Message {
             role: MessageRole::User,
             ..said("Collect, group, write.", Classification::PUBLIC)
@@ -1392,7 +1392,7 @@ mod tests {
                 == Some(&source),
             "as what it was given (issue 16)"
         );
-        let work = &under_way(&state).unwrap().work;
+        let work = &state.turn(ThreadId::default()).unwrap().work;
         assert_eq!(
             work.context.frame.knowledge,
             [knowledge],
@@ -1400,7 +1400,7 @@ mod tests {
         );
         assert_eq!(work.label(), Classification::CHANNEL_DEFAULT, "which has seen it");
         assert_eq!(
-            under_way(&state).unwrap().work.context.transcript,
+            state.turn(ThreadId::default()).unwrap().work.context.transcript,
             state.transcript.digest(ThreadId::default()),
             "what the turn says next is produced from it"
         );
@@ -1434,7 +1434,7 @@ mod tests {
             "loaded".to_string(),
             Classification::PUBLIC,
         );
-        under_way_mut(&mut state).as_mut().unwrap().tool_calls.clear();
+        turn_slot(&mut state).as_mut().unwrap().tool_calls.clear();
         let results = Message {
             role: MessageRole::Tool,
             tool_results: vec![result],
@@ -1455,9 +1455,9 @@ mod tests {
             .map(|n| matches!(&n.entry, TranscriptEntry::Given { source: Some(_), .. }))
             .collect();
         assert_eq!(sources, [true, false], "each as it was given, knowledge or not");
-        assert!(under_way(&state).unwrap().after_step.is_empty());
+        assert!(state.turn(ThreadId::default()).unwrap().after_step.is_empty());
         assert_eq!(
-            under_way(&state).unwrap().work.context.transcript,
+            state.turn(ThreadId::default()).unwrap().work.context.transcript,
             state.transcript.digest(ThreadId::default()),
             "what the turn says next is produced from it"
         );
@@ -1483,7 +1483,7 @@ mod tests {
         let public = |content| said(content, Classification::PUBLIC);
         let first = public("Collect.");
         assert!(state.given(ThreadId::default(), first.clone(), Some(skill.clone())), "given");
-        let turn_id = under_way(&state).unwrap().work.turn_id;
+        let turn_id = state.turn(ThreadId::default()).unwrap().work.turn_id;
         state.finish_turn(ThreadId::default(), turn_id, Vec::new(), Vec::new());
         begin(&mut state, Vec::new());
         state.take_told();
@@ -1495,7 +1495,7 @@ mod tests {
         assert_eq!(state.transcript.messages(ThreadId::default()).len(), 2, "it stands once");
         assert!(state.take_told().is_empty(), "nothing to tell");
         assert_eq!(
-            under_way(&state).unwrap().work.context.frame.knowledge,
+            state.turn(ThreadId::default()).unwrap().work.context.frame.knowledge,
             vec![skill.clone()],
             "recorded with the turn all the same"
         );
@@ -1533,7 +1533,7 @@ mod tests {
             "the first given"
         );
         assert!(!state.given(ThreadId::default(), text.clone(), Some(skill)), "the second not");
-        under_way_mut(&mut state).as_mut().unwrap().tool_calls.clear();
+        turn_slot(&mut state).as_mut().unwrap().tool_calls.clear();
         let results = calls
             .iter()
             .map(|call| {
@@ -1580,7 +1580,7 @@ mod tests {
         assert_eq!(last(&state, "a.txt"), None, "nothing known");
 
         let calls = a_step_calling(&mut state, &["read_file"]);
-        under_way_mut(&mut state).as_mut().unwrap().tool_calls.clear();
+        turn_slot(&mut state).as_mut().unwrap().tool_calls.clear();
         let read = state.said(
             ThreadId::default(),
             Message {
@@ -1597,10 +1597,10 @@ mod tests {
         );
 
         let calls = a_step_calling(&mut state, &["write_file", "grep_files"]);
-        under_way_mut(&mut state).as_mut().unwrap().tool_calls[0].status =
+        turn_slot(&mut state).as_mut().unwrap().tool_calls[0].status =
             ToolCallStatus::Finished(result(&calls[0], "a.txt", digest("two")));
         assert_eq!(last(&state, "a.txt"), digest("two"), "as the step under way wrote it");
-        under_way_mut(&mut state).as_mut().unwrap().tool_calls[1].status =
+        turn_slot(&mut state).as_mut().unwrap().tool_calls[1].status =
             ToolCallStatus::Finished(result(&calls[1], "a.txt", None));
         assert_eq!(last(&state, "a.txt"), digest("two"), "a search holds no content");
         state.given(
@@ -1614,14 +1614,14 @@ mod tests {
             "as put aside to be given after the step"
         );
 
-        under_way_mut(&mut state).as_mut().unwrap().tool_calls.clear();
-        under_way_mut(&mut state).as_mut().unwrap().after_step.clear();
+        turn_slot(&mut state).as_mut().unwrap().tool_calls.clear();
+        turn_slot(&mut state).as_mut().unwrap().after_step.clear();
         assert!(state.transcript.revoke(read.id, Utc::now()));
         assert_eq!(last(&state, "a.txt"), None, "taken back, as the model is no longer given it");
 
-        let lowered = under_way(&state).unwrap().work.turn_id;
+        let lowered = state.turn(ThreadId::default()).unwrap().work.turn_id;
         let calls = a_step_calling(&mut state, &["read_file"]);
-        under_way_mut(&mut state).as_mut().unwrap().tool_calls.clear();
+        turn_slot(&mut state).as_mut().unwrap().tool_calls.clear();
         state.said(
             ThreadId::default(),
             Message {
@@ -1636,7 +1636,7 @@ mod tests {
             lowered,
             GivenUpReason::Lowered { channel: Classification::PUBLIC },
         );
-        *under_way_mut(&mut state) = None;
+        *turn_slot(&mut state) = None;
         assert_eq!(last(&state, "a.txt"), None, "hidden with a turn given up as `Lowered`");
     }
 
@@ -1670,7 +1670,7 @@ mod tests {
             "unanswered".to_string(),
             Classification::PUBLIC,
         );
-        under_way_mut(&mut state).as_mut().unwrap().tool_calls.clear();
+        turn_slot(&mut state).as_mut().unwrap().tool_calls.clear();
         state.said(
             ThreadId::default(),
             Message {
@@ -1683,9 +1683,9 @@ mod tests {
             matches!(state.transcript.last(ThreadId::default()).map(|n| &n.entry), Some(TranscriptEntry::ParticipantLeft { participant, .. }) if *participant == alice),
             "after the results"
         );
-        assert!(under_way(&state).unwrap().after_step.is_empty());
+        assert!(state.turn(ThreadId::default()).unwrap().after_step.is_empty());
         assert_eq!(
-            under_way(&state).unwrap().work.context.transcript,
+            state.turn(ThreadId::default()).unwrap().work.context.transcript,
             state.transcript.digest(ThreadId::default()),
             "what the turn says next is produced from it"
         );
@@ -1705,7 +1705,7 @@ mod tests {
             ..said("hi", Classification::PUBLIC)
         };
         let sent = state.said(ThreadId::default(), answer.clone());
-        let first = under_way_mut(&mut state).take().unwrap().work.turn_id;
+        let first = turn_slot(&mut state).take().unwrap().work.turn_id;
         state.finish_turn(ThreadId::default(), first, Vec::new(), Vec::new());
         let answered = state
             .transcript
@@ -1758,7 +1758,7 @@ mod tests {
         assert_eq!(state.transcript.digest(ThreadId::default()), head, "nothing changed");
         assert!(
             state.take_told().is_empty()
-                && under_way(&state).unwrap().work.context.transcript == head,
+                && state.turn(ThreadId::default()).unwrap().work.context.transcript == head,
             "nothing told, the turn where it was"
         );
 
@@ -1778,7 +1778,7 @@ mod tests {
 
         assert_eq!(Some(from), head, "from what stood");
         assert_eq!(state.transcript.digest(ThreadId::default()), Some(to));
-        let turn_under_way = &under_way(&state).unwrap().work;
+        let turn_under_way = &state.turn(ThreadId::default()).unwrap().work;
         assert_eq!(
             turn_under_way.context.transcript,
             Some(to),
@@ -1865,7 +1865,7 @@ mod tests {
             "the new branch as estimated, not the summary's call over the old one"
         );
 
-        let turn = under_way_mut(&mut state).take().unwrap().work.turn_id;
+        let turn = turn_slot(&mut state).take().unwrap().work.turn_id;
         state.finish_turn(ThreadId::default(), turn, Vec::new(), Vec::new());
         assert_eq!(
             state.thread(ThreadId::default()).and_then(|part| part.used).map(|u| u.context_tokens),
@@ -1900,7 +1900,7 @@ mod tests {
             ("at the end", PromptAt::End),
         ]
         .map(|(text, at)| state.keep_prompt(MessageRole::System, text.to_string(), at, None));
-        under_way_mut(&mut state).as_mut().unwrap().work.context.frame.prompts = parts.to_vec();
+        turn_slot(&mut state).as_mut().unwrap().work.context.frame.prompts = parts.to_vec();
 
         state
             .compact(
@@ -1927,8 +1927,16 @@ mod tests {
             ),
             PromptAt::Start | PromptAt::End => None,
         };
-        let anchors: Vec<_> =
-            under_way(&state).unwrap().work.context.frame.prompts.iter().map(anchor).collect();
+        let anchors: Vec<_> = state
+            .turn(ThreadId::default())
+            .unwrap()
+            .work
+            .context
+            .frame
+            .prompts
+            .iter()
+            .map(anchor)
+            .collect();
         assert_eq!(anchors, [
             None,
             Some(Some(Some("summary".to_string()))),
@@ -1937,11 +1945,11 @@ mod tests {
             None,
         ], "before everything as it was, after the replacement for what it replaced, after the copy for what was kept - a change's after its message");
         assert_eq!(
-            under_way(&state).unwrap().work.context.frame.prompts[4].at,
+            state.turn(ThreadId::default()).unwrap().work.context.frame.prompts[4].at,
             PromptAt::End,
             "at the end as it was (issue 537)"
         );
-        let context = under_way(&state).unwrap().work.context.clone();
+        let context = state.turn(ThreadId::default()).unwrap().work.context.clone();
         assert!(
             ContextResolver::of(&state, ThreadId::default(), kernel_catalogue())
                 .resolve(&context, TurnId::new(), agent)
@@ -1967,11 +1975,11 @@ mod tests {
             ),
             request.clone(),
         );
-        let turn = under_way(&state).expect("a turn was begun");
+        let turn = state.turn(ThreadId::default()).expect("a turn was begun");
         assert_eq!(turn.command.as_ref(), Some(&request), "kept with the turn, for one resumed");
         assert!(turn.work.context.frame.tools.is_none(), "a command turn offers its model nothing");
 
-        *under_way_mut(&mut state) = None;
+        *turn_slot(&mut state) = None;
         assert!(!state.finish_turn(ThreadId::default(), turn_id, Vec::new(), Vec::new()));
         assert!(
             matches!(state.transcript.last(ThreadId::default()).map(|n| &n.entry), Some(TranscriptEntry::TurnFinished { turn_id: t, .. }) if *t == turn_id)
@@ -1985,7 +1993,7 @@ mod tests {
         begin(&mut state, Vec::new());
         state.said(ThreadId::default(), said("mailing", Classification::CHANNEL_DEFAULT));
 
-        let turn_id = under_way_mut(&mut state).take().expect("a turn was begun").work.turn_id;
+        let turn_id = turn_slot(&mut state).take().expect("a turn was begun").work.turn_id;
         state.give_up_turn(ThreadId::default(), turn_id, GivenUpReason::Left);
         let contents = |messages: Vec<Message>| {
             messages.iter().map(|m| m.content.clone().unwrap_or_default()).collect::<Vec<_>>()
@@ -2017,7 +2025,7 @@ mod tests {
         let given_up = |reason: GivenUpReason| {
             let mut state = a_state_that_heard("hello", Classification::CHANNEL_DEFAULT);
             begin(&mut state, Vec::new());
-            let turn = under_way_mut(&mut state).take().expect("a turn was begun").work.turn_id;
+            let turn = turn_slot(&mut state).take().expect("a turn was begun").work.turn_id;
             state.give_up_turn(ThreadId::default(), turn, reason);
             (state, turn)
         };
@@ -2054,7 +2062,7 @@ mod tests {
 
         let mut state = a_state_that_heard("hello", Classification::CHANNEL_DEFAULT);
         begin(&mut state, Vec::new());
-        let turn = under_way_mut(&mut state).take().expect("a turn was begun").work.turn_id;
+        let turn = turn_slot(&mut state).take().expect("a turn was begun").work.turn_id;
         state.finish_turn(ThreadId::default(), turn, Vec::new(), Vec::new());
         assert_eq!(
             state.answers_again_after(ThreadId::default(), turn),
@@ -2106,7 +2114,8 @@ mod tests {
                 ..said("second part", Classification::CHANNEL_DEFAULT)
             },
         );
-        let answer: Vec<_> = under_way(&state)
+        let answer: Vec<_> = state
+            .turn(ThreadId::default())
             .unwrap()
             .answer
             .iter()
@@ -2115,7 +2124,11 @@ mod tests {
         assert_eq!(answer, ["first part", "second part"], "the whole answer");
         let stored: AgentChannelState =
             serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
-        assert_eq!(under_way(&stored).map(|t| t.answer.len()), Some(2), "stored with the turn");
+        assert_eq!(
+            stored.turn(ThreadId::default()).map(|t| t.answer.len()),
+            Some(2),
+            "stored with the turn"
+        );
     }
 
     #[test]
@@ -2160,9 +2173,11 @@ mod tests {
         state.offer_tools(ThreadId::default(), sets);
         let system =
             state.keep_prompt(MessageRole::System, "system".to_string(), PromptAt::Start, None);
-        under_way_mut(&mut state).as_mut().unwrap().work.context.frame.prompts.push(system.clone());
-        let offer = under_way(&state).unwrap().work.context.frame.tools.expect("an offer");
-        let frame = state.keep_frame(&under_way(&state).unwrap().work.context.frame.clone());
+        turn_slot(&mut state).as_mut().unwrap().work.context.frame.prompts.push(system.clone());
+        let offer =
+            state.turn(ThreadId::default()).unwrap().work.context.frame.tools.expect("an offer");
+        let frame =
+            state.keep_frame(&state.turn(ThreadId::default()).unwrap().work.context.frame.clone());
         state.keep_window();
         assert_eq!(
             (state.prompts.len(), state.offered_tools.len(), state.frames.len()),
@@ -2187,7 +2202,7 @@ mod tests {
             "a frame is the store's at once: the turn holds its own (issue 426)"
         );
 
-        *under_way_mut(&mut state) = None;
+        *turn_slot(&mut state) = None;
         state.keep_window();
         assert!(
             state.prompts.is_empty() && state.offered_tools.is_empty(),
@@ -2209,9 +2224,8 @@ mod tests {
         let mut state = AgentChannelState::default();
         let first = state.begin_turn(one, work());
         let second = state.begin_turn(other, work());
-        let turn_in = |state: &AgentChannelState, thread| {
-            state.thread(thread).and_then(|part| part.turn.as_ref()).map(|t| t.work.turn_id)
-        };
+        let turn_in =
+            |state: &AgentChannelState, thread| state.turn(thread).map(|t| t.work.turn_id);
         assert_eq!(
             (turn_in(&state, one), turn_in(&state, other)),
             (Some(first), Some(second)),
@@ -2238,7 +2252,7 @@ mod tests {
             );
             state.begin_turn(thread, work);
             state.offer_tools(thread, vec![ToolSet::new(name, name, Vec::new())]);
-            let turn = state.thread(thread).and_then(|part| part.turn.as_ref());
+            let turn = state.turn(thread);
             turn.and_then(|t| t.work.context.frame.tools).expect("an offer")
         };
         let mut state = AgentChannelState::default();
@@ -2286,7 +2300,7 @@ mod tests {
             id(2),
         );
         state.thread_mut(ThreadId::default()).processing_state = ActorState::WaitingForUser;
-        *under_way_mut(&mut state) = Some(TurnState { model_calls: 3, ..TurnState::default() });
+        *turn_slot(&mut state) = Some(TurnState { model_calls: 3, ..TurnState::default() });
         state.thread_mut(ThreadId::default()).used =
             TokenUsage::counted(None, &Message { prompt_tokens: Some(5), ..make_message(id(2)) });
         state.last_message = Some(id(2));
@@ -2329,11 +2343,11 @@ mod tests {
         );
 
         state.mark_stored();
-        *under_way_mut(&mut state) = None;
+        *turn_slot(&mut state) = None;
         state.heard.took(Position::new(5));
         assert_eq!(state.changes().len(), 4, "between turns a step is the small parts alone");
         replayed(&state, &mut copy);
-        assert!(under_way(&copy).is_none());
+        assert!(copy.turn(ThreadId::default()).is_none());
     }
 
     #[test]
@@ -2348,19 +2362,19 @@ mod tests {
         );
 
         let channel = Classification::general(Confidentiality::Confidential);
-        *under_way_mut(&mut state) = Some(TurnState {
+        *turn_slot(&mut state) = Some(TurnState {
             work: Work::new(Default::default(), None, channel.clone(), Default::default()),
             ..TurnState::default()
         });
         let confidential = Message { classification: channel.clone(), ..make_message(id(3)) };
         state.perceive(ThreadId::default(), vec![confidential]);
         assert_eq!(
-            under_way(&state).map(|t| t.work.label()),
+            state.turn(ThreadId::default()).map(|t| t.work.label()),
             Some(channel),
             "the turn has seen it"
         );
         assert_eq!(
-            under_way(&state).map(|t| t.work.context.transcript),
+            state.turn(ThreadId::default()).map(|t| t.work.context.transcript),
             Some(state.transcript.digest(ThreadId::default())),
             "and its next message follows it (issue 260)"
         );
@@ -2371,18 +2385,18 @@ mod tests {
         use crate::message::testing::{id, make_message};
         let mut state = AgentChannelState::default();
         begin(&mut state, Vec::new());
-        let before = under_way(&state).map(|t| t.work.context.clone());
+        let before = state.turn(ThreadId::default()).map(|t| t.work.context.clone());
         let other = ThreadId::new();
         state.perceive(other, vec![make_message(id(1))]);
         state.give_parts(other, vec![("part".to_string(), make_message(id(2)))]);
         state.said(other, make_message(id(3)));
         assert_eq!(
-            under_way(&state).map(|t| t.work.context.clone()),
+            state.turn(ThreadId::default()).map(|t| t.work.context.clone()),
             before,
             "the turn's context stays where it was"
         );
         assert!(
-            under_way(&state).is_some_and(|t| t.answer.is_empty()),
+            state.turn(ThreadId::default()).is_some_and(|t| t.answer.is_empty()),
             "nor is what was said there its answer"
         );
         assert_eq!(
@@ -2402,7 +2416,7 @@ mod tests {
             turn
         };
         let mut state = in_thread(ThreadId::default(), ActorState::WaitingForUser, None);
-        *under_way_mut(&mut state) = Some(waiting("first"));
+        *turn_slot(&mut state) = Some(waiting("first"));
         state.thread_mut(ThreadId::new()).turn = Some(waiting("second"));
         assert_eq!(state.pending_approvals().len(), 2, "an approval from each thread's turn");
 
@@ -2464,7 +2478,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         let heard = Message { attachments: vec![a.clone()], ..make_message(id(1)) };
         state.perceive(ThreadId::default(), vec![heard.clone()]);
-        *under_way_mut(&mut state) = Some(TurnState::default());
+        *turn_slot(&mut state) = Some(TurnState::default());
         let sent = state
             .said(ThreadId::default(), Message { attachments: vec![b], ..make_message(id(2)) });
         assert_eq!(
@@ -2582,7 +2596,7 @@ mod tests {
 
         begin(&mut state, Vec::new());
         assert_eq!(
-            under_way(&state).unwrap().work.label(),
+            state.turn(ThreadId::default()).unwrap().work.label(),
             Classification::PUBLIC,
             "released, it no longer raises the label"
         );

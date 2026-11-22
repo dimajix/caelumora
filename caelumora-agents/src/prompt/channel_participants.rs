@@ -326,6 +326,7 @@ mod tests {
         );
         let turn = Turn::of(
             &mut state,
+            ThreadId::line(channel.id),
             agent_runtime(participant_runtime_in(
                 &session_loop.channels()[0],
                 ActorId::Agent(jonathan.id),
@@ -371,6 +372,7 @@ mod tests {
         );
         let turn = Turn::of(
             &mut state,
+            ThreadId::line(channel.id()),
             agent_runtime(participant_runtime_in(channel, ActorId::Agent(outsider))),
         )
         .expect("a turn was begun");

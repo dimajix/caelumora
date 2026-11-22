@@ -33,6 +33,8 @@ use std::sync::Arc;
 pub struct Situation<'a> {
     agent_id: AgentId,
     work: &'a Work,
+    /// The thread whose branch of the agent's transcript the work reads and extends (issue 602).
+    branch_thread_id: ThreadId,
     agent_channel_state: &'a AgentChannelState,
     /// The runtime of the agent's actor: what it asks of its channel and
     /// what it navigates.
@@ -40,14 +42,16 @@ pub struct Situation<'a> {
 }
 
 impl<'a> Situation<'a> {
-    /// `work` of the agent of `runtime`, with its state in the channel, read
-    /// through the actor's `runtime`.
+    /// `work` of the agent of `runtime` on the branch of `branch_thread_id`, with its state in the
+    /// channel, read through the actor's `runtime`.
     pub(crate) fn new(
         work: &'a Work,
+        branch_thread_id: ThreadId,
         agent_channel_state: &'a AgentChannelState,
         runtime: &'a dyn ActorRuntime,
     ) -> Self {
-        Self { agent_id: runtime.agent().id, work, agent_channel_state, runtime }
+        let agent_id = runtime.agent().id;
+        Self { agent_id, work, branch_thread_id, agent_channel_state, runtime }
     }
 
     /// The agent whose work this is.
@@ -72,10 +76,10 @@ impl<'a> Situation<'a> {
     }
 
     /// The thread whose branch of the agent's transcript the work reads and extends (issue 602):
-    /// the one thread the agent takes part in (`ActorRuntime::thread_id`), whatever thread the
-    /// envelope it answers names (`thread_id`).
+    /// the thread of the envelope it answers (`thread_id`) where the agent takes part in it, else
+    /// the one it takes part in (`AgentBody::branch_of`).
     pub fn branch_thread_id(&self) -> ThreadId {
-        self.runtime.thread_id()
+        self.branch_thread_id
     }
 
     /// Why the work was asked for (issue 439): the reason of the request

@@ -26,13 +26,15 @@ use caelumora_domain::actor::{
     ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RetryTarget,
 };
 use caelumora_domain::agent::{AgentChannelState, AgentId, HearsDuringTurn, RetryRefused};
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::component::ComponentConfig;
 use caelumora_domain::confidentiality::Visibility;
 use caelumora_domain::context::{KnowledgeRef, ModelProfile, PromptPart};
 use caelumora_domain::transcript::TranscriptEntry;
+use caelumora_domain::turn::TurnState;
 use caelumora_domain::type_map::TypeKey;
 use caelumora_domain::value::name::Name;
-use caelumora_domain::work::Work;
+use caelumora_domain::work::{TurnId, Work};
 use futures::future::BoxFuture;
 use std::future::ready;
 use std::sync::Arc;
@@ -122,11 +124,19 @@ impl AgentBody {
             CommandSet::new(components.get_all::<dyn CommandProvider<dyn AgentCommand>>(None)?)?;
         let mut state = runtime.load_channel_state().await?;
         resume(&mut state);
-        let part = state.thread(runtime.thread_id());
-        let control = RunControl::new(
-            part.map(|part| part.processing_state).unwrap_or_default(),
-            part.and_then(|part| part.turn.as_ref()).map(|turn| turn.work.turn_id),
-        );
+        // It resumes the turn stored under way, in whichever thread - one at a time (issue 557) -,
+        // or else stands where it stood in the thread it takes part in.
+        let resumed = state.threads.iter().find_map(|(thread, part)| {
+            let turn = part.turn.as_ref()?;
+            Some((part.processing_state, (*thread, turn.work.turn_id)))
+        });
+        let control = match resumed {
+            Some((standing, turn)) => RunControl::new(standing, Some(turn)),
+            None => {
+                let part = state.thread(runtime.thread_id());
+                RunControl::new(part.map(|part| part.processing_state).unwrap_or_default(), None)
+            }
+        };
         let body = Self {
             runtime,
             perceive_in_processors,
@@ -195,10 +205,49 @@ impl AgentBody {
         self.built_from.clone()
     }
 
-    /// The turn under way in `state`, as its steps work with it; `None`
-    /// between turns.
-    pub(super) fn turn<'s>(&self, state: &'s mut AgentChannelState) -> Option<Turn<'s>> {
-        Turn::of(state, Arc::clone(&self.runtime))
+    /// The turn under way in `thread` of `state`, as its steps work with it; `None` between turns
+    /// there.
+    pub(super) fn turn<'s>(
+        &self,
+        state: &'s mut AgentChannelState,
+        thread: ThreadId,
+    ) -> Option<Turn<'s>> {
+        Turn::of(state, thread, Arc::clone(&self.runtime))
+    }
+
+    /// Begins a turn of `work` in `thread` of `state` (`AgentChannelState::begin_turn`), as the
+    /// turn that runs (`RunControl::begin_turn`), whose part its steps work with (`under_way`).
+    pub(super) fn begin_turn(
+        &self,
+        state: &mut AgentChannelState,
+        thread: ThreadId,
+        work: Work,
+    ) -> TurnId {
+        let turn_id = state.begin_turn(thread, work);
+        self.control.begin_turn(thread, turn_id);
+        turn_id
+    }
+
+    /// The working state of the turn under way in `state`, in the thread of the turn that runs or
+    /// ran last (`RunControl::thread`); `None` between turns.
+    pub(super) fn under_way<'s>(&self, state: &'s AgentChannelState) -> Option<&'s TurnState> {
+        state.turn(self.control.thread()?)
+    }
+
+    /// The thread whose branch of the agent's transcript `envelope` is taken in on, answered on or
+    /// carried out on (issue 602): the thread it happens in (`EventContext::thread_id`) if the
+    /// agent takes part there, else the one it takes part in (`ActorRuntime::thread_id`). A nudge,
+    /// a request to answer again and a command reach it from any thread, until they are routed by
+    /// the thread they name; read on a branch of their own, a request to answer again would be
+    /// refused and a turn would begin empty.
+    pub(super) fn branch_of(&self, envelope: &Envelope) -> ThreadId {
+        let taking_part = self.runtime.thread_id();
+        let happened_in = envelope.context.thread_id;
+        if happened_in == taking_part {
+            happened_in
+        } else {
+            taking_part
+        }
     }
 
     /// The context `request` is answered in, continued in the agent's name
@@ -218,15 +267,16 @@ impl AgentBody {
         (answering, work)
     }
 
-    /// The situation of `work`, as the agent's components read it, with its
-    /// `state` in the channel - for work that is no turn of `state`, as an
-    /// external agent's answer is.
+    /// The situation of `work` on the branch of `thread`, as the agent's components read it, with
+    /// its `state` in the channel - for work that is no turn of `state`, as an external agent's
+    /// answer is.
     pub(super) fn situation<'a>(
         &'a self,
         work: &'a Work,
+        thread: ThreadId,
         state: &'a AgentChannelState,
     ) -> Situation<'a> {
-        Situation::new(work, state, &*self.runtime)
+        Situation::new(work, thread, state, &*self.runtime)
     }
 
     /// The prompt parts and the knowledge they hold that its context
@@ -245,10 +295,12 @@ impl AgentBody {
         })
     }
 
-    /// Stores its `state` in the channel, with where its actor stands now.
-    /// A failure is logged: the actor carries on with the state in memory.
+    /// Stores its `state` in the channel, with where its actor stands now: in the thread of the
+    /// turn that runs or ran last, else in the one it takes part in. A failure is logged: the actor
+    /// carries on with the state in memory.
     pub(super) async fn store(&self, state: &mut AgentChannelState) {
-        state.thread_mut(self.runtime.thread_id()).processing_state = self.control.state();
+        let thread = self.control.thread().unwrap_or_else(|| self.runtime.thread_id());
+        state.thread_mut(thread).processing_state = self.control.state();
         if let Err(e) = self.runtime.store_channel_state(state).await {
             warn!(
                 "Agent {} cannot store its state in channel {}: {:#}",

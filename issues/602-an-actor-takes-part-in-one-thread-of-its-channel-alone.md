@@ -455,3 +455,20 @@ above. The position of a predecessor (C) is no step yet.
   (`load_named_by_turns`, `TranscriptStore::named_by` of several contexts). The actor reads and
   writes the part of its runtime's thread until step 2, `RunControl` one per actor until step 3.
   The stored agents' states are to be deleted.
+- **2026-11-22** — Step 1b committed. Decided by the maintainer, as recommended: step 2 goes in
+  two, 2a the agent side - it reads the thread of the envelope and of the work - before 2b,
+  taking part a set of one thread in the kernel; an envelope of a thread the agent takes no part
+  in goes on the branch of the one it takes part in, one rule in one place, until step 3 routes a
+  nudge, a request to answer again and a command by the thread they name; where something is said
+  of oneself without a thread to name - the tools an agent would be offered, what a user says -,
+  the thread one was taken in until step 3; and `AgentChannelState::turn`, `turn_mut` and `turns`
+  in place of looking a turn up in every reader. Step 2a done: `AgentBody::branch_of` is that
+  rule; a turn runs on the branch it was begun on (`Turn::of` and `Situation::new` are given it)
+  and the actor keeps the thread of the turn that runs or ran last (`RunControl::thread`, both
+  begun by `AgentBody::begin_turn`); taking in goes by branch - a request to respond on another
+  branch ends the batch and waits unheard, and during a turn and as it ends what happens on
+  another branch is passed over -, which with one thread changes nothing; `prepare_resume` tells
+  each turn what its model is given of a call not executed in the variant that turn was begun
+  with. An external agent keeps to its one thread. Testable only once an agent takes part in two
+  threads, with step 2b: the batch ended by a request of another branch, `build` resuming and
+  `store` writing in a thread other than the runtime's.

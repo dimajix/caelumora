@@ -16,7 +16,8 @@ turn](#a-command-turn)).
 
 `Idle` and `Sleeping` wait for the next event, and take it in together with everything there
 behind it in the inbox - queued, or in the history behind the queue -, in order, and write where
-the agent stands into its state with it (`AgentBody::take_in`, issue 223):
+the agent stands into its state with it (`AgentBody::take_in`, issue 223), each on the branch of
+its thread (see [The transcript as a tree](#the-transcript-as-a-tree)):
 
 *   **Perceive.** A complete message of another participant - all that was offered to it, live or
     read from the history, which records it as gone to it (issue 417) - is heard as the sender's
@@ -132,7 +133,9 @@ with `from: none` an agent hears what was said when the turn has ended, as betwe
     again, a command. So the order every rule of taking in relies on holds. The exceptions are
     `others: when_asked`, below: what is left behind what it took is only ever another's request,
     and requests are not in the transcript; and one who leaves while the turn waits for a person
-    (`WaitingForUser`, above), whose leave settles what nobody else asked is left to answer.
+    (`WaitingForUser`, above), whose leave settles what nobody else asked is left to answer. What
+    happens on another branch than the turn's it passes over (see
+    [The transcript as a tree](#the-transcript-as-a-tree)).
 *   **In whose authority.** A turn acts in the authority of whoever began the chain it answers
     (`EventContext::initiator_id`). With `others: wait`, it hears only what is said in that
     authority - by them, or an agent working for them -, so that nobody steers what it does in an
@@ -410,9 +413,17 @@ thread is the path from its root up to its head, and what the agent's model is g
 thread. Every method that reads or extends a branch names its thread; a change of a message is
 recorded on every branch that holds it. The transcript gives every position, on whichever branch,
 so that its threads never give one twice. An agent takes part in one thread for now, that of its
-runtime (`ActorRuntime::thread_id`): what it takes in, answers again and does in a turn goes on the
-branch of that thread (`Situation::branch_thread_id`), whatever thread the envelope or the work
-names - a request to answer again reaches it from any thread.
+runtime (`ActorRuntime::thread_id`). What it takes in, answers again or carries out goes on the
+branch of the thread the envelope happens in where the agent takes part there, and else on the
+branch of the thread it takes part in (`AgentBody::branch_of`): a nudge, a request to answer again
+and a command reach it by name from any thread, and read on a branch of their own, a request to
+answer again would be refused and a turn would begin empty. A turn runs on the branch it was begun
+on (`Turn::of`, `Situation::branch_thread_id`), and the actor keeps the thread of the turn that
+runs or ran last (`RunControl::thread`). Taking in goes by branch: a request to respond on another
+branch than the one to be answered ends the batch and waits, unheard, for a turn of its own; during
+a turn and as it ends, what happens on another branch is passed over
+(`AgentBody::take_in_during_turn`, `drop_answered`). With one thread, everything goes on its one
+branch.
 
 Neither ending a turn nor changing a message moves a head: each is an entry after what it is about.
 Nor does the end of what a compaction wrote, which is an entry of the transcript after it (see

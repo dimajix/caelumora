@@ -30,7 +30,7 @@ impl Turn<'_> {
     /// If the context names what the agent's state does not hold, or an
     /// attachment given along cannot be read.
     pub(crate) async fn full_context(&mut self) -> Result<(Vec<Message>, Vec<ToolDescription>)> {
-        let thread = self.thread();
+        let thread = self.thread;
         let resolved =
             ContextResolver::of(self.agent_channel_state, thread, self.runtime.prompts())
                 .resolve(
@@ -57,7 +57,7 @@ impl Turn<'_> {
     /// If the transcript holds no entry `last`, or an attachment given along cannot be read.
     pub async fn conversation_until(&mut self, last: Digest) -> Result<Vec<Message>> {
         let FrameRef { profile, time_zone, .. } = self.current().work.context.frame;
-        let thread = self.thread();
+        let thread = self.thread;
         let items = ContextResolver::of(self.agent_channel_state, thread, self.runtime.prompts())
             .conversation_until(
                 last,
@@ -123,7 +123,7 @@ impl Turn<'_> {
     /// before its context is set (`AgentChannelState::offer_tools`, issue
     /// 290): what the agent's tool providers offer for the turn's work.
     pub(crate) fn offer_tools(&mut self, tool_sets: Vec<ToolSet>) {
-        let thread = self.thread();
+        let thread = self.thread;
         self.agent_channel_state.offer_tools(thread, tool_sets);
     }
 
@@ -160,7 +160,7 @@ impl Turn<'_> {
             }
         }
         self.current_mut().work.context.frame.prompts = prompts;
-        let thread = self.thread();
+        let thread = self.thread;
         self.agent_channel_state.give_parts(thread, given);
     }
 
@@ -270,9 +270,10 @@ mod tests {
             );
             let channel_classification = confidential.clone();
             async move {
+                let line = ThreadId::line(channel.id);
                 let mut state = AgentChannelState::default();
                 state.perceive(
-                    ThreadId::line(channel.id),
+                    line,
                     vec![Message {
                         role: MessageRole::User,
                         attachments,
@@ -281,11 +282,11 @@ mod tests {
                 );
                 let profile = ModelProfile { max_images, ..ModelProfile::default() };
                 state.begin_turn(
-                    ThreadId::line(channel.id),
+                    line,
                     Work::new(Default::default(), None, channel_classification, Default::default())
                         .given_as(profile),
                 );
-                let mut turn = Turn::of(&mut state, agent_runtime(runtime)).unwrap();
+                let mut turn = Turn::of(&mut state, line, agent_runtime(runtime)).unwrap();
                 let context = turn.full_context().await.map(|(messages, _)| messages);
                 (context, turn.situation().label())
             }

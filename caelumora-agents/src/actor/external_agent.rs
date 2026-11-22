@@ -132,6 +132,13 @@ impl ExternalAgentActor {
         TypeKey::of::<dyn CommandProvider<dyn AgentCommand>>(),
     ];
 
+    /// The one thread it takes part in, whose branch of its transcript all its work reads and
+    /// extends (issue 602): its remote agent keeps one conversation, so an external agent keeps to
+    /// one thread.
+    fn thread(&self) -> ThreadId {
+        self.body.runtime.thread_id()
+    }
+
     /// The actor of the external agent of `actor_runtime` (issue 516), built from its
     /// personality, in its channel.
     ///
@@ -198,7 +205,7 @@ impl ExternalAgentActor {
         work: &mut Work,
     ) -> Result<Vec<(String, PromptPart)>> {
         let (parts, knowledge) =
-            self.body.current_context(&self.body.situation(work, state)).await?;
+            self.body.current_context(&self.body.situation(work, self.thread(), state)).await?;
         work.take_in_context(&parts, knowledge);
         let mut pending = self.pending_prompts();
         // A part whose component gives none now is not given: what it said no longer holds.
@@ -278,12 +285,12 @@ impl ExternalAgentActor {
         let (answering, work) = self.body.work_for(request);
         let mut work = work.given_as(self.body.profile);
         // A turn of its own, whose token `cancel`, `stop` and `leave` reach.
-        self.body.control.begin_turn(work.turn_id);
+        self.body.control.begin_turn(self.thread(), work.turn_id);
         let token = self.body.control.token();
         self.go_to(ActorState::Planning, output).await;
         let ending = self.exchange(state, &answering, &mut work, &token, output).await;
         if matches!(ending, Ok(Ending::Answered(_))) {
-            self.body.drop_answered(state, request.context.initiator_id, rx).await;
+            self.body.drop_answered(state, self.thread(), request.context.initiator_id, rx).await;
         }
         self.body.store(state).await;
         let events = match ending {
@@ -367,7 +374,7 @@ impl ExternalAgentActor {
         // All it was ever given: in the calls before, and what it is given
         // now - every message, and every change of one, as it may have used
         // either version (issue 236).
-        let thread = self.body.runtime.thread_id();
+        let thread = self.thread();
         state.classifications_given(thread).iter().for_each(|c| work.see(c));
         let given = ContextResolver::of(state, thread, self.body.runtime.prompts())
             .given_messages(&work.context.frame.profile, self.id(), work.context.frame.time_zone)?;
@@ -424,7 +431,7 @@ impl ExternalAgentActor {
             state.remote.give(key, digest::prompt(&part.text));
         }
         self.pending_prompts().clear();
-        work.context.transcript = state.transcript.start_anew(self.body.runtime.thread_id());
+        work.context.transcript = state.transcript.start_anew(self.thread());
         // The task that asked back is taken up by this call, whether or not
         // the remote agent tells it as begun again (issue 213).
         if let Some(asked) = &answers {

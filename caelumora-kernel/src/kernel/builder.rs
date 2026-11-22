@@ -1200,10 +1200,10 @@ mod tests {
                 }
                 let state =
                     self.state_store.get_agent_channel_state(agent.id, self.channel).await?;
-                self.removed.lock().unwrap().push((
-                    agent.id,
-                    state.thread(ThreadId::default()).is_none_or(|part| part.turn.is_none()),
-                ));
+                self.removed
+                    .lock()
+                    .unwrap()
+                    .push((agent.id, state.turn(ThreadId::default()).is_none()));
                 Ok(())
             }
         }

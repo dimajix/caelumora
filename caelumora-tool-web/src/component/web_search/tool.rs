@@ -309,7 +309,9 @@ mod tests {
             ThreadId::default(),
             Work::new(Default::default(), None, Default::default(), Default::default()),
         );
-        let mut turn = Turn::of(&mut state, detached_actor_runtime(AgentId::new())).unwrap();
+        let mut turn =
+            Turn::of(&mut state, ThreadId::default(), detached_actor_runtime(AgentId::new()))
+                .unwrap();
         for params in [
             json!({ "query": "tokio", "max_results": 0 }),
             json!({ "query": "tokio", "max_results": MAX_RESULTS + 1 }),

@@ -313,6 +313,7 @@ mod tests {
     ) -> Prompt {
         let turn = Turn::of(
             state,
+            ThreadId::line(session_loop.channels()[0].id()),
             agent_runtime(participant_runtime_in(
                 &session_loop.channels()[0],
                 ActorId::Agent(agent),
