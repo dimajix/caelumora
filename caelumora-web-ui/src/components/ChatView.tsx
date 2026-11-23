@@ -838,9 +838,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     }
   };
 
-  const handleStopGeneration = async () => {
+  /**
+   * Stops what is generated: in the whole channel from the line, in the thread `thread` alone from
+   * its pane (issue 595).
+   */
+  const stopIn = (thread?: string) => async () => {
     try {
-      await api.cancelChannel(sessionId, channelId);
+      if (thread) await api.cancelThread(sessionId, channelId, thread);
+      else await api.cancelChannel(sessionId, channelId);
     } catch (error) {
       reportError('Failed to cancel generation', error);
     }
@@ -1106,7 +1111,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
               newSince={newSince?.channelId === channelId ? newSince : undefined}
               draftKey={channelId}
               onSend={sendTo()}
-              onStop={() => void handleStopGeneration()}
+              onStop={stopIn()}
               cannotWrite={takesPart === false
                 ? 'You do not take part in this channel: its history is shown as it is, not followed live, and you cannot write here.'
                 : undefined}
@@ -1201,6 +1206,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
                   conversation={openThread.conversation}
                   onLoadEarlier={loadEarlier(openedThread.id)}
                   onSend={sendTo(openedThread.id)}
+                  onStop={stopIn(openedThread.id)}
                   onClose={() => setOpen(null)}
                 >
                   {waiting(

@@ -412,6 +412,35 @@ async fn a_nudge_ends_the_quiet_of_its_thread_and_a_turn_is_asked_again_where_it
     running.abort();
 }
 
+/// Issue 595: `/agent wakeup` issued in a thread ends the quiet of that thread alone; issued in the
+/// line, of the whole channel.
+#[tokio::test]
+async fn wakeup_ends_the_quiet_of_the_thread_it_is_issued_in_or_of_the_channel() {
+    use caelumora_domain::channel::ThreadOrigin;
+    let alice = make_user("alice");
+    let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
+    let running = tokio::spawn({
+        let channel = Arc::clone(&channel);
+        async move { channel.run().await }
+    });
+    let context =
+        SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
+    let line = ThreadId::line(channel.id());
+    let origin = ThreadOrigin { thread: line, message: MessageId::new() };
+    let thread =
+        channel.open_thread_by_procedure(&context, ThreadSpec::new(origin)).await.expect("opened");
+    channel.cancel(&context, None).await.expect("permitted");
+    assert!(channel.is_quiet(line) && channel.is_quiet(thread), "both quiet after the cancel");
+
+    let actor = channel.user_actor(alice.id).unwrap();
+    actor.execute_command(Some(thread), "wakeup").await.expect("/wakeup runs in the thread");
+    assert!(!channel.is_quiet(thread), "the thread it is issued in is quiet no longer");
+    assert!(channel.is_quiet(line), "the line stays quiet");
+    actor.execute_command(None, "wakeup").await.expect("/wakeup runs in the line");
+    assert!(!channel.is_quiet(line), "issued in the line, the whole channel is quiet no longer");
+    running.abort();
+}
+
 #[tokio::test]
 async fn a_nudge_wakes_the_agent_it_names_and_ends_a_quiet_channel() {
     let Stuck { channel, context, agent, helper, mut events, running } =

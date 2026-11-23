@@ -35,7 +35,7 @@ import type {Answer, Conversation} from '../conversation';
 import {ShownChannelContext, useShownChannel, type ShownChannel} from '../shownChannel';
 import {useChatChannel} from '../chatChannel';
 import {useComposer} from '../composer';
-import {Composer} from './Composer';
+import {Composer, StopButton} from './Composer';
 import {ThreadMark} from './ThreadMark';
 import type {UserInput} from '../command';
 
@@ -680,7 +680,11 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
             </p>
           )}
           {cannotWrite ? (
-            <p className="text-sm text-gray-500 dark:text-gray-400 text-center p-2">{cannotWrite}</p>
+            // Who may not write here may still stop what is generated (issue 595): a sub-agent's.
+            <div className="flex items-center gap-2">
+              <p className="flex-1 text-sm text-gray-500 dark:text-gray-400 text-center p-2">{cannotWrite}</p>
+              {answers.length > 0 && onStop && <StopButton onStop={onStop} />}
+            </div>
           ) : (
             <Composer composer={composer} onSend={send} onStop={onStop} generating={answers.length > 0} />
           )}

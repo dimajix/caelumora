@@ -1019,10 +1019,11 @@ decision for the whole channel rather than one per actor.
 
 `ChannelLoop::cancel` (`CancelChannel`) ends the turns that run in a thread, or wait there for a
 person, set aside - not the turn an actor taking part in it runs in another (issue 602) -, or in
-every thread of the channel - the web
-UI's stop button, which cancels them all (issue 557). It is an operation on the channel, like
-renaming or deleting it, not an act of taking part: the policy decides who may, and nobody has to
-be a participant for it; a thread is part of its channel, and asks the same.
+every thread of the channel: the web UI's stop button of the line cancels them all (issue 557),
+that of a thread's pane its thread alone (`POST …/threads/{tid}/cancel`, issue 595). It is an
+operation on the channel, like renaming or deleting it, not an act of taking part: the policy
+decides who may, and nobody has to be a participant for it; a thread is part of its channel, and
+asks the same.
 
 It is not a kill. The agent takes its turn over, so that observers stop waiting even when the turn
 said nothing, and returns to a normal state with its history intact. But nothing under way is waited
@@ -1057,7 +1058,8 @@ first. See [TOOLS.md](TOOLS.md#running-tool-calls).
 A quiet thread is woken in one of two ways:
 
 *   **Deliberately**: `ChannelLoop::wakeup` (`WakeChannel`), of a thread or of every one, as
-    `/wakeup` does for the whole channel; `wakeup_actor` wakes a single actor under the same
+    `/wakeup` does for the thread it is issued in, or from the line for the whole channel (issue
+    595); `wakeup_actor` wakes a single actor under the same
     permission, and ends the quiet of its threads. The channel moves a sleeping agent to `Idle`
     itself; the agent announces it (see [AGENT-TURN.md](AGENT-TURN.md#the-cognitive-cycle)).
 *   **Because something is on its way**: a `WakeupRequested` that a user's actor sends ahead of its

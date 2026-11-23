@@ -607,6 +607,14 @@ export const api = {
     await ensureOk(res, 'Failed to cancel channel');
   },
 
+  /** Ends the turns under way in the thread `thread` alone and keeps it quiet (issue 595). */
+  async cancelThread(sessionId: string, channelId: string, thread: string): Promise<void> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/threads/${thread}/cancel`, {
+      method: 'POST',
+    });
+    await ensureOk(res, 'Failed to stop the thread');
+  },
+
   async deleteSession(sessionId: string): Promise<void> {
     const res = await request(`/sessions/${sessionId}`, {
       method: 'DELETE',

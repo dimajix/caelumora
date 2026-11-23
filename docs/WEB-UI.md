@@ -389,10 +389,11 @@ A channel that does not run, its components unreadable, says so and why above th
     narrow screen in the place of the line -, one at a time: its own conversation
     (`ConversationView`), read from its history (`?thread=`) and followed on the channel's stream
     (`isShownInThread`), with the approvals and questions of its calls, written in where its circle
-    is open - a sub-agent's is closed, and its pane says whom to tell instead. Who takes part and
-    where an agent answers are kept up by the stream (`StateChanged` in the turn's thread, the
-    channel fetched again as a thread opens or someone joins or leaves one); a thread closed closes
-    its pane. What is read stays the channel's and follows the line.
+    is open - a sub-agent's is closed, and its pane says whom to tell instead. The stop button of
+    the pane stops that thread alone (`…/threads/{tid}/cancel`), that of the line the whole
+    channel. Who takes part and where an agent answers are kept up by the stream (`StateChanged`
+    in the turn's thread, the channel fetched again as a thread opens or someone joins or leaves
+    one); a thread closed closes its pane. What is read stays the channel's and follows the line.
 *   **A plan** is shown by its call, its steps numbered. While an agent works through it, each step
     is a block of its own, headed with the step, that holds what the step said; the step a turn is
     in is open while the turn is under way, every other one folded unless the user opened or closed
@@ -437,7 +438,9 @@ A channel that does not run, its components unreadable, says so and why above th
     declines them.
 *   **Brave mode** adds a rule that allows every tool call in the session for an hour; while a rule
     of this user's allows everything in the channel, a bar says so, until when, and stops it.
-*   **Stop.** The stop button ends the current turn of every agent; the stop icon on an answer under
+*   **Stop.** The stop button of the line ends the current turn of every agent, that of a thread's
+    pane the turns in that thread alone - also where the user may not write there, as in a
+    sub-agent's -; the stop icon on an answer under
     way ends that agent's turn alone; a tool call that runs has a stop icon that interrupts that
     call alone, and the agent goes on. A command a call handed back as still running can be ended by
     whoever may change the workspace's files.

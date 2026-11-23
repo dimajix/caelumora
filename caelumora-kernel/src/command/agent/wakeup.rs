@@ -3,6 +3,7 @@
 use crate::command::{command_error, named_one, names, ChannelCommand, CommandContext};
 use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandResult};
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::command::{
     CommandDescription, CommandOutput, CommandParameter, ParameterKind,
 };
@@ -10,8 +11,8 @@ use caelumora_domain::value::command_name::CommandName;
 
 const WAKEUP_COMMAND_NAME: &str = "agent wakeup";
 
-/// `/agent wakeup [agent]`: wakes the sleeping agents of the channel, or one of them. `/wakeup`
-/// for short.
+/// `/agent wakeup [agent]`: wakes the sleeping agents of the channel - of the thread it is issued
+/// in, where that is not the line (issue 595) -, or one of them. `/wakeup` for short.
 #[derive(Debug)]
 pub(super) struct WakeupCommand(CommandDescription);
 
@@ -21,7 +22,7 @@ impl WakeupCommand {
         Self(CommandDescription {
             name: CommandName::fixed(WAKEUP_COMMAND_NAME),
             aliases: vec![CommandName::fixed("wakeup")],
-            description: "Wakes the sleeping agents of this channel, or the one named.".to_string(),
+            description: "Wakes the sleeping agents of this channel - of this thread, issued in one - or the one named.".to_string(),
             parameters: vec![CommandParameter::optional("agent").of_kind(ParameterKind::Agent)],
             owners_only: false,
         })
@@ -45,9 +46,12 @@ impl ChannelCommand for WakeupCommand {
     ) -> CommandResult<CommandOutput> {
         let wanted = args.trim();
         if wanted.is_empty() {
+            // Issued in a thread, it wakes that thread; in the line, the whole channel (issue 595).
+            let line = ThreadId::line(context.channel.id());
+            let thread = Some(context.thread).filter(|thread| *thread != line);
             let mut woken = context
                 .channel
-                .wakeup(&context.issuer.security_context(), None)
+                .wakeup(&context.issuer.security_context(), thread)
                 .await
                 .map_err(|e| command_error(WAKEUP_COMMAND_NAME, &e))?;
             woken.sort();

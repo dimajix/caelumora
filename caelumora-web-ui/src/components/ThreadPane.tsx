@@ -19,6 +19,8 @@ interface ThreadPaneProps {
   onLoadEarlier: () => Promise<void>;
   /** Sends `input` into it, as `ConversationView` does. */
   onSend: (input: UserInput, attached: string[], release: Classification | null) => Promise<void>;
+  /** Stops what is generated in it alone (issue 595). */
+  onStop: () => void;
   /** Closes the pane: the channel's panel shows again. */
   onClose: () => void;
   /** What waits for the user in it: the approvals and questions of its calls. */
@@ -26,7 +28,7 @@ interface ThreadPaneProps {
 }
 
 /** The thread `thread` as its pane shows it, its conversation `conversation`. */
-export const ThreadPane: React.FC<ThreadPaneProps> = ({thread, conversation, onLoadEarlier, onSend, onClose, children}) => {
+export const ThreadPane: React.FC<ThreadPaneProps> = ({thread, conversation, onLoadEarlier, onSend, onStop, onClose, children}) => {
   const {participants, takesPart, channel} = useChatChannel();
   const {title, takingPart} = describeThread(thread, participants);
   // A closed circle is a sub-agent's: nobody outside says anything in it (issue 602).
@@ -61,6 +63,7 @@ export const ThreadPane: React.FC<ThreadPaneProps> = ({thread, conversation, onL
         onLoadEarlier={onLoadEarlier}
         draftKey={`${channel?.id}:${thread.id}`}
         onSend={onSend}
+        onStop={onStop}
         cannotWrite={cannotWrite}
       >
         {children}

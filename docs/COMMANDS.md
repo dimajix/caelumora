@@ -174,7 +174,9 @@ A command is issued in a thread of its channel (`CommandContext::thread`, issue 
 issuer names, the line where none is named: what it sends happens there. A `/participant nudge` asks
 in it, of someone who takes part there; a `/workspace run` says its call there; a command of an
 agent is asked of an agent that takes part there, and rejected at the channel's door otherwise; a
-channel-wide answer is announced there.
+channel-wide answer is announced there. `/agent wakeup` without an agent wakes the thread it is
+issued in and ends its quiet - in the line, the whole channel (issue 595), as stopping from the
+line's view stops the whole channel.
 
 ### Private or channel-wide answers
 
@@ -307,7 +309,7 @@ external agent alike.
 | `/agent list` | - | the channel | `agent` | - | private | Lists the agents of the session the user may read - those taking part, and those lying in its scope -, with their personalities and whether they take part in the channel, the session or neither. |
 | `/agent create` | - | the channel | `agent` | `<personality> [as <name>]` | private | Makes an agent of the personality named, in the session's scope - in the channel's for a personality of the channel's scope -, named after the personality unless named; `/participant add` brings it in. |
 | `/agent delete` | - | the channel | `agent` | `<agent>` | private | Deletes the agent of the session named, among those `/agent list` lists; one taking part rests in its channels until it is restored. |
-| `/agent wakeup` | `/wakeup` | the channel | `agent` | `[agent]` | channel-wide | Wakes the sleeping agents of the channel, or the one named. |
+| `/agent wakeup` | `/wakeup` | the channel | `agent` | `[agent]` | channel-wide | Wakes the sleeping agents of the channel - of the thread it is issued in, if not the line -, or the one named. |
 | `/agent usage` | - | the channel | `agent` | `[agent]` | private | Tells how full the context of each agent taking part in the channel is, or of the one named - its tokens against its size, where known - and the input and output tokens of all its calls; without an agent, adds up the calls of them all. |
 | `/channel list` | - | the channel | `channel` | - | private | Lists the channels of the session the user may read: whether it is this one, whether the user takes part, and its summary. |
 | `/channel describe` | - | the channel | `channel` | `[channel]` | private | Describes this channel, or the one of the session named: its summary, briefing, classification and language. |

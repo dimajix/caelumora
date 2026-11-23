@@ -624,6 +624,20 @@ pub(super) async fn cancel_channel(
     Ok(StatusCode::OK)
 }
 
+/// Ends the turns under way in the thread `tid` of the channel and keeps it quiet (issue 595) -
+/// running there or set aside there waiting for a person -, the other threads going on: under the
+/// permission of cancelling the channel, of which a thread is part (`CancelChannel`, checked by the
+/// channel). `404 thread_not_found` for a thread that is not open.
+pub(super) async fn cancel_thread(
+    State(state): State<Arc<AppState>>,
+    Path((session_id, channel_id, thread)): Path<(SessionId, ChannelId, ThreadId)>,
+    user: AuthenticatedUser,
+) -> Result<StatusCode, ApiError> {
+    let (_, channel) = open_channel(&state, &user, session_id, channel_id).await?;
+    channel.cancel(&user.security_context(), Some(thread)).await?;
+    Ok(StatusCode::OK)
+}
+
 /// Ends the turn of one participant of the channel (issue 235), under the
 /// same permission as cancelling the channel (`CancelChannel`, checked by
 /// the channel). The others go on, and the channel stays answering.
@@ -1389,9 +1403,10 @@ mod tests {
 
     /// Issue 602: a participant of the channel is taken into a further thread of it and let go
     /// from it alone; taken in twice, or let go from the last thread it takes part in, it is told
-    /// why.
+    /// why. Issue 595: the channel lists the thread and where its participants take part, and the
+    /// thread is stopped alone.
     #[tokio::test]
-    async fn a_participant_is_taken_into_a_thread_and_let_go_from_it_alone() {
+    async fn a_thread_takes_participants_in_lets_them_go_and_is_stopped_alone() {
         use caelumora_domain::channel::ThreadOrigin;
         use caelumora_kernel::channel::ThreadSpec;
         let state = state();
@@ -1445,6 +1460,16 @@ mod tests {
         assert_eq!(taking_part, both, "she takes part in the line and the thread");
         let (status, _) = send(&api, &cookie, Method::DELETE, &hers(thread), None).await;
         assert_eq!(status, StatusCode::NO_CONTENT, "let go by the channel's owner");
+        // Issue 595: a thread is stopped alone, one not open is not found.
+        let cancel = |thread: ThreadId| format!("{threads}/{}/cancel", thread.0);
+        let (status, _) = send(&api, &cookie, Method::POST, &cancel(thread), None).await;
+        assert_eq!(status, StatusCode::OK, "the thread stopped");
+        let (status, refused) =
+            send(&api, &cookie, Method::POST, &cancel(ThreadId::new()), None).await;
+        assert_eq!(
+            (status, refused["code"].clone()),
+            (StatusCode::NOT_FOUND, json!("thread_not_found"))
+        );
 
         state.session_manager.stop(&system, session_id).await.unwrap();
     }

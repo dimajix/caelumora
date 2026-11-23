@@ -253,3 +253,10 @@ which its event already carries in its context - or only in the snapshot.
   where its circle is open; the channel kept up from the stream (`withChannelEvent`) and fetched
   again as a thread opens or someone joins or leaves one. Stored channel histories holding an
   approval or a question request are to be deleted: the requests now carry their thread.
+- **2026-11-23** — Step 3: stopping and waking one thread, as E3 decided. A thread is stopped by an
+  endpoint of its own, `POST …/threads/{tid}/cancel`, decided by the maintainer: stopping is an act
+  on the thread, as taking someone into it is, not something said in the channel that names where;
+  `POST …/cancel` stays the whole channel's. `/agent wakeup` without an agent wakes the thread it is
+  issued in, in the line the whole channel. The pane's stop button stops its thread alone. Whether
+  `ChannelLoop::cancel_actor` is to end an actor's turns set aside in other threads stays open from
+  602.

@@ -295,17 +295,23 @@ export const Composer: React.FC<ComposerProps> = ({composer, onSend, onStop, gen
         >
           <Send size={20} />
         </button>
-        {generating && onStop && (
-          <button
-            type="button"
-            onClick={onStop}
-            className="h-10.5 p-2 bg-red-600 hover:bg-red-700 text-white rounded-md transition-colors"
-            title="Stop generation"
-          >
-            <Square size={20} fill="currentColor" />
-          </button>
-        )}
+        {generating && onStop && <StopButton onStop={onStop} />}
       </form>
     </>
   );
 };
+
+/**
+ * The button that stops what is generated in a conversation - beside the field to write in, and
+ * where the user cannot write but may stop it (issue 595).
+ */
+export const StopButton: React.FC<{onStop: () => void}> = ({onStop}) => (
+  <button
+    type="button"
+    onClick={onStop}
+    className="h-10.5 p-2 bg-red-600 hover:bg-red-700 text-white rounded-md transition-colors"
+    title="Stop generation"
+  >
+    <Square size={20} fill="currentColor" />
+  </button>
+);
