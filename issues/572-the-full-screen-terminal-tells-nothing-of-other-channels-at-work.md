@@ -49,3 +49,7 @@ something of the activity in other channels.
 together with this issue: since 557 the line's view (`Envelope::is_shown_in_line`) shows the
 terminal of another thread its approvals, its questions and what mentions the user, told
 "elsewhere" in another channel. What concerns a user as a whole is issue 594.
+
+**2026-11-23** - Issue 594 decided what concerns a user (`Envelope::concerns`) and kept this issue
+apart from it: this one is about activity; of 594 it can take a mark of the channels where
+something waits for the user.
