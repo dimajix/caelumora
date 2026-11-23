@@ -2,7 +2,7 @@
 // messages, notices, steps of plans and answers under way, its earlier pages and the mark of what
 // is new, with what the user may do with each message.
 
-import React, {useLayoutEffect, useMemo, useRef, useState} from 'react';
+import React, {useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
 import {
   AlertTriangle,
   AtSign,
@@ -39,6 +39,8 @@ import {useComposer} from '../composer';
 import {Composer, StopButton} from './Composer';
 import {ThreadMark} from './ThreadMark';
 import type {UserInput} from '../command';
+import {ApiRequestError, reportError} from '../errors';
+import {isOthers} from '../unread';
 
 /** Why an agent did not answer again (issue 234), as this page words it. */
 function retryRefusedText(reason: RetryRefused): string {
@@ -111,6 +113,15 @@ function commandHeading(output: NonNullable<Message['commandOutput']>, sender: s
     : <span>{sender} ran {name}</span>;
 }
 
+/**
+ * Where the new messages of a conversation began as it was opened (issues 404, 595): after the
+ * message last read - none if nothing was -, and how many came since.
+ */
+export interface NewSince {
+  after: string | null;
+  count: number;
+}
+
 interface ConversationViewProps {
   conversation: Conversation;
   /** Reads the page of the history before those shown. */
@@ -119,7 +130,12 @@ interface ConversationViewProps {
    * Where the new messages began as the conversation was opened (issue 404): after the message
    * last read, and how many came since.
    */
-  newSince?: {after: string | null; count: number};
+  newSince?: NewSince;
+  /**
+   * Marks the conversation read up to `message` (issues 404, 595): the newest message of someone
+   * else it shows, while the tab is visible.
+   */
+  onRead: (message: string) => Promise<void>;
   /** Where what the user writes here is kept as a draft. */
   draftKey: string;
   /**
@@ -147,7 +163,7 @@ interface ConversationViewProps {
  * dropped are attached.
  */
 export const ConversationView: React.FC<ConversationViewProps> = ({
-  conversation, onLoadEarlier, newSince, draftKey, onSend, onStop, cannotWrite, onThreadAt, children,
+  conversation, onLoadEarlier, newSince, onRead, draftKey, onSend, onStop, cannotWrite, onThreadAt, children,
 }) => {
   const {
     me, channel, participants, takesPart, attachments, threads,
@@ -169,6 +185,37 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
     return ids;
   }, [merged, byUser]);
   const digestsByTurn = useMemo(() => attachedByTurn(shown), [shown]);
+
+  // The newest message of someone else shown is what the user read (issue 404), marked while the
+  // tab is visible: as the conversation is opened, as messages arrive and as the tab comes back.
+  // Never one of their own, which is shown before the channel takes it in; nor a notice of the
+  // UI's, which is in no history.
+  const newestOfOthers = useMemo(() => shown.findLast(m =>
+    m.id && (m.role === 'User' || m.role === 'Assistant') && isOthers(m, me)
+    && !m.givenUp && !m.commandOutput && !m.activity && !m.chainCutOff && !m.nudged
+  )?.id ?? null, [shown, me]);
+  // Read through a ref, so that a caller's new function on every render marks nothing again.
+  const read = useRef(onRead);
+  useEffect(() => {
+    read.current = onRead;
+  });
+  const marked = useRef<string | null>(null);
+  useEffect(() => {
+    if (!newestOfOthers) return;
+    const mark = () => {
+      if (document.visibilityState !== 'visible' || marked.current === newestOfOthers) return;
+      marked.current = newestOfOthers;
+      read.current(newestOfOthers).catch(error => {
+        // A message the history does not hold marks nothing, and is not tried again.
+        if (error instanceof ApiRequestError && error.status === 404) return;
+        marked.current = null;
+        reportError('Failed to mark what was read', error);
+      });
+    };
+    mark();
+    document.addEventListener('visibilitychange', mark);
+    return () => document.removeEventListener('visibilitychange', mark);
+  }, [newestOfOthers]);
   const shownChannel: ShownChannel = {...outer, endedCommands: ended, digestsByTurn};
   const [isLoadingEarlier, setIsLoadingEarlier] = useState(false);
   // The user's own message being edited, and the one whose taking back waits for a second click

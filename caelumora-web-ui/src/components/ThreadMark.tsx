@@ -6,6 +6,7 @@ import {MessagesSquare} from 'lucide-react';
 import type {ChannelThread} from '../types';
 import {useChatChannel} from '../chatChannel';
 import {describeThread} from '../threads';
+import {unreadLabel} from '../unread';
 
 /** The mark of `thread`, which opens it in its pane. */
 export const ThreadMark: React.FC<{thread: ChannelThread}> = ({thread}) => {
@@ -22,6 +23,11 @@ export const ThreadMark: React.FC<{thread: ChannelThread}> = ({thread}) => {
       <span>{title}</span>
       {takingPart.length > 0 && (
         <span className="text-gray-500 dark:text-gray-400">· {takingPart.map(m => m.name).join(', ')}</span>
+      )}
+      {(thread.unread?.messages ?? 0) > 0 && (
+        <span className={thread.unread?.mentioned ? 'font-semibold' : 'text-gray-500 dark:text-gray-400'}>
+          · {unreadLabel(thread.unread!.messages)} new{thread.unread?.mentioned ? ', mentions you' : ''}
+        </span>
       )}
       {answering && (
         <span className="inline-flex items-center gap-1 text-gray-500 dark:text-gray-400">

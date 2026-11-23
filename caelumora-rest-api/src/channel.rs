@@ -228,11 +228,20 @@ pub struct ThreadResponse {
     pub opening: Opening,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recipient: Option<ActorId>,
+    /// What is new in it to the requesting user (issue 595), wherever its threads are given; marked
+    /// read by `PUT …/threads/{tid}/read`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unread: Option<UnreadResponse>,
 }
 
 impl From<snapshot::ThreadSnapshot> for ThreadResponse {
     fn from(thread: snapshot::ThreadSnapshot) -> Self {
-        Self { id: thread.id, opening: thread.opening, recipient: thread.recipient }
+        Self {
+            id: thread.id,
+            opening: thread.opening,
+            recipient: thread.recipient,
+            unread: thread.unread.map(UnreadResponse::from),
+        }
     }
 }
 

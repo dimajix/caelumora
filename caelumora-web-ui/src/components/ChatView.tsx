@@ -64,7 +64,7 @@ import {LanguageDialog} from './LanguageDialog';
 import {ApprovalRulesDialog} from './ApprovalRulesDialog';
 import {languageLabel} from '../language';
 import {approvalRulesChangedChannel, changedChannel, descriptionChangedChannel, languageChangedChannel, languageChangedSession, joinedOrLeftChannel, onGlobalEvent, profileApprovalRules, reclassifiedChannel, saidInChannel, startedChannel} from '../globalEvents';
-import {isOthers, markRead} from '../unread';
+import {markRead} from '../unread';
 import {api} from '../api';
 import type {Page} from '../page';
 import {ApiRequestError, reportError} from '../errors';
@@ -91,21 +91,25 @@ import {QuestionCard} from './QuestionCard';
 import {approveEverything, approvingEverything, initialChoice, ruleOf, type RuleChoice} from '../approvalRules';
 import {APPROVER_NAME, actorKey, actorPath, agentIdOf, isApprover, sameActor, userActor, userIdOf} from '../actor';
 import {openEventStream} from '../stream';
-import {ConversationView} from './ConversationView';
+import {ConversationView, type NewSince} from './ConversationView';
 import {ThreadPane} from './ThreadPane';
 import {ThreadMark} from './ThreadMark';
 import {NewThreadDialog} from './NewThreadDialog';
 import {ChatChannelContext, type ChatChannel} from '../chatChannel';
-import {withChannelEvent, withThreadOpened} from '../channel';
-import {NO_CONVERSATION, answersUnderWay, withAnswersUnderWay, conversationOf, shownOf, withEarlierPage, withEvent, withLastPage, withAdded, withReplaced, type Answer, type Conversation} from '../conversation';
+import {withChannelEvent, withThreadOpened, withThreadRead} from '../channel';
+import {NO_CONVERSATION, answersUnderWay, withAnswersUnderWay, conversationOf, withEarlierPage, withEvent, withLastPage, withAdded, withReplaced, type Answer, type Conversation} from '../conversation';
 import type {UserInput} from '../command';
 
 
-/** The thread open in its pane (issue 595): of which channel, which, and its conversation. */
+/**
+ * The thread open in its pane (issue 595): of which channel, which, its conversation, and where its
+ * new messages began as it was opened.
+ */
 interface OpenThread {
   channelId: string;
   thread: string;
   conversation: Conversation;
+  newSince?: NewSince;
 }
 
 /**
@@ -218,8 +222,6 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   const openThread = open?.channelId === channelId ? open : null;
   // Changes whenever the stream starts again from a snapshot: the thread open is read anew.
   const [streamStarts, setStreamStarts] = useState(0);
-  // The line's messages as the chat shows them: each result with its call, quiet calls left out.
-  const shown = useMemo(() => shownOf(line.messages), [line.messages]);
   const [channel, setChannel] = useState<ChannelResponse | null>(null);
   const [notes, setNotes] = useState<PublishedNotes[]>([]);
   const [sideTab, setSideTab] = useState<SideTab>('channel');
@@ -283,7 +285,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   // Where the new messages began as the channel was opened (issue 404):
   // after the message last read, as the server said then, so that the line
   // stays where it was while the mark moves on as the user reads.
-  const [newSince, setNewSince] = useState<{channelId: string; after: string | null; count: number} | null>(null);
+  const [newSince, setNewSince] = useState<NewSince & {channelId: string} | null>(null);
   if (channel?.id === channelId && newSince?.channelId !== channelId) {
     setNewSince({channelId, after: channel.unread?.read_up_to ?? null, count: channel.unread?.messages ?? 0});
   }
@@ -615,7 +617,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
         .then(setChannel)
         .catch(error => reportError('Failed to load the channel', error));
       // Where an agent stands and answers, the threads open (issues 243, 595).
-      setChannel(prev => prev && withChannelEvent(prev, envelope));
+      setChannel(prev => prev && withChannelEvent(prev, envelope, me));
       if (actorEvent.CompleteMessageGenerated || actorEvent.IntermediateMessageGenerated) {
         const said = (actorEvent.CompleteMessageGenerated ?? actorEvent.IntermediateMessageGenerated)!;
         // A tool call that ended may have changed the files.
@@ -749,35 +751,21 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     });
   }, [sessionId, channelId, takesPart, user.id, me]);
 
-  // The newest message of someone else shown is what the user read (issue
-  // 404), marked while the tab is visible: as the channel is opened, as
-  // messages arrive and as the tab comes back. Never one of their own, which
-  // is shown before the channel takes it in; nor a notice of the UI's, which
-  // is in no history.
-  const newestOfOthers = useMemo(() => shown.findLast(m =>
-    m.id && (m.role === 'User' || m.role === 'Assistant') && isOthers(m, me)
-    && !m.givenUp && !m.commandOutput && !m.activity && !m.chainCutOff && !m.nudged
-  )?.id ?? null, [shown, me]);
-  const marked = useRef<string | null>(null);
-  useEffect(() => {
-    if (!newestOfOthers) return;
-    const mark = () => {
-      const key = `${channelId}:${newestOfOthers}`;
-      if (document.visibilityState !== 'visible' || marked.current === key) return;
-      marked.current = key;
-      markRead(sessionId, channelId, newestOfOthers).catch(error => {
-        marked.current = null;
-        // A message the history does not hold marks nothing.
-        if (!(error instanceof ApiRequestError && error.status === 404)) reportError('Failed to mark the channel read', error);
-      });
-    };
-    mark();
-    document.addEventListener('visibilitychange', mark);
-    return () => document.removeEventListener('visibilitychange', mark);
-  }, [sessionId, channelId, newestOfOthers]);
+  /**
+   * Shows `thread` in its pane beside the line (issue 595), read from its last page, the new
+   * messages in it marked where they began as it is opened.
+   */
+  const showThread = (thread: string) => {
+    const unread = channel?.threads?.find(t => t.id === thread)?.unread;
+    const newSince = unread && {after: unread.read_up_to ?? null, count: unread.messages};
+    setOpen({channelId, thread, conversation: NO_CONVERSATION, newSince});
+  };
 
-  /** Shows `thread` in its pane beside the line (issue 595), read from its last page. */
-  const showThread = (thread: string) => setOpen({channelId, thread, conversation: NO_CONVERSATION});
+  /** Marks the thread `thread` read up to `message`, and nothing new in it any more (issue 595). */
+  const markThreadRead = async (thread: string, message: string) => {
+    await api.markThreadRead(sessionId, channelId, thread, message);
+    setChannel(prev => prev && withThreadRead(prev, thread, message));
+  };
   // The message of the line a thread is being opened at (issue 595), while the user chooses with
   // whom.
   const [threadAt, setThreadAt] = useState<Message | null>(null);
@@ -1120,6 +1108,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
               onLoadEarlier={loadEarlier()}
             onThreadAt={setThreadAt}
               newSince={newSince?.channelId === channelId ? newSince : undefined}
+              onRead={(message) => markRead(sessionId, channelId, message)}
               draftKey={channelId}
               onSend={sendTo()}
               onStop={stopIn()}
@@ -1228,6 +1217,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
                   onLoadEarlier={loadEarlier(openedThread.id)}
                   onSend={sendTo(openedThread.id)}
                   onStop={stopIn(openedThread.id)}
+                  newSince={openThread.newSince}
+                  onRead={(message) => markThreadRead(openedThread.id, message)}
                   onClose={() => setOpen(null)}
                 >
                   {waiting(

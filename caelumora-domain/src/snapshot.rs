@@ -189,10 +189,13 @@ pub struct ThreadSnapshot {
     pub opening: Opening,
     /// To whom it was delegated, if it was: a sub-agent's thread (issue 558).
     pub recipient: Option<ActorId>,
+    /// What is new in it to the viewer - with `Detail::UNREAD`, for a user; `None` without it,
+    /// for an agent, or if it cannot be read.
+    pub unread: Option<Unread>,
 }
 
-/// What is new in a channel to a user (issue 404): the messages of others
-/// said since they last read it, of those they may read.
+/// What is new in a thread of a channel to a user - its line, or another (issues 404, 595): the
+/// messages of others said in its view since they last read it, of those they may read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Unread {
     /// How many, counted up to `Unread::CAP`: a number above it says only
@@ -201,7 +204,7 @@ pub struct Unread {
     /// Whether one of them mentions the user, `@all` included.
     pub mentioned: bool,
     /// The last message the user read, after which the new ones begin;
-    /// `None` while they read nothing of the channel.
+    /// `None` while they read nothing of the thread.
     pub read_up_to: Option<MessageId>,
 }
 

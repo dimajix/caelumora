@@ -5,7 +5,7 @@ use super::document::{log_changed, take_over};
 use arc_swap::{ArcSwap, Guard};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::approval::{ApprovalRule, ApprovalRuleId};
-use caelumora_domain::channel::{Channel, ChannelId};
+use caelumora_domain::channel::{Channel, ChannelId, ThreadId};
 use caelumora_domain::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_domain::history::Reader;
 use caelumora_domain::message::MessageId;
@@ -229,25 +229,24 @@ impl UserController {
         self.profiles.create(ctx, profile).await.created()
     }
 
-    /// Marks channel `channel_id` of session `session_id` read by the user up to message
-    /// `message_id` (issue 404), on behalf of `ctx`, the user's own: the
-    /// newest message of someone else they were shown. The channel is
-    /// reached as `ctx` reads it - the store asks whether they may read it
-    /// and are cleared for it -, and the message must be one of its history
-    /// they see, from where their view of it begins. The mark only moves
+    /// Marks the thread `thread` of channel `channel_id` of session `session_id` - its line, or
+    /// another (issue 595) - read by the user up to message `message_id` (issue 404), on behalf of
+    /// `ctx`, the user's own: the newest message of someone else they were shown in its view. The
+    /// channel is reached as `ctx` reads it - the store asks whether they may read it and are
+    /// cleared for it -, and the message must be one of its history they see, from where their
+    /// view of it begins - of a thread other than the line, said in it. The mark only moves
     /// forward: a message before it changes nothing.
     ///
     /// # Errors
-    /// `StoreError::NotFound` for a channel `ctx` does not reach in the
-    /// session and for a
-    /// message the user does not see in it; `Validation` for a context not
-    /// the user's; otherwise whatever the stores report. Nothing is changed
-    /// then.
+    /// `StoreError::NotFound` for a channel `ctx` does not reach in the session and for a message
+    /// the user does not see there; `Validation` for a context not the user's; otherwise whatever
+    /// the stores report. Nothing is changed then.
     pub async fn mark_read(
         &self,
         ctx: &SecurityContext,
         session_id: SessionId,
         channel_id: ChannelId,
+        thread: ThreadId,
         message_id: MessageId,
     ) -> StoreResult<()> {
         let reader = ActorId::User(self.id);
@@ -262,14 +261,18 @@ impl UserController {
             return Err(StoreError::NotFound { entity: "channel", id: channel_id.to_string() });
         }
         let not_seen = || StoreError::NotFound { entity: "message", id: message_id.to_string() };
-        let (position, _) = self
+        let (position, said) = self
             .histories
             .said(channel_id, &Reader::Participant(reader), message_id)
             .await?
             .ok_or_else(not_seen)?;
+        // The line's view shows messages of other threads too; another thread's, its own alone.
+        if thread != ThreadId::line(channel_id) && said.thread() != Some(thread) {
+            return Err(not_seen());
+        }
         let _guard = self.read_lock.lock().await;
         let mut state = self.states.get_user_channel_state(self.id, channel_id).await?;
-        if state.read_up_to(ReadMark { position, message: message_id }) {
+        if state.read_up_to(thread, ReadMark { position, message: message_id }) {
             self.states.put_user_channel_state(self.id, channel_id, &mut state).await?;
             debug!(user = %self.id, channel = %channel_id, "Read up to message {}", message_id);
         }

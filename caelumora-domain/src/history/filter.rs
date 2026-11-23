@@ -171,6 +171,15 @@ impl Filter<HistoryField> {
         Filter::any_of([Filter::in_thread(line), addressing_viewer])
     }
 
+    /// What the view of `thread` shows `viewer` of a channel's history, whose line is `line` (issue
+    /// 595): of the line `shown_in_line`, of another thread `in_thread`.
+    pub fn shown_in(thread: ThreadId, line: ThreadId, viewer: ActorId) -> Self {
+        match thread == line {
+            true => Filter::shown_in_line(line, viewer),
+            false => Filter::in_thread(thread),
+        }
+    }
+
     /// A message addressing `actor` (`Message::addressees`): by name, or as one of everyone.
     pub fn addressing(actor: ActorId) -> Self {
         Filter::any(HistoryField::Addressees, Filter::eq(HistoryField::Element, actor))

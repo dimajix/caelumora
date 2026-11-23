@@ -598,35 +598,47 @@ impl ChannelView {
                 false => None,
             },
             threads: match detail.contains(Detail::THREADS) {
-                true => self.threads().await,
+                true => self.threads(detail).await,
                 false => Vec::new(),
             },
         }
     }
 
     /// The threads open in the channel but its line (issue 595), from the running channel: none in
-    /// one that does not run. Whoever reads the channel reads them (issue 557).
-    async fn threads(&self) -> Vec<ThreadSnapshot> {
+    /// one that does not run. Whoever reads the channel reads them (issue 557); what is new in each
+    /// to a viewing user with `Detail::UNREAD` in `detail`.
+    async fn threads(&self, detail: Detail) -> Vec<ThreadSnapshot> {
         let Some(running) = self.running() else { return Vec::new() };
         let mut threads = Vec::new();
         for (id, opening) in running.openings() {
             let recipient = running.delegation(id).await.map(|delegation| delegation.recipient);
-            threads.push(ThreadSnapshot { id, opening, recipient });
+            let unread = match detail.contains(Detail::UNREAD) {
+                true => self.unread_in(id).await.ok().flatten(),
+                false => None,
+            };
+            threads.push(ThreadSnapshot { id, opening, recipient, unread });
         }
         threads
     }
 
-    /// What is new in the channel to the viewer (issue 404), if they are a
-    /// user: the messages others said that the viewer hears in the view of
-    /// the line and may read (`Filter::shown_in_line`, issue 557), after the last one
-    /// they read and from where their view of the
-    /// history begins - counted up to `Unread::CAP` -, and whether one of
-    /// them mentions them. Read from the store, whether the channel runs or
-    /// not.
+    /// What is new in the channel to the viewer (issue 404), if they are a user: what is new in its
+    /// line (`unread_in`).
+    ///
+    /// # Errors
+    /// As `unread_in`.
+    pub async fn unread(&self) -> ViewResult<Option<Unread>> {
+        self.unread_in(ThreadId::line(self.channel.id)).await
+    }
+
+    /// What is new in the thread `thread` to the viewer (issues 404, 595), if they are a user: the
+    /// messages others said that the viewer hears in the view of that thread (`Filter::shown_in`)
+    /// and may read, after the last one they read there and from where their view of the history
+    /// begins - counted up to `Unread::CAP` -, and whether one of them mentions them. Read from the
+    /// store, whether the channel runs or not.
     ///
     /// # Errors
     /// `Failed` if the history or what the user read cannot be read.
-    pub async fn unread(&self) -> ViewResult<Option<Unread>> {
+    async fn unread_in(&self, thread: ThreadId) -> ViewResult<Option<Unread>> {
         let viewer @ ActorId::User(user) = self.reader() else { return Ok(None) };
         let state = self
             .views()
@@ -640,13 +652,14 @@ impl ChannelView {
                     format!("reading what was read of channel {}", self.channel.id),
                 )
             })?;
-        let read_up_to = state.read.map(|read| read.message);
-        let from = state.unread_from();
+        let read_up_to = state.read_in(thread).map(|read| read.message);
+        let from = state.unread_from(thread);
+        let line = ThreadId::line(self.channel.id);
         let heard_from_others = || {
             Filter::all_of([
                 Filter::heard(),
                 Filter::negated(Filter::said_by(viewer)),
-                Filter::shown_in_line(ThreadId::line(self.channel.id), viewer),
+                Filter::shown_in(thread, line, viewer),
             ])
         };
         let new = self.readable_items(Some(heard_from_others()));

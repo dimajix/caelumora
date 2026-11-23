@@ -309,7 +309,7 @@ is shown its history and no input, and what others say in it as the global strea
 A channel that does not run, its components unreadable, says so and why above the input
 (`unavailable`); what is done there tries it again, and it is fetched anew as it starts.
 
-*   **What was read.** The chat marks the channel read up to the newest message of someone else it
+*   **What was read.** The chat marks the line read up to the newest message of someone else it
     shows, while the tab is visible - as the channel is opened, as messages arrive and as the tab
     comes back. Never up to one of the user's own, which is shown before the channel takes it in,
     nor to a notice of the UI's. A line marks where the new messages began as the channel was
@@ -396,7 +396,11 @@ A channel that does not run, its components unreadable, says so and why above th
     the pane stops that thread alone (`…/threads/{tid}/cancel`), that of the line the whole
     channel. Who takes part and where an agent answers are kept up by the stream (`StateChanged`
     in the turn's thread, the channel fetched again as a thread opens or someone joins or leaves
-    one); a thread closed closes its pane. What is read stays the channel's and follows the line.
+    one); a thread closed closes its pane. Each thread is read on its own: its mark tells how many
+    messages of others came there since the user last read it, and whether one mentions them -
+    from the snapshot, counted on from the stream (`withChannelEvent`) -, and its pane marks it
+    read as the line marks the channel (`…/threads/{tid}/read`), with a line where its new
+    messages began as it was opened. The sidebar counts the line alone.
 *   **A plan** is shown by its call, its steps numbered. While an agent works through it, each step
     is a block of its own, headed with the step, that holds what the step said; the step a turn is
     in is open while the turn is under way, every other one folded unless the user opened or closed

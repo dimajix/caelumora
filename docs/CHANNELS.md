@@ -460,25 +460,29 @@ viewer; see [SECURITY.md](SECURITY.md).
 
 ### What is new to a user
 
-A user marks up to where they read a channel: the newest message of someone else they were shown,
-never one of their own - their own is shown as they send it, before the channel takes it in, so it
-may stand after a message of another that comes earlier in the history and was not shown yet. The
-messages of others reach a user in the order of the history, since the channel appends and routes
-in one step; so their positions in the history order them as the user sees them.
+A user marks up to where they read each thread of a channel, its line and each other one apart
+(issue 595): the newest message of someone else they were shown in its view, never one of their
+own - their own is shown as they send it, before the channel takes it in, so it may stand after a
+message of another that comes earlier in the history and was not shown yet. The messages of others
+reach a user in the order of the history, since the channel appends and routes in one step; so
+their positions in the history order them as the user sees them.
 
-*   **Kept by the user's controller.** The mark is the user's state in the channel
-    (`UserChannelState`, see [STORAGE.md](STORAGE.md#the-state-store)): the position of the message
-    in the history and the message. The `UserController` is its one writer
+*   **Kept by the user's controller.** The marks are the user's state in the channel
+    (`UserChannelState`, see [STORAGE.md](STORAGE.md#the-state-store)): for each thread the position
+    of the message in the history and the message - of a thread other than the line, one said in
+    it. The `UserController` is its one writer
     (`UserController::mark_read`), so that it is kept whether the channel runs or not, and for a
     reader who takes no part. It reaches the channel as the user reads it - the store asks - and
     takes only a message from where the user's view of the history begins. The mark only moves
     forward, so that two frontends of the user cannot move it back, and nobody else reads it.
-*   **Counted by the views.** What is new (`ChannelView::unread`, `Detail::UNREAD`) is what others
-    said that a participant hears in the view of the line (`Message::is_heard`: no steps of a plan,
-    no notices of the kernel, nothing taken back; `ChannelView::shown_in_line`), of what the user
-    may read, after the mark and from where
-    their view begins - counted up to a cap, and whether one of these messages addresses them,
-    `@all` included (`Message::addressees`).
+*   **Counted by the views.** What is new in a thread (`ChannelView::unread_in`) is what others
+    said that a participant hears in its view (`Message::is_heard`: no steps of a plan, no notices
+    of the kernel, nothing taken back; `Filter::shown_in`: of the line `Filter::shown_in_line`, of
+    another `Filter::in_thread`), of what the user may read, after its mark and from where their
+    view begins - counted up to a cap, and whether one of these messages addresses them, `@all`
+    included (`Message::addressees`). The channel's (`ChannelView::unread`, `Detail::UNREAD`) is
+    its line's, what mentions the user elsewhere included; each thread open beside it gives its
+    own (`ThreadSnapshot::unread`), so that a sub-agent's work does not count for the channel.
 *   **Announced as it is said.** Every message others hear in the line, and one mentioning a user
     in another thread, is announced on the event bus once it is stored (`channel::SAID`), with the
     message and its thread (`Said`), classified as the channel: it reaches who may read the channel

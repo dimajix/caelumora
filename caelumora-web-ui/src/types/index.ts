@@ -283,6 +283,8 @@ export interface ChannelThread {
   opening: {origin: {thread: string; message: string}; by: ActorId; circle: Circle};
   /** To whom it was delegated, if it was: a sub-agent's thread (issue 558). */
   recipient?: ActorId;
+  /** What is new in it to you (issue 595), as the channel is fetched or its stream starts. */
+  unread?: Unread;
 }
 
 /**

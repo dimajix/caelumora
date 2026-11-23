@@ -506,7 +506,7 @@ The `StateStore` (in `caelumora-store`) stores the runtime state of channels and
     what its inbox opens at when it runs again.
     An external agent keeps instead what it keeps of the remote side: the remote conversation and
     the tasks not yet ended.
-*   **`UserChannelState`**: a user in one channel - up to where they read it (see
+*   **`UserChannelState`**: a user in one channel - up to where they read each of its threads (see
     [CHANNELS.md](CHANNELS.md#what-is-new-to-a-user)).
 
 ### What a state tells a store

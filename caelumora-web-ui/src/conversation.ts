@@ -25,7 +25,6 @@ import {
   responderUndecidedNotice,
   retryRefusedNotice,
   threadNotice,
-  withoutQuietCalls,
 } from './messages';
 
 /**
@@ -98,11 +97,6 @@ export function answersUnderWay(participants: ChannelParticipant[], thread: stri
 export function withAnswersUnderWay(conversation: Conversation, found: Answer[]): Conversation {
   const fresh = found.filter(answer => !conversation.answers.some(a => a.sender === answer.sender));
   return fresh.length === 0 ? conversation : {...conversation, answers: [...conversation.answers, ...fresh]};
-}
-
-/** `messages` as the chat shows them: each result with its call, the quiet calls left out. */
-export function shownOf(messages: Message[]): Message[] {
-  return withoutQuietCalls(mergeToolResults(messages));
 }
 
 /**

@@ -1,6 +1,6 @@
 # 595 — No frontend shows another thread of a channel
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -280,3 +280,31 @@ which its event already carries in its context - or only in the snapshot.
   the list `/thread list` showed last; switching the thread followed lets go of what was known of
   the one before, also as it closes, which is told from a channel not talked in as well; what
   mentions the user is shown in any thread (`Envelope::addresses`).
+- **2026-11-23** — Step 6: what is read in a thread, decided by the maintainer as E7 to E10. A user
+  keeps a mark per thread (`UserChannelState::read`, the line under its own id; the stored states
+  of users in channels are to be deleted). What is new in a thread is counted in its view
+  (`ChannelView::unread_in`, `Filter::in_thread`) and given with each thread open
+  (`ThreadSnapshot::unread`); the channel's count stays its line's, so that a sub-agent's work
+  does not count for the sidebar. `PUT …/threads/{tid}/read` marks a thread at a message said in
+  it. The web UI's thread mark shows what is new there, counted on from the stream, and its pane
+  marks it read as the line does; marking read moved from `ChatView` into `ConversationView`,
+  which both share. The terminal is unchanged: it counts nothing new. Weighed and decided:
+  - **E7 - Where the mark lies.** (a) One mark per thread, the line among them under its own id;
+    the stored states are deleted, losing only what was read. (b) The line's mark kept as it is,
+    and a map of the other threads beside it - no data deleted, but two fields for one concept.
+    Decided: (a).
+  - **E8 - What is new in a thread.** Counted as the line's, in the thread's view: what others
+    said after its mark, and whether one of them mentions the user, given with each thread open
+    (`Detail::UNREAD`). Decided so.
+  - **E9 - How it counts in the channel's unread.** (a) Unchanged: the channel counts its line,
+    what mentions the user elsewhere included, and a thread shows its own at its mark - a
+    sub-agent's work does not count for the sidebar. (b) The threads the user takes part in count
+    for the channel too. Decided: (a).
+  - **E10 - How a thread is marked read.** `PUT …/threads/{tid}/read`, built as the cancel of a
+    thread of step 3, the line keeping `PUT …/read`; in the web UI the pane marks it as the line is
+    marked, with a line where its new messages began. Decided so.
+
+  On review: which filter a thread's view is (`Filter::shown_in`) is chosen in one place, by the
+  history route and the count alike; marking a thread has a case of its own in the security
+  suite, beside S5.
+  With this step, the last planned, the issue is done.

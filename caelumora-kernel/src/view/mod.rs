@@ -1739,12 +1739,13 @@ mod tests {
                     .unwrap()
             }
         };
+        let line = ThreadId::line(channel.id);
         let mark = |user: &User, message: MessageId| {
             let (controller, user) = (controller(user), user.id);
             async move {
                 controller
                     .await
-                    .mark_read(as_user(user).context(), session.id, channel.id, message)
+                    .mark_read(as_user(user).context(), session.id, channel.id, line, message)
                     .await
             }
         };
@@ -1765,7 +1766,7 @@ mod tests {
                 .get_user_channel_state(bob.id, channel.id)
                 .await
                 .unwrap()
-                .read,
+                .read_in(line),
             None,
             "hers alone"
         );
@@ -1785,12 +1786,12 @@ mod tests {
         );
         let elsewhere = controller(&alice)
             .await
-            .mark_read(as_user(alice.id).context(), SessionId::new(), channel.id, hers.id)
+            .mark_read(as_user(alice.id).context(), SessionId::new(), channel.id, line, hers.id)
             .await;
         assert!(not_found(elsewhere, "channel"), "nor in another session");
         let forged = controller(&alice)
             .await
-            .mark_read(as_user(bob.id).context(), session.id, channel.id, hers.id)
+            .mark_read(as_user(bob.id).context(), session.id, channel.id, line, hers.id)
             .await;
         assert!(
             matches!(forged, Err(StoreError::Validation(_))),

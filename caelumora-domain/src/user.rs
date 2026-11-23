@@ -9,6 +9,7 @@
 use crate::actor::ActorId;
 use crate::approval::{ApprovalRule, ApprovalRuleId, RuleError, MAX_PERSONAL_RULES};
 use crate::chain::Position;
+use crate::channel::ThreadId;
 use crate::message::MessageId;
 use crate::query::{Field, NoField};
 use crate::removal::Removal;
@@ -22,6 +23,7 @@ use crate::value::text::Introduction;
 use crate::value::ValueError;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::ops::Not;
 
 define_id!(UserId);
@@ -349,18 +351,18 @@ impl From<UserProfileFields> for UserProfile {
     }
 }
 
-/// A user in one channel (issue 404): up to where they read it. The user's
-/// counterpart of an agent's `AgentChannelState`, kept in the `StateStore`,
-/// written by the user's controller alone and read by nobody but the user.
+/// A user in one channel (issue 404): up to where they read each of its threads. The user's
+/// counterpart of an agent's `AgentChannelState`, kept in the `StateStore`, written by the user's
+/// controller alone and read by nobody but the user.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UserChannelState {
-    /// The last message of someone else the user read; `None` while they
-    /// read nothing of the channel.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub read: Option<ReadMark>,
+    /// The last message of someone else the user read in each thread (issue 595) - the line under
+    /// its own id, in its view -; none of a thread they read nothing of.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub read: BTreeMap<ThreadId, ReadMark>,
 }
 
-/// Up to where a user read a channel: a message and where it stands in the
+/// Up to where a user read a thread of a channel: a message and where it stands in the
 /// channel's history - the position to count what is new from, the message
 /// to show where the new ones begin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -370,21 +372,25 @@ pub struct ReadMark {
 }
 
 impl UserChannelState {
-    /// Moves the mark to `mark` if that lies after it - it only moves
-    /// forward, so that two frontends of the user cannot move it back.
-    /// Whether it moved.
-    pub fn read_up_to(&mut self, mark: ReadMark) -> bool {
-        if self.read.is_some_and(|read| read.position >= mark.position) {
+    /// Moves the mark of `thread` to `mark` if that lies after it - it only moves forward, so that
+    /// two frontends of the user cannot move it back. Whether it moved.
+    pub fn read_up_to(&mut self, thread: ThreadId, mark: ReadMark) -> bool {
+        if self.read_in(thread).is_some_and(|read| read.position >= mark.position) {
             return false;
         }
-        self.read = Some(mark);
+        self.read.insert(thread, mark);
         true
     }
 
-    /// The position in the channel's history from which on what is said is
-    /// new to the user: after the mark, or from the start.
-    pub fn unread_from(&self) -> Position {
-        self.read.map_or(Position::START, |read| read.position.next())
+    /// Up to where the user read `thread`, if they read anything of it.
+    pub fn read_in(&self, thread: ThreadId) -> Option<ReadMark> {
+        self.read.get(&thread).copied()
+    }
+
+    /// The position in the channel's history from which on what is said in `thread` is new to the
+    /// user: after its mark, or from the start.
+    pub fn unread_from(&self, thread: ThreadId) -> Position {
+        self.read_in(thread).map_or(Position::START, |read| read.position.next())
     }
 }
 
@@ -392,15 +398,15 @@ impl UserChannelState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UserChannelStateChange {
-    Read(Option<ReadMark>),
+    Read(BTreeMap<ThreadId, ReadMark>),
 }
 
 impl Journaled for UserChannelState {
     type Change = UserChannelStateChange;
 
-    /// The mark is small and changed in place: recorded whole.
+    /// The marks are small and changed in place: recorded whole.
     fn changes(&self) -> Vec<Self::Change> {
-        vec![UserChannelStateChange::Read(self.read)]
+        vec![UserChannelStateChange::Read(self.read.clone())]
     }
 
     fn mark_stored(&mut self) {}
@@ -440,16 +446,21 @@ mod tests {
     fn what_was_read_only_moves_forward() {
         let mut state = UserChannelState::default();
         let mut copy = stored(&mut state);
-        assert_eq!(state.unread_from().get(), 0, "nothing read: everything is new");
+        let (line, thread) = (ThreadId::default(), ThreadId::new());
+        assert_eq!(state.unread_from(line).get(), 0, "nothing read: everything is new");
         let first = ReadMark { position: Position::new(4), message: MessageId::new() };
         let later = ReadMark { position: Position::new(9), message: MessageId::new() };
-        assert!(state.read_up_to(first));
-        assert!(state.read_up_to(later));
-        assert!(!state.read_up_to(first), "not back");
-        assert!(!state.read_up_to(later), "nor again");
-        assert_eq!((state.read, state.unread_from().get()), (Some(later), 10));
+        assert!(state.read_up_to(line, first));
+        assert!(state.read_up_to(line, later));
+        assert!(!state.read_up_to(line, first), "not back");
+        assert!(!state.read_up_to(line, later), "nor again");
+        assert_eq!((state.read_in(line), state.unread_from(line).get()), (Some(later), 10));
+        // Issue 595: each thread keeps a mark of its own.
+        assert_eq!(state.unread_from(thread).get(), 0, "nothing of the thread read");
+        assert!(state.read_up_to(thread, first), "behind the line's mark, the thread's own");
         replayed(&state, &mut copy);
-        assert_eq!(copy.read, Some(later), "replayed as stored");
+        assert_eq!(copy.read_in(line), Some(later), "replayed as stored");
+        assert_eq!(copy.read_in(thread), Some(first));
     }
 
     #[test]

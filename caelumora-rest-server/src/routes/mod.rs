@@ -387,6 +387,10 @@ fn session_routes() -> Router<Arc<AppState>> {
         .route("/sessions/{id}/channels/{cid}/threads", post(channels::open_thread))
         .route("/sessions/{id}/channels/{cid}/threads/{tid}/cancel", post(channels::cancel_thread))
         .route(
+            "/sessions/{id}/channels/{cid}/threads/{tid}/read",
+            routing::put(channels::mark_thread_read),
+        )
+        .route(
             "/sessions/{id}/channels/{cid}/threads/{tid}/participants",
             post(channels::add_thread_participant),
         )

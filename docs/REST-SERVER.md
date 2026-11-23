@@ -129,12 +129,13 @@ list (`AccessEntry`), is a bare UUID.
 | `GET …/history`, `POST …/messages` | A page of the channel's history as items; write a message - its `content`, the `attachments` it carries by their ids, or both -, in the thread `thread` names, the line if none, which draws the writer and whom it mentions by name into it unless its circle is closed (issue 602) |
 | `POST …/attachments?name=&level=&compartments=` | Upload a file for a message the user is about to write (issue 282): the body, with its `Content-Length` (`411 length_required` without), classified by `level` and `compartments` (comma-separated) - the channel's if no level is given -; answers `201` with the reference a message names by its `id` |
 | `GET …/messages/{mid}/attachments/{aid}` | Download an attachment of a message the user sees in the history, or what one of its tool results the user is shown gave or showed its model: a png, jpeg or webp image inline, anything else as a download |
-| `PUT …/read` | Mark the channel read up to a message (`message_id`): the newest of someone else the user was shown; `404 message_not_found` for one their view of the history does not reach |
+| `PUT …/read` | Mark the channel's line read up to a message (`message_id`): the newest of someone else the user was shown; `404 message_not_found` for one their view of the history does not reach |
 | `GET`, `PUT`, `DELETE …/messages/{mid}`; `PUT …/messages/{mid}/classification`; `POST …/messages/{mid}/retry` | Read a message as it stands (`404 message_not_found` where the user's view of the history does not reach it); modify or take back one's own message - a modification names its `attachments` as they are to stand, so that one naming none removes them all -; reclassify a message; ask the agent that said it to answer again, in the thread it was said in |
 | `POST …/approvals`, `POST …/questions/{qid}` | Approve or deny a tool call; answer or decline the questions of an agent's call |
 | `POST …/cancel` | End the current turn of every agent in the channel |
 | `POST …/threads` | Open a thread at a message of the line (`message`), its circle open, founded with the user and agents of theirs (`founders`) - one new to the channel takes part in the thread alone (issue 595): `201` with the thread as the channel lists it, `404 message_not_found` for a message not said in the line |
 | `POST …/threads/{tid}/cancel` | End the turns under way in one thread alone and keep it quiet (issue 595), under the channel's `CancelChannel`: `404 thread_not_found` for a thread not open |
+| `PUT …/threads/{tid}/read` | Mark a thread read up to a message said in it (`message_id`), as `PUT …/read` the line (issue 595): `404 message_not_found` for one not said there or out of the user's view |
 | `POST`, `DELETE …/participants`, `…/participants/{aid}`; `GET …/participants/{aid}` | Add or remove a participant - one not in the session yet is taken into it, too; one participant, with who it is |
 | `GET …/participants/{aid}/usage` | What one participant's model calls used alone, as its state holds it - `null` for one that is no agent or counted no call yet -, failing if its state cannot be read: what a client reads again after an agent's turn |
 | `POST …/participants/{aid}/retry`, `…/cancel`, `…/tool-calls/{call_id}/cancel` | Ask one agent to answer again - its turn `turn_id`, in the thread it runs or ran in -; end its turn alone; interrupt one tool call of its turn |
@@ -177,7 +178,8 @@ Some rules hold across the endpoints:
 *   **What costs, or concerns one thing, is given where one thing is fetched**, not where things are
     listed: what a participant's model calls used, a briefing, an artifact's places of publication.
     An access list is given to the owner alone. What is new in a channel to the user (`unread`) is
-    given wherever channels are, listed or fetched: it is what a list is read for.
+    given wherever channels are, listed or fetched: it is what a list is read for; what is new in
+    each of its threads wherever its threads are given.
 *   **What a client offers it reads from flags** (`can_change`, `can_retry`, `can_cancel`,
     `can_read_context`, ...) the views decide for the user, not from rules of its own.
 

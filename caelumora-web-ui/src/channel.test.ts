@@ -2,8 +2,8 @@
 
 import {describe, expect, it} from 'vitest';
 import type {ChannelResponse, ChannelThread} from './types';
-import {withChannelEvent, withThreadOpened} from './channel';
-import {AGENT, CHANNEL, ME, THREAD, channelOf, envelope, participant} from './testing';
+import {withChannelEvent, withThreadOpened, withThreadRead} from './channel';
+import {AGENT, CHANNEL, ME, THREAD, channelOf, envelope, message, participant} from './testing';
 import {describeThread} from './threads';
 
 /** The channel with `AGENT` and `ME` taking part, and `threads` open. */
@@ -15,17 +15,29 @@ const opened: ChannelThread = {id: THREAD, opening: {origin: {thread: CHANNEL, m
 
 describe('withChannelEvent', () => {
   it('tells where an agent answers: the thread a step of its turn is announced in', () => {
-    const working = withChannelEvent(channel(), envelope({StateChanged: 'Planning'}, AGENT, THREAD));
+    const working = withChannelEvent(channel(), envelope({StateChanged: 'Planning'}, AGENT, THREAD), ME);
     expect(working.participants[0]).toMatchObject({state: 'Planning', answering_in: THREAD});
-    const waiting = withChannelEvent(working, envelope({StateChanged: 'WaitingForUser'}));
+    const waiting = withChannelEvent(working, envelope({StateChanged: 'WaitingForUser'}), ME);
     expect(waiting.participants[0]).toMatchObject({state: 'WaitingForUser', answering_in: undefined});
   });
 
   it('lets a thread closed go, and leaves the channel as it is otherwise', () => {
     const held = channel([opened]);
-    expect(withChannelEvent(held, envelope({ThreadClosed: {thread: THREAD}})).threads).toEqual([]);
-    expect(withChannelEvent(held, envelope({ThreadClosed: {thread: 'elsewhere'}}))).toBe(held);
-    expect(withChannelEvent(held, envelope({ResponseStarted: {turn_id: 'turn-1'}}))).toBe(held);
+    expect(withChannelEvent(held, envelope({ThreadClosed: {thread: THREAD}}), ME).threads).toEqual([]);
+    expect(withChannelEvent(held, envelope({ThreadClosed: {thread: 'elsewhere'}}), ME)).toBe(held);
+    expect(withChannelEvent(held, envelope({ResponseStarted: {turn_id: 'turn-1'}}), ME)).toBe(held);
+  });
+
+  it('counts what others say in a thread as new there, and marking it read clears it', () => {
+    const held = channel([opened]);
+    const said = (sender: typeof ME, thread: string) =>
+      envelope({CompleteMessageGenerated: {...message(`m-${thread}`, sender), addressees: [ME]}}, sender, thread);
+    const counted = withChannelEvent(held, said(AGENT, THREAD), ME);
+    expect(counted.threads?.[0].unread).toEqual({messages: 1, mentioned: true, read_up_to: undefined});
+    expect(withChannelEvent(held, said(ME, THREAD), ME)).toBe(held);
+    expect(withChannelEvent(held, said(AGENT, CHANNEL), ME)).toBe(held);
+    const read = withThreadRead(counted, THREAD, 'm-thread');
+    expect(read.threads?.[0].unread).toEqual({messages: 0, mentioned: false, read_up_to: 'm-thread'});
   });
 });
 

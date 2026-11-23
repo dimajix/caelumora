@@ -666,7 +666,13 @@ async fn up_to_where_a_channel_was_read_is_marked_by_its_reader_alone() {
                 .user_controller(user)
                 .await
                 .unwrap()
-                .mark_read(&World::as_user(user), session, channel, message)
+                .mark_read(
+                    &World::as_user(user),
+                    session,
+                    channel,
+                    ThreadId::line(channel),
+                    message,
+                )
                 .await
         }
     };
@@ -708,6 +714,60 @@ async fn up_to_where_a_channel_was_read_is_marked_by_its_reader_alone() {
     );
 
     let (marked, asked) = world.asked(mark(world.carol, after)).await;
+    assert!(
+        matches!(marked, Err(StoreError::NotFound { entity: "channel", .. })),
+        "carol does not reach it: {marked:?}"
+    );
+    assert_eq!(asked, checks(&["carol: GetChannel(alice's) no"]));
+    world.manager.stop(&alice, session.id()).await.unwrap();
+}
+
+/// S5 for a thread (issue 595): a thread is marked as the line is - asked the same -, at a message
+/// said in it, by its reader alone; what is new in it is counted apart, given with the thread.
+#[tokio::test]
+async fn up_to_where_a_thread_was_read_is_marked_by_its_reader_alone() {
+    use caelumora_domain::message::MessageId;
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let line = ThreadId::line(main.id());
+    let origin = ThreadOrigin { thread: line, message: main.said_by(world.alice, line).await };
+    let alice = World::as_user(world.alice);
+    let thread = session.open_thread(&alice, main.id(), ThreadSpec::new(origin)).await.unwrap();
+    let aside = main.said_by(world.alice, thread).await;
+    let mark = |user: UserId, message: MessageId| {
+        let controllers = world.kernel.controller_manager();
+        let (session, channel) = (session.id(), main.id());
+        async move {
+            let controller = controllers.user_controller(user).await.unwrap();
+            controller.mark_read(&World::as_user(user), session, channel, thread, message).await
+        }
+    };
+    let unread = |user: UserId| {
+        let (manager, session, channel) = (&world.manager, session.id(), main.id());
+        async move {
+            let view = manager.views(Viewer::new(World::as_user(user)));
+            let channel = view.channel(session, channel).await.unwrap();
+            let snapshot = channel.snapshot(Detail::THREADS | Detail::UNREAD).await;
+            let listed = snapshot.threads.into_iter().find(|listed| listed.id == thread);
+            let in_thread = listed.and_then(|listed| listed.unread).map(|unread| unread.messages);
+            (snapshot.unread.map(|unread| unread.messages), in_thread)
+        }
+    };
+    assert_eq!(unread(world.bob).await, (Some(1), Some(1)), "her words in the line and the thread");
+
+    let (marked, asked) = world.asked(mark(world.bob, aside)).await;
+    marked.expect("his to mark");
+    assert_eq!(asked, checks(&["bob: GetChannel(alice's) yes", "bob: Cleared(bob) yes"]));
+    assert_eq!(unread(world.bob).await, (Some(1), Some(0)), "the line's count stays");
+    assert!(
+        matches!(
+            mark(world.bob, origin.message).await,
+            Err(StoreError::NotFound { entity: "message", .. })
+        ),
+        "not at a message of the line"
+    );
+    let (marked, asked) = world.asked(mark(world.carol, aside)).await;
     assert!(
         matches!(marked, Err(StoreError::NotFound { entity: "channel", .. })),
         "carol does not reach it: {marked:?}"

@@ -153,10 +153,9 @@ pub(super) async fn get_channel(
 const SNAPSHOT_ITEMS: usize = 20;
 
 /// A page of the history of the channel, as the user may see it (issues 46, 218): its messages and
-/// how turns ended (issue 258), oldest first - the last ones, or those before `?before=`; of the
-/// thread `?thread=`, with what happens in the whole channel, or else what the view of the line
-/// shows the user (`Filter::shown_in_line`, issue 557); with `?attachments=true`, the
-/// messages carrying attachments alone (issue 509).
+/// how turns ended (issue 258), oldest first - the last ones, or those before `?before=`; what the
+/// view of the thread `?thread=`, or else of the line, shows the user (`Filter::shown_in`, issues
+/// 557, 595); with `?attachments=true`, the messages carrying attachments alone (issue 509).
 pub(super) async fn get_channel_history(
     State(state): State<Arc<AppState>>,
     Path((session_id, channel_id)): Path<(SessionId, ChannelId)>,
@@ -165,14 +164,13 @@ pub(super) async fn get_channel_history(
 ) -> Result<Json<HistoryPageResponse<Message>>, ApiError> {
     let channel = channel_view(&state, &user, session_id, channel_id).await?;
     let line = ThreadId::line(channel_id);
-    let in_line =
-        query.thread.is_none().then(|| Filter::shown_in_line(line, ActorId::User(user.id)));
-    let filter = Filter::all_given([in_line, query.filter()]);
+    let shown = Filter::shown_in(query.thread.unwrap_or(line), line, ActorId::User(user.id));
+    let filter = Filter::all_given([Some(shown), query.filter()]);
     let page = channel.history_page_of(query.before, query.limit(), filter).await?;
     Ok(Json(HistoryPageResponse::of(page, |message, _| message)))
 }
 
-/// Marks the channel read by the user up to the message the body names
+/// Marks the channel's line read by the user up to the message the body names
 /// (issue 404): the newest message of someone else they were shown. `204`;
 /// a message before the one marked changes nothing. Answers `404
 /// channel_not_found` for a channel they do not read and
@@ -185,8 +183,24 @@ pub(super) async fn mark_read(
     Json(payload): Json<ReadRequest>,
 ) -> Result<StatusCode, ApiError> {
     let controller = state.kernel.controller_manager().user_controller(user.id).await?;
+    let line = ThreadId::line(channel_id);
     controller
-        .mark_read(&user.security_context(), session_id, channel_id, payload.message_id)
+        .mark_read(&user.security_context(), session_id, channel_id, line, payload.message_id)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Marks the thread `tid` of the channel read by the user up to a message of it (issue 595), as
+/// `mark_read` marks the line: `404 message_not_found` for a message they do not see said in it.
+pub(super) async fn mark_thread_read(
+    State(state): State<Arc<AppState>>,
+    Path((session_id, channel_id, thread)): Path<(SessionId, ChannelId, ThreadId)>,
+    user: AuthenticatedUser,
+    Json(payload): Json<ReadRequest>,
+) -> Result<StatusCode, ApiError> {
+    let controller = state.kernel.controller_manager().user_controller(user.id).await?;
+    controller
+        .mark_read(&user.security_context(), session_id, channel_id, thread, payload.message_id)
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -643,7 +657,8 @@ pub(super) async fn open_thread(
     let id = state.procedures.run(opening).await?;
     // As the channel lists it, read back as a channel made is.
     let channel = channel_view(&state, &user, session_id, channel_id).await?;
-    let listed = channel.snapshot(Detail::THREADS).await.threads.into_iter().find(|t| t.id == id);
+    let snapshot = channel.snapshot(Detail::THREADS | Detail::UNREAD).await;
+    let listed = snapshot.threads.into_iter().find(|t| t.id == id);
     let thread = listed.ok_or_else(|| {
         ApiError::not_found("thread_not_found", format!("Thread {id} is no longer open"))
     })?;
@@ -1131,10 +1146,8 @@ mod tests {
         page
     }
 
-    /// Has whoever `cookie` logs in say `text` in the channel, and waits until its history holds
-    /// it - kept, before a stop would lose it on its way (issue 385).
-    /// Has the user of `cookie` say `text` in the line of `channel`, and answers its id once the
-    /// history holds it.
+    /// Has whoever `cookie` logs in say `text` in the line of `channel`, and answers its id once
+    /// its history holds it - kept, before a stop would lose it on its way (issue 385).
     async fn say(
         api: &Router,
         cookie: &str,
@@ -1142,12 +1155,27 @@ mod tests {
         channel: ChannelId,
         text: &str,
     ) -> Value {
+        say_in(api, cookie, session, channel, None, text).await
+    }
+
+    /// As `say`, in the thread `thread` of `channel` - its line if none (issue 595).
+    async fn say_in(
+        api: &Router,
+        cookie: &str,
+        session: SessionId,
+        channel: ChannelId,
+        thread: Option<&Value>,
+        text: &str,
+    ) -> Value {
         let channel_uri = format!("/sessions/{}/channels/{}", session.0, channel.0);
         let messages = format!("{channel_uri}/messages");
-        let (status, _) =
-            send(api, cookie, Method::POST, &messages, Some(json!({ "content": text }))).await;
+        let said = Some(json!({ "content": text, "thread": thread }));
+        let (status, _) = send(api, cookie, Method::POST, &messages, said).await;
         assert_eq!(status, StatusCode::OK);
-        let history = format!("{channel_uri}/history");
+        let history = match thread.and_then(Value::as_str) {
+            Some(thread) => format!("{channel_uri}/history?thread={thread}"),
+            None => format!("{channel_uri}/history"),
+        };
         time::timeout(Duration::from_secs(5), async {
             loop {
                 let page = page_of(api, cookie, &history).await;
@@ -1603,6 +1631,49 @@ mod tests {
         assert_eq!(
             (status, refused["code"].clone()),
             (StatusCode::NOT_FOUND, json!("message_not_found"))
+        );
+        state.session_manager.stop(&SecurityContext::system(), session_id).await.unwrap();
+    }
+
+    /// Issue 595: what others say in a thread is new to a user there, given with the thread as
+    /// the channel lists it and not counted in the channel; marking the thread read at a message of
+    /// its own clears it, at one of the line it is not found.
+    #[tokio::test]
+    async fn a_thread_is_read_apart_from_its_channel() {
+        let state = state();
+        let api = api(Arc::clone(&state), &[]);
+        let alice_cookie = login(&api, "alice").await;
+        let bob_cookie = login(&api, "bob").await;
+        let alice = user_id(&api, &alice_cookie).await;
+        let bob = Participant::User(user_id(&api, &bob_cookie).await);
+        let (session_id, channel_id) = session_of(&state, alice, &[bob]).await;
+        let channel_uri = format!("/sessions/{}/channels/{}", session_id.0, channel_id.0);
+        let message = say(&api, &alice_cookie, session_id, channel_id, "look at this").await;
+        let threads = format!("{channel_uri}/threads");
+        let opening = Some(json!({ "message": message }));
+        let (status, opened) = send(&api, &alice_cookie, Method::POST, &threads, opening).await;
+        assert_eq!(status, StatusCode::CREATED, "{opened}");
+        let thread = &opened["id"];
+        let his = say_in(&api, &bob_cookie, session_id, channel_id, Some(thread), "aside").await;
+
+        let unread = || async {
+            let (_, channel) = send(&api, &alice_cookie, Method::GET, &channel_uri, None).await;
+            (channel["unread"]["messages"].clone(), channel["threads"][0]["unread"].clone())
+        };
+        let new_in_thread = json!({ "messages": 1, "mentioned": false });
+        assert_eq!(unread().await, (json!(0), new_in_thread), "his aside, in the thread alone");
+        let read = format!("{threads}/{}/read", thread.as_str().unwrap());
+        let (status, _) =
+            send(&api, &alice_cookie, Method::PUT, &read, Some(json!({ "message_id": his }))).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let read_up_to_his = json!({ "messages": 0, "mentioned": false, "read_up_to": his });
+        assert_eq!(unread().await, (json!(0), read_up_to_his));
+        let of_the_line = Some(json!({ "message_id": message }));
+        let (status, refused) = send(&api, &alice_cookie, Method::PUT, &read, of_the_line).await;
+        assert_eq!(
+            (status, refused["code"].clone()),
+            (StatusCode::NOT_FOUND, json!("message_not_found")),
+            "a message of the line is not the thread's"
         );
         state.session_manager.stop(&SecurityContext::system(), session_id).await.unwrap();
     }

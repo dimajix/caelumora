@@ -380,6 +380,16 @@ export const api = {
     await ensureOk(res, 'Failed to mark the channel read');
   },
 
+  /** Marks the thread `thread` read up to its message `messageId` (issue 595). */
+  async markThreadRead(sessionId: string, channelId: string, thread: string, messageId: string): Promise<void> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/threads/${thread}/read`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message_id: messageId }),
+    });
+    await ensureOk(res, 'Failed to mark the thread read');
+  },
+
   /** The message `messageId` of the channel as it stands, if the user sees it (issue 218). */
   async getMessage(sessionId: string, channelId: string, messageId: string): Promise<Message> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/messages/${messageId}`);
