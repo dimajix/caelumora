@@ -127,9 +127,8 @@ export function withEarlierPage(conversation: Conversation, page: HistoryPage<Me
  * it is where it shows none of that id.
  */
 export function withReplaced(conversation: Conversation, message: Message): Conversation {
-  const {messages} = conversation;
-  if (!message.id || !messages.some(m => m.id === message.id)) return conversation;
-  return {...conversation, messages: messages.map(m => m.id === message.id ? message : m)};
+  const messages = message.id ? changed(conversation.messages, message.id, () => message) : conversation.messages;
+  return messages === conversation.messages ? conversation : {...conversation, messages};
 }
 
 /**
@@ -152,7 +151,21 @@ function once(messages: Message[], notice: Message): Message[] {
 
 /** `messages` with `notice` in place of the one of its id, or after them. */
 function replacing(messages: Message[], notice: Message): Message[] {
-  return messages.some(m => m.id === notice.id) ? messages.map(m => m.id === notice.id ? notice : m) : [...messages, notice];
+  const replaced = notice.id ? changed(messages, notice.id, () => notice) : messages;
+  return replaced !== messages ? replaced : [...messages, notice];
+}
+
+/**
+ * `messages` with the one of `id` as `change` makes it; the same `messages` where none has that
+ * id, so that what does not change it is drawn again by nothing.
+ */
+function changed(messages: Message[], id: string, change: (message: Message) => Message): Message[] {
+  return messages.some(m => m.id === id) ? messages.map(m => m.id === id ? change(m) : m) : messages;
+}
+
+/** `messages` without the one of `id`; the same `messages` where none has that id. */
+function without(messages: Message[], id: string): Message[] {
+  return messages.some(m => m.id === id) ? messages.filter(m => m.id !== id) : messages;
 }
 
 /**
@@ -168,17 +181,16 @@ export function withEvent(conversation: Conversation, envelope: Envelope): Conve
   const answererName = envelope.context.sender_name || null;
   const at = envelope.timestamp;
   const position = envelope.context.position;
-  // What changed of it - the same conversation where nothing did, which is drawn again by nothing.
-  const chat = (change: (messages: Message[]) => Message[]): Conversation => {
-    const changed = change(messages);
-    return changed === messages ? conversation : {...conversation, messages: changed};
-  };
-  const under = (change: (answers: Answer[]) => Answer[]): Conversation => {
-    const changed = change(answers);
-    return changed === answers ? conversation : {...conversation, answers: changed};
-  };
-  // The answer of the envelope's sender, if it has one, has ended.
-  const ended = (answers: Answer[]) => answers.filter(a => a.sender !== answerer);
+  // It with `next` and `nextAnswers` - the same conversation where neither changed, which is drawn
+  // again by nothing.
+  const as = (next: Message[], nextAnswers: Answer[]): Conversation =>
+    next === messages && nextAnswers === answers ? conversation : {...conversation, messages: next, answers: nextAnswers};
+  const chat = (change: (messages: Message[]) => Message[]): Conversation => as(change(messages), answers);
+  const under = (change: (answers: Answer[]) => Answer[]): Conversation => as(messages, change(answers));
+  // The answers without that of `whose`, if it gives one: it has ended.
+  const endedOf = (whose: string, answers: Answer[]) =>
+    answers.some(a => a.sender === whose) ? answers.filter(a => a.sender !== whose) : answers;
+  const ended = (answers: Answer[]) => endedOf(answerer, answers);
   if (event.ResponseRequested) {
     // Someone asks you to respond (issue 278) - an agent is asked so, too, but a user only by a
     // nudge.
@@ -207,32 +219,31 @@ export function withEvent(conversation: Conversation, envelope: Envelope): Conve
     // snapshot's are; a call and its result are shown together as the chat is drawn.
     const said = (event.CompleteMessageGenerated ?? event.IntermediateMessageGenerated)!;
     const turnId = said.turn_id ?? null;
-    return {
-      ...conversation,
-      messages: said.id && messages.some(m => m.id === said.id) ? messages : [...messages, said],
+    const going = answers.some(a => a.sender === answerer);
+    return as(
+      said.id && messages.some(m => m.id === said.id) ? messages : [...messages, said],
       // Its sender may go on: what streams in next is its next message.
-      answers: answers.map(a => a.sender === answerer ? {...a, turnId: a.turnId ?? turnId, reasoning: '', content: ''} : a),
-    };
+      going ? answers.map(a => a.sender === answerer ? {...a, turnId: a.turnId ?? turnId, reasoning: '', content: ''} : a) : answers,
+    );
   }
   if (event.MessageModified) {
     // In its place, as the server reads it (`Message::modify`, issue 234): its words,
     // attachments, classification and mentions, and when.
     const modified = event.MessageModified;
-    return chat(prev => prev.map(m => m.id === modified.id
-      ? {...m, content: modified.content, reasoning: modified.reasoning, attachments: modified.attachments, classification: modified.classification, mentions: modified.mentions, addressees: modified.addressees, modified: modified.timestamp}
-      : m));
+    if (!modified.id) return conversation;
+    return chat(prev => changed(prev, modified.id!, m =>
+      ({...m, content: modified.content, reasoning: modified.reasoning, attachments: modified.attachments, classification: modified.classification, mentions: modified.mentions, addressees: modified.addressees, modified: modified.timestamp})));
   }
   if (event.MessageRevoked) {
     // In its place without what it said (`Message::revoke`).
     const {message, at: revoked} = event.MessageRevoked;
-    return chat(prev => prev.map(m => m.id === message
-      ? {...m, content: null, reasoning: undefined, attachments: [], tool_calls: [], tool_results: [], mentions: [], addressees: [], revoked}
-      : m));
+    return chat(prev => changed(prev, message, m =>
+      ({...m, content: null, reasoning: undefined, attachments: [], tool_calls: [], tool_results: [], mentions: [], addressees: [], revoked})));
   }
   if (event.MessageReclassified) {
     // In its place, classified anew (`Message::reclassify`, issue 239).
     const {message, classification} = event.MessageReclassified;
-    return chat(prev => prev.map(m => m.id === message ? {...m, classification} : m));
+    return chat(prev => changed(prev, message, m => ({...m, classification})));
   }
   if (event.RetryAccepted) {
     // A new answer begins: shown as under way from now on. An answer under way was given up, and
@@ -250,7 +261,7 @@ export function withEvent(conversation: Conversation, envelope: Envelope): Conve
     // what the channel holds, which the chat reads back (`withReplaced`).
     const {rejected, message, reason} = event.EventRejected;
     if (message && rejected === 'CompleteMessageGenerated') {
-      return chat(prev => prev.map(m => m.id === message ? {...m, rejected: reason} : m));
+      return chat(prev => changed(prev, message, m => ({...m, rejected: reason})));
     }
     return chat(prev => once(prev, eventRejectedNotice(rejected, reason, at, position)));
   }
@@ -262,7 +273,7 @@ export function withEvent(conversation: Conversation, envelope: Envelope): Conve
   if (event.TurnFinished) {
     // Its messages were shown as they were said; what it did of its own accord ended with it.
     const underWay = activityUnderWay(event.TurnFinished.turn_id);
-    return {...conversation, messages: messages.filter(m => m.id !== underWay), answers: ended(answers)};
+    return as(without(messages, underWay), ended(answers));
   }
   if (event.TurnGivenUp) {
     // Shown as the turn's end (issue 258), not yet part of the history: gone on reload. What it
@@ -270,12 +281,8 @@ export function withEvent(conversation: Conversation, envelope: Envelope): Conve
     const {turn_id, reason} = event.TurnGivenUp;
     const notice = givenUpNotice(turn_id, reason, sender, envelope.context.sender_name, at, envelope.context.span_id);
     const underWay = activityUnderWay(turn_id);
-    const without = messages.filter(m => m.id !== underWay);
-    return {
-      ...conversation,
-      messages: messages.some(m => m.id === notice.id) ? without : [...without, notice],
-      answers: ended(answers),
-    };
+    const rest = without(messages, underWay);
+    return as(messages.some(m => m.id === notice.id) ? rest : [...rest, notice], ended(answers));
   }
   if (event.CommandExecuted) {
     const {command, args, output, to, turn_id} = event.CommandExecuted;
@@ -301,8 +308,8 @@ export function withEvent(conversation: Conversation, envelope: Envelope): Conve
     const notice = activityNotice(turn_id, activity, sender, envelope.context.sender_name, at, output);
     const underWay = activityUnderWay(turn_id);
     return chat(prev => prev.some(m => m.id === notice.id)
-      ? prev.filter(m => m.id !== underWay)
-      : prev.some(m => m.id === underWay) ? prev.map(m => m.id === underWay ? notice : m) : [...prev, notice]);
+      ? without(prev, underWay)
+      : prev.some(m => m.id === underWay) ? changed(prev, underWay, () => notice) : [...prev, notice]);
   }
   if (event.CommandStarted) {
     // An agent began a command of yours (issue 299): its notice shows it under way until the
@@ -332,19 +339,18 @@ export function withEvent(conversation: Conversation, envelope: Envelope): Conve
     // Its calls without a result as the chat shows them.
     const unanswered = new Set(mergeToolResults(messages)
       .filter(m => m.sender_id && sameActor(m.sender_id, participant) && m.tool_calls?.some(c => !m.tool_results?.some(r => r.id === c.id)))
-      .map(m => m.id));
-    const abandoned = messages.map(m => m.id && unanswered.has(m.id) ? {...m, abandoned: true} : m);
-    return {
-      ...conversation,
-      messages: once(abandoned, notice),
-      answers: answers.filter(a => a.sender !== left),
-    };
+      .flatMap(m => m.id ? [m.id] : []));
+    const abandoned = unanswered.size > 0
+      ? messages.map(m => m.id && unanswered.has(m.id) ? {...m, abandoned: true} : m)
+      : messages;
+    return as(once(abandoned, notice), endedOf(left, answers));
   }
   if (event.GivenToRead) {
     // What came back from a thread (issue 557), at its place: part of the history, kept once by
     // the message's id.
     const given = givenBack(event.GivenToRead.message);
-    return chat(prev => [...prev, ...given.filter(g => !prev.some(m => m.id === g.id))]);
+    const fresh = (prev: Message[]) => given.filter(g => !prev.some(m => m.id === g.id));
+    return chat(prev => fresh(prev).length > 0 ? [...prev, ...fresh(prev)] : prev);
   }
   if (event.ThreadOpened || event.ThreadClosed) {
     // A thread of the channel (issue 557).

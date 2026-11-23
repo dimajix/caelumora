@@ -15,7 +15,7 @@ npm run dev
 
 The development server proxies `/api` to the program on `http://localhost:3000` (`vite.config.ts`),
 which serves the API there; the program is started as described in the [README](../README.md).
-`npm run lint` runs ESLint.
+`npm run lint` runs ESLint, `npm test` the tests with Vitest.
 
 `npm run build` type-checks and builds into `dist/`, which `caelumora-app` serves from the binary:
 embedded in a release build, read from `dist/` in a debug build, where a new build of the UI shows
@@ -67,6 +67,7 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/chatChannel.ts` | What the parts of the chat are given of the channel - who is in it, what the user may do there -, as a React context |
 | `src/conversation.ts` | One conversation of a channel - its line, or a thread -: what is shown of it, and how an event of the stream and a page of the history change it |
 | `src/composer.ts` | What a user is writing: its text, kept as a draft, what is attached and how it is classified |
+| `src/testing.ts` | What the tests build their cases from: a channel, its actors, envelopes and messages |
 | `src/page.ts`, `src/pageList.ts` | What is shown in the place of a channel, and the lists in the sidebar it is opened from |
 | `src/App.tsx` | Login state, keep-alive, the error banner, the layout |
 | `src/components/` | One exported component per file, named after what it shows; its own parts share its file, as do the parts of one thing shown that other components draw too (`MessageView.tsx`, `QuestionView.tsx`) |
@@ -80,6 +81,14 @@ all of it; the context and history panels, a record, provide the attachments alo
 provides a second, `ChatChannel`: who takes part and what the user may do there - ask for
 another answer, change or take back a message, stop an answer -, which a conversation's list and
 the field to write in read.
+
+## Tests
+
+What the UI computes without the browser - how an event or a page changes a conversation
+(`conversation.ts`), what the line's view shows and how calls and results are shown together
+(`messages.ts`) - is tested beside it, in `*.test.ts` with Vitest, built from `src/testing.ts`;
+`npm run build` type-checks the tests with the rest. The components themselves are not tested;
+they are checked in a browser.
 
 ## Talking to the server
 

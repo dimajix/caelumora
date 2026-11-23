@@ -13,8 +13,8 @@ The column _Usage_:
 
 | License | Packages |
 |---|---|
-| `MIT` | 259 |
-| `Apache-2.0` | 14 |
+| `MIT` | 273 |
+| `Apache-2.0` | 15 |
 | `ISC` | 13 |
 | `MPL-2.0` | 12 |
 | `BSD-2-Clause` | 6 |
@@ -77,7 +77,7 @@ Not purely permissive:
 | `@jridgewell/gen-mapping` | 0.3.13 | `MIT` | build |  | https://www.npmjs.com/package/@jridgewell/gen-mapping |
 | `@jridgewell/remapping` | 2.3.5 | `MIT` | build |  | https://www.npmjs.com/package/@jridgewell/remapping |
 | `@jridgewell/resolve-uri` | 3.1.2 | `MIT` | build |  | https://www.npmjs.com/package/@jridgewell/resolve-uri |
-| `@jridgewell/sourcemap-codec` | 1.5.5 | `MIT` | build |  | https://www.npmjs.com/package/@jridgewell/sourcemap-codec |
+| `@jridgewell/sourcemap-codec` | 1.6.0 | `MIT` | build |  | https://www.npmjs.com/package/@jridgewell/sourcemap-codec |
 | `@jridgewell/trace-mapping` | 0.3.31 | `MIT` | build |  | https://www.npmjs.com/package/@jridgewell/trace-mapping |
 | `@keyv/bigmap` | 1.3.1 | `MIT` | build |  | https://www.npmjs.com/package/@keyv/bigmap |
 | `@keyv/serialize` | 1.1.1 | `MIT` | build |  | https://www.npmjs.com/package/@keyv/serialize |
@@ -114,7 +114,9 @@ Not purely permissive:
 | `@tailwindcss/oxide-win32-x64-msvc` | 4.3.3 | `MIT` | build, optional |  | https://www.npmjs.com/package/@tailwindcss/oxide-win32-x64-msvc |
 | `@tailwindcss/postcss` | 4.3.3 | `MIT` | build | ✓ | https://www.npmjs.com/package/@tailwindcss/postcss |
 | `@tailwindcss/typography` | 0.5.20 | `MIT` | runtime | ✓ | https://www.npmjs.com/package/@tailwindcss/typography |
+| `@types/chai` | 5.2.3 | `MIT` | build |  | https://www.npmjs.com/package/@types/chai |
 | `@types/debug` | 4.1.13 | `MIT` | runtime |  | https://www.npmjs.com/package/@types/debug |
+| `@types/deep-eql` | 4.0.2 | `MIT` | build |  | https://www.npmjs.com/package/@types/deep-eql |
 | `@types/esrecurse` | 4.3.1 | `MIT` | build |  | https://www.npmjs.com/package/@types/esrecurse |
 | `@types/estree` | 1.0.9 | `MIT` | runtime |  | https://www.npmjs.com/package/@types/estree |
 | `@types/estree-jsx` | 1.0.5 | `MIT` | runtime |  | https://www.npmjs.com/package/@types/estree-jsx |
@@ -138,10 +140,13 @@ Not purely permissive:
 | `@typescript-eslint/visitor-keys` | 8.70.1 | `MIT` | build |  | https://www.npmjs.com/package/@typescript-eslint/visitor-keys |
 | `@ungap/structured-clone` | 1.3.3 | `ISC` | runtime |  | https://www.npmjs.com/package/@ungap/structured-clone |
 | `@vitejs/plugin-react` | 6.1.1 | `MIT` | build | ✓ | https://www.npmjs.com/package/@vitejs/plugin-react |
+| `@vitest/mocker` | 5.1.1 | `MIT` | build |  | https://www.npmjs.com/package/@vitest/mocker |
+| `@vitest/spy` | 5.1.1 | `MIT` | build |  | https://www.npmjs.com/package/@vitest/spy |
 | `acorn` | 8.17.0 | `MIT` | build |  | https://www.npmjs.com/package/acorn |
 | `acorn-jsx` | 5.3.2 | `MIT` | build |  | https://www.npmjs.com/package/acorn-jsx |
 | `ajv` | 6.15.0 | `MIT` | build |  | https://www.npmjs.com/package/ajv |
 | `any-ascii` | 0.3.3 | `ISC` | runtime | ✓ | https://www.npmjs.com/package/any-ascii |
+| `assertion-error` | 2.0.1 | `MIT` | build |  | https://www.npmjs.com/package/assertion-error |
 | `bail` | 2.0.2 | `MIT` | runtime |  | https://www.npmjs.com/package/bail |
 | `balanced-match` | 4.0.4 | `MIT` | build |  | https://www.npmjs.com/package/balanced-match |
 | `baseline-browser-mapping` | 2.11.25 | `Apache-2.0` | build |  | https://www.npmjs.com/package/baseline-browser-mapping |
@@ -150,6 +155,7 @@ Not purely permissive:
 | `cacheable` | 2.5.0 | `MIT` | build |  | https://www.npmjs.com/package/cacheable |
 | `caniuse-lite` | 1.0.30001812 | `CC-BY-4.0` | build |  | https://www.npmjs.com/package/caniuse-lite |
 | `ccount` | 2.0.1 | `MIT` | runtime |  | https://www.npmjs.com/package/ccount |
+| `chai` | 6.3.0 | `MIT` | build |  | https://www.npmjs.com/package/chai |
 | `character-entities` | 2.0.2 | `MIT` | runtime |  | https://www.npmjs.com/package/character-entities |
 | `character-entities-html4` | 2.1.0 | `MIT` | runtime |  | https://www.npmjs.com/package/character-entities-html4 |
 | `character-entities-legacy` | 3.0.0 | `MIT` | runtime |  | https://www.npmjs.com/package/character-entities-legacy |
@@ -168,6 +174,7 @@ Not purely permissive:
 | `devlop` | 1.1.0 | `MIT` | runtime |  | https://www.npmjs.com/package/devlop |
 | `electron-to-chromium` | 1.5.438 | `ISC` | build |  | https://www.npmjs.com/package/electron-to-chromium |
 | `enhanced-resolve` | 5.25.1 | `MIT` | build |  | https://www.npmjs.com/package/enhanced-resolve |
+| `es-module-lexer` | 2.3.2 | `MIT` | build |  | https://www.npmjs.com/package/es-module-lexer |
 | `escalade` | 3.2.0 | `MIT` | build |  | https://www.npmjs.com/package/escalade |
 | `escape-string-regexp` | 4.0.0, 5.0.0 | `MIT` | runtime |  | https://www.npmjs.com/package/escape-string-regexp |
 | `eslint` | 10.11.0 | `MIT` | build | ✓ | https://www.npmjs.com/package/eslint |
@@ -180,7 +187,9 @@ Not purely permissive:
 | `esrecurse` | 4.3.0 | `BSD-2-Clause` | build |  | https://www.npmjs.com/package/esrecurse |
 | `estraverse` | 5.3.0 | `BSD-2-Clause` | build |  | https://www.npmjs.com/package/estraverse |
 | `estree-util-is-identifier-name` | 3.0.0 | `MIT` | runtime |  | https://www.npmjs.com/package/estree-util-is-identifier-name |
+| `estree-walker` | 3.0.3 | `MIT` | build |  | https://www.npmjs.com/package/estree-walker |
 | `esutils` | 2.0.3 | `BSD-2-Clause` | build |  | https://www.npmjs.com/package/esutils |
+| `expect-type` | 1.4.0 | `Apache-2.0` | build |  | https://www.npmjs.com/package/expect-type |
 | `extend` | 3.0.2 | `MIT` | runtime |  | https://www.npmjs.com/package/extend |
 | `fast-deep-equal` | 3.1.3 | `MIT` | build |  | https://www.npmjs.com/package/fast-deep-equal |
 | `fast-json-stable-stringify` | 2.1.0 | `MIT` | build |  | https://www.npmjs.com/package/fast-json-stable-stringify |
@@ -237,7 +246,7 @@ Not purely permissive:
 | `longest-streak` | 3.1.0 | `MIT` | runtime |  | https://www.npmjs.com/package/longest-streak |
 | `lru-cache` | 5.1.1 | `ISC` | build |  | https://www.npmjs.com/package/lru-cache |
 | `lucide-react` | 1.48.0 | `ISC` | runtime | ✓ | https://www.npmjs.com/package/lucide-react |
-| `magic-string` | 0.30.21 | `MIT` | build |  | https://www.npmjs.com/package/magic-string |
+| `magic-string` | 0.30.21, 1.4.5 | `MIT` | build |  | https://www.npmjs.com/package/magic-string |
 | `markdown-table` | 3.0.4 | `MIT` | runtime |  | https://www.npmjs.com/package/markdown-table |
 | `mdast-util-find-and-replace` | 3.0.2 | `MIT` | runtime |  | https://www.npmjs.com/package/mdast-util-find-and-replace |
 | `mdast-util-from-markdown` | 2.0.3 | `MIT` | runtime |  | https://www.npmjs.com/package/mdast-util-from-markdown |
@@ -288,6 +297,7 @@ Not purely permissive:
 | `nanoid` | 3.3.19 | `MIT` | build |  | https://www.npmjs.com/package/nanoid |
 | `natural-compare` | 1.4.0 | `MIT` | build |  | https://www.npmjs.com/package/natural-compare |
 | `node-releases` | 2.0.57 | `MIT` | build |  | https://www.npmjs.com/package/node-releases |
+| `obug` | 3.0.0 | `MIT` | build |  | https://www.npmjs.com/package/obug |
 | `optionator` | 0.9.4 | `MIT` | build |  | https://www.npmjs.com/package/optionator |
 | `p-limit` | 3.1.0 | `MIT` | build |  | https://www.npmjs.com/package/p-limit |
 | `p-locate` | 5.0.0 | `MIT` | build |  | https://www.npmjs.com/package/p-locate |
@@ -317,12 +327,15 @@ Not purely permissive:
 | `shebang-regex` | 3.0.0 | `MIT` | build |  | https://www.npmjs.com/package/shebang-regex |
 | `source-map-js` | 1.2.1 | `BSD-3-Clause` | build |  | https://www.npmjs.com/package/source-map-js |
 | `space-separated-tokens` | 2.0.2 | `MIT` | runtime |  | https://www.npmjs.com/package/space-separated-tokens |
+| `std-env` | 4.3.0 | `MIT` | build |  | https://www.npmjs.com/package/std-env |
 | `stringify-entities` | 4.0.4 | `MIT` | runtime |  | https://www.npmjs.com/package/stringify-entities |
 | `style-to-js` | 1.1.21 | `MIT` | runtime |  | https://www.npmjs.com/package/style-to-js |
 | `style-to-object` | 1.0.14 | `MIT` | runtime |  | https://www.npmjs.com/package/style-to-object |
 | `tailwind-merge` | 3.7.0 | `MIT` | runtime | ✓ | https://www.npmjs.com/package/tailwind-merge |
 | `tailwindcss` | 4.3.3 | `MIT` | runtime | ✓ | https://www.npmjs.com/package/tailwindcss |
 | `tapable` | 2.3.3 | `MIT` | build |  | https://www.npmjs.com/package/tapable |
+| `tinybench` | 6.2.5 | `MIT` | build |  | https://www.npmjs.com/package/tinybench |
+| `tinyexec` | 1.3.1 | `MIT` | build |  | https://www.npmjs.com/package/tinyexec |
 | `tinyglobby` | 0.2.17 | `MIT` | build |  | https://www.npmjs.com/package/tinyglobby |
 | `trim-lines` | 3.0.1 | `MIT` | runtime |  | https://www.npmjs.com/package/trim-lines |
 | `trough` | 2.2.0 | `MIT` | runtime |  | https://www.npmjs.com/package/trough |
@@ -343,7 +356,9 @@ Not purely permissive:
 | `vfile` | 6.0.3 | `MIT` | runtime |  | https://www.npmjs.com/package/vfile |
 | `vfile-message` | 4.0.3 | `MIT` | runtime |  | https://www.npmjs.com/package/vfile-message |
 | `vite` | 8.3.1 | `MIT` | build | ✓ | https://www.npmjs.com/package/vite |
+| `vitest` | 5.1.1 | `MIT` | build | ✓ | https://www.npmjs.com/package/vitest |
 | `which` | 2.0.2 | `ISC` | build |  | https://www.npmjs.com/package/which |
+| `why-is-node-running` | 3.2.1 | `MIT` | build |  | https://www.npmjs.com/package/why-is-node-running |
 | `word-wrap` | 1.2.5 | `MIT` | build |  | https://www.npmjs.com/package/word-wrap |
 | `yallist` | 3.1.1 | `ISC` | build |  | https://www.npmjs.com/package/yallist |
 | `yocto-queue` | 0.1.0 | `MIT` | build |  | https://www.npmjs.com/package/yocto-queue |

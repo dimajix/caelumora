@@ -229,3 +229,11 @@ which its event already carries in its context - or only in the snapshot.
   (`withAdded`); the context named `ChatChannel` for what it is. One change of behaviour, as
   agreed: an event of another thread no longer ends an answer shown in the line. Keyed by the
   channel, the conversation keeps the draft typed in one channel out of another.
+- **2026-11-23** — Tests for the web UI, a step of their own before 2b, decided by the maintainer
+  on 2a's review: Vitest (`npm test`), and tests of what a conversation does with the stream's
+  events and the pages of the history (`conversation.ts`) and of what the line's view shows and
+  how calls and results are shown together (`messages.ts`), built from `src/testing.ts`. On review,
+  with the test that shows it: an event that changes nothing of a conversation leaves it the same
+  object, as `withEvent` promised and did not keep for a change of a message it does not show, an
+  answer it does not have, or what it shows already - in 2b, every change of a message of any
+  thread reaches the line and a thread's pane, each showing one of them.
