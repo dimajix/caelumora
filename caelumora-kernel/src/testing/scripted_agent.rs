@@ -270,6 +270,10 @@ impl Actor for ScriptedAgent {
         self.answering().filter(|(there, _)| *there == thread).map(|(_, turn)| turn)
     }
 
+    fn answering_in(&self) -> Option<ThreadId> {
+        self.answering().map(|(thread, _)| thread)
+    }
+
     fn retry_turn(&self, turn: TurnId) -> bool {
         let under_way = self.answering().map(|(_, under_way)| under_way) == Some(turn);
         if under_way {

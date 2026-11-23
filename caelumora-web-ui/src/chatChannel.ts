@@ -9,6 +9,7 @@ import type {Answer} from './conversation';
 import type {
   ActorId,
   ChannelParticipant,
+  ChannelThread,
   ChannelResponse,
   CommandDescription,
   Compartment,
@@ -39,6 +40,10 @@ export interface ChatChannel {
    * also serves a record that writes nothing, may lack them.
    */
   attachments: ChannelAttachments;
+  /** Its threads that are open (issue 595), each marked at the message it hangs at. */
+  threads: ChannelThread[];
+  /** Shows the thread `thread` in its pane beside the line (issue 595). */
+  openThread: (thread: string) => void;
   /** Asks the agent that said `message` to answer again instead (issue 234). */
   retry: (message: Message) => Promise<void>;
   /** Asks for another answer instead of `answer`, still under way (issue 235). */

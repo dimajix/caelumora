@@ -28,7 +28,7 @@ use caelumora_domain::note::Note;
 use caelumora_domain::query::Filter;
 use caelumora_domain::removal::Removal;
 use caelumora_domain::snapshot::{
-    ChannelParticipantSnapshot, ChannelSnapshot, Detail, PublishedNotes, Unread,
+    ChannelParticipantSnapshot, ChannelSnapshot, Detail, PublishedNotes, ThreadSnapshot, Unread,
 };
 use caelumora_domain::store::{StoreError, StoreResultExt};
 use caelumora_domain::tool::ToolSet;
@@ -38,6 +38,7 @@ use caelumora_domain::value::text::{Briefing, Introduction, Summary};
 use caelumora_domain::work::TurnId;
 use caelumora_domain::workspace::WorkspaceId;
 use caelumora_security::{AccessQuestions, ActionType, Enforcement};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -596,7 +597,23 @@ impl ChannelView {
                 true => self.unread().await.ok().flatten(),
                 false => None,
             },
+            threads: match detail.contains(Detail::THREADS) {
+                true => self.threads().await,
+                false => Vec::new(),
+            },
         }
+    }
+
+    /// The threads open in the channel but its line (issue 595), from the running channel: none in
+    /// one that does not run. Whoever reads the channel reads them (issue 557).
+    async fn threads(&self) -> Vec<ThreadSnapshot> {
+        let Some(running) = self.running() else { return Vec::new() };
+        let mut threads = Vec::new();
+        for (id, opening) in running.openings() {
+            let recipient = running.delegation(id).await.map(|delegation| delegation.recipient);
+            threads.push(ThreadSnapshot { id, opening, recipient });
+        }
+        threads
     }
 
     /// What is new in the channel to the viewer (issue 404), if they are a
@@ -1089,12 +1106,29 @@ impl ParticipantView {
         self.state.agent().ok_or_else(no_context)
     }
 
-    /// The turn of the answer the participant is giving now in the channel's line (issues 240,
-    /// 602), from the running channel - none of a former participant, nor in a channel that does
-    /// not run.
-    fn turn_under_way(&self) -> Option<TurnId> {
-        let running = self.channel.running().filter(|_| !self.former)?;
-        running.turn_under_way(self.id(), ThreadId::line(running.id()))
+    /// The running channel the participant takes part in, if it runs - not for a former one.
+    fn running_for_it(&self) -> Option<&Arc<ChannelLoop>> {
+        self.channel.running().filter(|_| !self.former)
+    }
+
+    /// The threads the participant takes part in (issue 602), from the running channel.
+    async fn threads(&self) -> Vec<ThreadId> {
+        let Some(running) = self.running_for_it() else { return Vec::new() };
+        running.threads_taken_part_in(self.id()).await.into_iter().collect()
+    }
+
+    /// Its turn under way in each of `threads` (issues 240, 595), from the running channel.
+    fn turns_under_way(&self, threads: &[ThreadId]) -> BTreeMap<ThreadId, TurnId> {
+        let Some(running) = self.running_for_it() else { return BTreeMap::new() };
+        let id = self.id();
+        let under_way =
+            |thread: &ThreadId| running.turn_under_way(id, *thread).map(|t| (*thread, t));
+        threads.iter().filter_map(under_way).collect()
+    }
+
+    /// The thread it answers in now (issue 595), from the running channel.
+    fn answering_in(&self) -> Option<ThreadId> {
+        self.running_for_it()?.answering_in(self.id())
     }
 
     /// The participant as the viewer sees it at this moment (issue 80), with
@@ -1160,6 +1194,13 @@ impl ParticipantView {
                     .collect();
             }
         }
+        // Where it takes part reads the history for one that does not run: shown where asked.
+        let threads = match detail.contains(Detail::THREADS) {
+            true => self.threads().await,
+            false => Vec::new(),
+        };
+        let turns_under_way = self.turns_under_way(&threads);
+        let answering_in = self.answering_in().filter(|_| detail.contains(Detail::THREADS));
         ChannelParticipantSnapshot {
             id: self.id(),
             name: self.name().map(Name::to_string),
@@ -1172,7 +1213,9 @@ impl ParticipantView {
             can_cancel: self.may_cancel().await,
             can_delete: self.may_delete().await,
             can_leave: self.may_leave(),
-            turn_under_way: self.turn_under_way(),
+            threads,
+            turns_under_way,
+            answering_in,
             state: self.state(),
             commands: self.commands().await,
             usage,

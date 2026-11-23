@@ -3107,6 +3107,7 @@ mod tests {
     #[tokio::test]
     async fn a_participant_s_answer_under_way_is_in_the_snapshot_of_its_channel() {
         use caelumora_domain::actor::{ActorEvent, ActorId};
+        use std::collections::BTreeMap;
 
         let store = Persistence::in_memory();
         let kernel = TestKernel {
@@ -3162,14 +3163,20 @@ mod tests {
                 .channel(session.id(), channel.id())
                 .await
                 .unwrap();
-            view.snapshot(Detail::PARTICIPANTS)
+            view.snapshot(Detail::PARTICIPANTS | Detail::THREADS)
                 .await
                 .participants
                 .into_iter()
                 .find(|m| m.id == agent)
                 .expect("a participant")
         };
-        assert_eq!(participant().await.turn_under_way, None, "nothing under way yet");
+        let line = ThreadId::line(channel.id());
+        let under_way = || async {
+            let participant = participant().await;
+            (participant.turns_under_way, participant.answering_in)
+        };
+        assert_eq!(participant().await.threads, [line], "it takes part in the line");
+        assert_eq!(under_way().await, (BTreeMap::new(), None), "nothing under way yet");
 
         let started = shown("ResponseStarted");
         channel
@@ -3180,15 +3187,15 @@ mod tests {
             .unwrap();
         let ActorEvent::ResponseStarted { turn_id } = started.await else { unreachable!() };
         assert_eq!(
-            participant().await.turn_under_way,
-            Some(turn_id),
-            "the turn its start announced"
+            under_way().await,
+            (BTreeMap::from([(line, turn_id)]), Some(line)),
+            "the turn its start announced, where it answers"
         );
 
         let ended = shown("TurnFinished");
         channel.cancel_actor(&alice_ctx, agent).await.unwrap();
         ended.await;
-        assert_eq!(participant().await.turn_under_way, None, "over once it ended");
+        assert_eq!(under_way().await, (BTreeMap::new(), None), "over once it ended");
         manager.stop(&system, session.id()).await.unwrap();
     }
 }

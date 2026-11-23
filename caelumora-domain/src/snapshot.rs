@@ -19,7 +19,7 @@
 use crate::actor::{ActorId, ActorState};
 use crate::agent::{AgentId, PersonalityId, PersonalityKind};
 use crate::approval::{ApprovalRequest, ApprovalRule};
-use crate::channel::ChannelId;
+use crate::channel::{ChannelId, Opening, ThreadId};
 use crate::command::CommandDescription;
 use crate::confidentiality::Classification;
 use crate::digest::Digest;
@@ -40,12 +40,13 @@ use crate::value::time_zone::TimeZone;
 use crate::work::TurnId;
 use crate::workspace::WorkspaceId;
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 bitflags::bitflags! {
     /// What a snapshot holds beyond what it always does, each detail in the
     /// part it belongs to; combined freely, without one implying another.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub struct Detail: u8 {
+    pub struct Detail: u16 {
         /// Of a session: the channels the viewer may read.
         const CHANNELS = 1 << 0;
         /// Of a channel: its participants.
@@ -66,6 +67,10 @@ bitflags::bitflags! {
         /// Of a channel: what is new in it to a viewing user (issue 404),
         /// which reads its history.
         const UNREAD = 1 << 7;
+        /// Of a channel: its threads that are open, and of a participant where it takes part, its
+        /// turns there and where it answers (issue 595), which reads the history of one that does
+        /// not run.
+        const THREADS = 1 << 8;
     }
 }
 
@@ -170,6 +175,20 @@ pub struct ChannelSnapshot {
     /// What is new in it to the viewer - with `Detail::UNREAD`, for a user;
     /// `None` without it, for an agent, or if it cannot be read.
     pub unread: Option<Unread>,
+    /// Its threads that are open, its line not among them (issue 595), read from the running
+    /// channel - with `Detail::THREADS`; none in a channel that does not run.
+    pub threads: Vec<ThreadSnapshot>,
+}
+
+/// An open thread of a channel as the viewer sees it (issue 595): whoever reads the channel reads
+/// its threads (issue 557).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ThreadSnapshot {
+    pub id: ThreadId,
+    /// Where it hangs, who opened it, whether who takes part in it may grow.
+    pub opening: Opening,
+    /// To whom it was delegated, if it was: a sub-agent's thread (issue 558).
+    pub recipient: Option<ActorId>,
 }
 
 /// What is new in a channel to a user (issue 404): the messages of others
@@ -233,13 +252,18 @@ pub struct ChannelParticipantSnapshot {
     /// (`CancelChannel`, issues 235, 243) - only ever for agents taking
     /// part, of either kind.
     pub can_cancel: bool,
-    /// The turn of the answer the participant is giving now (issue 240), read
-    /// from the running channel: only an agent run here in a turn that can
-    /// still be ended has one - not an external agent, whose answers are its
-    /// remote side's. `None` in a channel that does not run. A snapshot of a
-    /// channel's stream is kept up by the events that follow it; elsewhere
-    /// it says how things stood when it was taken.
-    pub turn_under_way: Option<TurnId>,
+    /// The threads of the channel the participant takes part in (issue 602), read from the
+    /// running channel - also for one resting there; none for a former participant - with
+    /// `Detail::THREADS`, as are its turns and where it answers.
+    pub threads: Vec<ThreadId>,
+    /// The turn under way in each thread (issues 240, 595) - the one the participant works on, or
+    /// one set aside there waiting for a person (issue 602) -, read from the running channel: only
+    /// an agent run here has such turns - not an external agent, whose answers are its remote
+    /// side's. Empty in a channel that does not run. A snapshot of a channel's stream is kept up by
+    /// the events that follow it; elsewhere it says how things stood when it was taken.
+    pub turns_under_way: BTreeMap<ThreadId, TurnId>,
+    /// The thread of the turn the participant works on now, if any (issue 595): where it answers.
+    pub answering_in: Option<ThreadId>,
     /// Where the participant stands now (issue 243), read from the running
     /// channel - only ever for agents taking part; `None` in a channel that
     /// does not run. Kept up by `ActorEvent::StateChanged`.

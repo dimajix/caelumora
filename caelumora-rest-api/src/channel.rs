@@ -7,7 +7,7 @@ use caelumora_domain::actor::{ActorId, ActorState, SpanId};
 use caelumora_domain::agent::PersonalityKind;
 use caelumora_domain::approval::{ApprovalId, ApprovalRequest, ApprovalRule};
 use caelumora_domain::chain::Position;
-use caelumora_domain::channel::{ChannelId, HistoryAccess, ThreadId};
+use caelumora_domain::channel::{ChannelId, HistoryAccess, Opening, ThreadId};
 use caelumora_domain::command::CommandDescription;
 use caelumora_domain::confidentiality::{Classification, Confidentiality};
 use caelumora_domain::content::ContentId;
@@ -22,6 +22,7 @@ use caelumora_domain::value::text::{Briefing, Summary};
 use caelumora_domain::work::TurnId;
 use caelumora_domain::workspace::WorkspaceId;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::mem;
 
 /// The state of a channel when a stream connects: its participants and the last
@@ -202,6 +203,28 @@ pub struct ChannelResponse {
     /// or list it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unread: Option<UnreadResponse>,
+    /// Its threads that are open, its line not among them (issue 595): given by the snapshot of
+    /// the channel's stream and where it is asked for alone, not where channels are listed, and
+    /// none in a channel that does not run. Kept up on the stream by `ThreadOpened` and
+    /// `ThreadClosed`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub threads: Vec<ThreadResponse>,
+}
+
+/// An open thread of a channel (issue 595): where it hangs, who opened it, whether who takes part
+/// in it may grow (`open`, `closed`), and to whom it was delegated - a sub-agent's thread.
+#[derive(Debug, Serialize)]
+pub struct ThreadResponse {
+    pub id: ThreadId,
+    pub opening: Opening,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recipient: Option<ActorId>,
+}
+
+impl From<snapshot::ThreadSnapshot> for ThreadResponse {
+    fn from(thread: snapshot::ThreadSnapshot) -> Self {
+        Self { id: thread.id, opening: thread.opening, recipient: thread.recipient }
+    }
 }
 
 /// What is new in a channel to the requesting user (issue 404): the
@@ -264,6 +287,7 @@ impl From<snapshot::ChannelSnapshot> for ChannelResponse {
                 .filter_map(ChannelParticipantResponse::of)
                 .collect(),
             unread: view.unread.map(UnreadResponse::from),
+            threads: view.threads.into_iter().map(ThreadResponse::from).collect(),
         }
     }
 }
@@ -316,12 +340,20 @@ pub struct ChannelParticipantResponse {
     /// (`POST …/participants/{aid}/leave`, issue 562) - themselves, or an agent of theirs, taking
     /// part.
     pub can_leave: bool,
-    /// The turn of the answer the participant is giving now (issue 240): what a
-    /// client that connects during an answer shows as under way, as if it
-    /// had seen `ResponseStarted`. Absent if none - also for an external
+    /// The threads of the channel the participant takes part in (issue 602); absent in a channel
+    /// that does not run, and for a former participant.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub threads: Vec<ThreadId>,
+    /// The turn under way in each thread, by the thread's id (issues 240, 595): what a client that
+    /// connects during an answer shows as under way, as if it had seen `ResponseStarted` - also a
+    /// turn set aside waiting for a person (issue 602). Absent if none - also for an external
     /// agent, which answers without a turn here.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub turns_under_way: BTreeMap<ThreadId, TurnId>,
+    /// The thread the participant answers in now, if it is in a turn (issue 595). Kept up on the
+    /// stream by `StateChanged`, which a turn's step announces in its thread.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub turn_under_way: Option<TurnId>,
+    pub answering_in: Option<ThreadId>,
     /// Where the participant stands now (issue 243), an agent's: `Idle`,
     /// `Sleeping`, `Planning`, `ExecutingTools`, `WaitingForUser`,
     /// `Reflecting`, `Cancelling`. Kept up by `StateChanged` on the
@@ -375,7 +407,9 @@ impl ChannelParticipantResponse {
             left: view.left,
             can_delete: view.can_delete,
             can_leave: view.can_leave,
-            turn_under_way: view.turn_under_way,
+            threads: view.threads,
+            turns_under_way: view.turns_under_way,
+            answering_in: view.answering_in,
             state: view.state,
             commands: view.commands,
             introduction: view.introduction,
@@ -503,7 +537,9 @@ mod tests {
             left: None,
             can_delete: false,
             can_leave: false,
-            turn_under_way: None,
+            threads: Vec::new(),
+            turns_under_way: BTreeMap::new(),
+            answering_in: None,
             state: None,
             commands: Vec::new(),
             introduction: None,
@@ -534,6 +570,7 @@ mod tests {
             ],
             former_participants: Vec::new(),
             unread: None,
+            threads: Vec::new(),
         };
 
         let response = ChannelResponse::from(view);
@@ -568,6 +605,7 @@ mod tests {
             participants: Vec::new(),
             former_participants: Vec::new(),
             unread: None,
+            threads: Vec::new(),
         };
         let json = serde_json::to_value(ChannelResponse::from(view.clone())).unwrap();
         assert!(json.get("summary").is_none() && json.get("briefing").is_none(), "{json}");
@@ -584,6 +622,7 @@ mod tests {
         assert!(json.get("unread").is_none(), "nothing new is told where it was not read: {json}");
         let unread = snapshot::ChannelSnapshot {
             unread: Some(snapshot::Unread { messages: 3, mentioned: true, read_up_to: None }),
+            threads: Vec::new(),
             ..view
         };
         let json = serde_json::to_value(ChannelResponse::from(unread)).unwrap();
@@ -630,7 +669,9 @@ mod tests {
             left: None,
             can_delete: false,
             can_leave: false,
-            turn_under_way: None,
+            threads: Vec::new(),
+            turns_under_way: BTreeMap::new(),
+            answering_in: None,
             state: None,
             commands: Vec::new(),
             introduction: None,
@@ -660,6 +701,7 @@ mod tests {
             ],
             former_participants: Vec::new(),
             unread: None,
+            threads: Vec::new(),
         };
 
         let json = serde_json::to_value(ChannelSnapshot::of(
@@ -699,7 +741,9 @@ mod tests {
             left,
             can_delete: false,
             can_leave: false,
-            turn_under_way: None,
+            threads: Vec::new(),
+            turns_under_way: BTreeMap::new(),
+            answering_in: None,
             state: None,
             commands: Vec::new(),
             introduction: None,
@@ -726,6 +770,7 @@ mod tests {
             participants: vec![participant(alice, None)],
             former_participants: vec![participant(helper, Some(left.clone()))],
             unread: None,
+            threads: Vec::new(),
         };
         let json = serde_json::to_value(ChannelResponse::from(view)).unwrap();
         assert!(json["participants"][0].get("left").is_none(), "a participant has not left");
@@ -766,7 +811,9 @@ mod tests {
             left: None,
             can_delete: false,
             can_leave: false,
-            turn_under_way: None,
+            threads: Vec::new(),
+            turns_under_way: BTreeMap::new(),
+            answering_in: None,
             state: None,
             commands: Vec::new(),
             introduction: None,
@@ -786,21 +833,25 @@ mod tests {
         let json = serde_json::to_value(ChannelParticipantResponse::of(participant(None)).unwrap())
             .unwrap();
         assert!(json.get("usage").is_none());
-        assert!(json.get("turn_under_way").is_none(), "no answer under way, nothing said of one");
+        assert!(json.get("turns_under_way").is_none(), "no answer under way, nothing said of one");
         let turn = TurnId::new();
+        let thread = ThreadId::new();
         let json = serde_json::to_value(
             ChannelParticipantResponse::of(snapshot::ChannelParticipantSnapshot {
-                turn_under_way: Some(turn),
+                threads: vec![thread],
+                turns_under_way: BTreeMap::from([(thread, turn)]),
+                answering_in: Some(thread),
                 ..participant(None)
             })
             .unwrap(),
         )
         .unwrap();
-        assert_eq!(
-            json["turn_under_way"],
-            serde_json::json!(turn.to_string()),
-            "the turn its messages carry"
-        );
+        // Where it takes part, the turn its messages carry by its thread, where it answers.
+        let written = [&json["threads"][0], &json["turns_under_way"][thread.to_string()]];
+        let there = serde_json::json!(thread.to_string());
+        let under_way = serde_json::json!(turn.to_string());
+        assert_eq!(written, [&there, &under_way]);
+        assert_eq!(json["answering_in"], there);
         assert!(json.get("state").is_none(), "where nothing runs, no state");
         let json = serde_json::to_value(
             ChannelParticipantResponse::of(snapshot::ChannelParticipantSnapshot {
@@ -857,7 +908,9 @@ mod tests {
             left: None,
             can_delete: false,
             can_leave: false,
-            turn_under_way: None,
+            threads: Vec::new(),
+            turns_under_way: BTreeMap::new(),
+            answering_in: None,
             state: None,
             commands: Vec::new(),
             introduction: None,

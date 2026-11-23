@@ -87,7 +87,7 @@ pub async fn channel_response(
 ) -> Result<ChannelResponse, ApiError> {
     Ok(channel_view(state, user, session_id, channel_id)
         .await?
-        .snapshot(Detail::PARTICIPANTS | Detail::BRIEFING | Detail::UNREAD)
+        .snapshot(Detail::PARTICIPANTS | Detail::BRIEFING | Detail::UNREAD | Detail::THREADS)
         .await
         .into())
 }

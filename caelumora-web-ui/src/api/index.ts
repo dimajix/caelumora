@@ -53,12 +53,14 @@ const API_BASE = '/api';
 
 /**
  * The query of a page of a history (issue 218): the one before `before`, or the last - of the
- * messages carrying attachments alone with `attachments` (issue 509).
+ * messages carrying attachments alone with `attachments` (issue 509), of the thread `thread`
+ * (issue 595).
  */
-function pageQuery(before?: number | null, attachments = false): string {
+function pageQuery(before?: number | null, attachments = false, thread?: string): string {
   const query = new URLSearchParams();
   if (before != null) query.set('before', String(before));
   if (attachments) query.set('attachments', 'true');
+  if (thread) query.set('thread', thread);
   const asked = query.toString();
   return asked ? `?${asked}` : '';
 }
@@ -353,10 +355,11 @@ export const api = {
   /**
    * A page of the channel's history as the user may see it: messages, and how
    * turns ended (issue 258) - the last ones, or those before `before`, the
-   * `earlier` of the page after it (issue 218).
+   * `earlier` of the page after it (issue 218); of the thread `thread` (issue 595), else as the
+   * view of the line shows it.
    */
-  async getHistory(sessionId: string, channelId: string, before?: number | null): Promise<HistoryPage<Message>> {
-    const res = await request(`/sessions/${sessionId}/channels/${channelId}/history${pageQuery(before)}`);
+  async getHistory(sessionId: string, channelId: string, before?: number | null, thread?: string): Promise<HistoryPage<Message>> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/history${pageQuery(before, false, thread)}`);
     await ensureOk(res, 'Failed to fetch the history');
     return res.json();
   },
@@ -448,13 +451,14 @@ export const api = {
 
   /**
    * Writes a message of `content` - none if blank - carrying the attachments `attachments` uploaded
-   * for it (issue 282), classified `classification` - the channel's if absent (issue 133).
+   * for it (issue 282), classified `classification` - the channel's if absent (issue 133) -, in
+   * the thread `thread`, the line if absent (issue 602).
    */
-  async sendMessage(sessionId: string, channelId: string, content: string, attachments: string[], classification?: Classification): Promise<void> {
+  async sendMessage(sessionId: string, channelId: string, content: string, attachments: string[], classification?: Classification, thread?: string): Promise<void> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: content.trim() ? content : null, attachments, classification }),
+      body: JSON.stringify({ content: content.trim() ? content : null, attachments, classification, thread }),
     });
     await ensureOk(res, 'Failed to send message');
   },
@@ -552,12 +556,15 @@ export const api = {
     return res.json();
   },
 
-  /** Runs a command; an answer for the whole channel arrives on the event stream. */
-  async executeCommand(sessionId: string, channelId: string, line: string): Promise<CommandReply> {
+  /**
+   * Runs a command in the thread `thread`, the line if absent (issue 602); an answer for the whole
+   * channel arrives on the event stream.
+   */
+  async executeCommand(sessionId: string, channelId: string, line: string, thread?: string): Promise<CommandReply> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/commands`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ line }),
+      body: JSON.stringify({ line, thread }),
     });
     await ensureOk(res, 'Failed to run the command');
     return res.json();

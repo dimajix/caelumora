@@ -36,8 +36,8 @@ interface ComposerProps {
    * fails with why, and what was typed is given back.
    */
   onSend: (input: UserInput, attached: string[], release: Classification | null) => Promise<void>;
-  /** Stops what is generated; offered while something is. */
-  onStop: () => void;
+  /** Stops what is generated; offered while something is, where it is given. */
+  onStop?: () => void;
   /** Whether an answer is being generated in the conversation it writes in. */
   generating: boolean;
 }
@@ -295,7 +295,7 @@ export const Composer: React.FC<ComposerProps> = ({composer, onSend, onStop, gen
         >
           <Send size={20} />
         </button>
-        {generating && (
+        {generating && onStop && (
           <button
             type="button"
             onClick={onStop}

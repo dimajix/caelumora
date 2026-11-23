@@ -127,6 +127,12 @@ pub trait Actor: Any + Debug + Send + Sync {
         None
     }
 
+    /// The thread of the turn it works on now, if it is in one (issue 595): where it answers - not
+    /// a thread with a turn set aside there. None for an actor without such turns.
+    fn answering_in(&self) -> Option<ThreadId> {
+        None
+    }
+
     /// Gives its turn `turn` up because the answer is asked for again
     /// (issue 235), if that is the turn under way, and returns whether it
     /// was: nothing else is ended. Synchronous like `cancel`, and like it

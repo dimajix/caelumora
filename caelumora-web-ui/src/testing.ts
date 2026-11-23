@@ -2,7 +2,7 @@
 // envelopes of its stream and the messages they carry - each test writes beside them only what it
 // differs in. Imported by tests alone.
 
-import type {ActorEvent, ActorId, ChannelParticipant, Envelope, Message} from './types';
+import type {ActorEvent, ActorId, ChannelParticipant, ChannelResponse, Envelope, Message} from './types';
 import {agentIdOf} from './actor';
 
 /** The channel the cases happen in: its id is its line's (issue 557). */
@@ -55,5 +55,23 @@ export function envelope(event: ActorEvent, sender: ActorId = AGENT, thread = CH
       span_id: 'span-1',
       span_depth: 0,
     },
+  };
+}
+
+/** The channel the cases happen in, with `participants`, as its stream's snapshot gives it. */
+export function channelOf(participants: ChannelParticipant[]): ChannelResponse {
+  return {
+    id: CHANNEL,
+    name: 'main',
+    participants,
+    moderator: null,
+    responder_policy: null,
+    classification: {level: 'internal'},
+    language: null,
+    effective_language: null,
+    approval_rules: [],
+    uses_workspace: false,
+    can_change: false,
+    former_participants: [],
   };
 }

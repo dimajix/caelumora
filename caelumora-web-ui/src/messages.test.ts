@@ -3,7 +3,7 @@
 
 import {describe, expect, it} from 'vitest';
 import type {Message, ToolCall, ToolPresentation, ToolResult, ToolResultStatus} from './types';
-import {isSaidInLine, isShownInLine, mergeToolResults, withoutQuietCalls} from './messages';
+import {isSaidInLine, isShownInLine, isShownInThread, mergeToolResults, withoutQuietCalls} from './messages';
 import {AGENT, CHANNEL, ME, THREAD, envelope, message} from './testing';
 
 describe('isShownInLine', () => {
@@ -25,6 +25,15 @@ describe('isShownInLine', () => {
     expect(isShownInLine(envelope(asked, AGENT, THREAD), ME)).toBe(true);
     const opened = {ThreadOpened: {thread: THREAD, origin: {thread: CHANNEL, message: 'm1'}}};
     expect(isShownInLine(envelope(opened, AGENT, THREAD), ME)).toBe(true);
+  });
+});
+
+describe('isShownInThread', () => {
+  it('shows what happens in the thread and in the whole channel, nothing of the line', () => {
+    expect(isShownInThread(envelope({CompleteMessageGenerated: message('m1')}, AGENT, THREAD), THREAD)).toBe(true);
+    expect(isShownInThread(envelope({CompleteMessageGenerated: message('m1')}), THREAD)).toBe(false);
+    const revoked = {MessageRevoked: {message: 'm1', at: '2026-11-23T12:01:00Z'}};
+    expect(isShownInThread(envelope(revoked), THREAD)).toBe(true);
   });
 });
 

@@ -444,11 +444,29 @@ export function isShownInLine(envelope: Envelope, me: ActorId): boolean {
   if (typeof event === 'string') return false;
   const waitedFor = event.ApprovalRequested || event.ApprovalAnswered || event.ApprovalGranted || event.ApprovalDenied
     || event.ApprovalTimedOut || event.ApprovalRequestWithdrawn || event.QuestionRequested || event.QuestionClosed;
-  const ofWholeChannel = event.ThreadOpened || event.ThreadClosed || event.MessageModified || event.MessageRevoked
-    || event.MessageReclassified;
   const said = event.CompleteMessageGenerated;
   const mentionsMe = said !== undefined && isHeard(said) && mentions(said, me);
-  return Boolean(waitedFor || ofWholeChannel || mentionsMe);
+  return Boolean(waitedFor || isOfWholeChannel(envelope) || mentionsMe);
+}
+
+/**
+ * Whether `envelope` tells of what happens in the whole channel rather than in the thread its
+ * context names (issue 557), known by its kind: a thread opened or closed, a change of a message,
+ * which reaches whoever shows the message.
+ */
+export function isOfWholeChannel(envelope: Envelope): boolean {
+  const event = envelope.event;
+  if (typeof event === 'string') return false;
+  return Boolean(event.ThreadOpened || event.ThreadClosed || event.MessageModified || event.MessageRevoked
+    || event.MessageReclassified);
+}
+
+/**
+ * Whether the view of the thread `thread` shows `envelope` (issue 595): what happens in it, and in
+ * the whole channel.
+ */
+export function isShownInThread(envelope: Envelope, thread: string): boolean {
+  return envelope.context.thread_id === thread || isOfWholeChannel(envelope);
 }
 
 /**

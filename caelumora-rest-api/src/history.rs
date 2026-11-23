@@ -197,6 +197,9 @@ pub enum HistoryItemResponse<M> {
 #[derive(Debug, Serialize)]
 pub struct HistoryPageItem<M> {
     pub seq: Position,
+    /// The thread it happened in (issue 595); absent for what happens in the whole channel.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread: Option<ThreadId>,
     #[serde(flatten)]
     pub item: HistoryItemResponse<M>,
 }
@@ -393,10 +396,10 @@ impl<M> HistoryPageResponse<M> {
         let items = page
             .items
             .into_iter()
-            .filter_map(|history::HistoryPageItem { seq, entry, .. }| {
+            .filter_map(|history::HistoryPageItem { seq, thread, entry }| {
                 let recorded = entry.context().is_some();
                 HistoryItemResponse::of(entry, |message| said(message, recorded))
-                    .map(|item| HistoryPageItem { seq, item })
+                    .map(|item| HistoryPageItem { seq, thread, item })
             })
             .collect();
         Self { items, earlier: page.earlier }
@@ -540,16 +543,23 @@ mod tests {
             |m| m,
         )
         .unwrap();
-        let json =
-            serde_json::to_value(HistoryPageItem { seq: Position::new(7), item: command }).unwrap();
+        let thread = ThreadId::new();
+        let item = HistoryPageItem { seq: Position::new(7), thread: Some(thread), item: command };
+        let json = serde_json::to_value(item).unwrap();
         assert_eq!(
             (
                 json["seq"].clone(),
+                json["thread"].clone(),
                 json["command_executed"]["command"].clone(),
                 json["command_executed"]["output"].clone()
             ),
-            (serde_json::json!(7), serde_json::json!("compact"), serde_json::json!("done")),
-            "beside its kind, its position"
+            (
+                serde_json::json!(7),
+                serde_json::json!(thread.to_string()),
+                serde_json::json!("compact"),
+                serde_json::json!("done")
+            ),
+            "beside its kind, its position and its thread"
         );
         assert_eq!(json["command_executed"]["issuer"], serde_json::to_value(issuer).unwrap());
         let (from, to) = (digest::content(b"before"), digest::content(b"after"));

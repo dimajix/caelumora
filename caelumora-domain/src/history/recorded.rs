@@ -520,6 +520,7 @@ mod tests {
             id: Default::default(),
             session_id: Default::default(),
             channel_id: Default::default(),
+            thread_id: Default::default(),
             agent_id,
             tool_call: call.clone(),
         };
@@ -528,6 +529,7 @@ mod tests {
             id: QuestionId::new(),
             session_id: Default::default(),
             channel_id: Default::default(),
+            thread_id: Default::default(),
             agent_id,
             tool_call: call.clone(),
             questions: Questions {

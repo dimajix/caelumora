@@ -65,6 +65,8 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/actor.ts` | Who an `ActorId` names, and the `ActorId` of a user or an agent |
 | `src/shownChannel.ts` | What the messages shown of a channel need of it, as a React context |
 | `src/chatChannel.ts` | What the parts of the chat are given of the channel - who is in it, what the user may do there -, as a React context |
+| `src/channel.ts` | What the stream changes of the channel as the chat holds it: where agents stand and answer, its threads open |
+| `src/threads.ts` | How a thread is told: whose sub-agent's, who takes part, whether one answers there |
 | `src/conversation.ts` | One conversation of a channel - its line, or a thread -: what is shown of it, and how an event of the stream and a page of the history change it |
 | `src/composer.ts` | What a user is writing: its text, kept as a draft, what is attached and how it is classified |
 | `src/testing.ts` | What the tests build their cases from: a channel, its actors, envelopes and messages |
@@ -85,10 +87,11 @@ the field to write in read.
 ## Tests
 
 What the UI computes without the browser - how an event or a page changes a conversation
-(`conversation.ts`), what the line's view shows and how calls and results are shown together
-(`messages.ts`) - is tested beside it, in `*.test.ts` with Vitest, built from `src/testing.ts`;
-`npm run build` type-checks the tests with the rest. The components themselves are not tested;
-they are checked in a browser.
+(`conversation.ts`), what the line's and a thread's views show and how calls and results are shown
+together (`messages.ts`), how the stream keeps the channel up (`channel.ts`) and how a thread is
+told (`threads.ts`) - is tested beside it, in `*.test.ts` with Vitest, built from `src/testing.ts`;
+`npm run build` type-checks the tests with the rest. The components themselves are not tested; they
+are checked in a browser.
 
 ## Talking to the server
 
@@ -298,12 +301,13 @@ from the dialog that adds someone to a channel (see below).
 ### A channel
 
 `ChatView` shows one channel: what is the channel's - its participants, approvals, questions,
-panels -, and its line as a conversation (`ConversationView`, `Composer`), to which it hands on
-what the stream says of the line (`withEvent`, issue 595). Only a participant follows it live, over
-the channel's stream; anyone else who may read it - the session's owner, say - is shown its history
-and no input, and what others say in it as the global stream announces it. A channel that does not
-run, its components unreadable, says so and why above the input (`unavailable`); what is done there
-tries it again, and it is fetched anew as it starts.
+panels -, kept up from the stream (`withChannelEvent`), its line as a conversation
+(`ConversationView`, `Composer`), and the thread open in its pane as another; it hands each event
+on to the line and to the thread whose view shows it (`withEvent`, issue 595). Only a participant
+follows it live, over the channel's stream; anyone else who may read it - the session's owner, say -
+is shown its history and no input, and what others say in it as the global stream announces it.
+A channel that does not run, its components unreadable, says so and why above the input
+(`unavailable`); what is done there tries it again, and it is fetched anew as it starts.
 
 *   **What was read.** The chat marks the channel read up to the newest message of someone else it
     shows, while the tab is visible - as the channel is opened, as messages arrive and as the tab
@@ -378,8 +382,17 @@ tries it again, and it is fetched anew as it starts.
     every thread. The unread count and the chat of a reader who takes no part follow what is
     announced as said, as far as the view of the line shows it (`isSaidInLine`). That a thread was
     opened or closed is a line of its own ("@lead has opened a thread"); what comes back from a
-    thread to read stands where it came, under "Given back to read from a thread:". A view of a
-    thread comes later.
+    thread to read stands where it came, under "Given back to read from a thread:".
+*   **A thread's pane** (issue 595). A thread is marked at the message it hangs at, and listed in
+    the channel's panel: whose sub-agent's it is, who takes part, whether someone answers there.
+    Opened, it is shown in a pane beside the line, in the place of the channel's panel - on a
+    narrow screen in the place of the line -, one at a time: its own conversation
+    (`ConversationView`), read from its history (`?thread=`) and followed on the channel's stream
+    (`isShownInThread`), with the approvals and questions of its calls, written in where its circle
+    is open - a sub-agent's is closed, and its pane says whom to tell instead. Who takes part and
+    where an agent answers are kept up by the stream (`StateChanged` in the turn's thread, the
+    channel fetched again as a thread opens or someone joins or leaves one); a thread closed closes
+    its pane. What is read stays the channel's and follows the line.
 *   **A plan** is shown by its call, its steps numbered. While an agent works through it, each step
     is a block of its own, headed with the step, that holds what the step said; the step a turn is
     in is open while the turn is under way, every other one folded unless the user opened or closed

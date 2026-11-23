@@ -81,11 +81,23 @@ function withAnswer(answers: Answer[], sender: string, name: string | null, chan
 }
 
 /**
- * The answers under way that `participants`, as a snapshot found them, are giving in the line
- * (issue 240): what streamed before is not kept, what follows streams in.
+ * The answers under way that `participants`, as a snapshot found them, are giving in `thread`
+ * (issues 240, 595): what streamed before is not kept, what follows streams in.
  */
-export function answersUnderWay(participants: ChannelParticipant[]): Answer[] {
-  return participants.flatMap(m => m.turn_under_way ? [begun(actorKey(m.id), m.name, m.turn_under_way)] : []);
+export function answersUnderWay(participants: ChannelParticipant[], thread: string): Answer[] {
+  return participants.flatMap(m => {
+    const turn = m.turns_under_way?.[thread];
+    return turn ? [begun(actorKey(m.id), m.name, turn)] : [];
+  });
+}
+
+/**
+ * `conversation` with the answers under way `found` - as a fetch of the channel found them - added
+ * where their senders are not answering already: one begun since stays as it streams.
+ */
+export function withAnswersUnderWay(conversation: Conversation, found: Answer[]): Conversation {
+  const fresh = found.filter(answer => !conversation.answers.some(a => a.sender === answer.sender));
+  return fresh.length === 0 ? conversation : {...conversation, answers: [...conversation.answers, ...fresh]};
 }
 
 /** `messages` as the chat shows them: each result with its call, the quiet calls left out. */

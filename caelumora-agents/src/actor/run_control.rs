@@ -283,6 +283,12 @@ impl RunControl {
         self.lock_turn().0.map(|(thread, _)| thread)
     }
 
+    /// The thread of the turn the run loop works on now (issue 595): where the agent answers
+    /// (`ActorState::answers`). `None` between turns, and while a turn of it waits for a person.
+    pub(crate) fn answering_in(&self) -> Option<ThreadId> {
+        self.thread().filter(|_| self.state().answers())
+    }
+
     /// Whether the run loop is in a turn that an interrupt can still end.
     fn interruptible(&self) -> bool {
         self.state().interruptible()
@@ -635,6 +641,28 @@ mod tests {
         control.go_to(ActorState::Reflecting);
         assert_eq!(control.turn_under_way(elsewhere), None, "nor once it ends");
         assert_eq!(control.thread(), Some(elsewhere), "its steps still work with its thread");
+    }
+
+    /// Issue 595: the agent answers in the thread of the turn whose step runs - not between turns,
+    /// nor while its turn waits for a person, about to be set aside, nor once it was.
+    #[test]
+    fn it_answers_where_a_step_of_its_turn_runs() {
+        let there = ThreadId::new();
+        let control = RunControl::new(ActorState::Idle, None);
+        assert_eq!(control.answering_in(), None, "before the first turn");
+        control.begin_turn(there, TurnId::new());
+        control.go_to(ActorState::Planning);
+        assert_eq!(control.answering_in(), Some(there), "where its turn runs");
+        control.go_to(ActorState::WaitingForUser);
+        assert_eq!(control.answering_in(), None, "waiting for a person");
+        control.set_aside();
+        control.go_to(ActorState::Idle);
+        assert_eq!(control.answering_in(), None, "set aside");
+        control.begin_turn(there, TurnId::new());
+        control.go_to(ActorState::Reflecting);
+        assert_eq!(control.answering_in(), Some(there), "closing out its turn");
+        control.go_to(ActorState::Idle);
+        assert_eq!(control.answering_in(), None, "between turns");
     }
 
     /// Issue 602: a turn that waits for a person is set aside, and no turn runs; a cancel of its

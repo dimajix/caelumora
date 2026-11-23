@@ -1621,6 +1621,7 @@ mod tests {
                         id: Default::default(),
                         session_id: Default::default(),
                         channel_id: Default::default(),
+                        thread_id: Default::default(),
                         agent_id: AgentId::new(),
                         tool_call: call.clone(),
                     }),

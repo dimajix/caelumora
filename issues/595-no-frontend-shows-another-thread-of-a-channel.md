@@ -237,3 +237,19 @@ which its event already carries in its context - or only in the snapshot.
   object, as `withEvent` promised and did not keep for a change of a message it does not show, an
   answer it does not have, or what it shows already - in 2b, every change of a message of any
   thread reaches the line and a thread's pane, each showing one of them.
+- **2026-11-23** — Step 2b: the web UI shows a thread in a pane beside the line. What a frontend is
+  given for it: an item of a page says its thread (`thread`); a channel its open threads
+  (`threads`: how each was opened, to whom it was delegated) and a participant where it takes part
+  (`threads`), its turn under way in each (`turns_under_way`, in place of the line's
+  `turn_under_way`) and where it answers (`answering_in`), these behind `Detail::THREADS`, since
+  where one takes part reads the history of one that does not run; an approval or a question
+  request the thread of the turn that waits, named `thread_id` as its `session_id` and
+  `channel_id` are. Where an agent answers is `Actor::answering_in`, a step of its turn running
+  (`ActorState::answers`): not a turn that waits for a person. The web UI marks a thread at the
+  message it hangs at and lists it in the channel's panel (`ThreadMark`, `describeThread`), shows
+  it in a pane in the place of that panel - the panel of what is shown of one participant first -,
+  on a narrow screen in the place of the line, one at a time, read with the channel as it is now
+  and followed on the stream (`isShownInThread`), its approvals and questions with it, written in
+  where its circle is open; the channel kept up from the stream (`withChannelEvent`) and fetched
+  again as a thread opens or someone joins or leaves one. Stored channel histories holding an
+  approval or a question request are to be deleted: the requests now carry their thread.

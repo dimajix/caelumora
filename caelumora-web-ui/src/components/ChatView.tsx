@@ -69,7 +69,7 @@ import type {Page} from '../page';
 import {ApiRequestError, reportError} from '../errors';
 import {cn} from '../classNames';
 import {ShownChannelContext, type ShownChannel} from '../shownChannel';
-import {attachedByTurn, endedCommands, formatArguments, formatTimestamp, formatTokens, formatTokensShort, isSaidInLine, isShownInLine, mergeToolResults} from '../messages';
+import {formatArguments, formatTimestamp, formatTokens, formatTokensShort, isSaidInLine, isShownInLine, isShownInThread} from '../messages';
 import {TokenGauge} from './TokenGauge';
 import {HoverCard} from './HoverCard';
 import {ActionMenu, type MenuAction} from './ActionMenu';
@@ -91,10 +91,30 @@ import {approveEverything, approvingEverything, initialChoice, ruleOf, type Rule
 import {APPROVER_NAME, actorKey, actorPath, agentIdOf, isApprover, sameActor, userActor, userIdOf} from '../actor';
 import {openEventStream} from '../stream';
 import {ConversationView} from './ConversationView';
+import {ThreadPane} from './ThreadPane';
+import {ThreadMark} from './ThreadMark';
 import {ChatChannelContext, type ChatChannel} from '../chatChannel';
-import {NO_CONVERSATION, answersUnderWay, conversationOf, shownOf, withEarlierPage, withEvent, withLastPage, withAdded, withReplaced, type Answer, type Conversation} from '../conversation';
+import {withChannelEvent} from '../channel';
+import {NO_CONVERSATION, answersUnderWay, withAnswersUnderWay, conversationOf, shownOf, withEarlierPage, withEvent, withLastPage, withAdded, withReplaced, type Answer, type Conversation} from '../conversation';
 import type {UserInput} from '../command';
 
+
+/** The thread open in its pane (issue 595): of which channel, which, and its conversation. */
+interface OpenThread {
+  channelId: string;
+  thread: string;
+  conversation: Conversation;
+}
+
+/**
+ * `open` with its conversation changed by `change`, if it is the thread `thread`; as it is
+ * otherwise - so that what was meant for one thread never reaches another opened since.
+ */
+function inThread(open: OpenThread | null, thread: string, change: (conversation: Conversation) => Conversation): OpenThread | null {
+  if (!open || open.thread !== thread) return open;
+  const conversation = change(open.conversation);
+  return conversation === open.conversation ? open : {...open, conversation};
+}
 
 /** The menu button of a participant's row: shown while the row is hovered or the button focused. */
 const ROW_MENU = 'text-gray-400 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-700';
@@ -190,9 +210,13 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   // The channel's line as the chat shows it (issues 557, 595): what is said in it, what of another
   // thread the line's view shows, the answers under way in it, and its pages.
   const [line, setLine] = useState<Conversation>(NO_CONVERSATION);
-  // Its messages, each tool result with the call it answers; and as the chat shows them, without
-  // the calls presented `quiet` that need not be shown.
-  const merged = useMemo(() => mergeToolResults(line.messages), [line.messages]);
+  // The thread shown in its pane beside the line (issue 595) - one at a time -, with the channel
+  // it was opened in and its conversation.
+  const [open, setOpen] = useState<OpenThread | null>(null);
+  const openThread = open?.channelId === channelId ? open : null;
+  // Changes whenever the stream starts again from a snapshot: the thread open is read anew.
+  const [streamStarts, setStreamStarts] = useState(0);
+  // The line's messages as the chat shows them: each result with its call, quiet calls left out.
   const shown = useMemo(() => shownOf(line.messages), [line.messages]);
   const [channel, setChannel] = useState<ChannelResponse | null>(null);
   const [notes, setNotes] = useState<PublishedNotes[]>([]);
@@ -224,6 +248,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   // it had as the participants panel (issue 245), so that its width stays.
   const channelPanel = usePanelWidth('participants');
   const detailPanel = usePanelWidth('detail');
+  const threadPanel = usePanelWidth('thread');
   const [compartments, setCompartments] = useState<Compartment[]>([]);
   // What each agent's model calls used (issue 209), by `actorKey`: from the
   // snapshot, added to by each of its calls as their messages arrive, and
@@ -553,7 +578,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     const handleSnapshot = (data: string) => {
       try {
         const snapshot: ChannelSnapshot = JSON.parse(data);
-        setLine(conversationOf(snapshot, nameIn(snapshot.channel), answersUnderWay(snapshot.channel.participants)));
+        setLine(conversationOf(snapshot, nameIn(snapshot.channel), answersUnderWay(snapshot.channel.participants, snapshot.channel.id)));
+        setStreamStarts(n => n + 1);
         setChannel(snapshot.channel);
         setUsage(Object.fromEntries(snapshot.channel.participants.flatMap(m => m.usage ? [[actorKey(m.id), m.usage]] : [])));
         countedCalls.current = new Set(snapshot.items.flatMap(item => 'said' in item && item.said.id ? [item.said.id] : []));
@@ -582,11 +608,13 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           .then(usage => { if (usage) setUsage(prev => ({...prev, [answerer]: usage})); })
           .catch(error => reportError('Failed to read what the agent used', error));
       };
-      if (actorEvent.StateChanged) {
-        // Where an agent stands now (issue 243), shown by its dot.
-        const state = actorEvent.StateChanged;
-        setChannel(prev => prev && {...prev, participants: prev.participants.map(m => actorKey(m.id) === answerer ? {...m, state} : m)});
-      } else if (actorEvent.CompleteMessageGenerated || actorEvent.IntermediateMessageGenerated) {
+      // The channel as the server holds it now - its threads, who takes part where.
+      const refetch = () => api.getChannel(sessionId, channelId)
+        .then(setChannel)
+        .catch(error => reportError('Failed to load the channel', error));
+      // Where an agent stands and answers, the threads open (issues 243, 595).
+      setChannel(prev => prev && withChannelEvent(prev, envelope));
+      if (actorEvent.CompleteMessageGenerated || actorEvent.IntermediateMessageGenerated) {
         const said = (actorEvent.CompleteMessageGenerated ?? actorEvent.IntermediateMessageGenerated)!;
         // A tool call that ended may have changed the files.
         if (said.tool_results?.length) setWorkspaceVersion(v => v + 1);
@@ -651,6 +679,16 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       } else if (actorEvent.ActivityFinished) {
         // The context may have shrunk: what the agent uses is read again.
         readUsage();
+      } else if (actorEvent.ThreadOpened) {
+        // A thread opened (issue 595): how, and who took part in it, the channel says.
+        refetch();
+      } else if (actorEvent.ThreadClosed) {
+        // Nothing more is said in it: its pane closes.
+        const closed = actorEvent.ThreadClosed.thread;
+        setOpen(prev => prev?.thread === closed ? null : prev);
+      } else if ((actorEvent.ParticipantJoined || actorEvent.ParticipantLeft) && envelope.context.thread_id !== channelId) {
+        // Someone joined or left a thread alone (issue 602), which the global stream does not tell.
+        refetch();
       }
     };
 
@@ -659,15 +697,21 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
         const envelope: Envelope = JSON.parse(data);
         handleChannelWide(envelope);
         // What is said in another thread is left out of the line's view (issue 557): nothing of it
-        // enters the line, no answer of it is shown under way there.
-        if (!isShownInLine(envelope, me)) return;
-        setLine(prev => withEvent(prev, envelope));
+        // enters the line, no answer of it is shown under way there; the thread open shows what
+        // happens in it (issue 595).
+        if (isShownInLine(envelope, me)) setLine(prev => withEvent(prev, envelope));
+        setOpen(prev => prev && isShownInThread(envelope, prev.thread)
+          ? inThread(prev, prev.thread, conversation => withEvent(conversation, envelope))
+          : prev);
         // A change of a message the channel did not let in is undone by what it holds (issue 304),
-        // where the line shows the message.
+        // wherever the message is shown.
         const rejected = typeof envelope.event === 'string' ? undefined : envelope.event.EventRejected;
         if (rejected?.message && ['MessageModified', 'MessageRevoked', 'MessageReclassified'].includes(rejected.rejected)) {
           api.getMessage(sessionId, channelId, rejected.message)
-            .then(standing => setLine(prev => withReplaced(prev, standing)))
+            .then(standing => {
+              setLine(prev => withReplaced(prev, standing));
+              setOpen(prev => prev && inThread(prev, prev.thread, conversation => withReplaced(conversation, standing)));
+            })
             .catch(error => reportError('Failed to read the message back', error));
         }
       } catch (e) {
@@ -730,35 +774,67 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     return () => document.removeEventListener('visibilitychange', mark);
   }, [sessionId, channelId, newestOfOthers]);
 
-  /** Puts the page of the history before those shown in front of them. */
-  const loadEarlier = async () => {
-    if (line.earlier === null) return;
+  /** Shows `thread` in its pane beside the line (issue 595), read from its last page. */
+  const showThread = (thread: string) => setOpen({channelId, thread, conversation: NO_CONVERSATION});
+
+  // The thread open as it is read - as it is opened, and again as the stream starts anew: its last
+  // page, with the channel as it is now, which names whose turns ended and which answers are under
+  // way in it; what the stream told of it meanwhile is kept (`withLastPage`, issue 34).
+  const openedThread = channel?.threads?.find(thread => thread.id === openThread?.thread);
+  const openedId = openedThread?.id;
+  useEffect(() => {
+    if (!openedId) return;
+    let cancelled = false;
+    Promise.all([api.getChannel(sessionId, channelId), api.getHistory(sessionId, channelId, null, openedId)])
+      .then(([found, page]) => {
+        if (cancelled) return;
+        setChannel(found);
+        const underWay = answersUnderWay(found.participants, openedId);
+        setOpen(prev => inThread(prev, openedId, conversation =>
+          withAnswersUnderWay(withLastPage(conversation, page, nameIn(found)), underWay)));
+      })
+      .catch(error => reportError('Failed to load the thread', error));
+    return () => { cancelled = true; };
+  }, [sessionId, channelId, openedId, streamStarts]);
+
+  /**
+   * Puts the page of the history before those shown of the line - or of the thread `thread`, while
+   * it is open - in front of them.
+   */
+  const loadEarlier = (thread?: string) => async () => {
+    const earlier = thread ? openThread?.conversation.earlier : line.earlier;
+    if (earlier == null) return;
     try {
-      const page = await api.getHistory(sessionId, channelId, line.earlier);
-      setLine(prev => withEarlierPage(prev, page, nameIn(channel)));
+      const page = await api.getHistory(sessionId, channelId, earlier, thread);
+      const withPage = (conversation: Conversation) => withEarlierPage(conversation, page, nameIn(channel));
+      if (thread) setOpen(prev => inThread(prev, thread, withPage));
+      else setLine(withPage);
     } catch (error) {
       reportError('Failed to load earlier messages', error);
     }
   };
 
   /**
-   * Sends `input` into the line: a command, whose answer for the user alone is shown at once - one
-   * for the whole channel arrives on the stream -, or a message.
+   * Sends `input` into the line, or into the thread `thread` (issue 602): a command, whose answer
+   * for the user alone is shown at once where it was issued - one for the whole channel arrives
+   * on the stream -, or a message.
    */
-  const send = async (input: UserInput, attached: string[], release: Classification | null) => {
+  const sendTo = (thread?: string) => async (input: UserInput, attached: string[], release: Classification | null) => {
     if (input.kind === 'command') {
-      const reply = await api.executeCommand(sessionId, channelId, input.line);
+      const reply = await api.executeCommand(sessionId, channelId, input.line, thread);
       if (reply.output !== null) {
-        setLine(prev => withAdded(prev, {
+        const told: Message = {
           role: 'System',
           content: reply.output,
           commandOutput: {command: reply.command, private: true},
           // Private output has no envelope: the time it arrived.
           timestamp: new Date().toISOString(),
-        }));
+        };
+        if (thread) setOpen(prev => inThread(prev, thread, conversation => withAdded(conversation, told)));
+        else setLine(prev => withAdded(prev, told));
       }
     } else {
-      await api.sendMessage(sessionId, channelId, input.text, attached, release ?? undefined);
+      await api.sendMessage(sessionId, channelId, input.text, attached, release ?? undefined, thread);
     }
   };
 
@@ -795,14 +871,6 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     }
   };
 
-  // The commands ended in the channel: by a result that shows them so, or by the user (issue 294).
-  const ended = useMemo(() => {
-    const ids = endedCommands(merged);
-    if (killedCommands?.channelId === channelId) killedCommands.ids.forEach(id => ids.add(id));
-    return ids;
-  }, [merged, killedCommands, channelId]);
-  // What the messages of each turn carry, which its calls' cards leave to them (issue 535).
-  const digestsByTurn = useMemo(() => attachedByTurn(shown), [shown]);
 
   /**
    * Ends the command `commandId` a call handed back as running, with what it
@@ -830,8 +898,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     artifacts: channelArtifacts,
     onSelectPage,
     onKillCommand: workspace?.can_write ? (commandId) => void killCommand(commandId) : undefined,
-    endedCommands: ended,
-    digestsByTurn,
+    // The commands the user ended here; a conversation adds those its results show ended.
+    endedCommands: killedCommands?.channelId === channelId ? killedCommands.ids : undefined,
   };
 
   /**
@@ -908,6 +976,101 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     }
   };
 
+  /**
+   * What waits for the user in a conversation (issues 165, 172): the questions and the approvals
+   * of `questions` and `approvals`, between its list and the field to write in.
+   */
+  const waiting = (questions: QuestionRequest[], approvals: ApprovalRequest[]) => (
+    <>
+      {questions.length > 0 && (
+        <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border-t border-blue-200 dark:border-blue-900/50 space-y-4">
+          <h4 className="text-sm font-semibold text-blue-800 dark:text-blue-200 flex items-center gap-2">
+            <MessageCircleQuestion size={16} />
+            Questions of an agent
+          </h4>
+          {questions.map(request => (
+            <QuestionCard
+              key={request.id}
+              request={request}
+              asked={askedOf(request).some(id => sameActor(id, me))}
+              askedNames={askedOf(request).flatMap(id => participants.find(m => sameActor(m.id, id))?.name ?? [])}
+              answered={answeredQuestions.includes(request.id)}
+              onAnswer={responses => answerQuestions(request, responses)}
+            />
+          ))}
+        </div>
+      )}
+      {approvals.length > 0 && (
+        <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 border-t border-yellow-200 dark:border-yellow-900/50 space-y-4">
+          <h4 className="text-sm font-semibold text-yellow-800 dark:text-yellow-200 flex items-center gap-2">
+            <Wrench size={16} />
+            <span className="flex-1">Tool Execution Approval Required</span>
+            {!braveMode && approvals.some(mayApprove) && (
+              <button
+                onClick={() => void startBraveMode()}
+                className="text-xs font-normal text-yellow-800 dark:text-yellow-200 hover:underline"
+                title="A rule of yours that approves every tool call of the agents you are responsible for, in this session, for an hour - shown for as long as it lasts"
+              >
+                Approve everything in this session for an hour
+              </button>
+            )}
+          </h4>
+          {approvals.map(approval => (
+            <div key={approval.id} className="bg-white dark:bg-gray-800 rounded-lg border border-yellow-200 dark:border-yellow-900/50 shadow-xs p-4">
+              <div className="flex items-center justify-between mb-2">
+                 <div className="text-xs font-mono font-bold text-gray-500">{approval.tool_call.function_name}</div>
+                 <div className="text-[11px] text-gray-400">ID: {approval.id}</div>
+              </div>
+              {approval.tool_call.description && (
+                <p className="text-sm whitespace-pre-wrap mb-2">{approval.tool_call.description}</p>
+              )}
+              <pre className="text-xs font-mono bg-gray-50 dark:bg-gray-900 p-2 rounded-sm mb-4 overflow-x-auto">
+                {formatArguments(approval.tool_call.arguments)}
+              </pre>
+              {approval.explicit && (
+                <p className="text-xs text-yellow-800 dark:text-yellow-200 mb-3 flex items-center gap-1">
+                  <ShieldAlert size={12} />
+                  A rule of this session or channel asks for this call to be decided by a person, each time.
+                </p>
+              )}
+              {answeredApprovals.includes(approval.id) ? (
+                <p className="text-sm text-gray-500 dark:text-gray-400 text-center">
+                  {answeredByRule[approval.id] ? 'Answered by your rule' : 'Answered'} - waiting for the decision.
+                </p>
+              ) : !mayApprove(approval) ? (
+                <p className="text-sm text-gray-500 dark:text-gray-400 text-center">Waiting for whoever is responsible for the agent.</p>
+              ) : (
+              <>
+              {!approval.explicit && approval.suggested && (
+                <ApprovalRuleOffer
+                  choice={ruleChoices[approval.id] ?? null}
+                  initial={initialChoice(approval.suggested)}
+                  onChange={(choice) => setRuleChoices(prev => ({...prev, [approval.id]: choice}))}
+                />
+              )}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleApproval(approval, true)}
+                  className="flex-1 bg-green-600 hover:bg-green-700 text-white text-sm py-2 rounded-md transition-colors"
+                >
+                  Approve
+                </button>
+                <button
+                  onClick={() => handleApproval(approval, false)}
+                  className="flex-1 bg-red-600 hover:bg-red-700 text-white text-sm py-2 rounded-md transition-colors"
+                >
+                  Deny
+                </button>
+              </div>
+              </>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+
   // What the parts of the chat are given of the channel (issue 595).
   const chatChannel: ChatChannel = {
     me,
@@ -917,6 +1080,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     compartments,
     commands,
     attachments: channelAttachments,
+    threads: channel?.threads ?? [],
+    openThread: showThread,
     retry,
     retryAnswer,
     retryGivenUp,
@@ -931,118 +1096,36 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   return (
     <ChatChannelContext value={chatChannel}>
       <div className="flex-1 flex overflow-hidden bg-gray-50 dark:bg-gray-800">
-        <ShownChannelContext value={shownChannel}>
-          <ConversationView
-            key={channelId}
-            conversation={line}
-            onLoadEarlier={loadEarlier}
-            newSince={newSince?.channelId === channelId ? newSince : undefined}
-            draftKey={channelId}
-            onSend={send}
-            onStop={() => void handleStopGeneration()}
-            cannotWrite={takesPart === false
-              ? 'You do not take part in this channel: its history is shown as it is, not followed live, and you cannot write here.'
-              : undefined}
-          >
-            {braveMode && (
-              <div role="status" className="px-4 py-2 bg-amber-100 dark:bg-amber-900/30 border-t border-amber-300 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200 flex items-center gap-2">
-                <ShieldAlert size={14} />
-                <span className="flex-1">
-                  Your rule approves every tool call here{braveMode.expires_at ? ` until ${new Date(braveMode.expires_at).toLocaleTimeString()}` : ''} - except where a rule of the session or channel asks.
-                </span>
-                <button onClick={() => void stopBraveMode(braveMode)} className="rounded-sm border border-amber-400 px-2 py-0.5 hover:bg-amber-200 dark:hover:bg-amber-800">
-                  Stop
-                </button>
-              </div>
-            )}
-            {pendingQuestions.length > 0 && (
-              <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border-t border-blue-200 dark:border-blue-900/50 space-y-4">
-                <h4 className="text-sm font-semibold text-blue-800 dark:text-blue-200 flex items-center gap-2">
-                  <MessageCircleQuestion size={16} />
-                  Questions of an agent
-                </h4>
-                {pendingQuestions.map(request => (
-                  <QuestionCard
-                    key={request.id}
-                    request={request}
-                    asked={askedOf(request).some(id => sameActor(id, me))}
-                    askedNames={askedOf(request).flatMap(id => participants.find(m => sameActor(m.id, id))?.name ?? [])}
-                    answered={answeredQuestions.includes(request.id)}
-                    onAnswer={responses => answerQuestions(request, responses)}
-                  />
-                ))}
-              </div>
-            )}
-            {pendingApprovals.length > 0 && (
-              <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 border-t border-yellow-200 dark:border-yellow-900/50 space-y-4">
-                <h4 className="text-sm font-semibold text-yellow-800 dark:text-yellow-200 flex items-center gap-2">
-                  <Wrench size={16} />
-                  <span className="flex-1">Tool Execution Approval Required</span>
-                  {!braveMode && pendingApprovals.some(mayApprove) && (
-                    <button
-                      onClick={() => void startBraveMode()}
-                      className="text-xs font-normal text-yellow-800 dark:text-yellow-200 hover:underline"
-                      title="A rule of yours that approves every tool call of the agents you are responsible for, in this session, for an hour - shown for as long as it lasts"
-                    >
-                      Approve everything in this session for an hour
-                    </button>
-                  )}
-                </h4>
-                {pendingApprovals.map(approval => (
-                  <div key={approval.id} className="bg-white dark:bg-gray-800 rounded-lg border border-yellow-200 dark:border-yellow-900/50 shadow-xs p-4">
-                    <div className="flex items-center justify-between mb-2">
-                       <div className="text-xs font-mono font-bold text-gray-500">{approval.tool_call.function_name}</div>
-                       <div className="text-[11px] text-gray-400">ID: {approval.id}</div>
-                    </div>
-                    {approval.tool_call.description && (
-                      <p className="text-sm whitespace-pre-wrap mb-2">{approval.tool_call.description}</p>
-                    )}
-                    <pre className="text-xs font-mono bg-gray-50 dark:bg-gray-900 p-2 rounded-sm mb-4 overflow-x-auto">
-                      {formatArguments(approval.tool_call.arguments)}
-                    </pre>
-                    {approval.explicit && (
-                      <p className="text-xs text-yellow-800 dark:text-yellow-200 mb-3 flex items-center gap-1">
-                        <ShieldAlert size={12} />
-                        A rule of this session or channel asks for this call to be decided by a person, each time.
-                      </p>
-                    )}
-                    {answeredApprovals.includes(approval.id) ? (
-                      <p className="text-sm text-gray-500 dark:text-gray-400 text-center">
-                        {answeredByRule[approval.id] ? 'Answered by your rule' : 'Answered'} - waiting for the decision.
-                      </p>
-                    ) : !mayApprove(approval) ? (
-                      <p className="text-sm text-gray-500 dark:text-gray-400 text-center">Waiting for whoever is responsible for the agent.</p>
-                    ) : (
-                    <>
-                    {!approval.explicit && approval.suggested && (
-                      <ApprovalRuleOffer
-                        choice={ruleChoices[approval.id] ?? null}
-                        initial={initialChoice(approval.suggested)}
-                        onChange={(choice) => setRuleChoices(prev => ({...prev, [approval.id]: choice}))}
-                      />
-                    )}
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => handleApproval(approval, true)}
-                        className="flex-1 bg-green-600 hover:bg-green-700 text-white text-sm py-2 rounded-md transition-colors"
-                      >
-                        Approve
-                      </button>
-                      <button
-                        onClick={() => handleApproval(approval, false)}
-                        className="flex-1 bg-red-600 hover:bg-red-700 text-white text-sm py-2 rounded-md transition-colors"
-                      >
-                        Deny
-                      </button>
-                    </div>
-                    </>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </ConversationView>
-        </ShownChannelContext>
+        {/* On a narrow screen a thread's pane takes the place of the line (issue 595). */}
+        <div className={cn("flex-1 flex min-w-0", openedThread && !detailShown && "hidden md:flex")}>
+          <ShownChannelContext value={shownChannel}>
+            <ConversationView
+              key={channelId}
+              conversation={line}
+              onLoadEarlier={loadEarlier()}
+              newSince={newSince?.channelId === channelId ? newSince : undefined}
+              draftKey={channelId}
+              onSend={sendTo()}
+              onStop={() => void handleStopGeneration()}
+              cannotWrite={takesPart === false
+                ? 'You do not take part in this channel: its history is shown as it is, not followed live, and you cannot write here.'
+                : undefined}
+            >
+              {braveMode && (
+                <div role="status" className="px-4 py-2 bg-amber-100 dark:bg-amber-900/30 border-t border-amber-300 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200 flex items-center gap-2">
+                  <ShieldAlert size={14} />
+                  <span className="flex-1">
+                    Your rule approves every tool call here{braveMode.expires_at ? ` until ${new Date(braveMode.expires_at).toLocaleTimeString()}` : ''} - except where a rule of the session or channel asks.
+                  </span>
+                  <button onClick={() => void stopBraveMode(braveMode)} className="rounded-sm border border-amber-400 px-2 py-0.5 hover:bg-amber-200 dark:hover:bg-amber-800">
+                    Stop
+                  </button>
+                </div>
+              )}
+              {waiting(pendingQuestions, pendingApprovals)}
+            </ConversationView>
+          </ShownChannelContext>
+        </div>
 
         {isAddingParticipant && channel && (
           <AddParticipantDialog
@@ -1104,7 +1187,31 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
             onClose={() => setReclassifying(null)}
           />
         ))}
-        {detailShown ? (
+        {/* What is shown of one participant comes first, a thread's pane before the channel's. */}
+        {openThread && openedThread && !detailShown ? (
+          <>
+            <ResizeHandle panel={threadPanel} panelSide="right" label="Resize the thread" className="hidden md:block" />
+            <div
+              className="shrink-0 w-full md:w-(--thread-width) flex min-h-0 border-l border-gray-200 dark:border-gray-700"
+              style={{'--thread-width': `${threadPanel.width}px`} as React.CSSProperties}
+            >
+              <ShownChannelContext value={shownChannel}>
+                <ThreadPane
+                  thread={openedThread}
+                  conversation={openThread.conversation}
+                  onLoadEarlier={loadEarlier(openedThread.id)}
+                  onSend={sendTo(openedThread.id)}
+                  onClose={() => setOpen(null)}
+                >
+                  {waiting(
+                    pendingQuestions.filter(q => q.thread_id === openedThread.id),
+                    pendingApprovals.filter(a => a.thread_id === openedThread.id),
+                  )}
+                </ThreadPane>
+              </ShownChannelContext>
+            </div>
+          </>
+        ) : detailShown ? (
           <>
           <ResizeHandle panel={detailPanel} panelSide="right" label="Resize the panel" />
           <div className="shrink-0 max-w-full flex min-h-0" style={{width: detailPanel.width}}>
@@ -1294,6 +1401,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
                 <span>Total tokens:</span>
                 <span className="text-gray-700 dark:text-gray-300">{formatTokensShort(channelUsage.prompt + channelUsage.completion)}</span>
               </HoverCard>
+            )}
+            {(channel?.threads?.length ?? 0) > 0 && (
+              <div className="mb-4 space-y-1">
+                {channel!.threads!.map(thread => <ThreadMark key={thread.id} thread={thread} />)}
+              </div>
             )}
             <div className="space-y-2">
               {participants.map(participant => {

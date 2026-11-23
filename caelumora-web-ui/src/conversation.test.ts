@@ -8,6 +8,7 @@ import {
   answersUnderWay,
   conversationOf,
   withAdded,
+  withAnswersUnderWay,
   withEarlierPage,
   withEvent,
   withLastPage,
@@ -15,7 +16,7 @@ import {
   type Conversation,
 } from './conversation';
 import {activityUnderWay} from './messages';
-import {AGENT, ME, OTHER_AGENT, envelope, message, participant} from './testing';
+import {AGENT, CHANNEL, ME, OTHER_AGENT, THREAD, envelope, message, participant} from './testing';
 
 /** `conversation` after each of `events`, in their order. */
 function after(conversation: Conversation, ...events: Parameters<typeof withEvent>[1][]): Conversation {
@@ -178,11 +179,25 @@ describe('a message from elsewhere', () => {
   });
 });
 
+describe('withAnswersUnderWay', () => {
+  it('adds the answers a fetch found, but where their senders answer already', () => {
+    const answering = after(NO_CONVERSATION, envelope({ResponseStarted: {turn_id: 'turn-new'}}));
+    const found = [
+      {sender: 'Agent:agent-1', name: 'agent', turnId: 'turn-old', reasoning: '', content: '', internal: false},
+      {sender: 'Agent:agent-2', name: 'other', turnId: 'turn-2', reasoning: '', content: '', internal: false},
+    ];
+    expect(withAnswersUnderWay(answering, found).answers.map(a => a.turnId)).toEqual(['turn-new', 'turn-2']);
+    expect(withAnswersUnderWay(answering, found.slice(0, 1))).toBe(answering);
+  });
+});
+
 describe('answersUnderWay', () => {
-  it('begins the answers of the participants a snapshot found in a turn', () => {
-    const answering = {...participant(AGENT, 'agent'), turn_under_way: 'turn-1'};
-    expect(answersUnderWay([answering, participant(OTHER_AGENT, 'other'), participant(ME, 'me')])).toEqual([
+  it('begins the answers of the participants a snapshot found in a turn of the thread', () => {
+    const answering = {...participant(AGENT, 'agent'), turns_under_way: {[CHANNEL]: 'turn-1'}};
+    const elsewhere = {...participant(OTHER_AGENT, 'other'), turns_under_way: {[THREAD]: 'turn-2'}};
+    expect(answersUnderWay([answering, elsewhere, participant(ME, 'me')], CHANNEL)).toEqual([
       {sender: 'Agent:agent-1', name: 'agent', turnId: 'turn-1', reasoning: '', content: '', internal: false},
     ]);
+    expect(answersUnderWay([answering, elsewhere], THREAD).map(a => a.turnId)).toEqual(['turn-2']);
   });
 });

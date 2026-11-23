@@ -1,19 +1,20 @@
 // The width of the panels beside the chat (issue 231): the sidebar, the
-// participants of a channel, and the panel showing an agent's context, history or
-// tools. Each can be made wider or narrower; the width is a convenience of
-// this browser, kept in local storage, since the right one depends on the
-// screen.
+// participants of a channel, the panel showing an agent's context, history or
+// tools, and the pane of a thread (issue 595). Each can be made wider or
+// narrower; the width is a convenience of this browser, kept in local storage,
+// since the right one depends on the screen.
 
 import {useEffect, useState} from 'react';
 
 /** The panels whose width is kept - the context, history and tools panels share one. */
-export type PanelKind = 'sidebar' | 'participants' | 'detail';
+export type PanelKind = 'sidebar' | 'participants' | 'detail' | 'thread';
 
 /** Each panel's width in pixels: as it starts, and how narrow and wide it may be. */
 const PANELS: Record<PanelKind, {initial: number; min: number; max: number}> = {
   sidebar: {initial: 256, min: 180, max: 480},
   participants: {initial: 256, min: 200, max: 480},
   detail: {initial: 448, min: 320, max: 960},
+  thread: {initial: 448, min: 320, max: 960},
 };
 
 /** How much of the window one panel may take at most, so that the chat keeps room. */

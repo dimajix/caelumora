@@ -38,6 +38,14 @@ impl ChannelLoop {
         self.thread(thread)?.opening().map(|opening| opening.origin)
     }
 
+    /// The threads open in the channel but its line, each with how it was opened (issue 595), in
+    /// the order of their ids, so that a list of them stays as it is.
+    pub(crate) fn openings(&self) -> Vec<(ThreadId, Opening)> {
+        let threads = self.threads.load();
+        let opened = threads.iter().filter_map(|(id, held)| held.opening().map(|o| (*id, o)));
+        opened.collect::<BTreeMap<_, _>>().into_iter().collect()
+    }
+
     /// Whether `thread` is open in the channel: something may be said in it, and a thread opened at
     /// it. Whoever closes it holds it until `run` closed it (`procedure::thread::Close`).
     pub(crate) fn is_open(&self, thread: ThreadId) -> bool {

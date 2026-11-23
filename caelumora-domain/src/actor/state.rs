@@ -58,6 +58,12 @@ impl ActorState {
         !matches!(self, ActorState::Idle | ActorState::Sleeping | ActorState::CarryingOutCommand)
     }
 
+    /// Whether the actor answers in this state (issue 595): a step of a turn runs - not one that
+    /// waits for a person, which is set aside (issue 602).
+    pub fn answers(self) -> bool {
+        self.in_turn() && self != ActorState::WaitingForUser
+    }
+
     /// Whether a cancel can still end the turn in this state (issues 235,
     /// 243): not one ending already, nor none.
     pub fn interruptible(self) -> bool {

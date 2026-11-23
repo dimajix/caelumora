@@ -348,7 +348,8 @@ impl ChannelFollower {
                     | Detail::NOTES
                     | Detail::APPROVALS
                     | Detail::BRIEFING
-                    | Detail::UNREAD,
+                    | Detail::UNREAD
+                    | Detail::THREADS,
             )
             .await;
         let history = HistoryPageResponse::of(page, |message, _| message);
@@ -1269,6 +1270,17 @@ mod tests {
         let line = page_of(&api, &cookie, &history).await.to_string();
         assert!(line.contains("in the line") && !line.contains("in another thread"), "{line}");
         assert!(line.contains("mentioned"), "what mentions her: {line}");
+        // Issue 595: each item says the thread it happened in.
+        let page = page_of(&api, &cookie, &history).await;
+        let thread_of = |text: &str| {
+            let items = page["items"].as_array().unwrap();
+            let item = items.iter().find(|item| item.to_string().contains(text)).unwrap();
+            item["thread"].clone()
+        };
+        assert_eq!(
+            (thread_of("in the line"), thread_of("mentioned")),
+            (json!(ThreadId::line(channel).to_string()), json!(other.to_string()))
+        );
         let of_other = page_of(&api, &cookie, &format!("{history}?thread={}", other.0)).await;
         let of_other = of_other.to_string();
         assert!(
@@ -1416,6 +1428,21 @@ mod tests {
         let join = format!("{}/join", hers(thread));
         let (status, _) = send(&api, &cookie, Method::POST, &join, None).await;
         assert_eq!(status, StatusCode::NO_CONTENT, "into the thread again by her own act");
+        // Issue 595: the channel lists its open threads, and where its participants take part.
+        let channel_uri = format!("/sessions/{}/channels/{}", session_id.0, channel_id.0);
+        let (status, channel) = send(&api, &cookie, Method::GET, &channel_uri, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            (&channel["threads"][0]["id"], &channel["threads"][0]["opening"]["origin"]["thread"]),
+            (&json!(thread.to_string()), &json!(line.to_string())),
+            "the thread open, where it hangs: {channel}"
+        );
+        let mut taking_part: Vec<String> =
+            serde_json::from_value(channel["participants"][0]["threads"].clone()).unwrap();
+        taking_part.sort();
+        let mut both = vec![line.to_string(), thread.to_string()];
+        both.sort();
+        assert_eq!(taking_part, both, "she takes part in the line and the thread");
         let (status, _) = send(&api, &cookie, Method::DELETE, &hers(thread), None).await;
         assert_eq!(status, StatusCode::NO_CONTENT, "let go by the channel's owner");
 

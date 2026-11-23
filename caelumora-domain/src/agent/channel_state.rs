@@ -2518,15 +2518,20 @@ mod tests {
     fn what_its_turns_wait_for_is_found_in_every_thread() {
         let call = |name: &str| ToolCallState::pending(make_tool_call(name), false, None, None);
         let agent = ActorId::Agent(AgentId::new());
-        let waiting = |name: &str| {
+        // Its turn waiting in `thread`, as a turn begun there knows its thread.
+        let waiting = |name: &str, thread: ThreadId| {
             let mut turn = TurnState { tool_calls: vec![call(name)], ..TurnState::default() };
             turn.work.event_context.sender_id = agent;
+            turn.work.event_context.thread_id = thread;
             turn
         };
-        let mut state = in_thread(ThreadId::default(), ActorState::WaitingForUser, None);
-        *turn_slot(&mut state) = Some(waiting("first"));
-        state.thread_mut(ThreadId::new()).turn = Some(waiting("second"));
-        assert_eq!(state.pending_approvals().len(), 2, "an approval from each thread's turn");
+        let (line, second, third) = (ThreadId::default(), ThreadId::new(), ThreadId::new());
+        let mut state = in_thread(line, ActorState::WaitingForUser, None);
+        *turn_slot(&mut state) = Some(waiting("first", line));
+        state.thread_mut(second).turn = Some(waiting("second", second));
+        let threads: BTreeSet<ThreadId> =
+            state.pending_approvals().iter().map(|request| request.thread_id).collect();
+        assert_eq!(threads, BTreeSet::from([line, second]), "an approval from each thread's turn");
 
         let questions = Questions {
             questions: vec![Question {
@@ -2540,10 +2545,12 @@ mod tests {
         };
         let asking = TurnState {
             tool_calls: vec![ToolCallState::asking(make_tool_call("ask"), questions)],
-            ..waiting("third")
+            ..waiting("third", third)
         };
-        state.thread_mut(ThreadId::new()).turn = Some(asking);
-        assert_eq!(state.pending_questions().len(), 1, "and the questions of another thread's");
+        state.thread_mut(third).turn = Some(asking);
+        let asked: Vec<ThreadId> =
+            state.pending_questions().iter().map(|request| request.thread_id).collect();
+        assert_eq!(asked, [third], "and the questions of another thread's");
     }
 
     #[test]

@@ -149,11 +149,16 @@ export interface ChannelParticipant {
    * not run.
    */
   commands?: CommandDescription[];
+  /** The threads of the channel it takes part in (issue 602); absent where the channel stopped. */
+  threads?: string[];
   /**
-   * The turn of the answer it is giving now (issue 240), as `ResponseStarted`
-   * named it; absent if none - also for an external agent.
+   * The turn under way in each thread, by the thread's id (issues 240, 595), as `ResponseStarted`
+   * named it - also one set aside waiting for a person; absent if none - also for an external
+   * agent.
    */
-  turn_under_way?: string;
+  turns_under_way?: Record<string, string>;
+  /** The thread it answers in now, if it is in a turn (issue 595). */
+  answering_in?: string;
   /**
    * What its model calls used (issue 209): sent with the channel stream's
    * snapshot alone - `getParticipantUsage` reads it for one participant -;
@@ -261,6 +266,23 @@ export interface ChannelResponse {
   former_participants: ChannelParticipant[];
   /** What is new in it to you (issue 404), as you open or list it. */
   unread?: Unread;
+  /**
+   * Its threads that are open, its line not among them (issue 595) - where it is fetched alone
+   * and in the snapshot of its stream; absent where it does not run.
+   */
+  threads?: ChannelThread[];
+}
+
+/** Whether who takes part in a thread may grow (issue 602): `closed` for a sub-agent's. */
+export type Circle = 'open' | 'closed';
+
+/** An open thread of a channel (issue 595). */
+export interface ChannelThread {
+  id: string;
+  /** Where it hangs - a message of another thread -, who opened it, whether its circle may grow. */
+  opening: {origin: {thread: string; message: string}; by: ActorId; circle: Circle};
+  /** To whom it was delegated, if it was: a sub-agent's thread (issue 558). */
+  recipient?: ActorId;
 }
 
 /**
@@ -1324,6 +1346,8 @@ export interface QuestionRequest {
   id: string;
   session_id: string;
   channel_id: string;
+  /** The thread of the turn whose call waits for the answers (issue 595). */
+  thread_id: string;
   agent_id: string;
   tool_call: ToolCall;
   questions: Questions;
@@ -1333,6 +1357,8 @@ export interface ApprovalRequest {
   id: string;
   session_id: string;
   channel_id: string;
+  /** The thread of the turn whose call waits for it (issue 595). */
+  thread_id: string;
   agent_id: string;
   tool_call: ToolCall;
   /**
@@ -1464,9 +1490,10 @@ export type GivenUpReason =
  * channel or a `HistoryMessage` of an agent - or how a turn ended, and whose
  * it was; a notice its reader was given (issue 417). `seq` is the position
  * of the entry that added it: what a live event that announced it carries
- * as its `position`.
+ * as its `position`; `thread` the thread it happened in, absent for what
+ * happens in the whole channel (issue 595).
  */
-export type HistoryItem<M> = {seq: number} & HistoryItemKind<M>;
+export type HistoryItem<M> = {seq: number; thread?: string} & HistoryItemKind<M>;
 
 /** What an item of a history is (`HistoryItem`), named by its kind. */
 export type HistoryItemKind<M> =

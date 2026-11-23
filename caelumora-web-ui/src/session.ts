@@ -85,15 +85,15 @@ export function useSessionKeepAlive(lifetimeSecs: number | undefined) {
   }, [lifetimeSecs]);
 }
 
-/** The key under which a channel's unsent message is kept. */
-function draftKey(channelId: string): string {
-  return `caelumora.draft.${channelId}`;
+/** The key under which the unsent message of a conversation - a line, a thread - is kept. */
+function draftKey(conversation: string): string {
+  return `caelumora.draft.${conversation}`;
 }
 
-/** The message typed but not sent in this channel, kept across a re-login. */
-export function loadDraft(channelId: string): string {
+/** The message typed but not sent in `conversation`, kept across a re-login. */
+export function loadDraft(conversation: string): string {
   try {
-    return sessionStorage.getItem(draftKey(channelId)) ?? '';
+    return sessionStorage.getItem(draftKey(conversation)) ?? '';
   } catch {
     return '';
   }
@@ -122,12 +122,12 @@ export function saveLastTemplate(templateId: string) {
   }
 }
 
-export function saveDraft(channelId: string, text: string) {
+export function saveDraft(conversation: string, text: string) {
   try {
     if (text) {
-      sessionStorage.setItem(draftKey(channelId), text);
+      sessionStorage.setItem(draftKey(conversation), text);
     } else {
-      sessionStorage.removeItem(draftKey(channelId));
+      sessionStorage.removeItem(draftKey(conversation));
     }
   } catch {
     // No session storage (private mode, blocked): drafts are then not kept.

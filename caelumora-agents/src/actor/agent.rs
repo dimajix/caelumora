@@ -1284,6 +1284,10 @@ impl Actor for AgentActor {
         self.body.control.turn_under_way(thread)
     }
 
+    fn answering_in(&self) -> Option<ThreadId> {
+        self.body.control.answering_in()
+    }
+
     fn retry_turn(&self, turn: TurnId) -> bool {
         let hit = self.body.control.retry(turn);
         match hit {

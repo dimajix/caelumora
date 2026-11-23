@@ -14,7 +14,7 @@ pub use rule::{
 
 use crate::actor::ActorId;
 use crate::agent::AgentId;
-use crate::channel::ChannelId;
+use crate::channel::{ChannelId, ThreadId};
 use crate::session::SessionId;
 use crate::tool::ToolCall;
 use chrono::{DateTime, Utc};
@@ -111,6 +111,8 @@ pub struct ApprovalRequest {
     pub id: ApprovalId,
     pub session_id: SessionId,
     pub channel_id: ChannelId,
+    /// The thread of the turn whose call waits for it (issue 595).
+    pub thread_id: ThreadId,
     pub agent_id: AgentId,
     pub tool_call: ToolCall,
     /// Whether a rule of a place asked for this very call to be decided by
@@ -185,6 +187,7 @@ pub mod testing {
             id: ApprovalId::new(),
             session_id,
             channel_id,
+            thread_id: ThreadId::line(channel_id),
             agent_id,
             tool_call: ToolCall {
                 description: Some("call test_tool".to_string()),

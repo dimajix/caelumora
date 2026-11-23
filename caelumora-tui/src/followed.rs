@@ -606,15 +606,16 @@ impl Followed {
         self.under_way.iter_mut().find(|answer| answer.agent == agent)
     }
 
-    /// The answers under way in the channel as its running channel tells them: those known that
+    /// The answers under way in the line as its running channel tells them: those known that
     /// still are, in the order they began and with what they streamed, then those not known, in
     /// the order of the participants, as begun now; `None` if the channel cannot be read.
     async fn read_under_way(&self) -> Option<Vec<UnderWay>> {
         let view = self.view().await.ok()?;
+        let line = ThreadId::line(self.channel_id());
         let mut running = Vec::new();
         for participant in view.participants().await {
-            let snapshot = participant.snapshot(Detail::empty()).await;
-            if let Some(turn) = snapshot.turn_under_way {
+            let snapshot = participant.snapshot(Detail::THREADS).await;
+            if let Some(&turn) = snapshot.turns_under_way.get(&line) {
                 let name = snapshot.name.unwrap_or_else(|| snapshot.id.to_string());
                 running.push(UnderWay::began(snapshot.id, name, turn, snapshot.state));
             }

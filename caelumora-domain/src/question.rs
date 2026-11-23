@@ -11,7 +11,7 @@
 
 use crate::actor::ActorId;
 use crate::agent::AgentId;
-use crate::channel::ChannelId;
+use crate::channel::{ChannelId, ThreadId};
 use crate::mention::{handle_of, MentionDirectory};
 use crate::session::SessionId;
 use crate::tool::ToolCall;
@@ -96,6 +96,8 @@ pub struct QuestionRequest {
     pub id: QuestionId,
     pub session_id: SessionId,
     pub channel_id: ChannelId,
+    /// The thread of the turn whose call waits for the answers (issue 595).
+    pub thread_id: ThreadId,
     pub agent_id: AgentId,
     pub tool_call: ToolCall,
     /// With every addressee found: `Addressee::Actor`.
@@ -407,6 +409,7 @@ pub mod testing {
             id: QuestionId::new(),
             session_id,
             channel_id,
+            thread_id: ThreadId::line(channel_id),
             agent_id,
             tool_call: make_tool_call("ask"),
             questions: Questions {

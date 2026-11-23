@@ -719,6 +719,12 @@ impl ChannelLoop {
         self.actor(actor)?.turn_under_way(thread)
     }
 
+    /// The thread the participant `actor` answers in now (issue 595), if it is in a turn
+    /// (`Actor::answering_in`).
+    pub(crate) fn answering_in(&self, actor: ActorId) -> Option<ThreadId> {
+        self.actor(actor)?.answering_in()
+    }
+
     /// The thread the turn `turn` of `author` runs or ran in, if it can be asked for again: under
     /// way (issue 235), or `author`'s last turn, given up for a reason that may be answered again
     /// and with nothing after it in the channel's history (issue 259) - where a request to answer

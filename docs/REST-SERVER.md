@@ -318,8 +318,9 @@ channel's history records carries the position of its entry (`context.position`,
 `seq` of the item a client reads it as later.
 
 A history - the channel's, and an agent's, which is the channel's as the agent saw it (issue 417) -
-is a list of items in the order they happened, each with its position (`seq`): messages said, where
-a step of a plan began, how turns ended, commands carried out with what they answered
+is a list of items in the order they happened, each with its position (`seq`) and the thread it
+happened in (`thread`, issue 595; absent for what happens in the whole channel): messages said,
+where a step of a plan began, how turns ended, commands carried out with what they answered
 (`command_executed`) or not (`command_failed`), what an agent did of its own accord and what came of
 it (`activity_finished`), who joined or left the channel, by whose act and named as they were then
 (`participant_joined`, `participant_left`), the notices its reader was given - an answer to a
@@ -400,11 +401,14 @@ state they start from:
     last page of its line's history (issue 557) with `earlier` (older ones over REST, from there on)
     and the notes its agents published; for a participant, also the approvals and questions its
     agents wait for, read from their stored turns, so that one asked before the client connected or
-    before a restart is shown - a sensitive question only to whom it was asked. A participant giving
-    an answer carries its turn in the line (`turn_under_way`), running or set aside, and an agent
-participant where it stands
-    (`state`), both read from the running channel - none of a channel that does not run - and kept
-    up by the stream; a client that connects during an answer shows it as under way. Only here, not
+    before a restart is shown - a sensitive question only to whom it was asked -, each with the
+    thread of the turn that waits (`thread_id`). The channel carries its open threads (`threads`:
+    where each hangs, who opened it, its circle, to whom it was delegated; issue 595), as it does
+    where it is fetched alone. A participant carries the threads it takes part in (`threads`), its
+    turn under way in each (`turns_under_way`, by the thread's id), running or set aside, and the
+    thread it answers in (`answering_in`), an agent participant where it stands (`state`), all read
+    from the running channel - none of a channel that does not run - and kept up by the stream; a
+    client that connects during an answer shows it as under way. Only here, not
     where channels are listed, do participants carry what their model calls used, since that reads
     every agent's state;
 *   for the global stream, every session with its channels.

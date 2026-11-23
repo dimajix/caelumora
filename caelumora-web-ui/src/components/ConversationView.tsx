@@ -21,7 +21,7 @@ import {
   UserPlus,
 } from 'lucide-react';
 import type {ActorId, Message, Rejection, RetryRefused} from '../types';
-import {labelOtherThan} from '../confidentiality';
+import {labelOtherThan, type Classification} from '../confidentiality';
 import {MessageEditor} from './MessageEditor';
 import {cn} from '../classNames';
 import {MarkdownMessage} from './MarkdownMessage';
@@ -29,13 +29,14 @@ import {MessageView, Reasoning} from './MessageView';
 import {Notice} from './Notice';
 import {Timestamp} from './Timestamp';
 import {PlanSteps} from './PlanSteps';
-import {chatRows, formatTimestamp, isOwn, joinsSteps, mayBeAnsweredAgain, rowTurn, turnGroups, type ChatRow} from '../messages';
+import {attachedByTurn, chatRows, endedCommands, formatTimestamp, isOwn, joinsSteps, mayBeAnsweredAgain, mergeToolResults, rowTurn, turnGroups, withoutQuietCalls, type ChatRow} from '../messages';
 import {actorKey, sameActor} from '../actor';
-import {shownOf, type Answer, type Conversation} from '../conversation';
+import type {Answer, Conversation} from '../conversation';
+import {ShownChannelContext, useShownChannel, type ShownChannel} from '../shownChannel';
 import {useChatChannel} from '../chatChannel';
 import {useComposer} from '../composer';
 import {Composer} from './Composer';
-import type {Classification} from '../confidentiality';
+import {ThreadMark} from './ThreadMark';
 import type {UserInput} from '../command';
 
 /** Why an agent did not answer again (issue 234), as this page words it. */
@@ -125,8 +126,8 @@ interface ConversationViewProps {
    * `release`, or a command -; fails with why, and what was typed is given back.
    */
   onSend: (input: UserInput, attached: string[], release: Classification | null) => Promise<void>;
-  /** Stops the answers under way in it. */
-  onStop: () => void;
+  /** Stops the answers under way in it; absent where nothing is offered to stop them all. */
+  onStop?: () => void;
   /** Why the user cannot write here, said in place of the field to write in; absent if they can. */
   cannotWrite?: string;
   /** What stands between its list and the field to write in: what waits for the user there. */
@@ -143,14 +144,26 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
   conversation, onLoadEarlier, newSince, draftKey, onSend, onStop, cannotWrite, children,
 }) => {
   const {
-    me, channel, participants, takesPart, attachments,
+    me, channel, participants, takesPart, attachments, threads,
     retry, retryAnswer, retryGivenUp, modify, revoke, reclassify, showContext, interruptCall, stopAnswer,
   } = useChatChannel();
   const composer = useComposer(draftKey, attachments);
   // Whether files are dragged over the conversation, to be dropped as attachments.
   const [dragging, setDragging] = useState(false);
   const {answers, earlier} = conversation;
-  const shown = useMemo(() => shownOf(conversation.messages), [conversation.messages]);
+  const merged = useMemo(() => mergeToolResults(conversation.messages), [conversation.messages]);
+  const shown = useMemo(() => withoutQuietCalls(merged), [merged]);
+  // What its messages need of the channel, with what is the conversation's own (issues 294, 535):
+  // the commands a result in it, or the user, ended, and what the messages of each turn carry.
+  const outer = useShownChannel();
+  const byUser = outer.endedCommands;
+  const ended = useMemo(() => {
+    const ids = endedCommands(merged);
+    byUser?.forEach(id => ids.add(id));
+    return ids;
+  }, [merged, byUser]);
+  const digestsByTurn = useMemo(() => attachedByTurn(shown), [shown]);
+  const shownChannel: ShownChannel = {...outer, endedCommands: ended, digestsByTurn};
   const [isLoadingEarlier, setIsLoadingEarlier] = useState(false);
   // The user's own message being edited, and the one whose taking back waits for a second click
   // (issue 234).
@@ -482,6 +495,24 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
     />
   );
 
+  // The threads that hang at each message shown (issue 595), marked below it.
+  const hanging = new Map<string, typeof threads>();
+  for (const thread of threads) {
+    const at = thread.opening.origin.message;
+    hanging.set(at, [...(hanging.get(at) ?? []), thread]);
+  }
+  // A message as `renderMessage` shows it, with the marks of the threads that hang at it.
+  const withMarks = (msg: Message, key: React.Key, inTurn?: {first: boolean; last: boolean}) => {
+    const marks = msg.id ? hanging.get(msg.id) : undefined;
+    if (!marks) return renderMessage(msg, key, inTurn);
+    return (
+      <React.Fragment key={key}>
+        {renderMessage(msg, 'message', inTurn)}
+        {marks.map(thread => <ThreadMark key={thread.id} thread={thread} />)}
+      </React.Fragment>
+    );
+  };
+
   const rows = chatRows(shown);
   // The row of each turn's step that came last: the step it is in now, open while the turn is
   // under way (issue 263).
@@ -564,95 +595,97 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
   );
 
   return (
-    <div
-      // Files dropped onto the conversation are attached to the message being written (issue 282).
-      onDragOver={(e) => {
-        if (cannotWrite || !e.dataTransfer.types.includes('Files')) return;
-        e.preventDefault();
-        setDragging(true);
-      }}
-      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false); }}
-      onDrop={(e) => {
-        if (cannotWrite || e.dataTransfer.files.length === 0) return;
-        e.preventDefault();
-        setDragging(false);
-        composer.draft.add([...e.dataTransfer.files], composer.release ?? undefined);
-      }}
-      className={cn("flex-1 flex flex-col min-w-0", dragging && "ring-2 ring-inset ring-blue-500")}
-    >
-      <div ref={listRef} onScroll={scrolled} className="flex-1 overflow-y-auto p-4 space-y-4">
-        {earlier !== null && (
-          <div className="text-center">
-            <button
-              onClick={() => void loadEarlier()}
-              disabled={isLoadingEarlier}
-              className="text-xs px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50"
-            >
-              {isLoadingEarlier ? 'Loading…' : 'Load earlier messages'}
-            </button>
-          </div>
-        )}
-        {groups.map(group => {
-          const trailing = group === groups[groups.length - 1] ? answers.filter(continuesLast) : [];
-          const together = group.turnId !== null && (turnSizes.get(group.turnId) ?? 0) > 1;
-          return [group.start === newFrom && (
-            <div key="new-messages" role="separator" aria-label="New messages" className="flex items-center gap-2 text-xs font-semibold text-red-600 dark:text-red-400">
-              <div className="flex-1 border-t border-red-400 dark:border-red-500" />
-              New messages
-              <div className="flex-1 border-t border-red-400 dark:border-red-500" />
+    <ShownChannelContext value={shownChannel}>
+      <div
+        // Files dropped onto the conversation are attached to the message written (issue 282).
+        onDragOver={(e) => {
+          if (cannotWrite || !e.dataTransfer.types.includes('Files')) return;
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false); }}
+        onDrop={(e) => {
+          if (cannotWrite || e.dataTransfer.files.length === 0) return;
+          e.preventDefault();
+          setDragging(false);
+          composer.draft.add([...e.dataTransfer.files], composer.release ?? undefined);
+        }}
+        className={cn("flex-1 flex flex-col min-w-0", dragging && "ring-2 ring-inset ring-blue-500")}
+      >
+        <div ref={listRef} onScroll={scrolled} className="flex-1 overflow-y-auto p-4 space-y-4">
+          {earlier !== null && (
+            <div className="text-center">
+              <button
+                onClick={() => void loadEarlier()}
+                disabled={isLoadingEarlier}
+                className="text-xs px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50"
+              >
+                {isLoadingEarlier ? 'Loading…' : 'Load earlier messages'}
+              </button>
             </div>
-          ), (
-            <div
-              key={`turn-${rowKey(rows[group.start], group.start)}`}
-              onMouseEnter={together ? () => setPointedTurn(group.turnId) : undefined}
-              onMouseLeave={together ? () => setPointedTurn(null) : undefined}
-              className={cn(
-                "space-y-1",
-                // Indented as a whole, its frame flush with the messages alone and as far from its
-                // messages as they are from their content.
-                together && "p-3 rounded-lg transition-colors",
-                together && pointedTurn === group.turnId && "bg-gray-200/70 dark:bg-gray-700/50 ring-1 ring-gray-300 dark:ring-gray-600",
-              )}
-            >
-              {rows.slice(group.start, group.end).map((row, offset) => {
-                const idx = group.start + offset;
-                const inTurn = {first: idx === group.start, last: idx === group.end - 1 && trailing.length === 0};
-                if (row.kind === 'message') return renderMessage(row.message, rowKey(row, idx), inTurn);
-                const current = currentSteps.get(row.turnId) === idx;
-                const streaming = current ? answers.filter(a => a.turnId === row.turnId && inStep(a)) : [];
-                return (
-                  <PlanSteps
-                    key={rowKey(row, idx)}
-                    name={row.sender || 'Assistant'}
-                    step={row.step}
-                    count={row.messages.length}
-                    underWay={row.turnId !== null && current && answers.some(a => a.turnId === row.turnId)}
-                    streaming={streaming.length > 0}
-                  >
-                    {row.messages.map((msg, i) => renderMessage(msg, msg.id ?? `local-${i}`, {first: false, last: i === row.messages.length - 1 && streaming.length === 0}))}
-                    {streaming.map(answer => renderAnswer(answer, true))}
-                  </PlanSteps>
-                );
-              })}
-              {trailing.map(answer => renderAnswer(answer, true))}
-            </div>
-          )];
-        })}
-        {answers.filter(answer => !inStep(answer) && !continuesLast(answer)).map(answer => renderAnswer(answer))}
+          )}
+          {groups.map(group => {
+            const trailing = group === groups[groups.length - 1] ? answers.filter(continuesLast) : [];
+            const together = group.turnId !== null && (turnSizes.get(group.turnId) ?? 0) > 1;
+            return [group.start === newFrom && (
+              <div key="new-messages" role="separator" aria-label="New messages" className="flex items-center gap-2 text-xs font-semibold text-red-600 dark:text-red-400">
+                <div className="flex-1 border-t border-red-400 dark:border-red-500" />
+                New messages
+                <div className="flex-1 border-t border-red-400 dark:border-red-500" />
+              </div>
+            ), (
+              <div
+                key={`turn-${rowKey(rows[group.start], group.start)}`}
+                onMouseEnter={together ? () => setPointedTurn(group.turnId) : undefined}
+                onMouseLeave={together ? () => setPointedTurn(null) : undefined}
+                className={cn(
+                  "space-y-1",
+                  // Indented as a whole, its frame flush with the messages alone and as far from
+                  // its messages as they are from their content.
+                  together && "p-3 rounded-lg transition-colors",
+                  together && pointedTurn === group.turnId && "bg-gray-200/70 dark:bg-gray-700/50 ring-1 ring-gray-300 dark:ring-gray-600",
+                )}
+              >
+                {rows.slice(group.start, group.end).map((row, offset) => {
+                  const idx = group.start + offset;
+                  const inTurn = {first: idx === group.start, last: idx === group.end - 1 && trailing.length === 0};
+                  if (row.kind === 'message') return withMarks(row.message, rowKey(row, idx), inTurn);
+                  const current = currentSteps.get(row.turnId) === idx;
+                  const streaming = current ? answers.filter(a => a.turnId === row.turnId && inStep(a)) : [];
+                  return (
+                    <PlanSteps
+                      key={rowKey(row, idx)}
+                      name={row.sender || 'Assistant'}
+                      step={row.step}
+                      count={row.messages.length}
+                      underWay={row.turnId !== null && current && answers.some(a => a.turnId === row.turnId)}
+                      streaming={streaming.length > 0}
+                    >
+                      {row.messages.map((msg, i) => withMarks(msg, msg.id ?? `local-${i}`, {first: false, last: i === row.messages.length - 1 && streaming.length === 0}))}
+                      {streaming.map(answer => renderAnswer(answer, true))}
+                    </PlanSteps>
+                  );
+                })}
+                {trailing.map(answer => renderAnswer(answer, true))}
+              </div>
+            )];
+          })}
+          {answers.filter(answer => !inStep(answer) && !continuesLast(answer)).map(answer => renderAnswer(answer))}
+        </div>
+        {children}
+        <div className="p-4 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700">
+          {channel?.unavailable && (
+            <p className="text-sm text-amber-700 dark:text-amber-400 text-center p-2">
+              This channel does not run: {channel.unavailable}. It runs again once its components can be read - whatever you do here tries again -; its owner can delete it.
+            </p>
+          )}
+          {cannotWrite ? (
+            <p className="text-sm text-gray-500 dark:text-gray-400 text-center p-2">{cannotWrite}</p>
+          ) : (
+            <Composer composer={composer} onSend={send} onStop={onStop} generating={answers.length > 0} />
+          )}
+        </div>
       </div>
-      {children}
-      <div className="p-4 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700">
-        {channel?.unavailable && (
-          <p className="text-sm text-amber-700 dark:text-amber-400 text-center p-2">
-            This channel does not run: {channel.unavailable}. It runs again once its components can be read - whatever you do here tries again -; its owner can delete it.
-          </p>
-        )}
-        {cannotWrite ? (
-          <p className="text-sm text-gray-500 dark:text-gray-400 text-center p-2">{cannotWrite}</p>
-        ) : (
-          <Composer composer={composer} onSend={send} onStop={onStop} generating={answers.length > 0} />
-        )}
-      </div>
-    </div>
+    </ShownChannelContext>
   );
 };

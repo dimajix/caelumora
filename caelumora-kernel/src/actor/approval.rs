@@ -607,6 +607,7 @@ mod tests {
                 id: ApprovalId::new(),
                 session_id: self.channel.session_id(),
                 channel_id: self.channel.id(),
+                thread_id: ThreadId::line(self.channel.id()),
                 agent_id: self.agent,
                 tool_call: ToolCall { arguments: json!({}), ..make_tool_call("test_tool") },
             }
