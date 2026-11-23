@@ -426,6 +426,30 @@ impl ChannelLoop {
         items_of(&self.state.lock().await.history)
     }
 
+    /// The thread the message saying `text` was said in, once the history holds it (issue 595) - at
+    /// most five seconds, after which the test fails.
+    pub async fn thread_said_in(&self, text: &str) -> ThreadId {
+        let saying =
+            |entry: &HistoryEntry| entry.said().is_some_and(|m| m.content.as_deref() == Some(text));
+        time::timeout(Duration::from_secs(5), async {
+            loop {
+                let found = {
+                    let state = self.state.lock().await;
+                    let mut nodes = state.history.from(Position::START);
+                    nodes
+                        .find(|node| saying(&node.entry.entry))
+                        .and_then(|node| node.entry.thread())
+                };
+                if let Some(thread) = found {
+                    return thread;
+                }
+                time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("said")
+    }
+
     /// The entries of the whole history once `done` holds of them, waited for as `run` records -
     /// at most five seconds, after which the test fails.
     pub async fn history_once(&self, done: impl Fn(&[HistoryEntry]) -> bool) -> Vec<HistoryEntry> {

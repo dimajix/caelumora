@@ -153,7 +153,8 @@ impl Filter<HistoryField> {
     }
 
     /// What happened in `thread` or in the whole channel (issue 557): a page of one thread -
-    /// `Recorded::thread` being `None` or `thread`.
+    /// `Recorded::thread` being `None` or `thread`; live, `Envelope::is_shown_in_thread` (issue
+    /// 595).
     pub fn in_thread(thread: ThreadId) -> Self {
         Filter::any_of([
             Filter::IsNull(HistoryField::Thread),

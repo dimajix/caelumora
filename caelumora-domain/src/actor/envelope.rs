@@ -153,14 +153,24 @@ impl Envelope {
     /// (`Filter::shown_in_line`).
     pub fn is_shown_in_line(&self, viewer: ActorId) -> bool {
         let line = ThreadId::line(self.context.channel_id);
-        let addresses_viewer = matches!(
+        self.event.is_waited_for() || self.addresses(viewer) || self.is_shown_in_thread(line)
+    }
+
+    /// Whether it is a message heard that mentions `viewer` (issues 557, 595): what a view shows
+    /// them of a thread it is not of.
+    pub fn addresses(&self, viewer: ActorId) -> bool {
+        matches!(
             &self.event,
             ActorEvent::CompleteMessageGenerated(message)
                 if message.is_heard() && message.addressees.contains(&viewer)
-        );
-        self.event.is_waited_for()
-            || addresses_viewer
-            || self.thread().is_none_or(|thread| thread == line)
+        )
+    }
+
+    /// Whether a frontend shows it in the view of the thread `thread` (issue 595): what happens in
+    /// that thread or in the whole channel (`thread`) - as a page of one thread holds them
+    /// (`Filter::in_thread`).
+    pub fn is_shown_in_thread(&self, thread: ThreadId) -> bool {
+        self.thread().is_none_or(|happened| happened == thread)
     }
 
     /// What a channel's history records of this envelope (issue 417): a
@@ -793,6 +803,25 @@ mod tests {
         assert!(shown(&in_other, ActorEvent::ApprovalRequested(request)), "its call waits");
     }
 
+    /// Issue 595: a thread's view shows what happens in it and in the whole channel, nothing of
+    /// the line.
+    #[test]
+    fn a_threads_view_shows_what_happens_in_it_and_in_the_whole_channel() {
+        let (session, channel) = (SessionId::new(), ChannelId::new());
+        let in_line = EventContext::new(session, channel, ActorId::Agent(AgentId::new()), "bob");
+        let thread = ThreadId::new();
+        let in_thread = EventContext { thread_id: thread, ..in_line.clone() };
+        let shown = |context: &EventContext, event: ActorEvent| {
+            let envelope = Envelope { timestamp: Utc::now(), context: context.clone(), event };
+            envelope.is_shown_in_thread(thread)
+        };
+        let said = || ActorEvent::CompleteMessageGenerated(make_message(MessageId::new()));
+        assert!(shown(&in_thread, said()), "said in it");
+        assert!(!shown(&in_line, said()), "said in the line");
+        let revoked = ActorEvent::MessageRevoked { message: MessageId::new(), at: Utc::now() };
+        assert!(shown(&in_line, revoked), "of the whole channel");
+    }
+
     /// Issue 557: what the line's view shows live of a message is what a page of the line holds of
     /// it (`Filter::shown_in_line`) - said in the line or in another thread, mentioning the viewer
     /// or not, heard or a step of a plan.
@@ -826,6 +855,34 @@ mod tests {
                 let kept = serde_json::to_value(KeptItem::of(Position::START, recorded)).unwrap();
                 assert_eq!(
                     envelope.is_shown_in_line(viewer),
+                    page.matches(&kept),
+                    "{:?}",
+                    envelope.event
+                );
+            }
+        }
+    }
+
+    /// Issue 595: a thread's view shows live what a page of it holds (`Filter::in_thread`).
+    #[test]
+    fn a_threads_view_shows_live_what_a_page_of_it_holds() {
+        let (session, channel) = (SessionId::new(), ChannelId::new());
+        let sender = ActorId::Agent(AgentId::new());
+        let thread = ThreadId::new();
+        let page = Filter::in_thread(thread);
+        let said = || ActorEvent::CompleteMessageGenerated(make_message(MessageId::new()));
+        let revoked = || ActorEvent::MessageRevoked { message: MessageId::new(), at: Utc::now() };
+        for thread_id in [ThreadId::line(channel), thread] {
+            for event in [said(), revoked()] {
+                let context = EventContext {
+                    thread_id,
+                    ..EventContext::new(session, channel, sender, "bob")
+                };
+                let envelope = Envelope::new(context, event);
+                let recorded = Recorded::of(&envelope, sender, Audience::Everybody).unwrap();
+                let kept = serde_json::to_value(KeptItem::of(Position::START, recorded)).unwrap();
+                assert_eq!(
+                    envelope.is_shown_in_thread(thread),
                     page.matches(&kept),
                     "{:?}",
                     envelope.event

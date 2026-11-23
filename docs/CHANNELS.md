@@ -228,7 +228,9 @@ channel - what it hears enters its context, and is paid for by every call after 
 everything of the channel, which a frontend sorts by thread; what goes to someone by name reaches
 them wherever it happens. The web UI and the TUI show the line (`Envelope::is_shown_in_line`,
 `ChannelView::shown_in_line`): what happens in it and in the whole channel, and of another thread
-its approvals and its questions, which its calls wait for, and what mentions the viewer.
+its approvals and its questions, which its calls wait for, and what mentions the viewer. A view of
+another thread shows what happens in it and in the whole channel (`Envelope::is_shown_in_thread`,
+`Filter::in_thread`, issue 595): the web UI's pane beside the line, the thread the TUI follows.
 
 A thread is **opened** at a message of another thread of its channel (`ThreadOrigin`), its
 **circle** open or closed (see below), with its **founders**, as its `ThreadSpec` asks

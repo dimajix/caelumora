@@ -4,6 +4,7 @@
 
 use crate::here::HERE;
 use crate::id_prefix::{beginning_with, NotNamed};
+use crate::printed::beginning;
 use crate::printed::Printed;
 use crate::typeable::Typeable;
 use caelumora_domain::actor::ActorId;
@@ -29,9 +30,6 @@ use std::cmp::Reverse;
 use std::error::Error;
 use std::sync::Arc;
 use tracing::warn;
-
-/// How many characters of the last message a listed session shows.
-const SHOWN: usize = 60;
 
 /// What the program is asked to do with the sessions of its directory.
 pub(crate) enum Invocation {
@@ -392,16 +390,6 @@ async fn last_heard(channel: &ChannelView, viewer: ActorId) -> Option<Message> {
     }
 }
 
-/// The beginning of `content`, on one line: its first line that is not blank, cut to `SHOWN`
-/// characters.
-fn beginning(content: &str) -> String {
-    let line = content.lines().find(|line| !line.trim().is_empty()).unwrap_or_default().trim();
-    match line.char_indices().nth(SHOWN) {
-        Some((cut, _)) => format!("{}…", &line[..cut]),
-        None => line.to_string(),
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod testing {
     //! What the tests of the terminal reach the sessions of a directory by: a directory the program
@@ -535,13 +523,6 @@ mod tests {
         assert_eq!(order, [recent, quiet, old]);
         assert!(listed[0].line().ends_with("recent  later"), "{}", listed[0].line());
         assert!(listed[1].line().ends_with("quiet"), "{}", listed[1].line());
-    }
-
-    #[test]
-    fn what_was_said_last_is_shown_by_its_first_line_and_its_beginning() {
-        assert_eq!(beginning("\n  hello\nthere"), "hello");
-        let long = "ä".repeat(70);
-        assert_eq!(beginning(&long), format!("{}…", "ä".repeat(60)));
     }
 
     /// A session is started from the template named, among those the user may use; continued,

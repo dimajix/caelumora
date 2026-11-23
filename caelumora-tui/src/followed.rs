@@ -1,7 +1,7 @@
 //! A channel as the terminal follows it for the user: what it prints of what the channel shows,
 //! and what the user's commands there need of it (issue 561).
 
-use crate::printed::{ErrorKind, Printed, Said, Saying, Words};
+use crate::printed::{beginning, ErrorKind, Printed, Said, Saying, Words};
 use crate::typeable::Typeable;
 use crate::under_way::UnderWay;
 use anyhow::Result;
@@ -14,6 +14,7 @@ use caelumora_domain::command::{agents_commands, ParameterKind};
 use caelumora_domain::history::{HistoryEntry, HistoryPage, HistoryPageItem};
 use caelumora_domain::mention::MentionDirectory;
 use caelumora_domain::message::{Message, MessageId};
+use caelumora_domain::query::Filter;
 use caelumora_domain::question::{QuestionId, QuestionRequest};
 use caelumora_domain::snapshot::Detail;
 use caelumora_domain::tool::ToolPresentation;
@@ -37,7 +38,8 @@ const HISTORY_ITEMS: usize = 50;
 /// REST server does (`docs/CHANNELS.md`, issue 386): the channel, the views it is read through in
 /// their name and what their actor in it shows, the approvals pending there and those the user
 /// answered, which questions it knows, the answers under way, the quiet calls whose results are to
-/// come, the messages printed from its history, and what `/retry` asks to be given again.
+/// come, the messages printed from its history, what `/retry` asks to be given again, and the
+/// thread of it the user follows (issue 595).
 pub(crate) struct Followed {
     /// The channel followed, in which the user's actor is reached where they act: a run of it may
     /// have ended and another begun since it was followed - they left and joined again. Held, not
@@ -105,6 +107,19 @@ pub(crate) struct Followed {
     from_history: HashSet<MessageId>,
     /// The turn given up that may be answered anew, with nothing said since (issue 259).
     given_up: Option<(ActorId, TurnId)>,
+    /// The thread of the channel the user follows (issue 595): what is printed is what its view
+    /// shows, and what they type goes there. The line unless they chose another.
+    thread: ThreadId,
+}
+
+/// A thread open in the channel, as `/thread list` tells it (issue 595).
+#[derive(Debug, Clone)]
+pub(crate) struct OpenThread {
+    pub(crate) id: ThreadId,
+    /// `Thread of` the agent it was delegated to - a sub-agent's -, else `Thread`.
+    pub(crate) title: String,
+    /// Its title, who takes part, and the beginning of the message it hangs at.
+    pub(crate) told: String,
 }
 
 impl Followed {
@@ -121,6 +136,7 @@ impl Followed {
             .user_follow()
             .await
             .ok()??;
+        let thread = ThreadId::line(channel.id());
         let mut followed = Self {
             channel,
             user,
@@ -135,6 +151,7 @@ impl Followed {
             quiet_calls: HashMap::new(),
             from_history: HashSet::new(),
             given_up: None,
+            thread,
         };
         followed.catch_up().await;
         Some(followed)
@@ -167,6 +184,12 @@ impl Followed {
     /// shows them (`Screen::show_under_way`).
     pub(crate) async fn catch_up(&mut self) -> Vec<Printed> {
         let mut printed = Vec::new();
+        // A thread followed whose closing was missed - the watch lagged - is left for the line.
+        if self.thread != self.line()
+            && !self.open_threads().await.iter().any(|t| t.id == self.thread)
+        {
+            printed.push(self.back_to_the_line());
+        }
         if let Some(mut pending) = self.read_pending_approvals().await {
             pending.retain(|request| !self.answered_approvals.contains(&request.id));
             let unknown = pending.iter().filter(|request| !self.is_pending(request.id));
@@ -194,11 +217,87 @@ impl Followed {
         self.channel.name()
     }
 
+    /// The thread of the channel the user follows (issue 595): where what they type goes.
+    pub(crate) fn thread(&self) -> ThreadId {
+        self.thread
+    }
+
+    /// Follows `thread` of the channel from now on (issue 595) - its line, or a thread open -,
+    /// called `called`, and answers what tells so: what was said in it so far and that it is
+    /// followed, as talking in a channel tells. The last answer, a turn given up and the answers
+    /// under way are read anew, of that thread.
+    pub(crate) async fn follow(&mut self, thread: ThreadId, called: &str) -> Vec<Printed> {
+        self.switch_to(thread);
+        self.under_way = self.read_under_way().await.unwrap_or_default();
+        let mut printed = self.history().await;
+        printed.push(Printed::Notice(format!("Following {called} of {} now", self.name())));
+        printed
+    }
+
+    /// Follows `thread` from now on, what was known of the thread followed before let go: the last
+    /// answer and a turn given up that `/retry` asks for, the answers under way, the messages
+    /// printed from its history (issue 595).
+    fn switch_to(&mut self, thread: ThreadId) {
+        self.thread = thread;
+        self.last_answer = None;
+        self.given_up = None;
+        self.under_way.clear();
+        self.from_history.clear();
+    }
+
+    /// Follows the line again, as the thread followed is gone, and answers what tells so.
+    fn back_to_the_line(&mut self) -> Printed {
+        self.switch_to(self.line());
+        Printed::Notice(format!(
+            "The thread you followed is closed: following {} again",
+            self.name()
+        ))
+    }
+
+    /// The line of the channel.
+    fn line(&self) -> ThreadId {
+        ThreadId::line(self.channel_id())
+    }
+
+    /// The threads open in the channel as its view lists them (issue 595), each with what tells
+    /// it: whose sub-agent's it is, who takes part, the beginning of the message it hangs at;
+    /// none where the channel cannot be read.
+    pub(crate) async fn open_threads(&self) -> Vec<OpenThread> {
+        let Ok(view) = self.view().await else { return Vec::new() };
+        let snapshot = view.snapshot(Detail::PARTICIPANTS | Detail::THREADS).await;
+        let participants = &snapshot.participants;
+        let name_of = |id: ActorId| participants.iter().find(|m| m.id == id)?.name.clone();
+        let mut listed = Vec::new();
+        for thread in &snapshot.threads {
+            let title = match thread.recipient.and_then(name_of) {
+                Some(name) => format!("Thread of {name}"),
+                None => "Thread".to_string(),
+            };
+            let taking_part: Vec<String> = participants
+                .iter()
+                .filter(|m| m.threads.contains(&thread.id))
+                .filter_map(|m| m.name.clone())
+                .collect();
+            let hangs_at = view.message(thread.opening.origin.message).await.ok();
+            let words = hangs_at.and_then(|said| said.content).unwrap_or_default();
+            let at = beginning(&words);
+            let told = format!("{title} ({}), at \"{at}\"", taking_part.join(", "));
+            listed.push(OpenThread { id: thread.id, title, told });
+        }
+        listed
+    }
+
     /// What tells the user they talk in the channel now: what was said in it so far (`history`),
     /// its name, who answers there, and what waits for them there.
     pub(crate) async fn talking_in(&mut self) -> Vec<Printed> {
         let mut printed = self.history().await;
         printed.push(Printed::Notice(format!("Talking in {} now", self.name())));
+        if self.thread != self.line() {
+            let open = self.open_threads().await;
+            let title = open.into_iter().find(|t| t.id == self.thread).map(|t| t.title);
+            let title = title.unwrap_or_else(|| "a thread".to_string());
+            printed.push(Printed::Notice(format!("Following {title}: /thread line for the line")));
+        }
         printed.extend(self.who_answers().await);
         printed.extend(self.waiting());
         printed
@@ -272,10 +371,13 @@ impl Followed {
     /// approval, questions put to them, a message that mentions them -, ends an approval for
     /// them - withdrawn, or answered by them (issue 566) -, or is a call they made (issue 587). Of
     /// the end of an approval, `take_in` tells what concerns them: a withdrawal of one pending, an
-    /// answer given by a rule of theirs. Of another thread than the line, what the line's view
-    /// leaves out concerns them nowhere (`Envelope::is_shown_in_line`, issue 557).
+    /// answer given by a rule of theirs. What the view of the thread followed leaves out concerns
+    /// them nowhere (`shows`, issues 557, 595); the thread followed closing does.
     pub(crate) fn concerns_user(&self, envelope: &Envelope) -> bool {
-        if !envelope.is_shown_in_line(self.me()) {
+        if matches!(envelope.event, ActorEvent::ThreadClosed { thread } if thread == self.thread) {
+            return true;
+        }
+        if !self.shows(envelope) {
             return false;
         }
         match &envelope.event {
@@ -316,9 +418,9 @@ impl Followed {
     /// Takes in `message`, complete, as `envelope` shows it, and answers what the terminal prints
     /// of it: each message as soon as it is complete, as the web UI shows it; the full response
     /// that ends an answer holds them again (issue 220). One of another thread that mentions the
-    /// user (issue 557) is no answer of the line that `/retry` asks for again.
+    /// user (issue 557) is no answer of the thread followed that `/retry` asks for again.
     fn take_in_complete(&mut self, envelope: &Envelope, message: &Message) -> Vec<Printed> {
-        if envelope.context.thread_id == ThreadId::line(self.channel_id()) {
+        if envelope.context.thread_id == self.thread {
             if matches!(message.sender_id, ActorId::Agent(_)) {
                 self.last_answer = Some(message.id);
             }
@@ -330,9 +432,9 @@ impl Followed {
         self.shown_message(message, Saying::Complete)
     }
 
-    /// Takes in `envelope`, of another thread than the line, which the terminal prints nothing of
-    /// (issue 557): an answer under way read before it ended (`catch_up`) ends with its turn all
-    /// the same.
+    /// Takes in `envelope`, of a thread not followed, which the terminal prints nothing of (issues
+    /// 557, 595): an answer under way read before it ended (`catch_up`) ends with its turn all the
+    /// same.
     fn take_in_of_another_thread(&mut self, envelope: &Envelope) {
         if matches!(
             envelope.event,
@@ -354,13 +456,40 @@ impl Followed {
 
     /// Takes in what the channel showed: keeps what the user's commands and what is printed later
     /// need of it, and answers what the terminal prints of it - of what was sent in the user's
-    /// name, what `take_in_own` prints; of another thread, only what the line's view shows of it
-    /// (`Envelope::is_shown_in_line`, issue 557).
+    /// name, what `take_in_own` prints; of another thread, only what the view of the thread
+    /// followed shows of it (`shows`, issues 557, 595). The thread followed closed, the user
+    /// follows the line again.
     pub(crate) fn take_in(&mut self, envelope: &Envelope) -> Vec<Printed> {
-        if !envelope.is_shown_in_line(self.me()) {
-            self.take_in_of_another_thread(envelope);
-            return Vec::new();
+        let mut printed = Vec::new();
+        if let ActorEvent::ThreadClosed { thread } = envelope.event {
+            if thread == self.thread {
+                printed.push(self.back_to_the_line());
+            }
         }
+        if !self.shows(envelope) {
+            self.take_in_of_another_thread(envelope);
+            return printed;
+        }
+        printed.extend(self.taken_in(envelope));
+        printed
+    }
+
+    /// Whether the view of the thread followed shows `envelope` (issue 595): the line's view
+    /// (`Envelope::is_shown_in_line`), or of another thread what happens in it and in the whole
+    /// channel (`Envelope::is_shown_in_thread`) - and, wherever the user follows, what waits for
+    /// them, which they answer from any thread, and what mentions them, as the line's view shows
+    /// it of the other threads.
+    fn shows(&self, envelope: &Envelope) -> bool {
+        if self.thread == self.line() {
+            return envelope.is_shown_in_line(self.me());
+        }
+        envelope.is_shown_in_thread(self.thread)
+            || envelope.event.is_waited_for()
+            || envelope.addresses(self.me())
+    }
+
+    /// What the terminal prints of `envelope`, which the view of the thread followed shows.
+    fn taken_in(&mut self, envelope: &Envelope) -> Vec<Printed> {
         let sender_id = envelope.context.sender_id;
         if sender_id == self.me() {
             return self.take_in_own(&envelope.event);
@@ -606,16 +735,15 @@ impl Followed {
         self.under_way.iter_mut().find(|answer| answer.agent == agent)
     }
 
-    /// The answers under way in the line as its running channel tells them: those known that
-    /// still are, in the order they began and with what they streamed, then those not known, in
-    /// the order of the participants, as begun now; `None` if the channel cannot be read.
+    /// The answers under way in the thread followed as its running channel tells them: those known
+    /// that still are, in the order they began and with what they streamed, then those not known,
+    /// in the order of the participants, as begun now; `None` if the channel cannot be read.
     async fn read_under_way(&self) -> Option<Vec<UnderWay>> {
         let view = self.view().await.ok()?;
-        let line = ThreadId::line(self.channel_id());
         let mut running = Vec::new();
         for participant in view.participants().await {
             let snapshot = participant.snapshot(Detail::THREADS).await;
-            if let Some(&turn) = snapshot.turns_under_way.get(&line) {
+            if let Some(&turn) = snapshot.turns_under_way.get(&self.thread) {
                 let name = snapshot.name.unwrap_or_else(|| snapshot.id.to_string());
                 running.push(UnderWay::began(snapshot.id, name, turn, snapshot.state));
             }
@@ -649,11 +777,22 @@ impl Followed {
         self.message_printed(message, saying)
     }
 
-    /// What the terminal prints of the history of the channel so far: what was said among the
-    /// last `HISTORY_ITEMS` of it as the user sees them (`history_printed`); nothing where the
-    /// history cannot be read, which is logged.
+    /// What the terminal prints of the history of the thread followed so far: what was said among
+    /// the last `HISTORY_ITEMS` of it as the user sees them - of the line, its view
+    /// (`history_printed`); nothing where the history cannot be read, which is logged.
     async fn history(&mut self) -> Vec<Printed> {
-        let read = async { self.view().await?.history_page(None, HISTORY_ITEMS).await };
+        let line = ThreadId::line(self.channel_id());
+        let thread = self.thread;
+        let read = async {
+            let view = self.view().await?;
+            match thread == line {
+                true => view.history_page(None, HISTORY_ITEMS).await,
+                false => {
+                    let filter = Some(Filter::in_thread(thread));
+                    view.history_page_of(None, HISTORY_ITEMS, filter).await
+                }
+            }
+        };
         match read.await {
             Ok(page) => self.history_printed(&page),
             Err(error) => {
@@ -672,12 +811,11 @@ impl Followed {
     /// printed are remembered, in place of those of the page before, so that one the channel
     /// shows after - said as the history was read - is not printed twice; the quiet calls among
     /// them join those under way, so that a result that comes live finds its call. The last answer
-    /// of an agent in the line is what `/retry` asks for, as one shown live is - not one of another
-    /// thread that mentions the user (issue 595).
+    /// of an agent in the thread followed is what `/retry` asks for, as one shown live is - not one
+    /// of another thread that mentions the user (issue 595).
     fn history_printed(&mut self, page: &HistoryPage) -> Vec<Printed> {
         let mut printed = Vec::new();
         self.from_history.clear();
-        let line = ThreadId::line(self.channel_id());
         for HistoryPageItem { thread, entry, .. } in &page.items {
             if let HistoryEntry::GivenToRead { message, .. } = entry {
                 self.from_history.insert(message.id);
@@ -688,7 +826,7 @@ impl Followed {
             let HistoryEntry::Said { message } = entry else { continue };
             self.from_history.insert(message.id);
             let answer = matches!(message.sender_id, ActorId::Agent(_)) && !message.internal;
-            if answer && *thread == Some(line) {
+            if answer && *thread == Some(self.thread) {
                 self.last_answer = Some(message.id);
             }
             let saying = if message.internal { Saying::Step } else { Saying::Complete };
@@ -1208,6 +1346,52 @@ mod tests {
             lines(&followed.take_in(&from(&channel, delegate, given))),
             ["Given back to read from a thread:", "other: found it"]
         );
+    }
+
+    /// Issue 595: following a thread, the terminal prints what its view shows - what happens in it
+    /// and in the whole channel, not what is said in the line -, and what waits for the user or
+    /// mentions them wherever it was asked; the last answer `/retry` asks for is the thread's; as
+    /// the thread closes, which concerns the user wherever they talk, they follow the line again,
+    /// nothing of the thread left to ask for again.
+    #[tokio::test]
+    async fn a_thread_followed_shows_what_happens_in_it_and_the_line_again_once_it_closes() {
+        let (mut followed, channel, me) = followed().await;
+        let agent_id = AgentId::new();
+        let agent = ActorId::Agent(agent_id);
+        let thread_id = ThreadId::new();
+        let in_thread = |event| {
+            let envelope = from(&channel, agent, event);
+            Envelope { context: EventContext { thread_id, ..envelope.context }, ..envelope }
+        };
+        let printed = lines(&followed.follow(thread_id, "a thread").await);
+        assert_eq!(printed.last().map(String::as_str), Some("Following a thread of main now"));
+        assert_eq!(followed.thread(), thread_id);
+
+        let said = |text| ActorEvent::CompleteMessageGenerated(message(agent, text));
+        assert!(followed.take_in(&from(&channel, agent, said("in the line"))).is_empty());
+        let in_it = message(agent, "in it");
+        let answered = ActorEvent::CompleteMessageGenerated(in_it.clone());
+        assert_eq!(lines(&followed.take_in(&in_thread(answered))), ["other: in it"]);
+        let actor = followed.actor().expect("the owner's actor runs");
+        let error = followed.retry(&actor).await.expect_err("no such message in the channel");
+        let error = error.downcast::<ChannelError>().expect("refused by the actor");
+        assert!(
+            matches!(error, ChannelError::MessageNotFound { message, .. } if message == in_it.id),
+            "the thread's answer to ask for again: {error}"
+        );
+        let request = ActorEvent::ApprovalRequested(approval(&channel, agent_id));
+        assert_eq!(followed.take_in(&from(&channel, agent, request)).len(), 1, "it waits");
+        let mentioning = Message { addressees: vec![me], ..message(agent, "@owner, here") };
+        let mentioning = ActorEvent::CompleteMessageGenerated(mentioning);
+        let shown = lines(&followed.take_in(&from(&channel, agent, mentioning)));
+        assert_eq!(shown, ["other: @owner, here"], "mentioning them in the line");
+
+        let closed = from(&channel, agent, ActorEvent::ThreadClosed { thread: thread_id });
+        assert!(followed.concerns_user(&closed), "told wherever they talk");
+        let printed = lines(&followed.take_in(&closed));
+        assert_eq!(printed[0], "The thread you followed is closed: following main again");
+        assert_eq!(followed.thread(), ThreadId::line(channel.id()), "the line followed again");
+        assert!(!followed.retry(&actor).await.unwrap(), "nothing of the thread to give again");
     }
 
     /// An approval shown waits until the approver ends it - decided, timed out or withdrawn -, or

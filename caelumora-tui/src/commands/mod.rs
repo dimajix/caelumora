@@ -10,6 +10,7 @@ mod channel;
 mod exit;
 mod question;
 mod session;
+mod thread;
 
 use crate::talk::{Handled, Talk};
 use async_trait::async_trait;
@@ -51,6 +52,9 @@ pub(crate) fn commands() -> ComponentResult<CommandSet<dyn TerminalCommand>> {
         Arc::new(approval::ApprovalCommand::deny()),
         Arc::new(question::AnswerCommand::new()),
         Arc::new(question::DeclineCommand::new()),
+        Arc::new(thread::ListCommand::new()),
+        Arc::new(thread::FollowCommand::new()),
+        Arc::new(thread::LineCommand::new()),
     ];
     CommandSet::of("the terminal", commands)
 }

@@ -40,8 +40,9 @@ one place.
 ### Commands of the terminal
 
 The terminal (`caelumora-tui`) carries out a few commands itself, of what the channel's commands do
-not offer - end the program, switch the channel or the session it talks in, list, start, resume or
-delete the sessions of its directory, answer an approval or questions - the one asked without an
+not offer - end the program, switch the channel or the session it talks in, follow a thread of the
+channel, list, start, resume or delete the sessions of its directory, answer an approval or
+questions - the one asked without an
 argument, else the one whose id begins so (`beginning_with`, issue
 [571](../issues/571-approvals-and-questions-in-the-terminal.md)) -, ask an agent to answer again
 (issue [570](../issues/570-the-terminal-s-commands-and-its-sessions.md)). Each is an object of its
@@ -55,6 +56,14 @@ that takes no arguments refuses them, by the rule of every command
 them, or of a group of them, where the channel knows nothing of what is asked or no channel is
 talked in. `/exit` (`/quit`) belongs to no group, as `/help` does: ending the program acts on no
 entity of a channel.
+
+In a channel, the terminal follows one thread at a time (issue 595): its line, or the one
+`/thread follow` chose - by its number in the list `/thread list` showed last, or the beginning of
+its id. It prints what the view of that thread shows (`Envelope::is_shown_in_line`,
+`Envelope::is_shown_in_thread`), and, wherever it follows, the approvals and questions waiting for
+the user, which they answer from any thread, and what mentions them; what is typed goes to the
+thread followed. A thread followed that closes - or found closed as the channel is caught up with -
+leaves the user in the line again, told so, also from a channel not talked in.
 
 A line beginning with `!` is `/workspace run` with the rest of it, in the terminal alone (issue
 [587](../issues/587-a-person-cannot-run-a-command-in-the-workspace.md), `read_input`): the rule
@@ -333,8 +342,11 @@ external agent alike.
 | `/session new` | `/new` | the terminal | - | `[template]` | - | Starts a session from the template named, or the program's, and talks in it; the one left is stopped. |
 | `/session resume` | `/resume` | the terminal | - | `<id>` | - | Continues the session of the directory whose id begins so, and talks in it; the one left is stopped. |
 | `/session delete` | - | the terminal | - | `<id>` | - | Deletes the session of the directory whose id begins so, not the one talked in; it can be restored. |
-| `/agent retry` | `/retry` | the terminal | - | - | - | Asks for the answer under way, the turn given up, or the last answer of an agent in the line again. |
+| `/agent retry` | `/retry` | the terminal | - | - | - | Asks for the answer under way, the turn given up, or the last answer of an agent in the thread followed again. |
 | `/approval approve` | `/approve` | the terminal | - | `[id]` | - | Approves the call asked of the user, or the one waiting for approval whose id begins so ([APPROVALS.md](APPROVALS.md)). |
 | `/approval deny` | `/deny` | the terminal | - | `[id]` | - | Denies the call asked of the user, or the one waiting for approval whose id begins so. |
 | `/question answer` | `/answer` | the terminal | - | `[id]` | - | Asks the questions put to the user whose id begins so, or those put aside, one by one. |
 | `/question decline` | `/decline` | the terminal | - | `[id]` | - | Declines the questions asked of the user, or those put to them whose id begins so. |
+| `/thread list` | - | the terminal | - | - | - | Lists the threads open in the channel talked in, numbered: whose sub-agent's, who takes part, where it hangs. |
+| `/thread follow` | - | the terminal | - | `<thread>` | - | Follows a thread of the channel talked in, by its number in `/thread list` or the beginning of its id: what its view shows is printed, and what is typed goes there. |
+| `/thread line` | - | the terminal | - | - | - | Follows the line of the channel talked in again. |

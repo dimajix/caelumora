@@ -270,3 +270,13 @@ which its event already carries in its context - or only in the snapshot.
   agents to found it with (`NewThreadDialog`), and the thread in its pane. On review: the answer is
   the thread read back as the channel lists it; the icon stands at messages said in the line alone,
   a message keeping its thread.
+- **2026-11-23** — Step 5: the terminal follows a thread, as E5 decided. Its commands
+  `/thread list`, `/thread follow <thread>` (by its number in the list or the beginning of its id)
+  and `/thread line`, decided by the maintainer. What it prints is what the view of the thread
+  followed shows (`Envelope::is_shown_in_thread`, the rule the web UI's `isShownInThread` holds),
+  and wherever it follows, what waits for the user; what is typed goes there; a thread followed
+  that closes leaves the user in the line. Which thread is followed is told as a channel talked in
+  is, not by the prompt, which is the same in every channel. On review: a number names a thread of
+  the list `/thread list` showed last; switching the thread followed lets go of what was known of
+  the one before, also as it closes, which is told from a channel not talked in as well; what
+  mentions the user is shown in any thread (`Envelope::addresses`).

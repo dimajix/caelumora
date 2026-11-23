@@ -24,7 +24,7 @@ use anyhow::Result;
 use caelumora_api::command::{check_arguments, CommandError, CommandSet};
 use caelumora_domain::actor::ActorEvent;
 use caelumora_domain::approval::{ApprovalRequest, ApprovalRule, Reach, RuleDecision, ToolMatcher};
-use caelumora_domain::channel::ChannelId;
+use caelumora_domain::channel::{ChannelId, ThreadId};
 use caelumora_domain::command::UserInput;
 use caelumora_domain::question::{Question, QuestionRequest, Response};
 #[cfg(test)]
@@ -132,6 +132,9 @@ pub(crate) struct Talk {
     /// The shell command run in the workspace under way, if one is (issue 587), followed by
     /// `next`.
     shell_command: Option<ShellCommand>,
+    /// The threads `/thread list` showed last, in its order, with the channel they are of: what
+    /// the number `/thread follow` is given names (issue 595), as a number names a choice shown.
+    listed_threads: Option<(ChannelId, Vec<ThreadId>)>,
 }
 
 impl Talk {
@@ -158,8 +161,16 @@ impl Talk {
         let opening = channels.opening().await;
         let commands = commands()?;
         let typeable = Arc::new(Typeable::default());
-        let mut talk =
-            Talk { channels, asked: None, sessions, user, commands, typeable, shell_command: None };
+        let mut talk = Talk {
+            channels,
+            asked: None,
+            sessions,
+            user,
+            commands,
+            typeable,
+            shell_command: None,
+            listed_threads: None,
+        };
         talk.ask_next().await;
         talk.read_typeable().await;
         Ok((talk, opening))
@@ -444,6 +455,61 @@ impl Talk {
         printed
     }
 
+    /// What lists the threads open in the channel talked in (issue 595), numbered as
+    /// `/thread follow` names them, the one followed marked; as `talking` where no channel is
+    /// talked in.
+    pub(crate) async fn list_threads(&mut self) -> Vec<Printed> {
+        let followed = match self.channels.talked_in() {
+            Some(followed) => followed,
+            None => return vec![self.channels.hint()],
+        };
+        let threads = followed.open_threads().await;
+        let ids = threads.iter().map(|thread| thread.id).collect();
+        self.listed_threads = Some((followed.channel_id(), ids));
+        if threads.is_empty() {
+            return vec![Printed::Notice(format!("No thread is open in {}", followed.name()))];
+        }
+        let lines = threads.iter().enumerate().map(|(at, thread)| {
+            let mark = if thread.id == followed.thread() { " (followed)" } else { "" };
+            format!("{}. {} - {}{mark}", at + 1, thread.told, thread.id.0)
+        });
+        vec![Printed::Plain(lines.collect::<Vec<_>>().join("\n"))]
+    }
+
+    /// Follows the thread `which` of the channel talked in (issue 595) - its number in
+    /// `/thread list`, or the beginning of its id -, and answers what tells so, or why not.
+    pub(crate) async fn follow_thread(&mut self, which: &str) -> Vec<Printed> {
+        let listed = self.listed_threads.clone();
+        let Some(followed) = self.channels.talked_in_mut() else {
+            return vec![self.channels.hint()];
+        };
+        let threads = followed.open_threads().await;
+        // A number names a thread of the list shown last in this channel, an id what is open.
+        let numbered = which.trim().parse::<usize>().ok().and_then(|n| n.checked_sub(1));
+        let listed = listed.filter(|(channel, _)| *channel == followed.channel_id());
+        let chosen = numbered.and_then(|at| listed.and_then(|(_, ids)| ids.get(at).copied()));
+        let found = match chosen {
+            Some(id) => threads.into_iter().find(|thread| thread.id == id).ok_or_else(|| {
+                Printed::Notice(format!("Thread {which} of the list is no longer open"))
+            }),
+            None => beginning_with(threads, |thread| thread.id.0.to_string(), which)
+                .map_err(|e| Printed::Notice(e.told("open threads"))),
+        };
+        match found {
+            Ok(thread) => followed.follow(thread.id, &thread.title).await,
+            Err(printed) => vec![printed],
+        }
+    }
+
+    /// Follows the line of the channel talked in again (issue 595), and answers what tells so.
+    pub(crate) async fn follow_line(&mut self) -> Vec<Printed> {
+        let Some(followed) = self.channels.talked_in_mut() else {
+            return vec![self.channels.hint()];
+        };
+        let line = ThreadId::line(followed.channel_id());
+        followed.follow(line, "the line").await
+    }
+
     /// What tells of the sessions of the directory, the one spoken in last first, the one talked in
     /// marked as such.
     pub(crate) async fn listed(&self) -> Vec<Printed> {
@@ -707,8 +773,9 @@ impl Talk {
                 .and_then(|args| terminal_help(&self.commands, args)),
             UserInput::Message(_) => None,
         };
-        let actor = match self.talking() {
-            Ok((_, actor)) => actor,
+        // What is sent goes to the thread followed (issue 595).
+        let (thread, actor) = match self.talking() {
+            Ok((followed, actor)) => (Some(followed.thread()), actor),
             Err(printed) => return Ok(vec![help.map_or(printed, Printed::Plain)]),
         };
         let run = CommandName::fixed(RUN_COMMAND_NAME);
@@ -716,7 +783,7 @@ impl Talk {
             UserInput::Command(line) if run.strip_from(line).is_some() => {
                 Ok(vec![self.run_shell_command(&run, line).await])
             }
-            UserInput::Command(line) => Ok(match actor.execute_command(None, line).await {
+            UserInput::Command(line) => Ok(match actor.execute_command(thread, line).await {
                 // Also for an answer to the whole channel: its announcement is not routed back to
                 // its sender.
                 Ok(reply) => told(reply.output, help),
@@ -727,7 +794,7 @@ impl Talk {
             }),
             UserInput::Message(text) => {
                 let span_id =
-                    actor.send_message(None, Some(text.clone()), None, Vec::new()).await?;
+                    actor.send_message(thread, Some(text.clone()), None, Vec::new()).await?;
                 tracing::debug!(span_id = %span_id, "Message sent");
                 Ok(Vec::new())
             }
@@ -744,8 +811,10 @@ impl Talk {
         if self.shell_command.is_some() {
             return Printed::Notice("A command runs already: Ctrl-C ends it".to_string());
         }
-        let (channel_id, channel, actor) = match self.talking() {
-            Ok((followed, actor)) => (followed.channel_id(), followed.name(), actor),
+        let (channel_id, channel, thread, actor) = match self.talking() {
+            Ok((followed, actor)) => {
+                (followed.channel_id(), followed.name(), followed.thread(), actor)
+            }
             Err(printed) => return printed,
         };
         let offered = actor.visible_commands().await;
@@ -758,7 +827,7 @@ impl Talk {
         }
         let line = line.to_string();
         let task = AbortOnDropHandle::new(tokio::spawn(async move {
-            actor.execute_command(None, &line).await
+            actor.execute_command(Some(thread), &line).await
         }));
         self.shell_command = Some(ShellCommand { channel_id, channel, task });
         Printed::Notice("The command runs: Ctrl-C ends it".to_string())
@@ -1083,6 +1152,41 @@ mod tests {
         assert!(!group.contains("/exit"), "{group}");
         let unknown = typed(&mut talk, "/help nothing").await.join("\n");
         assert!(unknown.contains("Unknown command"), "{unknown}");
+    }
+
+    /// Issue 595: `/thread list` lists the threads open in the channel talked in, `/thread follow`
+    /// follows one by its number - what is typed goes there -, `/thread line` the line again; a
+    /// thread named badly is told so.
+    #[tokio::test]
+    async fn a_thread_is_listed_followed_and_left_for_the_line() {
+        use caelumora_domain::channel::ThreadOrigin;
+        use caelumora_kernel::channel::ThreadSpec;
+        let (mut talk, session_loop, running) = talking().await;
+        let channel = session_loop.channels().into_iter().next().expect("its first channel");
+        let ActorId::User(user) = running.owner.caller_id else { unreachable!("a user") };
+        let line = ThreadId::line(channel.id());
+        let origin = ThreadOrigin { thread: line, message: channel.said_by(user, line).await };
+        let opening = channel.open_thread_by_procedure(&running.owner, ThreadSpec::new(origin));
+        let thread = opening.await.expect("opened");
+
+        channel.said_by(user, thread).await;
+        let listed = typed(&mut talk, "/thread list").await.join("\n");
+        assert!(
+            listed.starts_with("1. Thread (") && listed.contains(&thread.0.to_string()),
+            "{listed}"
+        );
+        let followed = typed(&mut talk, "/thread follow 1").await;
+        assert!(
+            followed.last().is_some_and(|told| told.starts_with("Following Thread")),
+            "{followed:?}"
+        );
+        assert!(followed.iter().any(|line| line.contains("said by")), "its history: {followed:?}");
+        typed(&mut talk, "aside").await;
+        assert_eq!(channel.thread_said_in("aside").await, thread, "said in the thread followed");
+        let back = typed(&mut talk, "/thread line").await;
+        assert_eq!(back.last().map(String::as_str), Some("Following the line of main now"));
+        let none = typed(&mut talk, "/thread follow zz").await;
+        assert_eq!(none, ["None of the open threads begins with 'zz'"]);
     }
 
     /// What the terminal prints of a line typed where it cannot do what the line asks: an

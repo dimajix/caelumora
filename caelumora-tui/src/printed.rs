@@ -127,3 +127,28 @@ impl Printed {
         printed.into_iter().map(of).collect()
     }
 }
+
+/// How many characters of what was said `beginning` shows.
+const SHOWN: usize = 60;
+
+/// The beginning of `content`, on one line: its first line that is not blank, cut to `SHOWN`
+/// characters - what is shown of what was said where it is listed.
+pub(crate) fn beginning(content: &str) -> String {
+    let line = content.lines().find(|line| !line.trim().is_empty()).unwrap_or_default().trim();
+    match line.char_indices().nth(SHOWN) {
+        Some((cut, _)) => format!("{}…", &line[..cut]),
+        None => line.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn what_was_said_last_is_shown_by_its_first_line_and_its_beginning() {
+        assert_eq!(beginning("\n  hello\nthere"), "hello");
+        let long = "ä".repeat(70);
+        assert_eq!(beginning(&long), format!("{}…", "ä".repeat(60)));
+    }
+}
