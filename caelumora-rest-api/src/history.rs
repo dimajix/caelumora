@@ -5,6 +5,7 @@ use caelumora_domain::agent::RetryRefused;
 use caelumora_domain::chain::Position;
 use caelumora_domain::channel::{ThreadId, ThreadOrigin};
 use caelumora_domain::digest::Digest;
+use caelumora_domain::history;
 use caelumora_domain::history::{HistoryEntry, HistoryField, HistoryPage};
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::query::Filter;
@@ -392,7 +393,7 @@ impl<M> HistoryPageResponse<M> {
         let items = page
             .items
             .into_iter()
-            .filter_map(|(seq, entry)| {
+            .filter_map(|history::HistoryPageItem { seq, entry, .. }| {
                 let recorded = entry.context().is_some();
                 HistoryItemResponse::of(entry, |message| said(message, recorded))
                     .map(|item| HistoryPageItem { seq, item })

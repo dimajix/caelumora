@@ -162,27 +162,27 @@ mod tests {
         let (status, _) =
             send(&api, &cookie, Method::POST, &format!("{channel_uri}/messages"), Some(body)).await;
         assert_eq!(status, StatusCode::OK, "a message of attachments alone");
-        let message =
-            time::timeout(Duration::from_secs(5), async {
-                loop {
-                    let views = state.session_manager.views(Viewer::new(SecurityContext::system()));
-                    let history = views
-                        .channel(session, channel)
-                        .await
-                        .unwrap()
-                        .history_page(None, 10)
-                        .await
-                        .unwrap();
-                    if let Some(message) = history.items.iter().find_map(|(_, entry)| {
-                        entry.said().filter(|said| !said.attachments.is_empty())
-                    }) {
-                        break message.id;
-                    }
-                    time::sleep(Duration::from_millis(10)).await;
+        let message = time::timeout(Duration::from_secs(5), async {
+            loop {
+                let views = state.session_manager.views(Viewer::new(SecurityContext::system()));
+                let history = views
+                    .channel(session, channel)
+                    .await
+                    .unwrap()
+                    .history_page(None, 10)
+                    .await
+                    .unwrap();
+                if let Some(message) = history
+                    .entries()
+                    .find_map(|entry| entry.said().filter(|said| !said.attachments.is_empty()))
+                {
+                    break message.id;
                 }
-            })
-            .await
-            .expect("said");
+                time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("said");
 
         let download = |id: ContentId| {
             api.clone().oneshot(

@@ -22,7 +22,7 @@ use caelumora_domain::agent::{Agent, AgentChannelState, AgentId, Personality, Pe
 use caelumora_domain::chain::{Node, Position};
 use caelumora_domain::channel::testing::make_channel;
 use caelumora_domain::channel::{
-    moderation_components, Channel, ChannelId, ChannelState, ThreadId,
+    moderation_components, Channel, ChannelId, ChannelState, ThreadId, ThreadOrigin,
 };
 use caelumora_domain::component::{
     ComponentBundle, ComponentBundleId, ComponentConfig, ComponentDescriptor,
@@ -1736,6 +1736,9 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
     threads.history.enter(in_thread(its, speaker, joined));
     threads.history.enter(in_thread(its, user, heard(900)));
     threads.history.enter(in_thread(another, user, heard(901)));
+    let origin = ThreadOrigin { thread: its, message: id(900) };
+    let opened = ActorEvent::ThreadOpened { thread: ThreadId::new(), origin };
+    threads.history.enter(in_thread(its, user, opened));
     states.put_channel_state(channel, &mut threads).await.expect("put");
     let as_listener = Reader::Participant(listener);
     let page = histories.page(key, &as_listener, from, None, 10, None).await.unwrap();
@@ -1748,6 +1751,10 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
         .filter_map(|node| node.entry.entry.said().map(|m| m.id))
         .collect();
     assert_eq!(caught_up, [id(900)], "the chain: what happened in its thread, nothing of another");
+    // Issue 595: an item of a page says the thread it happened in, none of the whole channel.
+    let page = histories.page(key, &Reader::Channel, from, None, 10, None).await.unwrap();
+    let paged: Vec<_> = page.items.iter().map(|item| item.thread).collect();
+    assert_eq!(paged, [Some(its), Some(its), Some(another), None], "each item's thread");
 
     states.delete_channel_state(channel).await.expect("delete");
     assert!(

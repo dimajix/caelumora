@@ -11,7 +11,7 @@ use caelumora_domain::agent::AgentId;
 use caelumora_domain::approval::{ApprovalId, ApprovalRequest};
 use caelumora_domain::channel::{ChannelId, ThreadId};
 use caelumora_domain::command::{agents_commands, ParameterKind};
-use caelumora_domain::history::{HistoryEntry, HistoryPage};
+use caelumora_domain::history::{HistoryEntry, HistoryPage, HistoryPageItem};
 use caelumora_domain::mention::MentionDirectory;
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::question::{QuestionId, QuestionRequest};
@@ -671,11 +671,13 @@ impl Followed {
     /// printed are remembered, in place of those of the page before, so that one the channel
     /// shows after - said as the history was read - is not printed twice; the quiet calls among
     /// them join those under way, so that a result that comes live finds its call. The last answer
-    /// of an agent is what `/retry` asks for, as one shown live is.
+    /// of an agent in the line is what `/retry` asks for, as one shown live is - not one of another
+    /// thread that mentions the user (issue 595).
     fn history_printed(&mut self, page: &HistoryPage) -> Vec<Printed> {
         let mut printed = Vec::new();
         self.from_history.clear();
-        for entry in page.entries() {
+        let line = ThreadId::line(self.channel_id());
+        for HistoryPageItem { thread, entry, .. } in &page.items {
             if let HistoryEntry::GivenToRead { message, .. } = entry {
                 self.from_history.insert(message.id);
                 let given = self.message_printed(message, Saying::Complete);
@@ -684,7 +686,8 @@ impl Followed {
             }
             let HistoryEntry::Said { message } = entry else { continue };
             self.from_history.insert(message.id);
-            if matches!(message.sender_id, ActorId::Agent(_)) && !message.internal {
+            let answer = matches!(message.sender_id, ActorId::Agent(_)) && !message.internal;
+            if answer && *thread == Some(line) {
                 self.last_answer = Some(message.id);
             }
             let saying = if message.internal { Saying::Step } else { Saying::Complete };
@@ -1802,7 +1805,8 @@ mod tests {
 
     /// Of a page of the history, what was said is printed - the user's own words, a step of a
     /// plan, tool calls and how they ended -, a quiet call left out and its result paired with it
-    /// as it comes live; the last answer of an agent is what `/retry` asks for (issue 569).
+    /// as it comes live; the last answer of an agent in the line is what `/retry` asks for (issue
+    /// 569), not one of another thread that mentions the user after it (issue 595).
     #[tokio::test]
     async fn what_a_page_of_the_history_says_is_printed() {
         let (mut followed, channel, me) = followed().await;
@@ -1825,9 +1829,15 @@ mod tests {
         };
         let step = Message { internal: true, ..message(agent, "thinking it over") };
         let answer = message(agent, "here");
-        let said = [mine, calling, ended, step, answer.clone()];
-        let items =
-            said.into_iter().map(|message| (Position::START, HistoryEntry::Said { message }));
+        let elsewhere = message(agent, "@owner there");
+        let line = Some(ThreadId::line(channel.id()));
+        let said = [mine, calling, ended, step, answer.clone()].map(|message| (line, message));
+        let of_thread = (Some(ThreadId::new()), elsewhere);
+        let items = said.into_iter().chain([of_thread]).map(|(thread, message)| HistoryPageItem {
+            seq: Position::START,
+            thread,
+            entry: HistoryEntry::Said { message },
+        });
         let page = HistoryPage { items: items.collect(), earlier: None, digest: None };
         assert_eq!(
             lines(&followed.history_printed(&page)),
@@ -1838,6 +1848,7 @@ mod tests {
                 "terminal answered: done",
                 "other, working: thinking it over",
                 "other: here",
+                "other: @owner there",
             ]
         );
 
@@ -1846,7 +1857,7 @@ mod tests {
         let error = error.downcast::<ChannelError>().expect("refused by the actor");
         assert!(
             matches!(error, ChannelError::MessageNotFound { message, .. } if message == answer.id),
-            "the last answer: {error}"
+            "the last answer of the line: {error}"
         );
 
         let late = Message {
@@ -1869,8 +1880,9 @@ mod tests {
         let found = message(ActorId::Agent(AgentId::new()), "found it");
         let given =
             HistoryEntry::GivenToRead { recipient, message: found.clone(), by, at: Utc::now() };
-        let page =
-            HistoryPage { items: vec![(Position::START, given)], earlier: None, digest: None };
+        let line = Some(ThreadId::line(channel.id()));
+        let item = HistoryPageItem { seq: Position::START, thread: line, entry: given };
+        let page = HistoryPage { items: vec![item], earlier: None, digest: None };
         assert_eq!(
             lines(&followed.history_printed(&page)),
             ["Earlier in main", "Given back to read from a thread:", "other: found it"]

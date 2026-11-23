@@ -905,7 +905,7 @@ pub(super) async fn agent_history(
     let channel = channel_view(&state, &user, session_id, channel_id).await?;
     let view = channel.participant(actor_id).await?.context().await?;
     let mut page = view.history_page_of(query.before, query.limit(), query.filter()).await?;
-    page.items.retain(|(_, entry)| !matches!(entry, HistoryEntry::GivenToRead { .. }));
+    page.items.retain(|item| !matches!(item.entry, HistoryEntry::GivenToRead { .. }));
     let heard: Vec<MessageId> =
         page.entries().filter_map(|item| item.said().map(|m| m.id)).collect();
     let passed_on = view.in_transcript(&heard).await?;

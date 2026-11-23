@@ -85,10 +85,8 @@ pub const WINDOW: u64 = 200;
 /// history it was read from.
 #[derive(Debug, Clone, Default)]
 pub struct HistoryPage {
-    /// The items, oldest first, each at the position of the entry that
-    /// added it (issue 417): what a client tells an item by, and the live
-    /// event that announced it (`EventContext::position`).
-    pub items: Vec<(Position, HistoryEntry)>,
+    /// The items, oldest first.
+    pub items: Vec<HistoryPageItem>,
     /// The position of the oldest of `items`: what the page before this one
     /// is read before (`HistoryStore::page`); `None` if there is no older
     /// item to be had.
@@ -99,10 +97,23 @@ pub struct HistoryPage {
 }
 
 impl HistoryPage {
-    /// The items without their positions, oldest first.
+    /// The entries of its items alone, oldest first.
     pub fn entries(&self) -> impl DoubleEndedIterator<Item = &HistoryEntry> {
-        self.items.iter().map(|(_, entry)| entry)
+        self.items.iter().map(|item| &item.entry)
     }
+}
+
+/// An item of a `HistoryPage`: an entry as its reader sees it, where it stands and where it
+/// happened.
+#[derive(Debug, Clone)]
+pub struct HistoryPageItem {
+    /// The position of the entry (issue 417): what a client tells the item by, and the live event
+    /// that announced it (`EventContext::position`).
+    pub seq: Position,
+    /// The thread it happened in (issue 595); `None` for what happens in the whole channel
+    /// (`Recorded::thread`).
+    pub thread: Option<ThreadId>,
+    pub entry: HistoryEntry,
 }
 
 impl Chain<Recorded> {

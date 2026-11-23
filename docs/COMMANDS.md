@@ -331,7 +331,7 @@ external agent alike.
 | `/session new` | `/new` | the terminal | - | `[template]` | - | Starts a session from the template named, or the program's, and talks in it; the one left is stopped. |
 | `/session resume` | `/resume` | the terminal | - | `<id>` | - | Continues the session of the directory whose id begins so, and talks in it; the one left is stopped. |
 | `/session delete` | - | the terminal | - | `<id>` | - | Deletes the session of the directory whose id begins so, not the one talked in; it can be restored. |
-| `/agent retry` | `/retry` | the terminal | - | - | - | Asks for the answer under way, the turn given up, or the last answer of an agent again. |
+| `/agent retry` | `/retry` | the terminal | - | - | - | Asks for the answer under way, the turn given up, or the last answer of an agent in the line again. |
 | `/approval approve` | `/approve` | the terminal | - | `[id]` | - | Approves the call asked of the user, or the one waiting for approval whose id begins so ([APPROVALS.md](APPROVALS.md)). |
 | `/approval deny` | `/deny` | the terminal | - | `[id]` | - | Denies the call asked of the user, or the one waiting for approval whose id begins so. |
 | `/question answer` | `/answer` | the terminal | - | `[id]` | - | Asks the questions put to the user whose id begins so, or those put aside, one by one. |

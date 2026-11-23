@@ -16,7 +16,7 @@ use caelumora_domain::chain::{Node, Position};
 use caelumora_domain::channel::{ChannelId, ThreadId};
 use caelumora_domain::digest::Digest;
 use caelumora_domain::history::{
-    Attended, HistoryEntry, HistoryField, HistoryPage, KeptItem, Reader, Recorded,
+    Attended, HistoryEntry, HistoryField, HistoryPage, HistoryPageItem, KeptItem, Reader, Recorded,
 };
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::query::{meeting, Filter};
@@ -323,8 +323,8 @@ impl From<StandingItems> for Vec<(Position, Recorded)> {
 }
 
 /// The item at the position `seq` as `reader`, with `attended` as where it took part
-/// (`Attendance::of_reader`), may see it, if it meets `filter`: what a store returns of an item it
-/// read.
+/// (`Attendance::of_reader`), may see it, with the thread it happened in, if it meets `filter`:
+/// what a store returns of an item it read.
 ///
 /// # Errors
 /// `StoreError::Validation` if the item cannot be judged by `filter`.
@@ -333,7 +333,7 @@ pub fn seen(
     attended: &[Attended],
     filter: Option<&Filter<HistoryField>>,
     (seq, item): &(Position, Recorded),
-) -> StoreResult<Option<(Position, HistoryEntry)>> {
+) -> StoreResult<Option<HistoryPageItem>> {
     if !item.seen_by(*seq, reader, attended) {
         return Ok(None);
     }
@@ -342,7 +342,8 @@ pub fn seen(
             return Ok(None);
         }
     }
-    Ok(item.as_seen_by(*seq, reader, attended).map(|seen| (*seq, seen.entry)))
+    let seen = item.as_seen_by(*seq, reader, attended);
+    Ok(seen.map(|seen| HistoryPageItem { seq: *seq, thread: seen.thread(), entry: seen.entry }))
 }
 
 /// The entries of `nodes` that `reader`, with `attended` as where it took part, may see, as they
@@ -402,27 +403,27 @@ pub fn answer_of<'a>(
 /// # Errors
 /// The first error among the items it reads.
 pub fn page_of(
-    newest: impl IntoIterator<Item = StoreResult<Option<(Position, HistoryEntry)>>>,
+    newest: impl IntoIterator<Item = StoreResult<Option<HistoryPageItem>>>,
     from: Position,
     limit: usize,
     digest: Option<Digest>,
 ) -> StoreResult<HistoryPage> {
     let limit = limit.max(1);
-    let mut read: Vec<(Position, HistoryEntry)> = Vec::new();
+    let mut read: Vec<HistoryPageItem> = Vec::new();
     for item in newest {
         if read.len() > limit {
             break;
         }
-        let Some((seq, entry)) = item? else { continue };
-        if seq < from {
+        let Some(item) = item? else { continue };
+        if item.seq < from {
             break;
         }
-        read.push((seq, entry));
+        read.push(item);
     }
     let earlier = (read.len() > limit)
         .then(|| {
             read.truncate(limit);
-            read.last().map(|(seq, _)| *seq)
+            read.last().map(|item| item.seq)
         })
         .flatten();
     read.reverse();
@@ -571,11 +572,13 @@ mod tests {
         assert_eq!(items.newest_before(Position::MAX).count(), 3, "an item is added once");
     }
 
-    /// `newest` as a store gives them to `page_of`, each seen.
+    /// `newest` as a store gives them to `page_of`, each seen, of the whole channel.
     fn all_seen(
         newest: impl IntoIterator<Item = (Position, HistoryEntry)>,
-    ) -> impl Iterator<Item = StoreResult<Option<(Position, HistoryEntry)>>> {
-        newest.into_iter().map(|item| Ok(Some(item)))
+    ) -> impl Iterator<Item = StoreResult<Option<HistoryPageItem>>> {
+        newest
+            .into_iter()
+            .map(|(seq, entry)| Ok(Some(HistoryPageItem { seq, thread: None, entry })))
     }
 
     #[test]
@@ -630,6 +633,10 @@ mod tests {
                 Some(Position::new(2))
             ),
             "a page of those kept, full, and an older one kept"
+        );
+        assert!(
+            page.items.iter().all(|item| item.thread == Some(context.thread_id)),
+            "each in the thread it happened in"
         );
     }
 

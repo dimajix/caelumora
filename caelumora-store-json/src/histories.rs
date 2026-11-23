@@ -17,7 +17,7 @@ use caelumora_domain::actor::ActorId;
 use caelumora_domain::chain::{Node, Position};
 use caelumora_domain::channel::{ChannelId, ThreadId};
 use caelumora_domain::history::{
-    Attended, History, HistoryEntry, HistoryField, HistoryPage, Reader, Recorded,
+    Attended, History, HistoryEntry, HistoryField, HistoryPage, HistoryPageItem, Reader, Recorded,
 };
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::query::Filter;
@@ -219,7 +219,7 @@ impl HistoryStore for JsonStates {
         if before == Position::START {
             return Ok(HistoryPage::default());
         }
-        let mut newest: Vec<(Position, HistoryEntry)> = Vec::new();
+        let mut newest: Vec<HistoryPageItem> = Vec::new();
         let attended = read_attendance(&dir).await?.of_reader(reader);
         let mut segment = before.previous().map(segment_of);
         while let Some(from_here) = segment {

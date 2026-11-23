@@ -381,7 +381,7 @@ async fn last_heard(channel: &ChannelView, viewer: ActorId) -> Option<Message> {
     let in_line = Filter::shown_in_line(ThreadId::line(channel.id()), viewer);
     let heard = Filter::all_of([Filter::heard(), in_line]);
     match channel.history_page_of(None, 1, Some(heard)).await {
-        Ok(page) => page.items.into_iter().find_map(|(_, entry)| match entry {
+        Ok(page) => page.items.into_iter().find_map(|item| match item.entry {
             HistoryEntry::Said { message } => Some(message),
             _ => None,
         }),
