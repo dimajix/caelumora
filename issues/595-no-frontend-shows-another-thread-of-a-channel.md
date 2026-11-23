@@ -42,7 +42,18 @@ left for later. Missing with it:
   stopping it alone are recorded here.
 - What a frontend is given says its thread where it needs it.
 
+## Working apart with an agent
+
+Moved here from issue [596](596-a-user-cannot-start-a-sub-agent-by-command.md) on 2026-11-23: a
+user who wants an agent to work on something apart from the line, reading along and asking again,
+wants no sub-agent, whose thread is a closed circle delegated into, but a thread with that agent
+in which they write themselves. The agent is made by `/agent create` or brought in, and may take
+part in that thread alone (issue 602). Missing: how a user opens such a thread with an agent, and
+the view of it - to be decided with writing into a thread.
+
 ## History
 
 - **2026-11-18** — Opened from issue 557, step 6 of 2b, and 558's open points: the view of a thread
   left for later, and what its review found missing.
+- **2026-11-23** — *Working apart with an agent* moved here from 596: a thread with an agent in
+  which a user writes themselves, no delegation.

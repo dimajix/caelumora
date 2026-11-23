@@ -4,7 +4,7 @@
 **Type:** feature
 **Priority:** low
 **Area:** Sessions and channels
-**Summary:** Only an agent starts a sub-agent, by the tools of `caelumora-subagents` (issue 558); a user cannot hand a task to one by a command, though 558 asked for it, since it is not decided to whom its answer is given and in whose name.
+**Summary:** Only an agent starts a sub-agent, by the tools of `caelumora-subagents` (issue 558); a user cannot have an agent start one by a command of the agent, though 558 asked for a command.
 
 ## The problem
 
@@ -27,6 +27,37 @@ gives back what comes of it to whom delegated. For a user, 558 left open (*The c
   [595](595-no-frontend-shows-another-thread-of-a-channel.md)).
 - Ending: who ends a sub-agent a user started, and whether it ends with the user's session.
 
+## Decision
+
+The maintainer's decision of 2026-11-23, on the author's assessment:
+
+- **A command of an agent.** A user asks an agent taking part in the thread to start a sub-agent -
+  as `/subtask @bob <personality> <brief>`, its name not decided -, carried out by the agent in a
+  turn of its own: the agent delegates as with `start_subagent`, the answer is given back to it,
+  and it responds where the command was issued. It is offered by the component `subagents` beside
+  its tools, with the same list of personalities, as `skills` offers `/skill` beside `load_skill`.
+- **No command of the channel.** A sub-agent keeps the context of whom delegated small and gives
+  its result back into it; a user has no such context. What is given back is published to the
+  users anyway (`GivenToRead`), so a user given the answer would see a second time what the
+  sub-agent's thread holds; its closed circle keeps them from asking again by writing into it; and
+  the one gain - the answer shown in the line - stands in for a view of threads
+  ([595](595-no-frontend-shows-another-thread-of-a-channel.md)).
+- **Working apart with an agent**, reading along and asking again, is no delegation: it is a
+  thread with that agent in which the user writes themselves. Moved to 595.
+
+What *Done when* asks of a command now holds for the command of an agent alone.
+
+### Still open for the command
+
+- **Where its thread hangs.** A thread hangs at a message of another thread (`ThreadOrigin`); the
+  tool's at the message carrying its call, but a command is no message.
+- **Approval and who may issue it.** The tool asks for approval as its component is configured
+  (`requires_approval`); a command asks none, and a command of an agent is granted to whoever may
+  write in the channel - so another user could have an agent of someone else start a sub-agent
+  owned by that agent's owner, as a mention asking for the tool can today. Whether the command is
+  for the agent's owners alone.
+- **Its name and arguments.**
+
 ## Done when
 
 - It is decided which command starts a sub-agent and to whom its answer goes, and it is
@@ -35,3 +66,5 @@ gives back what comes of it to whom delegated. For a user, 558 left open (*The c
 ## History
 
 - **2026-11-18** — Opened from issue 558's open points (*The command*).
+- **2026-11-23** — Narrowed by the maintainer to a command of an agent (*Decision*): the command of
+  the channel is not pursued, and a user working apart with an agent in a thread is moved to 595.
