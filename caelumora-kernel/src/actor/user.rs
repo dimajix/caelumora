@@ -303,13 +303,8 @@ impl UserActor {
             &attachments,
             &[],
         )?;
-        let msg = Message {
+        let mut msg = Message {
             role: MessageRole::User,
-            // Resolved as the channel will, for the actor shows its own message before (issue 220).
-            mentions: content
-                .as_deref()
-                .map(|content| channel_loop.mentions().resolve(content))
-                .unwrap_or_default(),
             content,
             attachments,
             id: MessageId::new(),
@@ -318,6 +313,8 @@ impl UserActor {
             timestamp: Utc::now(),
             ..Message::new(classification)
         };
+        // Resolved as the channel will, for the actor shows its own message before (issue 220).
+        msg.resolve_mentions(&channel_loop.mentions());
         // All stem from one user action: one span. A message instead of an
         // answer declines every question put to the user (issue 165), each in its thread -
         // before it, so that the agent asking goes on and then hears it.
@@ -414,18 +411,10 @@ impl UserActor {
             &attachments,
             &original.attachments,
         )?;
-        let modified = Message {
-            // Resolved as the channel will, for the actor shows its own message before (issue 220).
-            mentions: content
-                .as_deref()
-                .map(|content| channel_loop.mentions().resolve(content))
-                .unwrap_or_default(),
-            content,
-            attachments,
-            classification,
-            timestamp: Utc::now(),
-            ..original
-        };
+        let mut modified =
+            Message { content, attachments, classification, timestamp: Utc::now(), ..original };
+        // Resolved as the channel will, for the actor shows its own message before (issue 220).
+        modified.resolve_mentions(&channel_loop.mentions());
         let span_id = SpanId::new();
         self.send(self.in_line(ActorEvent::MessageModified(modified), span_id)).await?;
         Ok(span_id)

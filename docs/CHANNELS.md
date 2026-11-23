@@ -286,28 +286,31 @@ each; a thread one was drawn into while being let go is among them, as `run` rea
 takes part as it takes the leave in.
 
 Whether who takes part in a thread may grow is its **circle** (`Circle`, issues 557, 602), fixed as
-it is opened. A thread whose circle is **open** - one a person opens, and the line - **draws in**
-whoever says a message of no turn in it and whom a message said in it mentions
-(`ChannelLoop::draw_in`), and, as it is opened, the author of the message it hangs at
-(`draw_in_author`, once its founders are in), so that a side question asks whom it is about; whoever
-opened it is drawn in by what they say there. A message of a turn draws in no speaker: the turn runs
-where its agent takes part, or remains of a turn cancelled as its agent was let go from the thread.
-A thread whose circle is **closed** - a sub-agent's, opened so by the plugin that delegates into it,
-as only such a thread is delegated into - draws in nobody, takes nobody in (`ClosedCircle`) and lets
-in nothing one outside it says there (`Rejection::ClosedCircle`); one leaving says what it says
-until its task has ended. Drawing in asks nothing of its own: what draws someone in was admitted
-already - a message, whose sender may write in the channel, or the opening -, and whom it draws in
-takes part in the channel, which is all a thread asks (see
-[PERMISSION-CHECKS.md](PERMISSION-CHECKS.md)). The channel's `run` draws them in as it takes in what
-draws them in, before it records and routes it, each join announced there in the name of who said it
-or opened the thread: an agent mentioned hears the message that mentioned it, and the thread's
-moderator asks it as anyone taking part there. One whose actor does not run - not started yet, or
-leaving -, who takes part there already, or an external agent with its one thread is passed over; a
-join asked for someone drawn in meanwhile is carried out without a second announcement, and closing
-a thread asked before someone was drawn in is refused (`ThreadNotEmpty`), which `run` asks again as
-it would close it. Whom a thread drew in hears it from their join on, as anyone taken in: an agent
-drawn in by a later mention knows its branch of the origin up to the thread's message and what is
-said from its join on, not what was said in the thread before.
+it is opened. A thread whose circle is **open** - one a person opens, and the line - **draws in** of
+a message heard there whoever says it, if it is of no turn, and whom it mentions by name
+(`Message::mentions`, not everyone a group handle such as `@all` addresses; `ChannelLoop::draw_in`),
+and, as it is opened, the author of the message it hangs at (`draw_in_author`, once its founders are
+in), so that a side question asks whom it is about; whoever opened it is drawn in by what they say
+there. A message of a turn draws in no speaker: the turn runs where its agent takes part, or remains
+of a turn cancelled as its agent was let go from the thread. A thread whose circle is **closed** - a
+sub-agent's, opened so by the plugin that delegates into it, as only such a thread is delegated
+into - draws in nobody, takes nobody in (`ClosedCircle`) and lets in nothing one outside it says
+there (`Rejection::ClosedCircle`); one leaving says what it says until its task has ended. Drawing
+in asks nothing of its own: what draws someone in was admitted already - a message, whose sender may
+write in the channel, or the opening -, and whom it draws in takes part in the channel, which is all
+a thread asks (see [PERMISSION-CHECKS.md](PERMISSION-CHECKS.md)). The channel's `run` draws them in
+as it takes in what draws them in, before it records and routes it, each join announced there in the
+name of who said it or opened the thread: an agent mentioned hears the message that mentioned it,
+and the thread's moderator asks it as anyone taking part there. One whose actor does not run - not
+started yet, or leaving -, who takes part there already, an external agent with its one thread, or
+one who takes part in threads whose circle is closed alone - a sub-agent - is passed over; whom a
+message mentions by name but its thread did not draw in, the thread's moderator tells whoever said
+it, in the system's name, alone (`NotDrawnIn`). A join asked for someone drawn in meanwhile is
+carried out without a second announcement, and closing a thread asked before someone was drawn in is
+refused (`ThreadNotEmpty`), which `run` asks again as it would close it. Whom a thread drew in hears
+it from their join on, as anyone taken in: an agent drawn in by a later mention knows its branch of
+the origin up to the thread's message and what is said from its join on, not what was said in the
+thread before.
 
 ### Building a channel
 
@@ -472,8 +475,8 @@ in one step; so their positions in the history order them as the user sees them.
     said that a participant hears in the view of the line (`Message::is_heard`: no steps of a plan,
     no notices of the kernel, nothing taken back; `ChannelView::shown_in_line`), of what the user
     may read, after the mark and from where
-    their view begins - counted up to a cap, and whether one of these messages mentions them,
-    `@all` included.
+    their view begins - counted up to a cap, and whether one of these messages addresses them,
+    `@all` included (`Message::addressees`).
 *   **Announced as it is said.** Every message others hear in the line, and one mentioning a user
     in another thread, is announced on the event bus once it is stored (`channel::SAID`), with the
     message and its thread (`Said`), classified as the channel: it reaches who may read the channel
@@ -1399,7 +1402,8 @@ which for what the history records is the rule its entry is read by (`HistoryEnt
 
 A moderator answers each event with a `Routing`: whether it goes where the rule sends it or to some
 participants alone, whom to ask to respond, and which of its own notices to tell whom - of a fixed
-few (`Notice`): a chain cut off, and that it could not be decided who responds. The channel builds
+few (`Notice`): a chain cut off, that it could not be decided who responds, and whom a message
+mentioned by name but its thread did not draw in (issue 602). The channel builds
 every envelope from it: the event as it entered, a request to respond in the event's context, a
 notice in the system's name. So a moderator cannot change what anyone is told, nor speak in
 anybody's name.
@@ -1417,7 +1421,10 @@ it, and decides:
     anyone`, the default, issue 437). With `agents`, only a mention of an agent replaces the policy,
     and a message to people alone is answered by whom the policy chooses. A mention of a sender of
     the message counts for nothing;
-*   a chain between agents ends at a limit (see below).
+*   a chain between agents ends at a limit (see below);
+*   whoever said a message heard is told whom it mentions by name but who takes no part in its
+    thread - whom the channel could not draw in (`NotDrawnIn`, issue 602, see [Its
+    threads](#its-threads)).
 
 Whom it asks when a message mentions nobody whose mention replaces it is the channel's
 `ResponderPolicy`, which is told the
@@ -1526,7 +1533,8 @@ it answers, an approval or a question is answered once -, so a moderator that bo
 bounds every chain. Beneath the hops, the `policy_moderator` asks nobody to respond to an event as
 deep in its span as `max_span_depth` (`EventContext::span_depth`, default 100): a net against
 routing that goes on without end, not a rule for users. What was said is delivered all the same,
-and nothing is told. A moderator of a plugin bounds its asks itself.
+and nothing is told but whom it mentioned by name and its thread did not draw in. A moderator of a
+plugin bounds its asks itself.
 
 The REST API returns each channel's `moderator` and `responder_policy`, and the web UI explains the
 policy to the user (see [WEB-UI.md](WEB-UI.md)).
@@ -1544,8 +1552,12 @@ participant whose handle is `all` or `channel` is among those they address, but 
 mentioned alone by it, and the channel warns of the handle as of one shared by several.
 
 The channel resolves mentions once, as a message enters it, and stores the resolved ids with the
-message - for `@all`, the participants of that moment. Nothing downstream parses the text again, so
-a later rename, or a participant who joins later, cannot change whom a past message addressed.
+message (`Message::resolve_mentions`) in two lists (issue 602): whom it mentions by name
+(`mentions`), and everyone it addresses (`addressees`) - those, and everyone a group handle
+addressed, the participants of that moment for `@all`. A mention by name draws its participant
+into the thread (see [Its threads](#its-threads)); whom a message addresses is whom the moderator
+asks and whom it mentions as the frontends show it. Nothing downstream parses the text again, so a
+later rename, or a participant who joins later, cannot change whom a past message addressed.
 It resolves them by the handles of its participants as they are named now (`ChannelLoop::mentions`),
 built anew as one joins or leaves, and as one is renamed: the session follows the announcements of
 its participants' renames and tells its channels the new name - and after it lost events, has them

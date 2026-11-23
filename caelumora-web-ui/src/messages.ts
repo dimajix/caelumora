@@ -24,7 +24,7 @@ export function isHeard(message: Message): boolean {
 
 /** Whether `message` mentions `me` - by name or as one of everyone. */
 export function mentions(message: Message, me: ActorId): boolean {
-  return (message.mentions ?? []).some(mentioned => sameActor(mentioned, me));
+  return (message.addressees ?? []).some(addressed => sameActor(addressed, me));
 }
 
 export function formatArguments(args: unknown): string {
@@ -317,6 +317,14 @@ export function responderUndecidedNotice(at: string, position?: number): Message
   return {id: entryId(position), role: 'System', content: null, responderUndecided: true, timestamp: at};
 }
 
+/**
+ * The notice that your message mentioned `mentioned` by name, whom its thread could not bring in
+ * (issue 602).
+ */
+export function notDrawnInNotice(mentioned: ActorId[], at: string, position?: number): Message {
+  return {id: entryId(position), role: 'System', content: null, notDrawnIn: {mentioned}, timestamp: at};
+}
+
 /** The notice that `agentName` did not answer again, for `reason` (issue 234). */
 export function retryRefusedNotice(reason: RetryRefused, agentName: string | undefined, at: string, position?: number): Message {
   return {id: entryId(position), role: 'System', content: null, sender_name: agentName, retryRefused: reason, timestamp: at};
@@ -489,6 +497,10 @@ export function chatMessages(items: HistoryItem<Message>[], nameOf: (actor: Acto
     if ('chain_cut_off' in item) {
       const {max_agent_hops, not_asked, at} = item.chain_cut_off;
       return [chainCutOffNotice(max_agent_hops, not_asked, at, item.seq)];
+    }
+    if ('not_drawn_in' in item) {
+      const {mentioned, at} = item.not_drawn_in;
+      return [notDrawnInNotice(mentioned, at, item.seq)];
     }
     if ('responder_undecided' in item) {
       return [responderUndecidedNotice(item.responder_undecided.at, item.seq)];

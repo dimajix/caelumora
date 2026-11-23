@@ -575,14 +575,12 @@ mod tests {
             [ActorId::User(alice), sleepers[0].id(), sleepers[1].id()].into();
 
         for text in ["@all, what do you think?", "@channel?"] {
-            assert_eq!(
-                channel.mentions().resolve(text).into_iter().collect::<HashSet<_>>(),
-                everyone,
-                "{text}"
-            );
+            let (named, addressed) = channel.mentions().resolve(text);
+            assert_eq!(addressed.into_iter().collect::<HashSet<_>>(), everyone, "{text}");
+            assert!(named.is_empty(), "{text}: nobody by name");
         }
         assert_eq!(
-            channel.mentions().resolve("@sassy"),
+            channel.mentions().resolve("@sassy").0,
             [sleepers[0].id()],
             "a handle still names one"
         );
@@ -596,13 +594,13 @@ mod tests {
         let (channel, _, sleepers) = channel_with_sleepers(&["Sassy"]).await;
         let sassy = sleepers[0].id();
         channel.participant_renamed(sassy, &Name::new("Saucy").unwrap());
-        assert_eq!(channel.mentions().resolve("@saucy"), [sassy], "by the name announced");
-        assert!(channel.mentions().resolve("@sassy").is_empty(), "not by the old one");
+        assert_eq!(channel.mentions().resolve("@saucy").0, [sassy], "by the name announced");
+        assert!(channel.mentions().resolve("@sassy").0.is_empty(), "not by the old one");
 
         channel.participant_renamed(ActorId::User(UserId::new()), &Name::new("Sassy").unwrap());
-        assert_eq!(channel.mentions().resolve("@saucy"), [sassy], "nobody taking part");
+        assert_eq!(channel.mentions().resolve("@saucy").0, [sassy], "nobody taking part");
         channel.rebuild_mentions();
-        assert_eq!(channel.mentions().resolve("@sassy"), [sassy], "by what its actor tells");
+        assert_eq!(channel.mentions().resolve("@sassy").0, [sassy], "by what its actor tells");
     }
 
     /// Issue 593: who lets a participant go waits until `run` answers that its old actor has

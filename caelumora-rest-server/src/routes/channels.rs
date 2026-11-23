@@ -1247,10 +1247,10 @@ mod tests {
         let alice = ActorId::User(user_id(&api, &cookie).await);
         let other = ThreadId::new();
         let said = |text: &str| {
-            let mentions = if text.contains("@alice") { vec![alice] } else { Vec::new() };
+            let addressees = if text.contains("@alice") { vec![alice] } else { Vec::new() };
             Message {
                 role: MessageRole::User,
-                mentions,
+                addressees,
                 sender_id: alice,
                 content: Some(text.to_string()),
                 ..Message::new(Classification::CHANNEL_DEFAULT)

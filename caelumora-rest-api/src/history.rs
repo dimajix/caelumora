@@ -21,8 +21,8 @@ use serde::{Deserialize, Serialize};
 /// `{"participant_joined": {…}}`, `{"participant_left": {…}}`, `{"given_to_read": {…}}`,
 /// `{"thread_opened": {…}}`, `{"thread_closed": {…}}`, and the notices a reader was given
 /// (issue 417): `{"command_failed": {…}}`, `{"retry_accepted": {…}}`, `{"retry_refused": {…}}`,
-/// `{"chain_cut_off": {…}}`, `{"responder_undecided": {…}}`, `{"event_rejected": {…}}`,
-/// `{"event_refused": {…}}`, `{"response_requested": {…}}`.
+/// `{"chain_cut_off": {…}}`, `{"responder_undecided": {…}}`, `{"not_drawn_in": {…}}`,
+/// `{"event_rejected": {…}}`, `{"event_refused": {…}}`, `{"response_requested": {…}}`.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HistoryItemResponse<M> {
@@ -159,6 +159,12 @@ pub enum HistoryItemResponse<M> {
         message: MessageId,
         at: DateTime<Utc>,
     },
+    /// `message` mentioned `mentioned` by name, whom its thread did not draw in (issue 602).
+    NotDrawnIn {
+        message: MessageId,
+        mentioned: Vec<ActorId>,
+        at: DateTime<Utc>,
+    },
     /// What the reader sent was not let into the channel (issue 304).
     EventRejected {
         rejected: String,
@@ -271,6 +277,9 @@ impl<M> HistoryItemResponse<M> {
             }
             HistoryEntry::ResponderUndecided { message, at } => {
                 Some(Self::ResponderUndecided { message, at })
+            }
+            HistoryEntry::NotDrawnIn { message, mentioned, at } => {
+                Some(Self::NotDrawnIn { message, mentioned, at })
             }
             HistoryEntry::EventRejected { rejected, message, reason, at } => {
                 Some(Self::EventRejected { rejected, message, reason, at })
@@ -457,6 +466,10 @@ mod tests {
             kind_of(HistoryEntry::ThreadClosed { thread, by, by_name, at }),
             "thread_closed"
         );
+        // Issue 602: whom a message mentioned by name but its thread did not draw in.
+        let mentioned = vec![ActorId::default()];
+        let not_drawn_in = HistoryEntry::NotDrawnIn { message: MessageId::new(), mentioned, at };
+        assert_eq!(kind_of(not_drawn_in), "not_drawn_in");
     }
 
     #[test]

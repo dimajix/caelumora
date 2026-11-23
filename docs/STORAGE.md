@@ -594,7 +594,7 @@ participant (issue 417), and is kept apart from the channel state's document (is
     reader sees.
     The filter is data too (issue 421): a `Filter` of the entity stores' queries over the fields of
     an item as it is kept (`HistoryField`) - a message said, its sender, role and words, what it
-    carries, whom it mentions, its level and compartments -, made by the reader's needs
+    carries, whom it addresses, its level and compartments -, made by the reader's needs
     (`Filter::said_by`, `heard`, `containing`, `with_attachments`, `readable` for what a reader from
     another channel may read) and judged on the item before its form is chosen, so that a database
     adds it to the same `WHERE`. In which form is `Recorded::as_seen_by`: as it was recorded for its

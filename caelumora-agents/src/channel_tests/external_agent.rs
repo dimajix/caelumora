@@ -24,7 +24,7 @@ use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::ContextItem;
 use caelumora_domain::digest;
 use caelumora_domain::external_agent::{OpenTaskState, TaskId};
-use caelumora_domain::history::Heard;
+use caelumora_domain::history::{Heard, HistoryEntry};
 use caelumora_domain::security::SecurityAttributes;
 use caelumora_domain::session::testing::{bare_session, make_session};
 use caelumora_domain::session::SessionId;
@@ -217,7 +217,8 @@ async fn an_external_agent_does_not_answer_again() {
 }
 
 /// Issue 602: an external agent keeps one remote state in its channel, and so takes part in one
-/// thread of it alone: taken into a further thread, it is refused.
+/// thread of it alone: taken into a further thread, it is refused; mentioned there, it is not drawn
+/// in, and whoever mentioned it is told so.
 #[tokio::test]
 async fn an_external_agent_is_not_taken_into_a_further_thread() {
     use caelumora_domain::channel::ThreadOrigin;
@@ -239,6 +240,19 @@ async fn an_external_agent_is_not_taken_into_a_further_thread() {
         ),
         "{refused}"
     );
+
+    let actor = channel.user_actor(alice_of(&context)).unwrap();
+    let word = Some("@hermes, in here?".to_string());
+    actor.send_message(Some(thread), word, None, Vec::new()).await.expect("sent");
+    let hermes = ActorId::Agent(agent);
+    let told = |entry: &HistoryEntry| match entry {
+        HistoryEntry::NotDrawnIn { mentioned, .. } => *mentioned == [hermes],
+        _ => false,
+    };
+    let entries = channel.history_once(|entries| entries.iter().any(told)).await;
+    assert!(entries.iter().any(told), "she is told of it");
+    let attended = channel.attendance(hermes).await;
+    assert!(attended.iter().all(|at| at.thread != thread), "not drawn in");
     running.abort();
 }
 

@@ -609,6 +609,7 @@ mod tests {
                 not_asked: vec![agent],
             },
             ActorEvent::ResponderUndecided { message: heard.id },
+            ActorEvent::NotDrawnIn { message: heard.id, mentioned: vec![agent] },
             ActorEvent::EventRejected {
                 rejected: "MessageModified".to_string(),
                 message: Some(heard.id),

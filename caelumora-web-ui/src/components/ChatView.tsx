@@ -89,7 +89,7 @@ import {MessageView, Reasoning} from './MessageView';
 import {Notice} from './Notice';
 import {Timestamp} from './Timestamp';
 import {ShownChannelContext, type ShownChannel} from '../shownChannel';
-import {activityNotice, activityUnderWay, attachedByTurn, chainCutOffNotice, responderUndecidedNotice, channelCommandNotice, chatMessages, chatRows, commandFailedNotice, commandNotice, eventRefusedNotice, eventRejectedNotice, nudgeNotice, retryRefusedNotice, endedCommands, formatArguments, givenBack, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, isSaidInLine, isShownInLine, joinsSteps, mayBeAnsweredAgain, mergeToolResults, participantNotice, threadNotice, withoutQuietCalls, planStepMark, rowTurn, turnGroups, type ChatRow} from '../messages';
+import {activityNotice, activityUnderWay, attachedByTurn, chainCutOffNotice, notDrawnInNotice, responderUndecidedNotice, channelCommandNotice, chatMessages, chatRows, commandFailedNotice, commandNotice, eventRefusedNotice, eventRejectedNotice, nudgeNotice, retryRefusedNotice, endedCommands, formatArguments, givenBack, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, isSaidInLine, isShownInLine, joinsSteps, mayBeAnsweredAgain, mergeToolResults, participantNotice, threadNotice, withoutQuietCalls, planStepMark, rowTurn, turnGroups, type ChatRow} from '../messages';
 import {PlanSteps} from './PlanSteps';
 import {TokenGauge} from './TokenGauge';
 import {HoverCard} from './HoverCard';
@@ -899,14 +899,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           // 234): its words, attachments, classification and mentions, and when.
           const modified = actorEvent.MessageModified;
           chat(prev => prev.map(m => m.id === modified.id
-            ? {...m, content: modified.content, reasoning: modified.reasoning, attachments: modified.attachments, classification: modified.classification, mentions: modified.mentions, modified: modified.timestamp}
+            ? {...m, content: modified.content, reasoning: modified.reasoning, attachments: modified.attachments, classification: modified.classification, mentions: modified.mentions, addressees: modified.addressees, modified: modified.timestamp}
             : m));
           setAttachmentsVersion(v => v + 1);
         } else if (actorEvent.MessageRevoked) {
           // In its place without what it said (`Message::revoke`).
           const {message, at} = actorEvent.MessageRevoked;
           chat(prev => prev.map(m => m.id === message
-            ? {...m, content: null, reasoning: undefined, attachments: [], tool_calls: [], tool_results: [], mentions: [], revoked: at}
+            ? {...m, content: null, reasoning: undefined, attachments: [], tool_calls: [], tool_results: [], mentions: [], addressees: [], revoked: at}
             : m));
           setAttachmentsVersion(v => v + 1);
         } else if (actorEvent.MessageReclassified) {
@@ -1081,6 +1081,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           showOnce(chainCutOffNotice(max_agent_hops, not_asked, envelope.timestamp, position));
         } else if (actorEvent.ResponderUndecided) {
           showOnce(responderUndecidedNotice(envelope.timestamp, position));
+        } else if (actorEvent.NotDrawnIn) {
+          showOnce(notDrawnInNotice(actorEvent.NotDrawnIn.mentioned, envelope.timestamp, position));
         } else if (actorEvent.PlanStepStarted) {
           // Heads the messages of the step that follow (issue 263), as the
           // history's mark of it does after a reload.
@@ -1328,6 +1330,19 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   };
 
   /**
+   * What a notice of whom a message could not bring into its thread says (issue 602), naming them
+   * as they are known now.
+   */
+  const notDrawnInText = (mentioned: ActorId[]): string => {
+    const names = mentioned.map(id => {
+      const participant = participants.find(m => sameActor(m.id, id));
+      return participant?.handle ? `@${participant.handle}` : (participant?.name ?? 'someone');
+    });
+    const whom = names.join(', ');
+    return `${whom} cannot take part in this thread and ${names.length === 1 ? 'was' : 'were'} not brought in by your mention.`;
+  };
+
+  /**
    * Whether the user may see the context of `msg`: a stored message of an agent they may read
    * (issue 41).
    */
@@ -1556,6 +1571,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   ) : msg.chainCutOff ? (
     <Notice key={key} message={msg} icon={Unlink} heading={<span>Chain cut off</span>}>
       <div className="wrap-break-word">{chainCutOffText(msg.chainCutOff)}</div>
+    </Notice>
+  ) : msg.notDrawnIn ? (
+    <Notice key={key} message={msg} icon={AtSign} heading={<span>Not brought into this thread · only visible to you</span>}>
+      <div className="wrap-break-word">{notDrawnInText(msg.notDrawnIn.mentioned)}</div>
     </Notice>
   ) : msg.responderUndecided ? (
     <Notice key={key} message={msg} icon={AtSign} heading={<span>Nobody chosen to respond</span>}>

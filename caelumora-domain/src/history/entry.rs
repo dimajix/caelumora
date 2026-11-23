@@ -194,6 +194,9 @@ pub enum HistoryEntry {
     /// `at` (issue 441), and nobody was asked. Told by the moderator, in the system's name, to the
     /// users.
     ResponderUndecided { message: MessageId, at: DateTime<Utc> },
+    /// `message` mentioned `mentioned` by name at `at`, whom its thread did not draw in (issue
+    /// 602). Told by the moderator, in the system's name, to whoever said it.
+    NotDrawnIn { message: MessageId, mentioned: Vec<ActorId>, at: DateTime<Utc> },
     /// What its sender sent - an event of the kind `rejected`, about
     /// `message` if it is one - was not let into the channel at `at`, for
     /// `reason` (issues 304, 417): told to the sender alone, in the system's
@@ -309,6 +312,7 @@ impl HistoryEntry {
             | HistoryEntry::RetryRefused { .. }
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
+            | HistoryEntry::NotDrawnIn { .. }
             | HistoryEntry::EventRejected { .. }
             | HistoryEntry::EventRefused { .. }
             | HistoryEntry::ResponseRequested { .. } => true,
@@ -355,6 +359,7 @@ impl HistoryEntry {
             | HistoryEntry::ResponseRequested { .. }
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
+            | HistoryEntry::NotDrawnIn { .. }
             | HistoryEntry::ApprovalRequested { .. }
             | HistoryEntry::ApprovalAnswered { .. }
             | HistoryEntry::ApprovalDecided { .. }
@@ -406,6 +411,7 @@ impl HistoryEntry {
             | HistoryEntry::RetryRefused { .. }
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
+            | HistoryEntry::NotDrawnIn { .. }
             | HistoryEntry::EventRejected { .. }
             | HistoryEntry::EventRefused { .. }
             | HistoryEntry::ResponseRequested { .. }
@@ -452,6 +458,7 @@ impl HistoryEntry {
             | HistoryEntry::RetryRefused { .. }
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
+            | HistoryEntry::NotDrawnIn { .. }
             | HistoryEntry::EventRejected { .. }
             | HistoryEntry::EventRefused { .. }
             | HistoryEntry::ResponseRequested { .. }
@@ -508,6 +515,7 @@ impl HistoryEntry {
             | HistoryEntry::RetryRefused { .. }
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
+            | HistoryEntry::NotDrawnIn { .. }
             | HistoryEntry::EventRejected { .. }
             | HistoryEntry::EventRefused { .. }
             | HistoryEntry::ResponseRequested { .. }
@@ -550,6 +558,7 @@ impl HistoryEntry {
             | HistoryEntry::RetryRefused { .. }
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
+            | HistoryEntry::NotDrawnIn { .. }
             | HistoryEntry::EventRejected { .. }
             | HistoryEntry::EventRefused { .. }
             | HistoryEntry::ResponseRequested { .. }
@@ -617,6 +626,7 @@ impl HistoryEntry {
             | HistoryEntry::Withdrawn { .. }
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
+            | HistoryEntry::NotDrawnIn { .. }
             | HistoryEntry::EventRejected { .. }
             | HistoryEntry::ResponseRequested { .. } => Recipients::NOBODY,
             HistoryEntry::EventRefused { to, .. } => Recipients::only(vec![*to]),
@@ -664,104 +674,99 @@ impl HistoryEntry {
     /// channel's, which is no event.
     pub fn event(&self) -> Option<ActorEvent> {
         Some(match self.clone() {
-            HistoryEntry::Said { message } if message.internal => {
+            Self::Said { message } if message.internal => {
                 ActorEvent::IntermediateMessageGenerated(message)
             }
-            HistoryEntry::Said { message } => ActorEvent::CompleteMessageGenerated(message),
-            HistoryEntry::Given { message } => ActorEvent::MessageGiven { message },
-            HistoryEntry::GivenToRead { recipient, message, .. } => {
+            Self::Said { message } => ActorEvent::CompleteMessageGenerated(message),
+            Self::Given { message } => ActorEvent::MessageGiven { message },
+            Self::GivenToRead { recipient, message, .. } => {
                 ActorEvent::GivenToRead { recipient, message }
             }
-            HistoryEntry::Withdrawn { message, at } => ActorEvent::MessageWithdrawn { message, at },
-            HistoryEntry::Reclassified { message, classification } => {
+            Self::Withdrawn { message, at } => ActorEvent::MessageWithdrawn { message, at },
+            Self::Reclassified { message, classification } => {
                 ActorEvent::MessageReclassified { message, classification }
             }
-            HistoryEntry::Modified { message } => ActorEvent::MessageModified(message),
-            HistoryEntry::Revoked { message, at } => ActorEvent::MessageRevoked { message, at },
-            HistoryEntry::TurnFinished { turn_id, .. } => {
+            Self::Modified { message } => ActorEvent::MessageModified(message),
+            Self::Revoked { message, at } => ActorEvent::MessageRevoked { message, at },
+            Self::TurnFinished { turn_id, .. } => {
                 ActorEvent::TurnFinished { turn_id, messages: Vec::new() }
             }
-            HistoryEntry::TurnGivenUp { turn_id, reason, .. } => {
+            Self::TurnGivenUp { turn_id, reason, .. } => {
                 ActorEvent::TurnGivenUp { turn_id, reason }
             }
-            HistoryEntry::PlanStepStarted {
-                turn_id, step_index, total_steps, description, ..
-            } => ActorEvent::PlanStepStarted { turn_id, step_index, total_steps, description },
-            HistoryEntry::CommandExecuted { turn_id, command, args, output, to, .. } => {
+            Self::PlanStepStarted { turn_id, step_index, total_steps, description, .. } => {
+                ActorEvent::PlanStepStarted { turn_id, step_index, total_steps, description }
+            }
+            Self::CommandExecuted { turn_id, command, args, output, to, .. } => {
                 ActorEvent::CommandExecuted { command, args, output, to, turn_id }
             }
-            HistoryEntry::Compacted { turn_id, from, to, .. } => {
+            Self::Compacted { turn_id, from, to, .. } => {
                 ActorEvent::ContextCompacted { turn_id, from, to }
             }
-            HistoryEntry::ActivityFinished { turn_id, activity, output, .. } => {
+            Self::ActivityFinished { turn_id, activity, output, .. } => {
                 ActorEvent::ActivityFinished { turn_id, activity, output }
             }
-            HistoryEntry::ParticipantJoined { participant, name, .. } => {
+            Self::ParticipantJoined { participant, name, .. } => {
                 ActorEvent::ParticipantJoined { participant, name }
             }
-            HistoryEntry::ParticipantLeft { participant, name, until, .. } => {
+            Self::ParticipantLeft { participant, name, until, .. } => {
                 ActorEvent::ParticipantLeft { participant, name, until }
             }
-            HistoryEntry::HistoryShared { participant, from, by, by_name, .. } => {
+            Self::HistoryShared { participant, from, by, by_name, .. } => {
                 ActorEvent::HistoryShared { participant, from, by, by_name }
             }
-            HistoryEntry::ThreadOpened { thread, origin, .. } => {
+            Self::ThreadOpened { thread, origin, .. } => {
                 ActorEvent::ThreadOpened { thread, origin }
             }
-            HistoryEntry::ThreadClosed { thread, .. } => ActorEvent::ThreadClosed { thread },
-            HistoryEntry::CommandFailed { turn_id, command, reason, to, .. } => {
+            Self::ThreadClosed { thread, .. } => ActorEvent::ThreadClosed { thread },
+            Self::CommandFailed { turn_id, command, reason, to, .. } => {
                 ActorEvent::CommandFailed { command, reason, to, turn_id }
             }
-            HistoryEntry::RetryAccepted { target, .. } => ActorEvent::RetryAccepted { target },
-            HistoryEntry::RetryRefused { target, reason, .. } => {
+            Self::RetryAccepted { target, .. } => ActorEvent::RetryAccepted { target },
+            Self::RetryRefused { target, reason, .. } => {
                 ActorEvent::RetryRefused { target, reason }
             }
-            HistoryEntry::ChainCutOff { message, max_agent_hops, not_asked, .. } => {
+            Self::ChainCutOff { message, max_agent_hops, not_asked, .. } => {
                 ActorEvent::ChainCutOff { message, max_agent_hops, not_asked }
             }
-            HistoryEntry::ResponderUndecided { message, .. } => {
-                ActorEvent::ResponderUndecided { message }
+            Self::ResponderUndecided { message, .. } => ActorEvent::ResponderUndecided { message },
+            Self::NotDrawnIn { message, mentioned, .. } => {
+                ActorEvent::NotDrawnIn { message, mentioned }
             }
-            HistoryEntry::EventRejected { rejected, message, reason, .. } => {
+            Self::EventRejected { rejected, message, reason, .. } => {
                 ActorEvent::EventRejected { rejected, message, reason }
             }
-            HistoryEntry::EventRefused { to, refused, message, reason, .. } => {
+            Self::EventRefused { to, refused, message, reason, .. } => {
                 ActorEvent::EventRefused { to, refused, message, reason }
             }
-            HistoryEntry::ResponseRequested { reason, .. } => {
-                ActorEvent::ResponseRequested { reason }
-            }
-            HistoryEntry::CommandRequested { agent, command, args, .. } => {
+            Self::ResponseRequested { reason, .. } => ActorEvent::ResponseRequested { reason },
+            Self::CommandRequested { agent, command, args, .. } => {
                 ActorEvent::CommandRequested { command, args, agent }
             }
-            HistoryEntry::RetryRequested { target, author, .. } => {
+            Self::RetryRequested { target, author, .. } => {
                 ActorEvent::RetryRequested { target, author }
             }
-            HistoryEntry::ApprovalRequested { request, .. } => {
-                ActorEvent::ApprovalRequested(request)
-            }
-            HistoryEntry::ApprovalAnswered { id, approved, decision, .. } => {
+            Self::ApprovalRequested { request, .. } => ActorEvent::ApprovalRequested(request),
+            Self::ApprovalAnswered { id, approved, decision, .. } => {
                 ActorEvent::ApprovalAnswered { id, approved, decision }
             }
-            HistoryEntry::ApprovalDecided {
-                response, status: ApprovalStatus::Approved, ..
-            } => ActorEvent::ApprovalGranted(response),
-            HistoryEntry::ApprovalDecided { response, status: ApprovalStatus::Denied, .. } => {
+            Self::ApprovalDecided { response, status: ApprovalStatus::Approved, .. } => {
+                ActorEvent::ApprovalGranted(response)
+            }
+            Self::ApprovalDecided { response, status: ApprovalStatus::Denied, .. } => {
                 ActorEvent::ApprovalDenied(response)
             }
-            HistoryEntry::ApprovalDecided { response, status: ApprovalStatus::Timeout, .. } => {
+            Self::ApprovalDecided { response, status: ApprovalStatus::Timeout, .. } => {
                 ActorEvent::ApprovalTimedOut(response)
             }
-            HistoryEntry::ApprovalRequestWithdrawn { id, .. } => {
+            Self::ApprovalRequestWithdrawn { id, .. } => {
                 ActorEvent::ApprovalRequestWithdrawn { id }
             }
-            HistoryEntry::QuestionRequested { request, .. } => {
-                ActorEvent::QuestionRequested(request)
-            }
-            HistoryEntry::QuestionClosed { id, shown_to, .. } => {
+            Self::QuestionRequested { request, .. } => ActorEvent::QuestionRequested(request),
+            Self::QuestionClosed { id, shown_to, .. } => {
                 ActorEvent::QuestionClosed { id, shown_to }
             }
-            HistoryEntry::Fitted { .. } => return None,
+            Self::Fitted { .. } => return None,
         })
     }
 
@@ -811,6 +816,7 @@ impl HistoryEntry {
             | HistoryEntry::RetryRefused { .. }
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
+            | HistoryEntry::NotDrawnIn { .. }
             | HistoryEntry::EventRejected { .. }
             | HistoryEntry::EventRefused { .. }
             | HistoryEntry::ResponseRequested { .. }
@@ -861,6 +867,7 @@ impl HistoryEntry {
             | HistoryEntry::QuestionClosed { by, .. } => *by,
             HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
+            | HistoryEntry::NotDrawnIn { .. }
             | HistoryEntry::EventRejected { .. }
             | HistoryEntry::ResponseRequested { .. } => ActorId::System,
             HistoryEntry::Revoked { .. }
@@ -903,6 +910,7 @@ impl HistoryEntry {
             | HistoryEntry::RetryRefused { .. }
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
+            | HistoryEntry::NotDrawnIn { .. }
             | HistoryEntry::EventRejected { .. }
             | HistoryEntry::EventRefused { .. }
             | HistoryEntry::ResponseRequested { .. }

@@ -1,11 +1,12 @@
 //! Who takes part in a thread of a running channel (issue 602): whom a thread draws in - whoever
-//! says something in it, and whom it mentions -, nobody where its circle is closed, and what
-//! taking someone in and closing a thread make of someone drawn in meanwhile.
+//! says something in it, and whom it mentions by name -, nobody where its circle is closed, and
+//! what taking someone in and closing a thread make of someone drawn in meanwhile.
 
 use super::*;
 use crate::testing::shown;
 use caelumora_domain::actor::Rejection;
 use caelumora_domain::channel::{Delegation, ThreadOrigin};
+use caelumora_domain::history::HistoryEntry;
 use caelumora_domain::message::MessageId;
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -163,5 +164,47 @@ async fn a_thread_someone_came_into_since_closing_it_was_asked_stays_open() {
         let closed = matches!(envelope.event, ActorEvent::ThreadClosed { .. });
         assert!(!closed, "and not announced closed");
     }
+    running.abort();
+}
+
+/// Issue 602: a group handle addresses everyone but mentions nobody by name: said in a thread, it
+/// draws in whoever said it alone, and nobody is told of anyone not brought in.
+#[tokio::test]
+async fn a_group_handle_draws_nobody_into_a_thread() {
+    let Stuck { channel, context, agent, helper, mut events, running } =
+        start(scripted_channel(Script::Answers("Here.".to_string())).await).await;
+    let (hers, helper_id) = (ActorId::User(alice_of(&context)), ActorId::Agent(agent));
+    answered(&mut events, agent).await;
+    settled(&helper, ActorState::Idle).await;
+    let thread = aside(&channel, &context).await;
+    let actor = channel.user_actor(alice_of(&context)).unwrap();
+
+    let word = "@all, a word";
+    actor.send_message(Some(thread), Some(word.to_string()), None, Vec::new()).await.unwrap();
+    let said = time::timeout(Duration::from_secs(5), async {
+        loop {
+            let envelope = events.recv().await.expect("open");
+            match envelope.event {
+                ActorEvent::CompleteMessageGenerated(said)
+                    if said.content.as_deref() == Some(word) =>
+                {
+                    break said;
+                }
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("said");
+    // What the moderator tells of it is recorded before the channel lets others see it.
+    let told = channel.history_entries().await;
+    assert!(
+        !told.iter().any(|entry| matches!(entry, HistoryEntry::NotDrawnIn { .. })),
+        "nobody named, nobody told of"
+    );
+    assert!(said.mentions.is_empty(), "nobody by name");
+    assert_eq!(said.addressees.len(), 2, "but everyone addressed: {:?}", said.addressees);
+    assert!(channel.runs_in(hers, thread), "who said it takes part");
+    assert!(!channel.runs_in(helper_id, thread), "the helper is not drawn in");
     running.abort();
 }

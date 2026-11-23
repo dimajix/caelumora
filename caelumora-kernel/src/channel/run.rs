@@ -336,12 +336,12 @@ impl ChannelLoop {
         true
     }
 
-    /// Takes into `thread` whoever of `drawn` it draws in (issue 602), on behalf of `by`: where
-    /// its circle is open, each whose actor runs in the channel - started and not leaving -, takes
-    /// no part there yet and may take part in several threads
-    /// (`Actor::takes_part_in_several_threads`), its join announced in the name of `by`'s caller
-    /// (`change_thread`). Asks nothing: what draws them in - something said there, its opening -
-    /// was asked already.
+    /// Takes into `thread` whoever of `drawn` it draws in (issue 602), on behalf of `by`: where its
+    /// circle is open, each whose actor runs in the channel - started and not leaving -, takes no
+    /// part there yet, may take part in several threads (`Actor::takes_part_in_several_threads`)
+    /// and takes part in a thread whose circle is open, its join announced in the name of `by`'s
+    /// caller (`change_thread`). Asks nothing: what draws them in - something said there, its
+    /// opening - was asked already.
     async fn draw_in(
         &self,
         thread: ThreadId,
@@ -357,11 +357,17 @@ impl ChannelLoop {
             if running.get(&id).is_none_or(|handle| handle.leaving.is_some()) {
                 continue;
             }
-            let Some(actor) = self.actor(id) else { continue };
-            if !actor.takes_part_in_several_threads() {
+            let Some(drawn) = self.actors.load().get(&id).cloned() else { continue };
+            // Who takes part in closed circles alone - a sub-agent - stays in them.
+            let closed = |thread: &ThreadId| {
+                self.thread(*thread).is_some_and(|there| there.circle() == Circle::Closed)
+            };
+            if !drawn.actor.takes_part_in_several_threads()
+                || drawn.threads.load().iter().all(closed)
+            {
                 continue;
             }
-            let name = actor.name().to_string();
+            let name = drawn.actor.name().to_string();
             self.change_thread(id, name, thread, ThreadChange::Joins, by.clone(), running).await;
         }
     }
@@ -511,8 +517,8 @@ impl ChannelLoop {
 
     /// Lets `event`, admitted, enter the channel in `context`, its sender's as the channel built it
     /// to admit the event: its mentions resolved, whoever it draws into its thread taken in there
-    /// (issue 602) - whoever says a message of no turn in it, and whom a message mentions
-    /// (`draw_in`) -, then recorded and routed (`record_and_route`).
+    /// (issue 602) - of a message heard, whoever says it if of no turn, and whom it mentions by
+    /// name (`draw_in`) -, then recorded and routed (`record_and_route`).
     async fn enter(
         &self,
         event: Envelope,
@@ -520,15 +526,18 @@ impl ChannelLoop {
         running: &HashMap<ActorId, RunningActor>,
     ) {
         let event = self.resolve_mentions(event);
-        // Their joins come before what draws them in, which they hear so. A message of a turn
-        // draws in no speaker: the turn runs where its agent takes part, or is what remains of a
-        // turn cancelled as it was let go from the thread, which would draw it back.
+        // Their joins come before what draws them in, which they hear so - a message heard. A
+        // message of a turn draws in no speaker: the turn runs where its agent takes part, or is
+        // what remains of a turn cancelled as it was let go from the thread, which would draw it
+        // back. Whom it mentions by name it draws in, not everyone a group handle addresses.
         if let ActorEvent::CompleteMessageGenerated(said)
         | ActorEvent::IntermediateMessageGenerated(said) = &event.event
         {
-            let speaker = said.turn_id.is_none().then_some(event.context.sender_id);
-            let drawn = speaker.into_iter().chain(said.mentions.iter().copied()).collect();
-            self.draw_in(event.context.thread_id, drawn, context, running).await;
+            if said.is_heard() {
+                let speaker = said.turn_id.is_none().then_some(event.context.sender_id);
+                let drawn = speaker.into_iter().chain(said.mentions.iter().copied()).collect();
+                self.draw_in(event.context.thread_id, drawn, context, running).await;
+            }
         }
         self.record_and_route(event, context, running).await;
     }
@@ -1062,16 +1071,13 @@ impl ChannelLoop {
         inbox.deliver(envelope);
     }
 
-    /// Resolves the `@`-mentions in every complete message carried by `event`
-    /// and stores them in `Message::mentions`. Done here, once, as the message
-    /// enters the channel, so that every frontend, the history and the
-    /// moderator all see the same resolution (issue 29).
+    /// Resolves the `@`-mentions in every complete message carried by `event` and stores them
+    /// with it (`Message::resolve_mentions`): whom it mentions by name, and whom it addresses. Done
+    /// here, once, as the message enters the channel, so that every frontend, the history, the
+    /// moderator and the thread it draws into all see the same resolution (issues 29, 602).
     fn resolve_mentions(&self, mut event: Envelope) -> Envelope {
-        let resolve = |m: &mut Message| {
-            if let Some(content) = &m.content {
-                m.mentions = self.mentions().resolve(content);
-            }
-        };
+        let directory = self.mentions();
+        let resolve = |m: &mut Message| m.resolve_mentions(&directory);
         match &mut event.event {
             ActorEvent::CompleteMessageGenerated(m)
             | ActorEvent::IntermediateMessageGenerated(m)
@@ -1275,7 +1281,7 @@ impl ChannelLoop {
             .entry
             .published()
             .and_then(|entry| entry.said().cloned())
-            .filter(|message| (in_line || mentions_a_user(message)) && message.is_heard())
+            .filter(|message| (in_line || addresses_a_user(message)) && message.is_heard())
             .map(|message| Said { message, thread });
         let entry = recorded.entry.clone();
         let mut state = self.state.lock().await;
@@ -1376,10 +1382,10 @@ impl Behind for ChannelLoop {
     }
 }
 
-/// Whether `message` mentions a user (issue 557): what the line's view shows them of another
-/// thread; an agent addressed there is told in its thread.
-fn mentions_a_user(message: &Message) -> bool {
-    message.mentions.iter().any(|mentioned| matches!(mentioned, ActorId::User(_)))
+/// Whether `message` addresses a user (issue 557), by name or as one of everyone: what the line's
+/// view shows them of another thread; an agent addressed there is told in its thread.
+fn addresses_a_user(message: &Message) -> bool {
+    message.addressees.iter().any(|addressed| matches!(addressed, ActorId::User(_)))
 }
 
 #[cfg(test)]
@@ -2795,6 +2801,47 @@ mod tests {
         assert_eq!(announced, BTreeSet::from([line, thread]), "in each");
     }
 
+    /// Issue 602: an actor drawn into a thread while it was let go - after the channel took it out
+    /// of its actors, before `run` took the leave in - leaves that thread as well: `run` announces
+    /// the leave in every thread the actor takes part in as it takes the leave in.
+    #[tokio::test]
+    async fn a_leave_is_announced_in_a_thread_drawn_into_while_letting_go() {
+        let (channel, context, agent, _) = scripted_channel(Script::Answers("ok".into())).await;
+        let helper = ActorId::Agent(agent);
+        let origin = ThreadOrigin { thread: ThreadId::line(channel.id), message: MessageId::new() };
+        let spec = ThreadSpec::new(origin);
+        let thread = channel.open_thread_by_procedure(&context, spec).await.expect("opened");
+        let threads = Arc::clone(&channel.actors.load().get(&helper).expect("it runs").threads);
+        let mut events = channel.observe();
+        channel.remove_actor(helper, &context).await;
+        // As `take_part` would, had a thread drawn it in right then.
+        threads.rcu(|taking_part| {
+            let mut taking_part = BTreeSet::clone(taking_part);
+            taking_part.insert(thread);
+            taking_part
+        });
+        let running = tokio::spawn({
+            let channel = Arc::clone(&channel);
+            async move { channel.run().await }
+        });
+
+        time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = events.recv().await.expect("open");
+                let left = matches!(
+                    envelope.event,
+                    ActorEvent::ParticipantLeft { participant, .. } if participant == helper
+                );
+                if left && envelope.context.thread_id == thread {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("its leave announced in the thread it was drawn into");
+        running.abort();
+    }
+
     /// Issue 593: `run` runs on, empty, until it is aborted; then it has run once, and a request
     /// handed in after is answered with nothing, at once.
     #[tokio::test]
@@ -3786,9 +3833,9 @@ mod tests {
         let step = Message { id: MessageId::new(), internal: true, ..heard.clone() };
         let notice = Message { id: MessageId::new(), role: MessageRole::System, ..heard.clone() };
         let aside = Message { id: MessageId::new(), ..heard.clone() };
-        let mentioning = Message { id: MessageId::new(), mentions: vec![owner], ..heard.clone() };
+        let mentioning = Message { id: MessageId::new(), addressees: vec![owner], ..heard.clone() };
         let agent = ActorId::Agent(AgentId::new());
-        let addressing = Message { id: MessageId::new(), mentions: vec![agent], ..heard.clone() };
+        let addressing = Message { id: MessageId::new(), addressees: vec![agent], ..heard.clone() };
         let mut rx = kernel.event_bus().subscribe_all();
 
         for message in [&heard, &step, &notice] {

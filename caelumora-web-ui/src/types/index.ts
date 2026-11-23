@@ -773,8 +773,13 @@ export interface Message {
   timestamp?: string;
   tool_calls?: ToolCall[];
   tool_results?: ToolResult[];
-  /** Participants addressed by `@`-mentions, resolved by the server. */
+  /** The participants it mentions by name, resolved by the server (issue 602). */
   mentions?: ActorId[];
+  /**
+   * Everyone it addresses, resolved by the server: those it mentions by name, and everyone a group
+   * handle (`@all`, `@channel`) addressed (issues 401, 602) - whom it mentions as the UI shows it.
+   */
+  addressees?: ActorId[];
   /** When its author last modified it (issue 234); absent if never. */
   modified?: string;
   /**
@@ -810,6 +815,9 @@ export interface Message {
   // UI only: it could not be decided who responds, so nobody was asked
   // (issue 441). Part of the history.
   responderUndecided?: boolean;
+  // UI only: your message mentioned `mentioned` by name, whom its thread could not bring in
+  // (issue 602). Part of the history.
+  notDrawnIn?: {mentioned: ActorId[]};
   // UI only: `sender_name` asks you to respond (issue 278), part of the
   // history as the request it is (issue 417).
   nudged?: boolean;
@@ -978,6 +986,11 @@ export interface ActorEvent {
    * system, to the users.
    */
   ResponderUndecided?: { message: string };
+  /**
+   * `message` mentioned `mentioned` by name, whom its thread did not draw in (issue 602). Sent in
+   * the name of the system, to whoever said it.
+   */
+  NotDrawnIn?: { message: string; mentioned: ActorId[] };
   /**
    * The message `id` reads as this from now on (issue 234): its author
    * modified it; `timestamp` is when.
@@ -1498,6 +1511,8 @@ export type HistoryItemKind<M> =
   | {chain_cut_off: {message: string; max_agent_hops: number; not_asked: ActorId[]; at: string}}
   /** It could not be decided who responds to `message`, and nobody was asked (issue 441). */
   | {responder_undecided: {message: string; at: string}}
+  /** `message` mentioned `mentioned` by name, whom its thread did not draw in (issue 602). */
+  | {not_drawn_in: {message: string; mentioned: ActorId[]; at: string}}
   /** What the reader sent was not let into the channel (issue 304). */
   | {event_rejected: {rejected: string; message: string | null; reason: Rejection; at: string}}
   /** What the reader sent was not taken by `by`, the actor it went to (issue 567). */

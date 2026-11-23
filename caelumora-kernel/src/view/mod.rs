@@ -1655,8 +1655,10 @@ mod tests {
         let hers = said(&alice, "hi");
         let step = Message { internal: true, ..said(&bob, "a step") };
         let notice = Message { role: MessageRole::System, ..said(&bob, "a notice") };
-        let asking =
-            Message { mentions: vec![ActorId::User(alice.id)], ..said(&bob, "@alice, a question") };
+        let asking = Message {
+            addressees: vec![ActorId::User(alice.id)],
+            ..said(&bob, "@alice, a question")
+        };
         // Alice and dave from the start, bob joined after dave's hello (issue 417).
         let context =
             EventContext::new(channel.session_id, channel.id, ActorId::None, String::new());
@@ -1684,7 +1686,8 @@ mod tests {
         }
         // Said in another thread (issue 557): left out of the line's view but where it mentions the
         // viewer, and counted there alone.
-        let aside = Message { mentions: vec![ActorId::User(bob.id)], ..said(&dave, "@bob, aside") };
+        let aside =
+            Message { addressees: vec![ActorId::User(bob.id)], ..said(&dave, "@bob, aside") };
         let elsewhere = EventContext { thread_id: ThreadId::new(), ..context };
         state.history.push(&elsewhere, aside.clone());
         manager.kernel().state_store().put_channel_state(channel.id, &mut state).await.unwrap();

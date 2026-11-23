@@ -770,6 +770,48 @@ mod tests {
         world.manager.stop(&alice, session.id()).await.unwrap();
     }
 
+    /// Issue 602: who takes part in closed circles alone - an agent founding a thread delegated
+    /// into, new to the channel - is not drawn into another thread by a mention; whoever mentioned
+    /// it is told so, in the system's name, alone.
+    #[tokio::test]
+    async fn one_in_closed_circles_alone_is_not_drawn_in_and_who_mentioned_them_is_told() {
+        let answering = ScriptedAgents(Script::Answers("ok".to_string()));
+        let world = World::with(&[], &[&answering], |_| {}).await;
+        let personality = world.personality("helper", Some(world.alice), &[]).await;
+        let helper = ActorId::Agent(world.agent("helper", world.alice, &personality).await);
+        let alice = World::as_user(world.alice);
+        let session = world.session_of(&[], &[], &[]).await;
+        let main = Arc::clone(&session.channels()[0]);
+        let at_the_line = at_the_line(&main);
+        let spec = ThreadSpec {
+            circle: Circle::Closed,
+            founders: vec![helper],
+            ..ThreadSpec::new(at_the_line)
+        };
+        let closed = session.open_thread(&alice, main.id(), spec).await.expect("opened");
+        assert_eq!(
+            main.threads_taken_part_in(helper).await,
+            BTreeSet::from([closed]),
+            "in it alone"
+        );
+
+        let hers = main.user_actor(world.alice).expect("her actor");
+        let word = Some("@helper, are you there?".to_string());
+        hers.send_message(None, word, None, Vec::new()).await.expect("sent");
+        let told = |entry: &HistoryEntry| match entry {
+            HistoryEntry::NotDrawnIn { mentioned, .. } => *mentioned == [helper],
+            _ => false,
+        };
+        let entries = main.history_once(|entries| entries.iter().any(told)).await;
+        assert!(entries.iter().any(told), "she is told");
+        assert_eq!(
+            main.threads_taken_part_in(helper).await,
+            BTreeSet::from([closed]),
+            "not drawn into the line"
+        );
+        world.manager.stop(&alice, session.id()).await.unwrap();
+    }
+
     /// Scripted agents that answer, but the one named "broken", which cannot start.
     #[derive(Debug)]
     struct OneBroken;

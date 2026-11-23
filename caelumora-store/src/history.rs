@@ -670,7 +670,7 @@ mod tests {
         let by_alice = Message {
             sender_id: alice,
             content: Some("Zoë likes tea".to_string()),
-            mentions: vec![bob],
+            addressees: vec![bob],
             ..make_message(id(1))
         };
         let other = HistoryEntry::ResponseRequested {
@@ -696,8 +696,8 @@ mod tests {
             "words, as names are compared"
         );
         assert!(
-            keeps(&Filter::mentioning(bob), said(by_alice.clone()))
-                && !keeps(&Filter::mentioning(alice), said(by_alice.clone()))
+            keeps(&Filter::addressing(bob), said(by_alice.clone()))
+                && !keeps(&Filter::addressing(alice), said(by_alice.clone()))
         );
 
         for message in [

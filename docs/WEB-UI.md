@@ -115,10 +115,11 @@ the item it is read as later as `seq` (issue 417).
 
 What the user was shown is what the channel's history recorded for them, so a reload shows the
 same: a turn given up, the answer of a command - the channel's and an agent's, a private one to its
-issuer -, a command not carried out, a chain cut off, that it could not be decided who responds, a
-nudge, something not let into the channel or not taken by an actor, a retry refused (issue 417). A
-message of theirs that was not let in is marked live; after a reload, the notice of its rejection
-stands in its place, since the message entered nothing.
+issuer -, a command not carried out, a chain cut off, that it could not be decided who responds,
+whom a mention of theirs could not bring into its thread (issue 602), a nudge, something not let
+into the channel or not taken by an actor, a retry refused (issue 417). A message of theirs that
+was not let in is marked live; after a reload, the notice of its rejection stands in its place,
+since the message entered nothing.
 
 ## What it shows
 
@@ -345,7 +346,9 @@ it is fetched anew as it starts.
     aborted without a word left - its partial answer, the stop button, calls without a result - goes
     or is shown as abandoned once the channel says it was removed. A chain between agents cut off at
     its limit says so, naming the agents that were not asked, and that a message of a user starts a
-    new chain. A user someone nudges is shown that they are asked to respond.
+    new chain. A user someone nudges is shown that they are asked to respond. A user whose mention
+    could not bring someone into the thread - its circle closed, or they cannot take part there -
+    is told so, alone (`not_drawn_in`, issue 602).
 *   **Who joined or left** is a line of its own where it happened, live and from the history alike:
     "@alice has added @bob to the channel", "@bob has joined the channel", "@bob was removed from
     the channel" - by whose act it was, named as they were then (issue 408). An agent's history

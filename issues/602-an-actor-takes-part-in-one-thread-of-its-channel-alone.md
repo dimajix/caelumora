@@ -570,3 +570,14 @@ above. The position of a predecessor (C) is no step yet.
   with what was recorded of it, so that the thread a message was said in is read once -; 3c-2, the
   mentions across circles and the notice; 3d as planned, with a turn given up last asked per thread.
   Step 3c-R done.
+- **2026-11-23** — Step 3c-R committed. Decided by the maintainer for step 3c-2: a message keeps
+  apart whom it mentions by name and whom it addresses, so that nothing of how it was meant is lost
+  as its mentions are resolved - `Message::mentions`, those mentioned by name, and
+  `Message::addressees`, those and everyone a group handle addressed. Step 3c-2 done: a thread draws
+  in whom a message heard there mentions by name, never everyone a group handle addresses, and
+  passes over who takes part in threads whose circle is closed alone; whom the moderator asks, and
+  whom a message mentions as the frontends show it - the line's view, what is unread, the browser's
+  notification, the handles highlighted -, is whom it addresses (`Filter::addressing`). Whom a
+  message mentions by name but its thread did not draw in, the thread's moderator tells whoever
+  said it (`Notice::NotDrawnIn`, `ActorEvent::NotDrawnIn`, `HistoryEntry::NotDrawnIn`, the REST
+  item `not_drawn_in`), and the web UI shows it.

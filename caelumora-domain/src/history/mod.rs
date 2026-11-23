@@ -193,6 +193,7 @@ impl Chain<Recorded> {
             | HistoryEntry::RetryRefused { .. }
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
+            | HistoryEntry::NotDrawnIn { .. }
             | HistoryEntry::EventRejected { .. }
             | HistoryEntry::EventRefused { .. }
             | HistoryEntry::ResponseRequested { .. }

@@ -544,7 +544,7 @@ mod tests {
         assert!(
             lines(&channels.take_in(envelope_shown(&side, other, said("hello"))).await).is_empty()
         );
-        let mentioning = Message { mentions: vec![me], ..message(other, "@owner look") };
+        let mentioning = Message { addressees: vec![me], ..message(other, "@owner look") };
         let event = ActorEvent::CompleteMessageGenerated(mentioning);
         assert_eq!(
             lines(&channels.take_in(envelope_shown(&side, other, event)).await),

@@ -633,9 +633,9 @@ impl ChannelView {
             ])
         };
         let new = self.readable_items(Some(heard_from_others()));
-        let mentioning = self.readable_items(Some(Filter::all_of([
+        let addressing = self.readable_items(Some(Filter::all_of([
             heard_from_others(),
-            Filter::mentioning(viewer),
+            Filter::addressing(viewer),
         ])));
         let key = self.channel.id;
         let reader = Reader::Participant(viewer);
@@ -646,15 +646,15 @@ impl ChannelView {
             .await
             .map_err(|e| self.failed_reading(e))?;
         // A mention among those not counted is looked for on its own.
-        let mentions_viewer = |item: &HistoryEntry| {
-            item.said().is_some_and(|message| message.mentions.contains(&viewer))
+        let addresses_viewer = |item: &HistoryEntry| {
+            item.said().is_some_and(|message| message.addressees.contains(&viewer))
         };
-        let mentioned = counted.entries().any(mentions_viewer)
+        let mentioned = counted.entries().any(addresses_viewer)
             || (counted.items.len() == Unread::CAP
                 && !self
                     .views()
                     .histories()
-                    .page(key, &reader, from, None, 1, mentioning.as_ref())
+                    .page(key, &reader, from, None, 1, addressing.as_ref())
                     .await
                     .map_err(|e| self.failed_reading(e))?
                     .items

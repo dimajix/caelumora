@@ -73,6 +73,9 @@ pub(crate) enum Notice {
     ChainCutOff { message: MessageId, max_agent_hops: u32, not_asked: Vec<ActorId> },
     /// The policy could not choose who responds to `message` (issue 441), and nobody was asked.
     ResponderUndecided { message: MessageId },
+    /// `message` mentioned `mentioned` by name, who take no part in the thread: it did not draw
+    /// them in (issue 602).
+    NotDrawnIn { message: MessageId, mentioned: Vec<ActorId> },
 }
 
 impl From<Notice> for ActorEvent {
@@ -82,6 +85,9 @@ impl From<Notice> for ActorEvent {
                 ActorEvent::ChainCutOff { message, max_agent_hops, not_asked }
             }
             Notice::ResponderUndecided { message } => ActorEvent::ResponderUndecided { message },
+            Notice::NotDrawnIn { message, mentioned } => {
+                ActorEvent::NotDrawnIn { message, mentioned }
+            }
         }
     }
 }

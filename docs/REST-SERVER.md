@@ -126,7 +126,7 @@ list (`AccessEntry`), is a bare UUID.
 | `PUT …/channels/{cid}/classification`, `…/language`, `…/description`, `…/uses-workspace`, `…/approval-rules` | Change a channel: reclassify it, its language, what it is for, whether it uses the session's workspace, what it restricts of tool calls |
 | `GET …/channels/{cid}/artifacts` | The artifacts with a version published in the channel (the plugin's) |
 | `POST …/channels/{cid}/commands/{command_id}/kill` | End a command of the workspace's shell started in the channel, with what it started |
-| `GET …/history`, `POST …/messages` | A page of the channel's history as items; write a message - its `content`, the `attachments` it carries by their ids, or both -, in the thread `thread` names, the line if none, which draws the writer and whom it mentions into it unless its circle is closed (issue 602) |
+| `GET …/history`, `POST …/messages` | A page of the channel's history as items; write a message - its `content`, the `attachments` it carries by their ids, or both -, in the thread `thread` names, the line if none, which draws the writer and whom it mentions by name into it unless its circle is closed (issue 602) |
 | `POST …/attachments?name=&level=&compartments=` | Upload a file for a message the user is about to write (issue 282): the body, with its `Content-Length` (`411 length_required` without), classified by `level` and `compartments` (comma-separated) - the channel's if no level is given -; answers `201` with the reference a message names by its `id` |
 | `GET …/messages/{mid}/attachments/{aid}` | Download an attachment of a message the user sees in the history, or what one of its tool results the user is shown gave or showed its model: a png, jpeg or webp image inline, anything else as a download |
 | `PUT …/read` | Mark the channel read up to a message (`message_id`): the newest of someone else the user was shown; `404 message_not_found` for one their view of the history does not reach |
@@ -324,7 +324,8 @@ a step of a plan began, how turns ended, commands carried out with what they ans
 it (`activity_finished`), who joined or left the channel, by whose act and named as they were then
 (`participant_joined`, `participant_left`), the notices its reader was given - an answer to a
 request to answer again (`retry_accepted`, `retry_refused`), a chain cut off (`chain_cut_off`), that
-it could not be decided who responds (`responder_undecided`), something of theirs not let in
+it could not be decided who responds (`responder_undecided`), whom their message mentioned by name
+but its thread did not draw in (`not_drawn_in`, issue 602), something of theirs not let in
 (`event_rejected`) or not taken (`event_refused`), a request to respond (`response_requested`) -,
 what a thread's delegate gave to read (`given_to_read`, in the channel's history alone - an agent's
 holds it as what it was given), threads opened and closed (`thread_opened`, `thread_closed`, issue

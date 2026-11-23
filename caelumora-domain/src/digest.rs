@@ -512,6 +512,12 @@ fn history_entry(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
             e.json(&serde_json::json!([message]));
             e.finish()
         }
+        HistoryEntry::NotDrawnIn { message, mentioned, .. } => {
+            let mut e = Encoder::new("caelumora.history-not-drawn-in.v1");
+            e.opt_digest(previous);
+            e.json(&serde_json::json!([message, mentioned]));
+            e.finish()
+        }
         HistoryEntry::EventRejected { rejected, message, reason, .. } => {
             let mut e = Encoder::new("caelumora.history-event-rejected.v1");
             e.opt_digest(previous);

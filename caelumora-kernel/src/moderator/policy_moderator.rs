@@ -337,6 +337,28 @@ impl PolicyModerator {
         Routing { ask, reason: RequestReason::Undecided, agent_hops, notices, ..Routing::default() }
     }
 
+    /// What tells whoever said `messages` - the answer of a turn, or a message of no turn - of
+    /// whom a message heard of them mentions by name but who take no part in the thread (issue
+    /// 602): the channel draws them in before it routes, so those it did not draw in
+    /// (`ChannelLoop::draw_in`). One notice per message, to its sender alone.
+    fn not_drawn_in(&self, event: &Envelope, messages: &[Message]) -> Vec<(Vec<ActorId>, Notice)> {
+        let speaker = event.context.sender_id;
+        let actors = self.actors();
+        messages
+            .iter()
+            .filter(|message| message.is_heard())
+            .filter_map(|message| {
+                let outside = |id: &ActorId| *id != speaker && !actors.takes_part(*id);
+                let mentioned: Vec<ActorId> =
+                    message.mentions.iter().copied().filter(outside).collect();
+                if mentioned.is_empty() {
+                    return None;
+                }
+                Some((vec![speaker], Notice::NotDrawnIn { message: message.id, mentioned }))
+            })
+            .collect()
+    }
+
     /// Tells that the response `messages` of `event` made nobody respond,
     /// since its chain reached the limit (issue 200): a `ChainCutOff` to the
     /// `users` and to the agents involved - its sender and the agents it
@@ -365,13 +387,15 @@ impl PolicyModerator {
 
 #[async_trait]
 impl Moderator for PolicyModerator {
-    /// Every event goes where every channel delivers it; what is decided
-    /// here is whom to ask to respond, and what to tell when a chain ends.
+    /// Every event goes where every channel delivers it; what is decided here is whom to ask to
+    /// respond, and what to tell when a chain ends, nobody could be chosen, or someone mentioned
+    /// was not drawn into the thread.
     async fn route(&self, event: &Envelope, context: &SecurityContext) -> Routing {
         match &event.event {
             // The end of a turn: whoever is to respond is asked (issue 258).
             ActorEvent::TurnFinished { messages, .. } => {
-                let routing = self.ask(event, context, messages).await;
+                let mut routing = self.ask(event, context, messages).await;
+                routing.notices.extend(self.not_drawn_in(event, messages));
                 self.hear(messages);
                 routing
             }
@@ -380,7 +404,8 @@ impl Moderator for PolicyModerator {
             // sender does not matter.
             ActorEvent::CompleteMessageGenerated(message) if message.turn_id.is_none() => {
                 let messages = slice::from_ref(message);
-                let routing = self.ask(event, context, messages).await;
+                let mut routing = self.ask(event, context, messages).await;
+                routing.notices.extend(self.not_drawn_in(event, messages));
                 self.hear(messages);
                 routing
             }
@@ -495,7 +520,7 @@ impl ModeratorActors {
         let mut addressed = false;
         let mut responders: Vec<ActorId> = Vec::new();
         for id in
-            messages.iter().flat_map(|m| m.mentions.iter()).filter(|id| !sender_ids.contains(id))
+            messages.iter().flat_map(|m| m.addressees.iter()).filter(|id| !sender_ids.contains(id))
         {
             let agent = self.agent_actors.contains_key(id);
             addressed |=
@@ -592,11 +617,13 @@ mod tests {
             .collect()
     }
 
+    /// Mentioning `mentions` by name.
     fn text_from(sender_id: ActorId, content: &str, mentions: Vec<ActorId>) -> Message {
         Message {
             sender_id,
             role: MessageRole::User,
             content: Some(content.to_string()),
+            addressees: mentions.clone(),
             mentions,
             ..Message::new(Classification::CHANNEL_DEFAULT)
         }
@@ -1149,6 +1176,45 @@ mod tests {
         assert_eq!(asked(&routing), (2, 0), "a user's message starts a new chain");
     }
 
+    /// Issue 602: whom a message heard mentions by name but who takes no part in the thread - the
+    /// channel could not draw them in - is told to whoever said it alone: after a user's message,
+    /// and after the turn of an agent; not whoever said it, nor who takes part, nor of a message
+    /// not heard.
+    #[tokio::test]
+    async fn whom_a_thread_did_not_draw_in_is_told_to_whoever_mentioned_them() {
+        let moderator = PolicyModerator::new(
+            policy(broadcast_policy::BroadcastPolicy),
+            5,
+            DEFAULT_CONTEXT_MESSAGES,
+        );
+        let agents = add_agents(&moderator);
+        let user = ActorId::User(UserId::new());
+        moderator.add_actor(Arc::new(StandIn::new(user, "test", ActorState::Idle)));
+        let outside = ActorId::Agent(AgentId::new());
+        let not_drawn_in = |routing: &Routing| -> Vec<(Vec<ActorId>, Notice)> {
+            let notices = routing.notices.iter().cloned();
+            notices.filter(|(_, notice)| matches!(notice, Notice::NotDrawnIn { .. })).collect()
+        };
+        let context = SecurityContext::default();
+
+        let event = said_from(user, "look", vec![outside, user, agents[0]]);
+        let ActorEvent::CompleteMessageGenerated(message) = &event.event else { unreachable!() };
+        let told = Notice::NotDrawnIn { message: message.id, mentioned: vec![outside] };
+        let routing = moderator.route(&event, &context).await;
+        assert_eq!(not_drawn_in(&routing), [(vec![user], told)], "of whom alone, to her alone");
+
+        let event = message_from(agents[0], "look", vec![outside]);
+        let ActorEvent::TurnFinished { messages, .. } = &event.event else { unreachable!() };
+        let told = Notice::NotDrawnIn { message: messages[0].id, mentioned: vec![outside] };
+        let routing = moderator.route(&event, &context).await;
+        assert_eq!(not_drawn_in(&routing), [(vec![agents[0]], told)], "an agent's turn alike");
+
+        let unheard = Message { internal: true, ..text_from(user, "step", vec![outside]) };
+        let event = envelope(user, ActorEvent::CompleteMessageGenerated(unheard));
+        let routing = moderator.route(&event, &context).await;
+        assert!(not_drawn_in(&routing).is_empty(), "nothing of a message not heard");
+    }
+
     #[tokio::test]
     async fn a_chain_cut_off_is_told_to_the_users_and_the_agents_involved() {
         let moderator = PolicyModerator::new(
@@ -1691,7 +1757,7 @@ mod tests {
                 role: MessageRole::Assistant,
                 content: None,
                 tool_calls: vec![call.clone()],
-                mentions: vec![agents[2]],
+                addressees: vec![agents[2]],
                 ..Message::new(classified.clone())
             };
             let tool = Message {
