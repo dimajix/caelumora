@@ -410,7 +410,7 @@ impl ChannelView {
             .said(self.channel.id, &self.reading_as(), id)
             .await
             .map_err(|e| self.failed_reading(e))?;
-        let seen = said.and_then(|(_, item)| item.said().cloned());
+        let seen = said.and_then(|(_, item)| item.entry.said().cloned());
         match seen {
             Some(message) if self.may_read_entry(&message.classification) => Ok(message),
             _ if self.reading != Reading::Whole => Err(self.nothing_released()),

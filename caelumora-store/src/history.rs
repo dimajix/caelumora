@@ -53,16 +53,16 @@ pub trait HistoryStore: Debug + Send + Sync {
         filter: Option<&Filter<HistoryField>>,
     ) -> StoreResult<HistoryPage>;
 
-    /// The item that said the message `id` - `HistoryEntry::Said`, its
-    /// message as it stands, with what it was produced from - and its
-    /// position, as `reader` may see it; `None` if it was never said in the
-    /// history, or not to them.
+    /// The item that said the message `id` - `HistoryEntry::Said`, its message as it stands, with
+    /// what it was produced from - and its position, as `reader` may see it, with what else was
+    /// recorded of it: its context names the thread it was said in (issue 602). `None` if it was
+    /// never said in the history, or not to them.
     async fn said(
         &self,
         channel: ChannelId,
         reader: &Reader,
         id: MessageId,
-    ) -> StoreResult<Option<(Position, HistoryEntry)>>;
+    ) -> StoreResult<Option<(Position, Recorded)>>;
 
     /// The entries of the chain at the positions `range` holds that `reader`
     /// may see, as they may see them, in the order they were added: what was
@@ -342,7 +342,7 @@ pub fn seen(
             return Ok(None);
         }
     }
-    Ok(item.as_seen_by(*seq, reader, attended).map(|entry| (*seq, entry)))
+    Ok(item.as_seen_by(*seq, reader, attended).map(|seen| (*seq, seen.entry)))
 }
 
 /// The entries of `nodes` that `reader`, with `attended` as where it took part, may see, as they
@@ -356,15 +356,8 @@ pub fn seen_nodes<'a>(
     nodes
         .into_iter()
         .filter_map(|node| {
-            let Recorded { sender, recipients, context, timestamp, .. } = &node.entry;
-            let entry = node.entry.as_seen_by(node.seq, reader, attended)?;
-            Some(node.with_entry(Recorded {
-                entry,
-                sender: *sender,
-                recipients: recipients.clone(),
-                context: context.clone(),
-                timestamp: *timestamp,
-            }))
+            let seen = node.entry.as_seen_by(node.seq, reader, attended)?;
+            Some(node.with_entry(seen))
         })
         .collect()
 }
@@ -393,7 +386,7 @@ pub fn answer_of<'a>(
         .filter_map(|node| {
             node.entry
                 .as_seen_by(node.seq, reader, attended)
-                .and_then(|entry| entry.said().cloned())
+                .and_then(|seen| seen.entry.said().cloned())
         })
         .collect();
     answer.reverse();

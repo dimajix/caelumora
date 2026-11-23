@@ -10,7 +10,7 @@
 
 use crate::channel::thread::Thread;
 use crate::channel::ResolvedParticipant;
-use crate::channel::{ChannelLoop, Ending};
+use crate::channel::{ChannelLoop, Ending, ThreadSpec};
 use crate::controller::SessionController;
 use crate::kernel::{ChannelRuntime, Kernel, ParticipantRuntime};
 use crate::procedure::channel::Reclassify;
@@ -614,9 +614,9 @@ impl ChannelLoop {
         session.procedures().run(adding).await.map(drop).map_err(SessionError::untyped)
     }
 
-    /// Opens a thread of the channel at `origin`, its circle open, on behalf of `context`, with
-    /// `founders`, by the procedure that does it (`thread::Open`), as an entry point does; in a
-    /// channel of no session without founders.
+    /// Opens a thread of the channel as `spec` says on behalf of `context`, by the procedure that
+    /// does it (`thread::Open`), as an entry point does; in a channel of no session without
+    /// founders.
     ///
     /// # Errors
     /// As `thread::Open`; if a channel of no session is to take founders in, else as
@@ -624,21 +624,17 @@ impl ChannelLoop {
     pub async fn open_thread_by_procedure(
         self: &Arc<Self>,
         context: &SecurityContext,
-        origin: ThreadOrigin,
-        founders: &[ActorId],
+        spec: ThreadSpec,
     ) -> Result<ThreadId> {
-        let founders = founders.to_vec();
         if let Some(session) = self.session_loop() {
-            let opening =
-                thread::Open::new(context, session.id(), self.id, origin, Circle::Open, founders);
+            let opening = thread::Open::new(context, session.id(), self.id, spec);
             return session.procedures().run(opening).await.map_err(SessionError::untyped);
         }
         // A channel of no session takes nobody in: its threads are opened without founders.
-        anyhow::ensure!(founders.is_empty(), "a channel of no session takes no founders in");
+        anyhow::ensure!(spec.founders.is_empty(), "a channel of no session takes no founders in");
         let (channel, context) = (Arc::clone(self), context.clone());
         let opened = ThreadId::new();
-        let opening =
-            async move { channel.open_thread(&context, opened, origin, Circle::Open).await };
+        let opening = async move { channel.open_thread(&context, opened, &spec).await };
         self.holding(opening).await?;
         Ok(opened)
     }

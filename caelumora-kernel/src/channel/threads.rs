@@ -3,10 +3,10 @@
 //! again from the channel's state as the channel starts.
 
 use super::thread::Thread;
-use super::{ActorChange, Answer, ChannelError, ChannelLoop};
+use super::{ActorChange, Answer, ChannelError, ChannelLoop, ThreadSpec};
 use anyhow::Result;
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::channel::{Channel, Circle, Opening, ThreadId, ThreadOrigin, ThreadState};
+use caelumora_domain::channel::{Channel, Opening, ThreadId, ThreadOrigin, ThreadState};
 use caelumora_domain::store::Stored;
 use caelumora_security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -62,8 +62,8 @@ impl ChannelLoop {
         self.rejoining(participant).await.map(|(_, threads)| threads).unwrap_or_default()
     }
 
-    /// Opens thread `thread` of the channel at `origin`, its circle `circle`, on behalf of
-    /// `context`, if they may (`require_opening`), for a procedure that holds it
+    /// Opens thread `thread` of the channel at the origin and with the circle `spec` names, on
+    /// behalf of `context`, if they may (`require_opening`), for a procedure that holds it
     /// (`procedure::thread::open`), which asked it ahead and takes its founders in after: the
     /// thread is there at once, with a moderator of its own, and `run` announces it
     /// (`ThreadOpened`) in the name of `context`'s caller - after whatever was sent into the
@@ -77,9 +77,9 @@ impl ChannelLoop {
         &self,
         context: &SecurityContext,
         thread: ThreadId,
-        origin: ThreadOrigin,
-        circle: Circle,
+        spec: &ThreadSpec,
     ) -> Result<()> {
+        let ThreadSpec { origin, circle, .. } = *spec;
         let open = self.is_open(origin.thread);
         let access = self.policies.access_policy();
         require_opening(access.as_ref(), context, &self.channel(), origin, open).await?;
@@ -153,8 +153,12 @@ impl ChannelLoop {
         }
         let closing = self.request(ActorChange::Close(thread, context.clone()));
         if !closing.carried_out().await {
-            // Someone it drew in meanwhile keeps it open (issue 602), else the channel stopped.
-            return if self.runs_anyone_in(thread) { Err(not_empty().into()) } else { Ok(false) };
+            return Ok(false);
+        }
+        // Left open by `run`: someone it drew in meanwhile takes part (issue 602). Nobody else
+        // closes it: whoever closes it holds it.
+        if self.is_open(thread) {
+            return Err(not_empty().into());
         }
         info!("Thread {} of channel {} is closed by {}", thread, self.id, context.caller_id);
         Ok(true)
@@ -166,7 +170,7 @@ impl ChannelLoop {
     pub(super) fn runs_anyone_in(&self, thread: ThreadId) -> bool {
         let delegate = ActorId::Delegate(thread);
         let actors = self.actors.load();
-        actors.iter().any(|(id, actor)| *id != delegate && actor.threads.load().contains(&thread))
+        actors.iter().any(|(id, actor)| *id != delegate && actor.takes_part_in(thread))
     }
 }
 

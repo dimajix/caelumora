@@ -37,9 +37,8 @@ impl ChannelLoop {
         for held in self.threads_in(thread) {
             held.set_quiet(true);
         }
-        let in_scope = |actor: &&ChannelActor| {
-            thread.is_none_or(|thread| actor.threads.load().contains(&thread))
-        };
+        let in_scope =
+            |actor: &&ChannelActor| thread.is_none_or(|thread| actor.takes_part_in(thread));
         for ChannelActor { actor, .. } in self.actors.load().values().filter(in_scope) {
             actor.cancel(thread);
         }
@@ -68,7 +67,7 @@ impl ChannelLoop {
             .actors
             .load()
             .values()
-            .filter(|a| thread.is_none_or(|thread| a.threads.load().contains(&thread)))
+            .filter(|a| thread.is_none_or(|thread| a.takes_part_in(thread)))
             .map(|a| &a.actor)
             .filter(|a| a.state() == ActorState::Sleeping)
             .map(|a| a.name().to_string())
@@ -215,9 +214,8 @@ impl ChannelLoop {
         for held in self.threads_in(thread) {
             held.set_quiet(false);
         }
-        let in_scope = |actor: &&ChannelActor| {
-            thread.is_none_or(|thread| actor.threads.load().contains(&thread))
-        };
+        let in_scope =
+            |actor: &&ChannelActor| thread.is_none_or(|thread| actor.takes_part_in(thread));
         for ChannelActor { actor, .. } in self.actors.load().values().filter(in_scope) {
             actor.wakeup();
         }
@@ -301,13 +299,17 @@ mod tests {
     /// agent taking part in it that runs in another -, and so does letting the agent go from it.
     #[tokio::test]
     async fn cancelling_a_thread_ends_the_turns_that_run_there_alone() {
+        use crate::channel::ThreadSpec;
         use caelumora_domain::channel::{ThreadId, ThreadOrigin};
         use caelumora_domain::message::MessageId;
         let Stuck { channel, context, agent, running, .. } = stuck_in_a_turn().await;
         let helper = ActorId::Agent(agent);
         let line = ThreadId::line(channel.id());
         let origin = ThreadOrigin { thread: line, message: MessageId::new() };
-        let thread = channel.open_thread_by_procedure(&context, origin, &[]).await.expect("open");
+        let thread = channel
+            .open_thread_by_procedure(&context, ThreadSpec::new(origin))
+            .await
+            .expect("open");
         channel.take_into_thread_by_procedure(&context, thread, helper).await.expect("taken in");
 
         channel.cancel(&context, Some(thread)).await.expect("cancelled");

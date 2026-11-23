@@ -15,7 +15,7 @@ use tokio::time;
 /// `context`: one nobody is drawn into as it is opened.
 async fn aside(channel: &Arc<ChannelLoop>, context: &SecurityContext) -> ThreadId {
     let origin = ThreadOrigin { thread: ThreadId::line(channel.id()), message: MessageId::new() };
-    channel.open_thread_by_procedure(context, origin, &[]).await.expect("opened")
+    channel.open_thread_by_procedure(context, ThreadSpec::new(origin)).await.expect("opened")
 }
 
 /// Issue 602: whoever says something in a thread and whom it mentions take part in it from then
@@ -125,19 +125,30 @@ async fn a_join_of_someone_in_the_thread_meanwhile_is_carried_out_and_announced_
 }
 
 /// Issue 602: a thread is not closed while someone takes part in it whom it drew in or who was
-/// taken in after closing it was asked: `run` asks it again as it would close it.
+/// taken in after closing it was asked - here, a closing asked while a join waits for `run`, which
+/// takes the join in first: `run` asks again as it would close it and leaves it open, and whoever
+/// asked finds it open. Whether the closing was handed to `run` is read off what waits for it, as
+/// nothing else tells.
 #[tokio::test]
 async fn a_thread_someone_came_into_since_closing_it_was_asked_stays_open() {
     let (channel, context, agent, _) = scripted_channel(Script::Answers("ok".to_string())).await;
     let helper_id = ActorId::Agent(agent);
     let thread = aside(&channel, &context).await;
     let joins = channel.take_into_thread(helper_id, thread, &context).await.expect("asked");
+    let waiting = || channel.requests_rx.lock().unwrap().as_ref().map_or(0, |rx| rx.len());
+    let before = waiting();
     let closing = tokio::spawn({
         let (channel, context) = (Arc::clone(&channel), context.clone());
         async move { channel.close_thread(&context, thread).await }
     });
-    // Closing asked before `run` takes the join in, most likely; refused either way.
-    time::sleep(Duration::from_millis(50)).await;
+    time::timeout(Duration::from_secs(5), async {
+        while waiting() == before {
+            time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .expect("the closing handed to `run`, behind the join");
+    let mut events = channel.observe();
     let running = tokio::spawn({
         let channel = Arc::clone(&channel);
         async move { channel.run().await }
@@ -147,6 +158,10 @@ async fn a_thread_someone_came_into_since_closing_it_was_asked_stays_open() {
     let refused = closing.await.expect("ran").expect_err("someone takes part");
     let refused = refused.downcast_ref::<ChannelError>();
     assert!(matches!(refused, Some(ChannelError::ThreadNotEmpty { .. })), "{refused:?}");
-    assert!(channel.is_open(thread), "still open");
+    assert!(channel.is_open(thread), "left open");
+    while let Ok(envelope) = events.try_recv() {
+        let closed = matches!(envelope.event, ActorEvent::ThreadClosed { .. });
+        assert!(!closed, "and not announced closed");
+    }
     running.abort();
 }

@@ -256,24 +256,31 @@ impl Recorded {
         }
     }
 
-    /// What `reader` may see of the entry at the position `seq`, with
-    /// `attended` as `seen_by` takes it: nothing unless it sees it; then the
-    /// entry as it was recorded for its sender and the channel, and as
-    /// everybody was given it for anyone else (`HistoryEntry::published`).
+    /// What `reader` may see of the entry at the position `seq`, with `attended` as `seen_by` takes
+    /// it: nothing unless it sees it; then the entry as it was recorded for its sender and the
+    /// channel, and as everybody was given it for anyone else (`HistoryEntry::published`), with
+    /// what else was recorded of it - its context among it, which names its thread.
     pub fn as_seen_by(
         &self,
         seq: Position,
         reader: &Reader,
         attended: &[Attended],
-    ) -> Option<HistoryEntry> {
+    ) -> Option<Self> {
         if !self.seen_by(seq, reader, attended) {
             return None;
         }
-        match reader {
-            Reader::Channel => Some(self.entry.clone()),
-            Reader::Participant(actor) if *actor == self.sender => Some(self.entry.clone()),
-            Reader::Participant(_) | Reader::Outsider => self.entry.published(),
-        }
+        let entry = match reader {
+            Reader::Channel => self.entry.clone(),
+            Reader::Participant(actor) if *actor == self.sender => self.entry.clone(),
+            Reader::Participant(_) | Reader::Outsider => self.entry.published()?,
+        };
+        Some(Self {
+            entry,
+            sender: self.sender,
+            recipients: self.recipients.clone(),
+            context: self.context.clone(),
+            timestamp: self.timestamp,
+        })
     }
 }
 
@@ -386,10 +393,9 @@ mod tests {
             Audience::Everybody,
             &context,
         );
-        let calls = |entry: Option<HistoryEntry>| {
-            entry
-                .as_ref()
-                .and_then(HistoryEntry::said)
+        let calls = |seen: Option<Recorded>| {
+            seen.as_ref()
+                .and_then(|seen| seen.entry.said())
                 .map(|m| (m.tool_calls.len(), m.content.clone()))
         };
 
@@ -400,7 +406,7 @@ mod tests {
         );
         assert!(
             said.as_seen_by(Position::START, &Reader::Participant(agent), all)
-                .and_then(|e| e.context().map(|_| ()))
+                .and_then(|seen| seen.entry.context().map(|_| ()))
                 .is_some(),
             "with what it was produced from"
         );
@@ -412,7 +418,7 @@ mod tests {
                 "{reader:?}: as it was published"
             );
             assert!(
-                seen.and_then(|e| e.context().map(|_| ())).is_none(),
+                seen.and_then(|seen| seen.entry.context().map(|_| ())).is_none(),
                 "{reader:?}: without what it was produced from"
             );
         }

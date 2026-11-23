@@ -3717,7 +3717,8 @@ async fn an_agent_taken_into_a_thread_forks_its_branch_at_the_message_the_thread
     stored_once(Box::new(move |state| state.last_message == Some(after.id))).await;
 
     let origin = ThreadOrigin { thread: line, message: before.id };
-    let thread = channel.open_thread_by_procedure(&context, origin, &[]).await.expect("opened");
+    let thread =
+        channel.open_thread_by_procedure(&context, ThreadSpec::new(origin)).await.expect("opened");
     let helper = ActorId::Agent(agent);
     channel.take_into_thread_by_procedure(&context, thread, helper).await.expect("taken in");
     let joined = move |state: &AgentChannelState| {
@@ -3768,7 +3769,8 @@ async fn an_agent_mentioned_in_a_thread_is_drawn_in_and_answers_there() {
         async move { channel.run().await }
     });
     let origin = ThreadOrigin { thread: line, message: before.id };
-    let thread = channel.open_thread_by_procedure(&context, origin, &[]).await.expect("opened");
+    let thread =
+        channel.open_thread_by_procedure(&context, ThreadSpec::new(origin)).await.expect("opened");
 
     let question = "@helper, what is this?";
     let actor = channel.user_actor(alice).unwrap();

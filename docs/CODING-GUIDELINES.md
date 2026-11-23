@@ -277,11 +277,11 @@ channel the caller reached whose mark the store no longer finds, which fails wit
 (issue 593).
 
 What a caller chooses of a new entity is a `…Spec`, which the operation making the entity takes -
-`create`, `procedure::session::Create::from_template`, `procedure::channel::Create` -, in the
-`spec.rs` of its module and exported from it: `WorkspaceSpec`, `ProjectSpec`, `AgentSpec`,
-`GroupSpec`, `SessionSpec` and `ChannelSpec`. It holds only what the caller may choose, never what
-the manager sets (its id, owner, access list, times); free text as a `String`, validated as the
-entity is made.
+`create`, `procedure::session::Create::from_template`, `procedure::channel::Create`,
+`procedure::thread::Open` -, in the `spec.rs` of its module and exported from it: `WorkspaceSpec`,
+`ProjectSpec`, `AgentSpec`, `GroupSpec`, `SessionSpec`, `ChannelSpec` and `ThreadSpec`. It holds
+only what the caller may choose, never what the manager sets (its id, owner, access list, times);
+free text as a `String`, validated as the entity is made.
 Its required parts are given to its `new`, the others are public fields with their defaults, so that
 a new optional part changes no caller:
 `WorkspaceSpec { description, ..WorkspaceSpec::new(name, scope, storage) }`. A spec with required

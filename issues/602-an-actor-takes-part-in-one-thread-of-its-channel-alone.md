@@ -560,3 +560,13 @@ above. The position of a predecessor (C) is no step yet.
   leave is announced in every thread the actor takes part in as `run` takes the leave in; an actor
   not started yet, or leaving, is not drawn in. The stored channel states with a thread, open or
   closed, are to be deleted: a thread's opening holds its circle.
+- **2026-11-23** — Step 3c committed. Decided by the maintainer: one who takes part in closed
+  circles alone is not drawn into another thread, and a group handle (`@all`, `@channel`) draws
+  nobody in; a mention that brings nobody in is told; the findings are planned. The rest of step 3,
+  in this order: 3c-R, a restructuring without a change of behaviour - what a caller chooses of a
+  new thread is a `ThreadSpec`, as `ChannelSpec` is of a channel; whether an actor takes part in a
+  thread is `ChannelActor::takes_part_in`; `run` answers a closing it does not carry out, and
+  whoever asked finds the thread open, instead of guessing why; `HistoryStore::said` gives the entry
+  with what was recorded of it, so that the thread a message was said in is read once -; 3c-2, the
+  mentions across circles and the notice; 3d as planned, with a turn given up last asked per thread.
+  Step 3c-R done.

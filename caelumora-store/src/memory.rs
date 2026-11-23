@@ -12,9 +12,7 @@ use caelumora_domain::chain::{Node, Position};
 use caelumora_domain::channel::{ChannelId, ChannelState, ThreadId};
 use caelumora_domain::context::FrameRef;
 use caelumora_domain::digest::Digest;
-use caelumora_domain::history::{
-    Attended, History, HistoryEntry, HistoryField, HistoryPage, Reader, Recorded,
-};
+use caelumora_domain::history::{Attended, History, HistoryField, HistoryPage, Reader, Recorded};
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::query::{ordered_after, FieldPath, Filter};
 use caelumora_domain::store::{EntityKind, Journaled, Revision, StoreError, StoreResult};
@@ -514,12 +512,13 @@ impl HistoryStore for MemoryStore {
         channel: ChannelId,
         reader: &Reader,
         id: MessageId,
-    ) -> StoreResult<Option<(Position, HistoryEntry)>> {
+    ) -> StoreResult<Option<(Position, Recorded)>> {
         read_lock(&self.histories, |all| {
-            match all.get(&channel).and_then(|kept| kept.items.said(id).map(|item| (kept, item))) {
-                Some((kept, item)) => seen(reader, &kept.attendance.of_reader(reader), None, item),
-                None => Ok(None),
-            }
+            Ok(all.get(&channel).and_then(|kept| {
+                let (at, item) = kept.items.said(id)?;
+                let seen = item.as_seen_by(*at, reader, &kept.attendance.of_reader(reader))?;
+                Some((*at, seen))
+            }))
         })
     }
 

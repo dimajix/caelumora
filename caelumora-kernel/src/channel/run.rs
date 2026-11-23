@@ -255,15 +255,15 @@ impl ChannelLoop {
                 self.announce(opened, by, ThreadId::line(self.id), running).await;
                 let _ = carried_out.send(());
             }
-            // Its delegate goes as it is closed (issue 557): it has nothing more to
-            // give, and what was open is dropped. Not closed while it drew someone in since
-            // closing it was asked (issue 602).
+            // Its delegate goes as it is closed (issue 557): it has nothing more to give, and what
+            // was open is dropped. Answered either way; left open while someone takes part, whom
+            // it drew in since closing it was asked (issue 602).
             ActorChange::Close(thread, by) => {
                 if !self.runs_anyone_in(thread) {
                     self.let_delegate_go(thread, running).await;
                     self.close(thread, by, running).await;
-                    let _ = carried_out.send(());
                 }
+                let _ = carried_out.send(());
             }
             ActorChange::Delegate(thread, delegation) => {
                 self.hand_to_delegate(thread, delegation).await;
@@ -794,7 +794,7 @@ impl ChannelLoop {
                 // says until its task has ended (issue 262).
                 let actors = self.actors.load();
                 let sender = actors.get(&event.context.sender_id);
-                let outside = sender.is_some_and(|actor| !actor.threads.load().contains(&thread));
+                let outside = sender.is_some_and(|actor| !actor.takes_part_in(thread));
                 (there.circle() == Circle::Open || !outside)
                     .then_some(())
                     .ok_or(Rejection::ClosedCircle)
@@ -1388,7 +1388,9 @@ mod tests {
     use crate::actor::user::ChannelWatch;
     use crate::actor::Shown;
     use crate::channel::tests::*;
-    use crate::channel::{require_opening, ActorChange, ChannelError, Ending, ResolvedParticipant};
+    use crate::channel::{
+        require_opening, ActorChange, ChannelError, Ending, ResolvedParticipant, ThreadSpec,
+    };
     use crate::moderator::broadcast_policy::BroadcastPolicy;
     use crate::moderator::{Moderator, Notice, ResponderPolicy, Routing};
     use crate::testing::Script;
@@ -2776,7 +2778,7 @@ mod tests {
         let (line, thread) = (ThreadId::line(channel.id), ThreadId::new());
         let system = SecurityContext::system();
         let origin = ThreadOrigin { thread: line, message: MessageId::new() };
-        channel.open_thread(&system, thread, origin, Circle::Open).await.expect("opened");
+        channel.open_thread(&system, thread, &ThreadSpec::new(origin)).await.expect("opened");
         let gone = ActorId::Agent(AgentId::new());
         let both = Arc::new(ArcSwap::from_pointee(BTreeSet::from([line, thread])));
         let left = channel.request(ActorChange::Leave(gone, "gone".to_string(), system, both));
@@ -3280,7 +3282,10 @@ mod tests {
         let system = SecurityContext::system();
         let line = ThreadId::line(channel.id);
         let origin = ThreadOrigin { thread: line, message: MessageId::new() };
-        let thread = channel.open_thread_by_procedure(&system, origin, &[]).await.expect("opened");
+        let thread = channel
+            .open_thread_by_procedure(&system, ThreadSpec::new(origin))
+            .await
+            .expect("opened");
         // What `run` does with the changes the channel hands it.
         let (event_tx, _event_rx) = mpsc::channel(10);
         let applied = async || {

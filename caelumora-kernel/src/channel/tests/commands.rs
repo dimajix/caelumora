@@ -313,8 +313,10 @@ async fn a_user_says_and_nudges_in_the_thread_they_name() {
     answered(&mut events, agent).await;
     settled(&helper, ActorState::Idle).await;
     let origin = ThreadOrigin { thread: ThreadId::line(channel.id()), message: MessageId::new() };
-    let thread = channel.open_thread_by_procedure(&context, origin, &[]).await.expect("opened");
-    let elsewhere = channel.open_thread_by_procedure(&context, origin, &[]).await.expect("opened");
+    let thread =
+        channel.open_thread_by_procedure(&context, ThreadSpec::new(origin)).await.expect("opened");
+    let elsewhere =
+        channel.open_thread_by_procedure(&context, ThreadSpec::new(origin)).await.expect("opened");
     channel.take_into_thread_by_procedure(&context, thread, helper_id).await.expect("taken in");
     let actor = channel.user_actor(alice).unwrap();
 
@@ -372,7 +374,8 @@ async fn a_nudge_ends_the_quiet_of_its_thread_and_a_turn_is_asked_again_where_it
     let (alice, helper_id) = (alice_of(&context), ActorId::Agent(agent));
     let line = ThreadId::line(channel.id());
     let origin = ThreadOrigin { thread: line, message: MessageId::new() };
-    let thread = channel.open_thread_by_procedure(&context, origin, &[]).await.expect("opened");
+    let thread =
+        channel.open_thread_by_procedure(&context, ThreadSpec::new(origin)).await.expect("opened");
     channel.take_into_thread_by_procedure(&context, thread, helper_id).await.expect("taken in");
     channel.cancel_actors(None);
     let quiet = |thread| channel.thread(thread).is_some_and(|held| held.is_quiet());

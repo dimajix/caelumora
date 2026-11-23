@@ -1,5 +1,6 @@
 //! A running channel: `ChannelLoop`, how it is built, and what it tells of itself and its actors;
-//! a thread within it is `thread`'s, opening and closing one `threads`'.
+//! a thread within it is `thread`'s, what is chosen of a new one `spec`'s, opening and closing one
+//! `threads`'.
 
 mod control;
 mod delegation;
@@ -10,6 +11,7 @@ mod participation;
 mod resolved;
 mod run;
 mod settings;
+mod spec;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 #[cfg(test)]
@@ -19,6 +21,7 @@ mod threads;
 
 pub(crate) use participation::Participation;
 pub(crate) use resolved::{ResolvedKind, ResolvedParticipant};
+pub use spec::ThreadSpec;
 pub(crate) use threads::require_opening;
 
 use crate::actor::approval::ApproverActor;
@@ -238,6 +241,14 @@ struct ChannelActor {
     task: TaskTracker,
 }
 
+impl ChannelActor {
+    /// Whether it takes part in `thread` (issue 602): whether the thread's moderator may ask it,
+    /// and what happens there is delivered to it.
+    fn takes_part_in(&self, thread: ThreadId) -> bool {
+        self.threads.load().contains(&thread)
+    }
+}
+
 /// The actors of a channel's participants.
 type Actors = HashMap<ActorId, ChannelActor>;
 
@@ -319,8 +330,9 @@ enum ActorChange {
     Open(ThreadId, Opening, SecurityContext),
     /// The thread to close, on whose behalf - in whose name `run` announces it (`ThreadClosed`) -,
     /// recorded closed at once: whoever closes it holds it, as whoever lets someone go from it does
-    /// until they have left (issue 593). Neither closed nor answered while anyone takes part in it,
-    /// whom it drew in since closing it was asked (issue 602).
+    /// until they have left (issue 593). Left open while anyone takes part in it, whom it drew in
+    /// since closing it was asked (issue 602): `run` answers all the same, and whoever asked finds
+    /// it open.
     Close(ThreadId, SecurityContext),
     /// What is delegated into the thread (issue 557): `run` records its briefs behind those of the
     /// thread's delegation, starting the delegation with it if the thread has none, and hands them
@@ -692,7 +704,7 @@ impl ChannelLoop {
     /// 602): whom a nudge, a request to answer again, a command or a brief there may ask.
     pub(crate) fn runs_in(&self, actor_id: ActorId, thread: ThreadId) -> bool {
         let actors = self.actors.load();
-        actors.get(&actor_id).is_some_and(|actor| actor.threads.load().contains(&thread))
+        actors.get(&actor_id).is_some_and(|actor| actor.takes_part_in(thread))
     }
 
     /// The actor of `actor_id` if it is an agent of this channel - whom a

@@ -258,7 +258,8 @@ async fn a_command_of_an_agent_is_issued_in_a_thread_it_takes_part_in() {
     let Stuck { channel, context, agent, running, .. } = with_a_marking_agent(false).await;
     let actor = channel.user_actor(alice_of(&context)).unwrap();
     let origin = ThreadOrigin { thread: ThreadId::line(channel.id()), message: MessageId::new() };
-    let thread = channel.open_thread_by_procedure(&context, origin, &[]).await.expect("opened");
+    let thread =
+        channel.open_thread_by_procedure(&context, ThreadSpec::new(origin)).await.expect("opened");
 
     let nobody = actor.execute_command(Some(thread), "mark @helper").await.expect_err("nobody");
     assert!(

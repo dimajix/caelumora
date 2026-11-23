@@ -243,13 +243,13 @@ impl HistoryStore for JsonStates {
         channel: ChannelId,
         reader: &Reader,
         id: MessageId,
-    ) -> StoreResult<Option<(Position, HistoryEntry)>> {
+    ) -> StoreResult<Option<(Position, Recorded)>> {
         let dir = self.history_dir(channel).await?;
         let mut segment = read_items_end(&dir).await?.previous().map(segment_of);
         while let Some(from) = segment {
-            if let Some(found) = read_items(&dir, from).await?.said(id) {
+            if let Some((at, item)) = read_items(&dir, from).await?.said(id) {
                 let attended = read_attendance(&dir).await?.of_reader(reader);
-                return seen(reader, &attended, None, found);
+                return Ok(item.as_seen_by(*at, reader, &attended).map(|seen| (*at, seen)));
             }
             segment = segment_before(from);
         }

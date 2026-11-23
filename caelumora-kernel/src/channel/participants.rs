@@ -198,7 +198,7 @@ impl ChannelLoop {
         }
         let running = self.actors.load().get(&participant).cloned();
         let running = running.ok_or(ChannelError::NotAParticipant { participant, channel })?;
-        if running.threads.load().contains(&thread) {
+        if running.takes_part_in(thread) {
             return Err(ChannelError::AlreadyInThread { participant, thread, channel }.into());
         }
         if !running.actor.takes_part_in_several_threads() {
@@ -231,6 +231,7 @@ impl ChannelLoop {
         let channel = self.id;
         let running = self.actors.load().get(&participant).cloned();
         let running = running.ok_or(ChannelError::NotAParticipant { participant, channel })?;
+        // One reading of where it takes part, for whether it does there and whether only there.
         let threads = running.threads.load();
         if !threads.contains(&thread) {
             return Err(ChannelError::NotInThread { participant, thread, channel }.into());
@@ -257,7 +258,7 @@ impl ChannelLoop {
     ) -> Option<bool> {
         let there = self.thread(thread)?;
         let running = self.actors.load().get(&participant).cloned()?;
-        if running.threads.load().contains(&thread) == (change == ThreadChange::Joins) {
+        if running.takes_part_in(thread) == (change == ThreadChange::Joins) {
             return Some(false);
         }
         if change == ThreadChange::Leaves {

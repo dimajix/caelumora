@@ -169,7 +169,7 @@ impl AgentContextView {
             .map_err(|source| self.failed(message, source))?;
         let (transcript, frame, turn) = said
             .as_ref()
-            .and_then(|(_, item)| item.context())
+            .and_then(|(_, item)| item.entry.context())
             .ok_or(AgentContextError::NotRecorded { actor: self.actor(), message })?;
         let unavailable = || AgentContextError::Unavailable { actor: self.actor(), message };
         let reference = self
@@ -214,7 +214,7 @@ impl AgentContextView {
             .said(self.channel, &self.reading_as(), message)
             .await
             .map_err(|source| self.failed(message, source))?;
-        Ok(said.and_then(|(_, item)| item.said().map(|m| m.classification.clone())))
+        Ok(said.and_then(|(_, item)| item.entry.said().map(|m| m.classification.clone())))
     }
 
     /// A page of all that was offered to the agent in the channel and what it said itself (issues

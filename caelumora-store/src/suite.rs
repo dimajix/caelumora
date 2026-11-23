@@ -1392,15 +1392,16 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
     assert_eq!(from_middle, expected[250..].to_vec(), "none before where a view begins");
     let (at, first) = histories.said(key, &Reader::Channel, id(1)).await.unwrap().expect("said");
     assert_eq!(
-        (at, first.said().and_then(|m| m.content.as_deref())),
+        (at, first.entry.said().and_then(|m| m.content.as_deref())),
         (Position::START, Some("changed")),
         "as it stands, where it was said"
     );
+    assert_eq!(first.thread(), Some(context.thread_id), "with the thread it was said in");
     assert!(histories
         .said(key, &Reader::Channel, id(300))
         .await
         .unwrap()
-        .is_some_and(|(_, item)| item.said().is_some_and(|m| m.revoked.is_some())));
+        .is_some_and(|(_, item)| item.entry.said().is_some_and(|m| m.revoked.is_some())));
     assert_eq!(
         histories.page(key, &Reader::Channel, Position::START, None, 1, None).await.unwrap().digest,
         state.history.digest(),
@@ -1546,8 +1547,8 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
         &context,
     ));
     states.put_channel_state(channel, &mut more).await.expect("put");
-    let calls = |said: Option<(Position, HistoryEntry)>| {
-        said.and_then(|(_, item)| item.said().map(|m| m.tool_calls.len()))
+    let calls = |said: Option<(Position, Recorded)>| {
+        said.and_then(|(_, item)| item.entry.said().map(|m| m.tool_calls.len()))
     };
     assert_eq!(
         calls(histories.said(key, &Reader::Participant(speaker), id(602)).await.unwrap()),

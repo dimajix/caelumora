@@ -348,12 +348,12 @@ async fn what_only_an_agents_owner_sees_is_recorded_and_reaches_nobody_else() {
     let key = main.id();
     let recorded = time::timeout(Duration::from_secs(5), async {
         loop {
-            if let Some((_, entry)) = histories
+            if let Some((_, item)) = histories
                 .said(key, &Reader::Participant(ActorId::Agent(helper)), answered.id)
                 .await
                 .unwrap()
             {
-                break entry;
+                break item.entry;
             }
             time::sleep(Duration::from_millis(10)).await;
         }

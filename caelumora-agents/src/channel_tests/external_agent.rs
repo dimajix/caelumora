@@ -226,7 +226,8 @@ async fn an_external_agent_is_not_taken_into_a_further_thread() {
     let remote = Arc::new(ScriptedExternalAgent::answering(Vec::new()));
     let Stuck { channel, context, agent, running, .. } = with_an_external_agent(remote).await;
     let origin = ThreadOrigin { thread: ThreadId::line(channel.id()), message: MessageId::new() };
-    let thread = channel.open_thread_by_procedure(&context, origin, &[]).await.expect("opened");
+    let thread =
+        channel.open_thread_by_procedure(&context, ThreadSpec::new(origin)).await.expect("opened");
     let refused = channel
         .take_into_thread_by_procedure(&context, thread, ActorId::Agent(agent))
         .await

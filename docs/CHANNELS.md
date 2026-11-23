@@ -232,10 +232,10 @@ them wherever it happens. The web UI and the TUI show the line (`Envelope::is_sh
 its approvals and its questions, which its calls wait for, and what mentions the viewer.
 
 A thread is **opened** at a message of another thread of its channel (`ThreadOrigin`), its
-**circle** open or closed (see below), with its **founders** (`procedure::thread::Open`, issue
-593, which holds the new thread, the one it is opened at and its founders until they are taken
-in): a founder new to the channel takes part in the thread alone, one who takes part in the
-channel already takes part in it as well (issue 602).
+**circle** open or closed (see below), with its **founders**, as its `ThreadSpec` asks
+(`procedure::thread::Open`, issue 593, which holds the new thread, the one it is opened at and its
+founders until they are taken in): a founder new to the channel takes part in the thread alone,
+one who takes part in the channel already takes part in it as well (issue 602).
 Opening goes through the session, as every way into a channel does (see [Taking someone into the
 session](#taking-someone-into-the-session)): a founder is mostly new to the session. Whoever reads
 the channel may open a thread (`OpenThread`), founded with whom they act for or agents of their

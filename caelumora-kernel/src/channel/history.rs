@@ -11,7 +11,7 @@ use caelumora_domain::channel::{ChannelId, HistoryAccess, HistoryStart, ThreadId
 use caelumora_domain::history::{HistoryEntry, Reader};
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::query::Filter;
-use caelumora_domain::store::{StoreError, StoreResult};
+use caelumora_domain::store::StoreResult;
 use caelumora_security::SecurityContext;
 use caelumora_store::history::HistoryStore;
 use chrono::{DateTime, Utc};
@@ -66,7 +66,7 @@ impl ChannelLoop {
     /// is not found.
     pub(crate) async fn message(&self, id: MessageId) -> Option<Message> {
         match self.history_store.said(self.id, &Reader::Channel, id).await {
-            Ok(said) => said.and_then(|(_, item)| item.said().cloned()),
+            Ok(said) => said.and_then(|(_, item)| item.entry.said().cloned()),
             Err(e) => {
                 warn!("Cannot read message {} of channel {}: {}", id, self.id, e);
                 None
@@ -74,27 +74,20 @@ impl ChannelLoop {
         }
     }
 
-    /// The message `id` as it was said, and the thread it was said in (issue 602), or `None` if it
+    /// The message `id` as it stands, and the thread it was said in (issue 602), or `None` if it
     /// was never said here - read from the store as `message` reads it, a store that cannot be
     /// read logged and the message not found: whom a request to answer it again goes to, and
     /// where.
     pub(crate) async fn said_in(&self, id: MessageId) -> Option<(Message, ThreadId)> {
-        let read = async {
-            let Some((at, _)) = self.history_store.said(self.id, &Reader::Channel, id).await?
-            else {
-                return Ok(None);
-            };
-            let entries = self.history_store.entries(self.id, &Reader::Channel, at..at.next());
-            let said = entries.await?.into_iter().next().and_then(|node| {
-                let thread = node.entry.thread()?;
-                Some((node.entry.entry.said()?.clone(), thread))
-            });
-            Ok::<_, StoreError>(said)
-        };
-        read.await.unwrap_or_else(|e| {
-            warn!("Cannot read message {} of channel {}: {}", id, self.id, e);
-            None
-        })
+        match self.history_store.said(self.id, &Reader::Channel, id).await {
+            Ok(said) => {
+                said.and_then(|(_, item)| Some((item.entry.said()?.clone(), item.thread()?)))
+            }
+            Err(e) => {
+                warn!("Cannot read message {} of channel {}: {}", id, self.id, e);
+                None
+            }
+        }
     }
 
     /// The position from which on a participant granted `access` now sees the history (`start_of`,

@@ -251,7 +251,7 @@ impl HistoryStore for PostgresStore {
         channel: ChannelId,
         reader: &Reader,
         id: MessageId,
-    ) -> StoreResult<Option<(Position, HistoryEntry)>> {
+    ) -> StoreResult<Option<(Position, Recorded)>> {
         let mut conn = self.connection.acquire().await?;
         let (key, name) = key(channel);
         let found: Option<ItemRow> = sqlx::query_as(
@@ -264,7 +264,8 @@ impl HistoryStore for PostgresStore {
         .map_err(failed(&name))?;
         let Some(found) = found else { return Ok(None) };
         let attended = read_attendance(&mut conn, &key, &name).await?.of_reader(reader);
-        seen(reader, &attended, None, &item(found))
+        let (at, found) = item(found);
+        Ok(found.as_seen_by(at, reader, &attended).map(|seen| (at, seen)))
     }
 
     async fn entries(
