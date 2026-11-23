@@ -105,6 +105,15 @@ pub struct AddParticipantRequest {
     pub history: HistoryAccess,
 }
 
+/// A thread to open at a message of the channel's line (issue 595): its founders beside whom opens
+/// it - agents of their own, also ones new to the channel, which take part in the thread alone.
+#[derive(Debug, Deserialize)]
+pub struct OpenThreadRequest {
+    pub message: MessageId,
+    #[serde(default)]
+    pub founders: Vec<ActorId>,
+}
+
 /// A participant of a channel to take into a further thread of it (issue 602).
 #[derive(Debug, Deserialize)]
 pub struct ThreadParticipantRequest {

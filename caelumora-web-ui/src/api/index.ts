@@ -1,7 +1,9 @@
 import type {
   AccessEntry,
+  ActorId,
   AddParticipantRequest,
   Candidate,
+  ChannelThread,
   Grant,
   CreateSkillRequest,
   SkillResponse,
@@ -605,6 +607,20 @@ export const api = {
       method: 'POST',
     });
     await ensureOk(res, 'Failed to cancel channel');
+  },
+
+  /**
+   * Opens a thread at the message `message` of the line (issue 595), with the user and the agents
+   * of theirs `founders` as its founders; the thread as the channel lists it.
+   */
+  async openThread(sessionId: string, channelId: string, message: string, founders: ActorId[]): Promise<ChannelThread> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/threads`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, founders }),
+    });
+    await ensureOk(res, 'Failed to open the thread');
+    return res.json();
   },
 
   /** Ends the turns under way in the thread `thread` alone and keeps it quiet (issue 595). */

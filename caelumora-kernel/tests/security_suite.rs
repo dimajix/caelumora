@@ -27,7 +27,6 @@ use caelumora_domain::config::AppConfig;
 use caelumora_domain::content::ContentRef;
 use caelumora_domain::event::GlobalEvent;
 use caelumora_domain::group::{Group, GroupId, GroupUpdateEvent};
-use caelumora_domain::message::MessageId;
 use caelumora_domain::privacy::PrivacyConfig;
 use caelumora_domain::project::{Project, ProjectId, ProjectUpdateEvent};
 use caelumora_domain::query::Query;
@@ -846,7 +845,10 @@ async fn a_participant_is_taken_into_a_thread_and_let_go_from_it_as_the_channel_
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
     let (hers, his) = (ActorId::User(world.alice), ActorId::User(world.bob));
     let (id, line) = (main.id(), ThreadId::line(main.id()));
-    let at_the_line = ThreadOrigin { thread: line, message: MessageId::new() };
+    let at_the_line = ThreadOrigin {
+        thread: line,
+        message: main.said_by(world.alice, ThreadId::line(main.id())).await,
+    };
     let thread =
         session.open_thread(&alice, id, ThreadSpec::new(at_the_line)).await.expect("opened");
 
@@ -906,9 +908,15 @@ async fn a_thread_draws_in_whom_its_messages_concern_and_asks_nothing_of_its_own
     let alice = World::as_user(world.alice);
     let (hers, his) = (ActorId::User(world.alice), ActorId::User(world.bob));
     let (id, line) = (main.id(), ThreadId::line(main.id()));
-    let at_the_line = ThreadOrigin { thread: line, message: MessageId::new() };
+    let at_the_line = ThreadOrigin {
+        thread: line,
+        message: main.said_by(world.alice, ThreadId::line(main.id())).await,
+    };
     let aside =
         session.open_thread(&alice, id, ThreadSpec::new(at_the_line)).await.expect("opened");
+    // Drawn in as the author of the message it hangs at (issue 595), she leaves it again, so that
+    // what draws her in below is what is said.
+    session.leave_thread(&alice, id, aside, hers).await.expect("she leaves it");
     let closed = session
         .open_thread(
             &alice,
@@ -953,13 +961,11 @@ async fn a_thread_draws_in_whom_its_messages_concern_and_asks_nothing_of_its_own
     let said: Vec<String> = main.history_entries().await.iter().filter_map(said).collect();
     assert!(!said.contains(&"@alice, here".to_string()), "not let in: {said:?}");
 
-    // Opening a thread at his message draws him in, asking what opening asks alone.
-    let his_message = main
-        .history_entries()
-        .await
-        .iter()
-        .find_map(|entry| entry.said().filter(|m| m.sender_id == his).map(|m| m.id));
-    let at_his = ThreadOrigin { thread: line, message: his_message.expect("his message") };
+    // Opening a thread at his message of the line draws him in, asking what opening asks alone.
+    let at_his = ThreadOrigin {
+        thread: line,
+        message: main.said_by(world.bob, ThreadId::line(main.id())).await,
+    };
     let (opened, asked) =
         world.asked(session.open_thread(&alice, id, ThreadSpec::new(at_his))).await;
     let opened = opened.expect("opened");
@@ -982,7 +988,10 @@ async fn a_thread_is_opened_by_a_reader_with_their_own_and_closed_by_its_opener_
     let session = world.shared_session(&[], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
-    let line = ThreadOrigin { thread: ThreadId::line(main.id()), message: MessageId::new() };
+    let line = ThreadOrigin {
+        thread: ThreadId::line(main.id()),
+        message: main.said_by(world.alice, ThreadId::line(main.id())).await,
+    };
 
     let carol_id = ActorId::User(world.carol);
     let (refused, asked) = world
@@ -998,13 +1007,11 @@ async fn a_thread_is_opened_by_a_reader_with_their_own_and_closed_by_its_opener_
     let opened = |e: &HistoryEntry| matches!(e, HistoryEntry::ThreadOpened { .. });
     assert!(!main.history_entries().await.iter().any(opened), "asked before the thread is there");
 
-    let (opened, asked) = world
-        .asked(session.open_thread(
-            &bob,
-            main.id(),
-            ThreadSpec { founders: vec![bobs_helper], ..ThreadSpec::new(line) },
-        ))
-        .await;
+    // Its circle closed, so that nobody is drawn in - the author of the message it hangs at - and
+    // it is closed once his agent is let go.
+    let founded =
+        ThreadSpec { founders: vec![bobs_helper], circle: Circle::Closed, ..ThreadSpec::new(line) };
+    let (opened, asked) = world.asked(session.open_thread(&bob, main.id(), founded)).await;
     let bobs = opened.expect("bob reads the channel and founds it with his own");
     assert_eq!(
         asked,
@@ -1096,7 +1103,10 @@ async fn a_brief_is_delegated_by_a_reader_of_the_channel_in_their_own_name() {
     let session = world.shared_session(&[], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
     let bob = World::as_user(world.bob);
-    let line = ThreadOrigin { thread: ThreadId::line(main.id()), message: MessageId::new() };
+    let line = ThreadOrigin {
+        thread: ThreadId::line(main.id()),
+        message: main.said_by(world.alice, ThreadId::line(main.id())).await,
+    };
     let thread = session
         .open_thread(
             &bob,
@@ -1134,7 +1144,10 @@ async fn a_thread_is_cancelled_and_woken_as_its_channel_is() {
     let session = world.shared_session(&[], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
     let bob = World::as_user(world.bob);
-    let line = ThreadOrigin { thread: ThreadId::line(main.id()), message: MessageId::new() };
+    let line = ThreadOrigin {
+        thread: ThreadId::line(main.id()),
+        message: main.said_by(world.alice, ThreadId::line(main.id())).await,
+    };
     let thread = session
         .open_thread(
             &bob,

@@ -452,6 +452,31 @@ impl ChannelLoop {
         self.message(id).await
     }
 
+    /// What `user`, taking part there, says in `thread`, once the history holds it: a message a
+    /// person opens a thread at (issue 595, `ChannelLoop::require_origin`).
+    pub async fn said_by(&self, user: UserId, thread: ThreadId) -> MessageId {
+        let actor = self.user_actor(user).expect("takes part");
+        let text = format!("said by {user} in {thread}");
+        actor.send_message(Some(thread), Some(text.clone()), None, Vec::new()).await.expect("said");
+        let said = |entry: &HistoryEntry| {
+            entry.said().filter(|m| m.content.as_deref() == Some(text.as_str())).map(|m| m.id)
+        };
+        time::timeout(Duration::from_secs(5), async {
+            loop {
+                let found = self.history_entries().await.iter().find_map(said);
+                // In the store, too, which what is asked of an origin reads.
+                if let Some(id) = found {
+                    if self.said_in(id).await.is_some() {
+                        break id;
+                    }
+                }
+                time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("in the history")
+    }
+
     /// The controller of the channel's session, as its actors read it
     /// (`ChannelRuntime::session_controller`): what a test changes of the
     /// session where the channel runs without its session's loop.

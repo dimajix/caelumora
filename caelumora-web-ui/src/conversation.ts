@@ -229,7 +229,7 @@ export function withEvent(conversation: Conversation, envelope: Envelope): Conve
     // A step of a plan is shown as any message, folded with the other steps of its turn (issue
     // 258). A message can arrive twice: in the snapshot and as an event. Kept as it came, as the
     // snapshot's are; a call and its result are shown together as the chat is drawn.
-    const said = (event.CompleteMessageGenerated ?? event.IntermediateMessageGenerated)!;
+    const said = {...(event.CompleteMessageGenerated ?? event.IntermediateMessageGenerated)!, thread: envelope.context.thread_id};
     const turnId = said.turn_id ?? null;
     const going = answers.some(a => a.sender === answerer);
     return as(

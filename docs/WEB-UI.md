@@ -385,6 +385,9 @@ A channel that does not run, its components unreadable, says so and why above th
     thread to read stands where it came, under "Given back to read from a thread:".
 *   **A thread's pane** (issue 595). A thread is marked at the message it hangs at, and listed in
     the channel's panel: whose sub-agent's it is, who takes part, whether someone answers there.
+    A participant opens one at a message said in the line ("Reply in a thread"; a message keeps the
+    thread it was said in), choosing in a dialog agents of their own to found it with
+    (`NewThreadDialog`); it opens in the pane at once.
     Opened, it is shown in a pane beside the line, in the place of the channel's panel - on a
     narrow screen in the place of the line -, one at a time: its own conversation
     (`ConversationView`), read from its history (`?thread=`) and followed on the channel's stream

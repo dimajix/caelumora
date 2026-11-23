@@ -849,6 +849,9 @@ export interface Message {
   // UI only: the channel did not let this message of the user's in, for
   // `rejected` (issue 304) - it is in no history, and gone on reload.
   rejected?: Rejection;
+  // UI only: the thread it was said in (issue 595), as the history item or the envelope that
+  // brought it says - where a thread may be opened at it.
+  thread?: string;
   // UI only: the channel did not let in what the user sent (issue 304).
   // Part of the history, also for a message of theirs (issue 417).
   eventRejected?: {rejected: string; reason: Rejection};

@@ -41,7 +41,7 @@ describe('withEvent', () => {
     expect(streaming.answers).toMatchObject([{turnId: 'turn-1', content: 'hello', internal: false}]);
 
     const said = withEvent(streaming, envelope({CompleteMessageGenerated: message('m1')}));
-    expect(said.messages.map(m => m.id)).toEqual(['m1']);
+    expect(said.messages.map(m => [m.id, m.thread])).toEqual([['m1', CHANNEL]]);
     expect(said.answers).toMatchObject([{turnId: 'turn-1', content: '', reasoning: ''}]);
   });
 

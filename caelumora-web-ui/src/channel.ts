@@ -2,7 +2,7 @@
 // agents stand and answer, and which of its threads are open - what the chat keeps up between the
 // times it fetches the channel.
 
-import type {ActorState, ChannelResponse, Envelope} from './types';
+import type {ActorState, ChannelResponse, ChannelThread, Envelope} from './types';
 import {actorKey} from './actor';
 
 /**
@@ -10,6 +10,15 @@ import {actorKey} from './actor';
  * turn runs - not one that waits for a person, which is set aside (issue 602).
  */
 const ANSWERING: ActorState[] = ['Planning', 'ExecutingTools', 'Reflecting', 'Cancelling', 'Busy'];
+
+/**
+ * `channel` with `thread`, just opened (issue 595), among its threads - the same `channel` where it
+ * lists it already.
+ */
+export function withThreadOpened(channel: ChannelResponse, thread: ChannelThread): ChannelResponse {
+  if (channel.threads?.some(listed => listed.id === thread.id)) return channel;
+  return {...channel, threads: [...(channel.threads ?? []), thread]};
+}
 
 /**
  * `channel` as `envelope` changes it: where its sender stands (issue 243) and the thread it answers

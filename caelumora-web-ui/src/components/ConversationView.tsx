@@ -10,6 +10,7 @@ import {
   BellRing,
   ChevronRight,
   Cog,
+  MessagesSquare,
   Pencil,
   RotateCcw,
   ScrollText,
@@ -130,6 +131,11 @@ interface ConversationViewProps {
   onStop?: () => void;
   /** Why the user cannot write here, said in place of the field to write in; absent if they can. */
   cannotWrite?: string;
+  /**
+   * Opens a thread at `message` (issue 595); offered at the messages of a conversation a person
+   * opens threads in - the line.
+   */
+  onThreadAt?: (message: Message) => void;
   /** What stands between its list and the field to write in: what waits for the user there. */
   children?: React.ReactNode;
 }
@@ -141,7 +147,7 @@ interface ConversationViewProps {
  * dropped are attached.
  */
 export const ConversationView: React.FC<ConversationViewProps> = ({
-  conversation, onLoadEarlier, newSince, draftKey, onSend, onStop, cannotWrite, children,
+  conversation, onLoadEarlier, newSince, draftKey, onSend, onStop, cannotWrite, onThreadAt, children,
 }) => {
   const {
     me, channel, participants, takesPart, attachments, threads,
@@ -263,6 +269,14 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
   const saveEdit = async (msg: Message, content: string, carried: string[]) => {
     if (await modify(msg, content, carried)) setEditing(null);
   };
+
+  /**
+   * Whether the user may open a thread at `msg` (issue 595): a stored message said in the line -
+   * not one of another thread that mentions them -, not taken back.
+   */
+  const mayThreadAt = (msg: Message) =>
+    !!onThreadAt && takesPart && !!msg.id && !msg.revoked && !msg.internal
+    && (msg.role === 'User' || msg.role === 'Assistant') && msg.thread === channel?.id;
 
   /**
    * Whether the user may see the context of `msg`: a stored message of an agent they may read
@@ -436,8 +450,18 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
       inTurn={inTurn}
       badges={[channel && msg.classification ? labelOtherThan(msg.classification, channel.classification) : null]
         .flatMap(released => released ? [`released: ${released}`] : [])}
-      actions={(mayShowContext(msg) || mayReclassify(msg) || mayChange(msg) || mayRetry(msg)) ? (
+      actions={(mayShowContext(msg) || mayReclassify(msg) || mayChange(msg) || mayRetry(msg) || mayThreadAt(msg)) ? (
         <>
+          {mayThreadAt(msg) && (
+            <button
+              onClick={() => onThreadAt?.(msg)}
+              className="p-0.5 opacity-60 hover:opacity-100 focus:opacity-100"
+              title="Reply in a thread"
+              aria-label="Reply in a thread"
+            >
+              <MessagesSquare size={13} />
+            </button>
+          )}
           {mayRetry(msg) && (
             <button
               onClick={() => void retry(msg)}

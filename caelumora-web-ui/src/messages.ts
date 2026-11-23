@@ -489,7 +489,7 @@ export function isSaidInLine(said: Said, me: ActorId): boolean {
  */
 export function chatMessages(items: HistoryItem<Message>[], nameOf: (actor: ActorId) => string | undefined): Message[] {
   return items.flatMap((item): Message[] => {
-    if ('said' in item) return [item.said];
+    if ('said' in item) return [{...item.said, thread: item.thread}];
     if ('plan_step_started' in item) {
       const {turn_id, actor, at, ...step} = item.plan_step_started;
       return [planStepMark(turn_id, step, actor, nameOf(actor), at)];

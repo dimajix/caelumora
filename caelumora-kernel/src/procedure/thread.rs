@@ -88,22 +88,24 @@ impl Procedure for Open {
 /// yet, an agent just made (the sub-agents' start, issue 558). A founder new to the channel takes
 /// part in the thread alone; one who takes part in the channel already takes part in it as well
 /// (issue 602). Everything is asked before anything is stored: whether `context` may open it there
-/// (`require_opening`, asked ahead of the channel, which asks it again as it opens it), what taking
-/// each founder who takes part already into the thread asks (`participant::require_thread_entry`),
-/// and what taking each newcomer in asks, as each is taken into the session
-/// (`participant::take_into_session`); then the thread is opened (`ChannelLoop::open_thread`), each
-/// newcomer taken into the channel as one (`participant::take_into_channel`) and each founder who
-/// takes part already into the thread (`participant::take_into_thread`). Each step is taken back by
-/// `log`, the last first, if a later step fails - a founder as if never taken in, the thread closed
-/// in the name of `context`, who opened it (`ChannelLoop::close_thread`). Last, as nothing fails
-/// after it, the thread draws in the author of the message it hangs at, where its circle is open
-/// (`ChannelLoop::draw_in_author`, issue 602).
+/// (`require_opening`, asked ahead of the channel, which asks it again as it opens it), that a
+/// person opens it at a message said where it is to hang (`ChannelLoop::require_origin`, issue
+/// 595), what taking each founder who takes part already into the thread asks
+/// (`participant::require_thread_entry`), and what taking each newcomer in asks, as each is taken
+/// into the session (`participant::take_into_session`); then the thread is opened
+/// (`ChannelLoop::open_thread`), each newcomer taken into the channel as one
+/// (`participant::take_into_channel`) and each founder who takes part already into the thread
+/// (`participant::take_into_thread`). Each step is taken back by `log`, the last first, if a later
+/// step fails - a founder as if never taken in, the thread closed in the name of `context`, who
+/// opened it (`ChannelLoop::close_thread`). Last, as nothing fails after it, the thread draws in
+/// the author of the message it hangs at, where its circle is open (`ChannelLoop::draw_in_author`,
+/// issue 602).
 ///
 /// # Errors
 /// `SessionError::ChannelNotFound` for a channel `context` may not read; as `require_opening`,
-/// `participant::require_thread_entry`, `participant::take_into_session`,
-/// `ChannelLoop::open_thread`, `participant::take_into_channel` and
-/// `participant::take_into_thread`.
+/// `ChannelLoop::require_origin`, `participant::require_thread_entry`,
+/// `participant::take_into_session`, `ChannelLoop::open_thread`, `participant::take_into_channel`
+/// and `participant::take_into_thread`.
 pub async fn open(
     log: &mut Compensation,
     kernel: &Kernel,
@@ -117,6 +119,7 @@ pub async fn open(
     let open = channel.is_open(spec.origin.thread);
     let access = kernel.access_policy();
     require_opening(access.as_ref(), context, &channel.channel(), spec.origin, open).await?;
+    channel.require_origin(context, spec.origin).await?;
     // Each once, in the order named.
     let mut named = HashSet::new();
     let founders = spec.founders.iter().copied().filter(|founder| named.insert(*founder));
@@ -222,6 +225,7 @@ mod tests {
     use caelumora_domain::history::{Attended, HistoryEntry};
     use caelumora_domain::message::MessageId;
     use caelumora_domain::store::StoreError;
+    use caelumora_domain::user::UserId;
     use std::collections::BTreeSet;
     use std::sync::Arc;
     use std::time::Duration;
@@ -238,10 +242,12 @@ mod tests {
         let session = world.session_of(&[world.bob], &[], &[]).await;
         let (id, main) = (session.id(), session.channels()[0].id());
         let line = ThreadId::line(main);
-        let at_the_line = ThreadOrigin { thread: line, message: MessageId::new() };
+        let at_the_line = at_the_line(&session.channels()[0], world.alice).await;
 
         let held = Held::key(&executor, Key::Thread(id, main, line), true).await;
-        let opening = Open::new(&alice, id, main, ThreadSpec::new(at_the_line));
+        // Its circle closed, so that nobody is drawn in and it is closed as it was opened.
+        let spec = ThreadSpec { circle: Circle::Closed, ..ThreadSpec::new(at_the_line) };
+        let opening = Open::new(&alice, id, main, spec);
         let thread = waits_for(held, &executor, opening).await.expect("opened once it is let go");
 
         let held = Held::key(&executor, Key::Thread(id, main, thread), false).await;
@@ -255,9 +261,10 @@ mod tests {
         world.manager.stop(&alice, id).await.unwrap();
     }
 
-    /// At the line of `channel`, at a message the test names.
-    fn at_the_line(channel: &ChannelLoop) -> ThreadOrigin {
-        ThreadOrigin { thread: ThreadId::line(channel.id()), message: MessageId::new() }
+    /// At the line of `channel`, at a message `user` says there (issue 595).
+    async fn at_the_line(channel: &ChannelLoop, user: UserId) -> ThreadOrigin {
+        let message = channel.said_by(user, ThreadId::line(channel.id())).await;
+        ThreadOrigin { thread: ThreadId::line(channel.id()), message }
     }
 
     fn channel_error(error: &Error) -> Option<&ChannelError> {
@@ -285,7 +292,7 @@ mod tests {
                 ThreadSpec {
                     circle: Circle::Closed,
                     founders: vec![helper],
-                    ..ThreadSpec::new(at_the_line(&main))
+                    ..ThreadSpec::new(at_the_line(&main, world.alice).await)
                 },
             )
             .await
@@ -376,7 +383,7 @@ mod tests {
                 ThreadSpec {
                     circle: Circle::Closed,
                     founders: vec![helper],
-                    ..ThreadSpec::new(at_the_line(&main))
+                    ..ThreadSpec::new(at_the_line(&main, world.alice).await)
                 },
             )
             .await
@@ -424,7 +431,7 @@ mod tests {
                 ThreadSpec {
                     circle: Circle::Closed,
                     founders: vec![helper],
-                    ..ThreadSpec::new(at_the_line(&main))
+                    ..ThreadSpec::new(at_the_line(&main, world.alice).await)
                 },
             )
             .await
@@ -495,7 +502,7 @@ mod tests {
                 ThreadSpec {
                     circle: Circle::Closed,
                     founders: vec![helper],
-                    ..ThreadSpec::new(at_the_line(&main))
+                    ..ThreadSpec::new(at_the_line(&main, world.alice).await)
                 },
             )
             .await
@@ -538,7 +545,7 @@ mod tests {
                 ThreadSpec {
                     circle: Circle::Closed,
                     founders: vec![helper],
-                    ..ThreadSpec::new(at_the_line(&main))
+                    ..ThreadSpec::new(at_the_line(&main, world.alice).await)
                 },
             )
             .await
@@ -620,7 +627,7 @@ mod tests {
                 ThreadSpec {
                     circle: Circle::Closed,
                     founders: vec![helper, carol],
-                    ..ThreadSpec::new(at_the_line(&main))
+                    ..ThreadSpec::new(at_the_line(&main, world.alice).await)
                 },
             )
             .await
@@ -652,6 +659,25 @@ mod tests {
             "{refused}"
         );
         assert!(!session.session().takes_part(helper), "nothing taken in");
+
+        // Issue 595: of a person, the message it hangs at is to be said where it is to hang - not
+        // in another thread, nor not at all. Of an agent it is not asked: the sub-agents' tests
+        // open threads at calls whose messages may still be on their way.
+        let line = ThreadId::line(main.id());
+        // She is drawn in as the author of the message it hangs at.
+        let at = at_the_line(&main, world.alice).await;
+        let aside =
+            session.open_thread(&alice, main.id(), ThreadSpec::new(at)).await.expect("opened");
+        let said_aside = main.said_by(world.alice, aside).await;
+        for message in [said_aside, MessageId::new()] {
+            let origin = ThreadOrigin { thread: line, message };
+            let refused = session.open_thread(&alice, main.id(), ThreadSpec::new(origin)).await;
+            let refused = refused.expect_err("not said in the line");
+            assert!(
+                matches!(channel_error(&refused), Some(ChannelError::MessageNotFound { .. })),
+                "{refused}"
+            );
+        }
         world.manager.stop(&alice, session.id()).await.unwrap();
     }
 
@@ -674,7 +700,10 @@ mod tests {
             .open_thread(
                 &alice,
                 id,
-                ThreadSpec { founders: vec![hers], ..ThreadSpec::new(at_the_line(&main)) },
+                ThreadSpec {
+                    founders: vec![hers],
+                    ..ThreadSpec::new(at_the_line(&main, world.alice).await)
+                },
             )
             .await
             .expect("alice, who takes part in the channel, founds a thread");
@@ -713,7 +742,7 @@ mod tests {
             ThreadSpec {
                 circle: Circle::Closed,
                 founders: vec![helper],
-                ..ThreadSpec::new(at_the_line(&main))
+                ..ThreadSpec::new(at_the_line(&main, world.alice).await)
             },
         );
         let delegated = closed.await.expect("alice opens a closed one");
@@ -782,7 +811,7 @@ mod tests {
         let alice = World::as_user(world.alice);
         let session = world.session_of(&[], &[], &[]).await;
         let main = Arc::clone(&session.channels()[0]);
-        let at_the_line = at_the_line(&main);
+        let at_the_line = at_the_line(&main, world.alice).await;
         let spec = ThreadSpec {
             circle: Circle::Closed,
             founders: vec![helper],
@@ -852,7 +881,7 @@ mod tests {
                 ThreadSpec {
                     circle: Circle::Closed,
                     founders: vec![helper, broken],
-                    ..ThreadSpec::new(at_the_line(&main))
+                    ..ThreadSpec::new(at_the_line(&main, world.alice).await)
                 },
             )
             .await

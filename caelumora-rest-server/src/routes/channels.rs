@@ -13,7 +13,7 @@ use axum::response::{IntoResponse, Response, Sse};
 use axum::{extract::State, http::StatusCode};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::approval::ApprovalRule;
-use caelumora_domain::channel::{moderation_components, ChannelId, ThreadId};
+use caelumora_domain::channel::{moderation_components, ChannelId, ThreadId, ThreadOrigin};
 use caelumora_domain::command::{CommandDescription, CommandVisibility};
 use caelumora_domain::confidentiality::{Classification, LabelCauses};
 use caelumora_domain::context::{ContextItem, KnowledgeRef, KnowledgeSource};
@@ -26,17 +26,18 @@ use caelumora_domain::snapshot::Detail;
 use caelumora_domain::value::name::Name;
 use caelumora_kernel::actor::user::{ChannelWatch, Lagged, UserActor};
 use caelumora_kernel::actor::Shown;
-use caelumora_kernel::channel::ChannelLoop;
+use caelumora_kernel::channel::{ChannelLoop, ThreadSpec};
 use caelumora_kernel::procedure::channel::{Create, Delete, Reclassify, Restore};
 use caelumora_kernel::procedure::participant::{LetGo, LetGoFromThread, TakeIn, TakeIntoThread};
+use caelumora_kernel::procedure::thread;
 use caelumora_kernel::session::ChannelSpec;
 use caelumora_kernel::view::{Reached, SessionView, Views};
 use caelumora_rest_api::actor::ActorPath;
 use caelumora_rest_api::channel::{
     AddParticipantRequest, AnswerQuestionsRequest, ChannelParticipantResponse, ChannelResponse,
     ChannelSnapshot, CommandReplyResponse, CreateChannelRequest, ExecuteCommandRequest,
-    MessageRequest, PublishedNotesResponse, ReadRequest, SendApprovalRequest,
-    ThreadParticipantRequest, TurnRequest,
+    MessageRequest, OpenThreadRequest, PublishedNotesResponse, ReadRequest, SendApprovalRequest,
+    ThreadParticipantRequest, ThreadResponse, TurnRequest,
 };
 use caelumora_rest_api::context::{
     AgentComponentsResponse, AgentToolsResponse, KnowledgeRefResponse, MessageContextResponse,
@@ -624,6 +625,31 @@ pub(super) async fn cancel_channel(
     Ok(StatusCode::OK)
 }
 
+/// Opens a thread at the message `message` of the channel's line (issue 595), its circle open, with
+/// the user and the agents of theirs among `founders` as its founders: what opening a thread asks
+/// (`OpenThread`, the user at the line alone, the message said there) and taking each founder in.
+/// Answers `201` with the thread as the channel lists it.
+pub(super) async fn open_thread(
+    State(state): State<Arc<AppState>>,
+    Path((session_id, channel_id)): Path<(SessionId, ChannelId)>,
+    user: AuthenticatedUser,
+    Json(payload): Json<OpenThreadRequest>,
+) -> Result<(StatusCode, Json<ThreadResponse>), ApiError> {
+    let context = user.security_context();
+    let origin = ThreadOrigin { thread: ThreadId::line(channel_id), message: payload.message };
+    let founders = [vec![context.caller_id], payload.founders].concat();
+    let spec = ThreadSpec { founders, ..ThreadSpec::new(origin) };
+    let opening = thread::Open::new(&context, session_id, channel_id, spec);
+    let id = state.procedures.run(opening).await?;
+    // As the channel lists it, read back as a channel made is.
+    let channel = channel_view(&state, &user, session_id, channel_id).await?;
+    let listed = channel.snapshot(Detail::THREADS).await.threads.into_iter().find(|t| t.id == id);
+    let thread = listed.ok_or_else(|| {
+        ApiError::not_found("thread_not_found", format!("Thread {id} is no longer open"))
+    })?;
+    Ok((StatusCode::CREATED, Json(ThreadResponse::from(thread))))
+}
+
 /// Ends the turns under way in the thread `tid` of the channel and keeps it quiet (issue 595) -
 /// running there or set aside there waiting for a person -, the other threads going on: under the
 /// permission of cancelling the channel, of which a thread is part (`CancelChannel`, checked by the
@@ -1107,7 +1133,15 @@ mod tests {
 
     /// Has whoever `cookie` logs in say `text` in the channel, and waits until its history holds
     /// it - kept, before a stop would lose it on its way (issue 385).
-    async fn say(api: &Router, cookie: &str, session: SessionId, channel: ChannelId, text: &str) {
+    /// Has the user of `cookie` say `text` in the line of `channel`, and answers its id once the
+    /// history holds it.
+    async fn say(
+        api: &Router,
+        cookie: &str,
+        session: SessionId,
+        channel: ChannelId,
+        text: &str,
+    ) -> Value {
         let channel_uri = format!("/sessions/{}/channels/{}", session.0, channel.0);
         let messages = format!("{channel_uri}/messages");
         let (status, _) =
@@ -1115,12 +1149,18 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         let history = format!("{channel_uri}/history");
         time::timeout(Duration::from_secs(5), async {
-            while !page_of(api, cookie, &history).await.to_string().contains(text) {
+            loop {
+                let page = page_of(api, cookie, &history).await;
+                let items = page["items"].as_array().cloned().unwrap_or_default();
+                let found = items.iter().find(|item| item.to_string().contains(text));
+                if let Some(item) = found {
+                    break item["said"]["id"].clone();
+                }
                 time::sleep(Duration::from_millis(10)).await;
             }
         })
         .await
-        .expect("in the history");
+        .expect("in the history")
     }
 
     /// Issue 386: following a channel that does not run does not start it;
@@ -1522,6 +1562,49 @@ mod tests {
             "bob takes no part in the thread"
         );
         state.session_manager.stop(&system, session_id).await.unwrap();
+    }
+
+    /// Issue 595: a user opens a thread at a message of the line, with an agent of theirs new to
+    /// the channel, which takes part in the thread alone; at a message not said there, it is not
+    /// found.
+    #[tokio::test]
+    async fn a_user_opens_a_thread_at_a_message_of_the_line_with_an_agent_of_theirs() {
+        let state = state();
+        let api = api(Arc::clone(&state), &[]);
+        let cookie = login(&api, "alice").await;
+        let alice = ActorId::User(user_id(&api, &cookie).await);
+        let stores = state.kernel.entity_stores();
+        let helper = stored_agent(stores, "helper", make_personality("plain"), alice).await;
+        let (session_id, channel_id) = session_of(&state, alice.as_user_id().unwrap(), &[]).await;
+        let channel_uri = format!("/sessions/{}/channels/{}", session_id.0, channel_id.0);
+        let message = say(&api, &cookie, session_id, channel_id, "look at this").await;
+
+        let threads = format!("{channel_uri}/threads");
+        let opening = Some(json!({ "message": message, "founders": [ActorId::Agent(helper.id)] }));
+        let (status, opened) = send(&api, &cookie, Method::POST, &threads, opening).await;
+        assert_eq!(status, StatusCode::CREATED, "{opened}");
+        assert_eq!(
+            (&opened["opening"]["origin"]["message"], &opened["opening"]["circle"]),
+            (&message, &json!("open"))
+        );
+        let (_, channel) = send(&api, &cookie, Method::GET, &channel_uri, None).await;
+        assert_eq!(channel["threads"][0], opened, "answered as the channel lists it");
+        let participants = channel["participants"].as_array().unwrap();
+        let of = |id: ActorId| {
+            let id = serde_json::to_value(id).unwrap();
+            participants.iter().find(|m| m["id"] == id).map(|m| m["threads"].clone())
+        };
+        assert_eq!(of(ActorId::Agent(helper.id)), Some(json!([opened["id"]])), "the thread alone");
+        assert!(of(alice)
+            .is_some_and(|threads| threads.to_string().contains(&opened["id"].to_string())));
+
+        let nowhere = Some(json!({ "message": MessageId::new() }));
+        let (status, refused) = send(&api, &cookie, Method::POST, &threads, nowhere).await;
+        assert_eq!(
+            (status, refused["code"].clone()),
+            (StatusCode::NOT_FOUND, json!("message_not_found"))
+        );
+        state.session_manager.stop(&SecurityContext::system(), session_id).await.unwrap();
     }
 
     /// Who takes no part in a channel cannot follow it, whether it runs or

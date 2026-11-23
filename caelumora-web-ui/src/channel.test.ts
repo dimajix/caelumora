@@ -2,7 +2,7 @@
 
 import {describe, expect, it} from 'vitest';
 import type {ChannelResponse, ChannelThread} from './types';
-import {withChannelEvent} from './channel';
+import {withChannelEvent, withThreadOpened} from './channel';
 import {AGENT, CHANNEL, ME, THREAD, channelOf, envelope, participant} from './testing';
 import {describeThread} from './threads';
 
@@ -26,6 +26,14 @@ describe('withChannelEvent', () => {
     expect(withChannelEvent(held, envelope({ThreadClosed: {thread: THREAD}})).threads).toEqual([]);
     expect(withChannelEvent(held, envelope({ThreadClosed: {thread: 'elsewhere'}}))).toBe(held);
     expect(withChannelEvent(held, envelope({ResponseStarted: {turn_id: 'turn-1'}}))).toBe(held);
+  });
+});
+
+describe('withThreadOpened', () => {
+  it('lists a thread just opened once', () => {
+    const listed = withThreadOpened(channel(), opened);
+    expect(listed.threads).toEqual([opened]);
+    expect(withThreadOpened(listed, opened)).toBe(listed);
   });
 });
 

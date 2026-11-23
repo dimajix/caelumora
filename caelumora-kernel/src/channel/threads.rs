@@ -7,11 +7,12 @@ use super::{ActorChange, Answer, ChannelError, ChannelLoop, ThreadSpec};
 use anyhow::Result;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::channel::{Channel, Opening, ThreadId, ThreadOrigin, ThreadState};
+use caelumora_domain::history::Reader;
 use caelumora_domain::store::Stored;
 use caelumora_security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
-use tracing::info;
+use tracing::{info, warn};
 
 impl ChannelLoop {
     /// Builds the channel's open threads as it starts (`ChannelState::threads`), its line among
@@ -36,6 +37,36 @@ impl ChannelLoop {
     /// the line, or a thread the channel does not hold open.
     pub(crate) fn origin_of(&self, thread: ThreadId) -> Option<ThreadOrigin> {
         self.thread(thread)?.opening().map(|opening| opening.origin)
+    }
+
+    /// That the message a person opens a thread at was said where it is to hang, as far as their
+    /// view of the history reaches (issue 595); asked by `procedure::thread::open` beside
+    /// `require_opening`. Not of an agent: a tool opens a thread while the message with its call
+    /// may still be on its way. A store that cannot be read is logged, and the message not found.
+    ///
+    /// # Errors
+    /// `ChannelError::MessageNotFound`.
+    pub(crate) async fn require_origin(
+        &self,
+        context: &SecurityContext,
+        origin: ThreadOrigin,
+    ) -> Result<()> {
+        let person @ ActorId::User(_) = context.caller_id else { return Ok(()) };
+        let reader = Reader::Participant(person);
+        let said = match self.history_store.said(self.id, &reader, origin.message).await {
+            Ok(said) => said,
+            Err(e) => {
+                warn!("Cannot read message {} of channel {}: {}", origin.message, self.id, e);
+                None
+            }
+        };
+        let there = said.is_some_and(|(_, item)| item.thread() == Some(origin.thread));
+        if !there {
+            let not_found =
+                ChannelError::MessageNotFound { message: origin.message, channel: self.id };
+            return Err(not_found.into());
+        }
+        Ok(())
     }
 
     /// The threads open in the channel but its line, each with how it was opened (issue 595), in
@@ -187,9 +218,10 @@ impl ChannelLoop {
 /// `procedure::thread::open`, before its founders are taken into the session: first whether they
 /// may open one at all (`OpenThread`, asked of `access`); then that a person opens one only at the
 /// channel's line (issue 557: a person branches once, deeper threads come from agents); then that
-/// the thread `origin` names is open. Whether its message is in that thread is not asked: a tool
-/// opens a thread while the message with its call may still be on its way into the channel, which
-/// records it before the thread's opening all the same.
+/// the thread `origin` names is open. Whether its message is in that thread is not asked here: a
+/// tool opens a thread while the message with its call may still be on its way into the channel,
+/// which records it before the thread's opening all the same; of a person, the procedure asks it
+/// (`ChannelLoop::require_origin`, issue 595).
 ///
 /// # Errors
 /// `ChannelError::Forbidden`, `NotAtTheLine` or `ThreadNotOpen`.

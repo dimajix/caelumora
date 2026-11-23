@@ -34,6 +34,7 @@ import type {
   ApprovalRule,
   ChannelParticipant,
   ChannelResponse,
+  ChannelThread,
   ChannelSnapshot,
   CommandDescription,
   Compartment,
@@ -93,8 +94,9 @@ import {openEventStream} from '../stream';
 import {ConversationView} from './ConversationView';
 import {ThreadPane} from './ThreadPane';
 import {ThreadMark} from './ThreadMark';
+import {NewThreadDialog} from './NewThreadDialog';
 import {ChatChannelContext, type ChatChannel} from '../chatChannel';
-import {withChannelEvent} from '../channel';
+import {withChannelEvent, withThreadOpened} from '../channel';
 import {NO_CONVERSATION, answersUnderWay, withAnswersUnderWay, conversationOf, shownOf, withEarlierPage, withEvent, withLastPage, withAdded, withReplaced, type Answer, type Conversation} from '../conversation';
 import type {UserInput} from '../command';
 
@@ -420,7 +422,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     return onGlobalEvent(event => {
       const said = saidInChannel(event);
       if (!said || said.channelId !== channelId || !isSaidInLine(said, me)) return;
-      setLine(prev => withAdded(prev, said.message));
+      setLine(prev => withAdded(prev, {...said.message, thread: said.thread}));
       if (said.message.attachments?.length) setAttachmentsVersion(v => v + 1);
     });
   }, [channelId, takesPart, me]);
@@ -776,6 +778,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
 
   /** Shows `thread` in its pane beside the line (issue 595), read from its last page. */
   const showThread = (thread: string) => setOpen({channelId, thread, conversation: NO_CONVERSATION});
+  // The message of the line a thread is being opened at (issue 595), while the user chooses with
+  // whom.
+  const [threadAt, setThreadAt] = useState<Message | null>(null);
+  /** Shows `thread`, just opened, at once - before the channel tells of it. */
+  const opened = (thread: ChannelThread) => {
+    setChannel(prev => prev && withThreadOpened(prev, thread));
+    showThread(thread.id);
+  };
 
   // The thread open as it is read - as it is opened, and again as the stream starts anew: its last
   // page, with the channel as it is now, which names whose turns ended and which answers are under
@@ -1108,6 +1118,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
               key={channelId}
               conversation={line}
               onLoadEarlier={loadEarlier()}
+            onThreadAt={setThreadAt}
               newSince={newSince?.channelId === channelId ? newSince : undefined}
               draftKey={channelId}
               onSend={sendTo()}
@@ -1132,6 +1143,16 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           </ShownChannelContext>
         </div>
 
+        {threadAt && (
+          <NewThreadDialog
+            sessionId={sessionId}
+            channelId={channelId}
+            message={threadAt}
+            userId={user.id}
+            onOpened={opened}
+            onClose={() => setThreadAt(null)}
+          />
+        )}
         {isAddingParticipant && channel && (
           <AddParticipantDialog
             sessionId={sessionId}

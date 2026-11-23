@@ -260,3 +260,13 @@ which its event already carries in its context - or only in the snapshot.
   issued in, in the line the whole channel. The pane's stop button stops its thread alone. Whether
   `ChannelLoop::cancel_actor` is to end an actor's turns set aside in other threads stays open from
   602.
+- **2026-11-23** — Step 4: a user opens a thread. `POST …/threads` at a message of the line, its
+  circle open, founded with the user and agents of theirs among `founders` - one new to the channel
+  takes part in the thread alone. Decided by the maintainer: the kernel asks of a person that the
+  message was said where the thread is to hang, as far as their view of the history reaches
+  (`ChannelLoop::require_origin`, `MessageNotFound`, answered `404 message_not_found`), not of an
+  agent, whose call may still be on its way; and one
+  way in the web UI: "Reply in a thread" at a message of the line opens a dialog of the user's own
+  agents to found it with (`NewThreadDialog`), and the thread in its pane. On review: the answer is
+  the thread read back as the channel lists it; the icon stands at messages said in the line alone,
+  a message keeping its thread.

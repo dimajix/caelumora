@@ -239,18 +239,19 @@ Opening goes through the session, as every way into a channel does (see [Taking 
 session](#taking-someone-into-the-session)): a founder is mostly new to the session. Whoever reads
 the channel may open a thread (`OpenThread`), founded with whom they act for or agents of their
 own - taken into the session and the channel in the kernel's name, without the right to change
-either, so that a participant who does not own a shared session can start a sub-agent (issue 558).
-A person opens a thread only at the line; deeper threads come from agents. Whether the origin's
-message is in its thread is not asked: a tool opens a thread while the message with its call may
-still be on its way into the channel, which takes what was sent first and so records it before the
-opening. The opening and the closing of a thread are announced in the line (`ThreadOpened`,
-`ThreadClosed`), of the whole channel and told to its users; every thread is kept in the channel's
-state (`ChannelState::threads`), the closed ones as closed, from which the channel builds the open
-ones again as it starts; every actor starts again in the threads its ranges of attendance hold
-open, in the line if each of them was closed. Every founder new to the channel is asked before the
-thread is there; one that cannot be taken in after all - whose actor cannot start - rolls the
-opening back: whoever was taken in is taken out again as if never taken in, the thread closed in
-the opener's name as a thread is closed, refused while anyone still takes part in it.
+either, so that a participant who does not own a shared session can start a sub-agent (issue 558). A
+person opens a thread only at the line, at a message said there (`MessageNotFound` otherwise, as far
+as their view of the history reaches, issue 595); deeper threads come from agents. Of an agent,
+whether the origin's message is in its thread is not asked: a tool opens a thread while the message
+with its call may still be on its way into the channel, which takes what was sent first and so
+records it before the opening. The opening and the closing of a thread are announced in the line
+(`ThreadOpened`, `ThreadClosed`), of the whole channel and told to its users; every thread is kept
+in the channel's state (`ChannelState::threads`), the closed ones as closed, from which the channel
+builds the open ones again as it starts; every actor starts again in the threads its ranges of
+attendance hold open, in the line if each of them was closed. Every founder new to the channel is
+asked before the thread is there; one that cannot be taken in after all - whose actor cannot start -
+rolls the opening back: whoever was taken in is taken out again as if never taken in, the thread
+closed in the opener's name as a thread is closed, refused while anyone still takes part in it.
 
 A thread is **closed** by whoever opened it, or whoever may change the channel
 (`procedure::thread::Close`, which holds it until the channel closed it), once nobody takes part in
