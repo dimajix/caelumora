@@ -469,7 +469,7 @@ mod tests {
         let mut watch = main.user_actor(world.alice).expect("she takes part").watch();
         main.user_actor(world.alice)
             .unwrap()
-            .send_message(Some("@helper read it".to_string()), None, Vec::new())
+            .send_message(None, Some("@helper read it".to_string()), None, Vec::new())
             .await
             .expect("sent");
 

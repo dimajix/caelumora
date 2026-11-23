@@ -521,3 +521,20 @@ above. The position of a predecessor (C) is no step yet.
   thread's message (`ThreadOrigin`), or whole where the branch does not hold it - not taken in yet,
   and so nothing after it either; never heard, or replaced by a compaction, where what came after it
   is forked with it.
+- **2026-11-22** — The step forking at a thread's message committed. Step 3b done: what a user says,
+  nudges, asks to answer again and issues names its thread - `UserActor::send_message`,
+  `request_response` and `execute_command` take one, the line where none is named, and so do the
+  REST requests (`thread`); a request to answer a message again is made in the thread it was said in
+  (`ChannelLoop::said_in`), one to answer a turn again in the thread the turn runs or ran in, which
+  the channel knows (`ChannelLoop::retryable_turn`, `Actor::turn_under_way` with its thread); a
+  command is issued in a thread (`CommandContext::thread`), where a `/nudge` asks and a `/workspace
+  run` says its call, whom it names found among those who take part there. The channel admits a
+  nudge, a request to answer again and a command of an agent only of whom takes part in the thread
+  they name (`ChannelLoop::runs_in`), and ends the quiet of that thread alone; that thread's
+  moderator routes a nudge, which so reaches whom it asks across threads. Decided by the maintainer:
+  questions and approvals are asked and answered in their thread, whose context they are of -
+  essential for questions; an approval may be told of everywhere -: a user answers questions in the
+  thread they were asked in, which their actor keeps with them, and an approval in the thread its
+  request was asked in, which the approver holding it tells (`ChannelLoop::approval_thread`); a
+  change of a message, which is of the whole channel, happens in the line. A user no longer says
+  anything in the thread they joined in: `joined_thread_id` is an agent's alone.

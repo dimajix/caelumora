@@ -201,7 +201,7 @@ pub async fn start(
     channel
         .user_actor(alice)
         .unwrap()
-        .send_message(Some("hello".to_string()), None, Vec::new())
+        .send_message(None, Some("hello".to_string()), None, Vec::new())
         .await
         .unwrap();
     let helper = channel.actor(ActorId::Agent(agent)).unwrap();
@@ -343,7 +343,7 @@ impl ChannelLoop {
     pub async fn say_as(&self, user: UserId, text: &str, attachments: Vec<ContentId>) -> MessageId {
         let actor = self.user_actor(user).expect("the user takes part");
         let mut watch = actor.watch();
-        actor.send_message(Some(text.to_string()), None, attachments).await.expect("sent");
+        actor.send_message(None, Some(text.to_string()), None, attachments).await.expect("sent");
         let ActorEvent::CompleteMessageGenerated(said) =
             shown(&mut watch, "CompleteMessageGenerated").await
         else {

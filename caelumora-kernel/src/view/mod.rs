@@ -3043,9 +3043,10 @@ mod tests {
 
         let writer = hr.user_actor(alice.id).expect("the creator takes part");
         let mut events = writer.watch();
-        writer.send_message(Some("for HR".to_string()), None, Vec::new()).await.unwrap();
+        writer.send_message(None, Some("for HR".to_string()), None, Vec::new()).await.unwrap();
         writer
             .send_message(
+                None,
                 Some("for finance too".to_string()),
                 Some(classified(Confidentiality::Internal, &["hr", "finance"])),
                 Vec::new(),
@@ -3054,6 +3055,7 @@ mod tests {
             .unwrap();
         writer
             .send_message(
+                None,
                 Some("too secret".to_string()),
                 Some(classified(Confidentiality::Confidential, &["hr"])),
                 Vec::new(),
@@ -3170,7 +3172,7 @@ mod tests {
         channel
             .user_actor(alice.id)
             .unwrap()
-            .send_message(Some("hello".to_string()), None, Vec::new())
+            .send_message(None, Some("hello".to_string()), None, Vec::new())
             .await
             .unwrap();
         let ActorEvent::ResponseStarted { turn_id } = started.await else { unreachable!() };

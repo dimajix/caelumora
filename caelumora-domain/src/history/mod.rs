@@ -27,6 +27,7 @@ pub use recorded::{Audience, Recipients, Recorded};
 
 use crate::actor::{ActorId, EventContext};
 use crate::chain::{Chain, Node, Position};
+use crate::channel::ThreadId;
 use crate::confidentiality::Classification;
 use crate::digest;
 use crate::digest::Digest;
@@ -105,20 +106,17 @@ impl HistoryPage {
 }
 
 impl Chain<Recorded> {
-    /// The turn of `author` given up, and why, if its end is the last thing
-    /// of the conversation (issue 259, `HistoryEntry::is_conversation`):
-    /// what may be asked for anew as long as nothing followed it - a notice
-    /// or a request does not count.
-    pub fn turn_given_up_last(&self, author: ActorId) -> Option<(TurnId, GivenUpReason)> {
-        match self
-            .entries()
-            .rev()
-            .map(|node| &node.entry.entry)
-            .find(|entry| entry.is_conversation())
-        {
-            Some(HistoryEntry::TurnGivenUp { turn_id, actor, reason, .. }) if *actor == author => {
-                Some((*turn_id, reason.clone()))
-            }
+    /// The turn of `author` given up, why, and the thread it ran in (issue 602), if its end is the
+    /// last thing of the conversation (issue 259, `HistoryEntry::is_conversation`): what may be
+    /// asked for anew as long as nothing followed it - a notice or a request does not count.
+    pub fn turn_given_up_last(&self, author: ActorId) -> Option<(TurnId, GivenUpReason, ThreadId)> {
+        let last = self.entries().rev().map(|node| &node.entry).find(|r| r.entry.is_conversation());
+        match last {
+            Some(Recorded {
+                entry: HistoryEntry::TurnGivenUp { turn_id, actor, reason, .. },
+                context,
+                ..
+            }) if *actor == author => Some((*turn_id, reason.clone(), context.thread_id)),
             _ => None,
         }
     }
@@ -271,7 +269,10 @@ mod tests {
                 at: Utc::now(),
             },
         );
-        assert_eq!(history.turn_given_up_last(agent), Some((turn, GivenUpReason::Left)));
+        assert_eq!(
+            history.turn_given_up_last(agent),
+            Some((turn, GivenUpReason::Left, context.thread_id))
+        );
         assert_eq!(history.turn_given_up_last(other), None, "another agent's");
         // What was only told or asked of it is no part of the conversation
         // (issue 417).
@@ -294,7 +295,7 @@ mod tests {
         );
         assert_eq!(
             history.turn_given_up_last(agent),
-            Some((turn, GivenUpReason::Left)),
+            Some((turn, GivenUpReason::Left, context.thread_id)),
             "a notice and a request do not count"
         );
         history.push(&context, make_message(id(2)));

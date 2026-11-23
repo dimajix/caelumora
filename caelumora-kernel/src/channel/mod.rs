@@ -38,6 +38,7 @@ use caelumora_api::component::{ComponentError, ComponentImpl};
 use caelumora_domain::actor::ActorId;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_domain::actor::Envelope;
+use caelumora_domain::approval::ApprovalId;
 use caelumora_domain::chain::Position;
 use caelumora_domain::channel::{
     Channel, ChannelId, ChannelState, Delegation, Opening, Participant, ThreadId,
@@ -672,6 +673,13 @@ impl ChannelLoop {
         self.actors.load().contains_key(&actor_id)
     }
 
+    /// Whether an actor of `actor_id` runs in the channel and takes part in `thread` (issues 557,
+    /// 602): whom a nudge, a request to answer again, a command or a brief there may ask.
+    pub(crate) fn runs_in(&self, actor_id: ActorId, thread: ThreadId) -> bool {
+        let actors = self.actors.load();
+        actors.get(&actor_id).is_some_and(|actor| actor.threads.load().contains(&thread))
+    }
+
     /// The actor of `actor_id` if it is an agent of this channel - whom a
     /// request to answer again or to carry out a command may name.
     fn agent_actor(&self, actor_id: ActorId) -> Option<Arc<dyn Actor>> {
@@ -682,25 +690,27 @@ impl ChannelLoop {
     /// in one that can still be ended - what a request to answer it again
     /// names.
     pub(crate) fn turn_under_way(&self, actor: ActorId) -> Option<TurnId> {
-        self.actor(actor)?.turn_under_way()
+        self.actor(actor)?.turn_under_way().map(|(_, turn)| turn)
     }
 
-    /// Whether the turn `turn` of `author` can be asked for again: under
-    /// way (issue 235), or `author`'s last turn, given up for a reason that
-    /// may be answered again and with nothing after it in the channel's
-    /// history (issue 259).
-    async fn retryable_turn(&self, author: ActorId, turn: TurnId) -> bool {
-        self.turn_under_way(author) == Some(turn) || self.given_up_last(author, turn).await
+    /// The thread the turn `turn` of `author` runs or ran in, if it can be asked for again: under
+    /// way (issue 235), or `author`'s last turn, given up for a reason that may be answered again
+    /// and with nothing after it in the channel's history (issue 259) - where a request to answer
+    /// it again is made (issue 602).
+    pub(crate) async fn retryable_turn(&self, author: ActorId, turn: TurnId) -> Option<ThreadId> {
+        let under_way = self.actor(author).and_then(|actor| actor.turn_under_way());
+        match under_way {
+            Some((thread, under_way)) if under_way == turn => Some(thread),
+            _ => self.given_up_last(author, turn).await,
+        }
     }
 
-    /// Whether `turn` is `author`'s last turn given up, which may be
-    /// answered anew after (issue 259).
-    async fn given_up_last(&self, author: ActorId, turn: TurnId) -> bool {
+    /// The thread of `author`'s last turn given up, if it is `turn` and may be answered anew
+    /// after (issue 259).
+    async fn given_up_last(&self, author: ActorId, turn: TurnId) -> Option<ThreadId> {
         let state = self.state.lock().await;
-        state
-            .history
-            .turn_given_up_last(author)
-            .is_some_and(|(last, reason)| last == turn && reason.may_be_answered_again())
+        let (last, reason, thread) = state.history.turn_given_up_last(author)?;
+        (last == turn && reason.may_be_answered_again()).then_some(thread)
     }
 
     /// The actor `user` acts through in this channel, or `None` if they are
@@ -713,6 +723,16 @@ impl ChannelLoop {
         let actor = self.actor(ActorId::User(user))?;
         let any_actor: Arc<dyn Any + Send + Sync> = actor;
         Arc::downcast::<UserActor>(any_actor).ok()
+    }
+
+    /// The thread the approval `id` was asked in (issue 602), while the channel's approver holds it
+    /// open: where a user answers it.
+    pub(crate) async fn approval_thread(&self, id: ApprovalId) -> Option<ThreadId> {
+        let actors = self.actors.load();
+        let (_, approver) = actors.iter().find(|(id, _)| matches!(id, ActorId::Approver(_)))?;
+        let actor = Arc::clone(&approver.actor);
+        let any_actor: Arc<dyn Any + Send + Sync> = actor;
+        Arc::downcast::<ApproverActor>(any_actor).ok()?.thread_of(id).await
     }
 
     /// The actor of `resolved`, taking part in `threads`, built but not yet taken in (`adopt`).

@@ -126,23 +126,23 @@ list (`AccessEntry`), is a bare UUID.
 | `PUT …/channels/{cid}/classification`, `…/language`, `…/description`, `…/uses-workspace`, `…/approval-rules` | Change a channel: reclassify it, its language, what it is for, whether it uses the session's workspace, what it restricts of tool calls |
 | `GET …/channels/{cid}/artifacts` | The artifacts with a version published in the channel (the plugin's) |
 | `POST …/channels/{cid}/commands/{command_id}/kill` | End a command of the workspace's shell started in the channel, with what it started |
-| `GET …/history`, `POST …/messages` | A page of the channel's history as items; write a message - its `content`, the `attachments` it carries by their ids, or both |
+| `GET …/history`, `POST …/messages` | A page of the channel's history as items; write a message - its `content`, the `attachments` it carries by their ids, or both -, in the thread `thread` names, the line if none (issue 602) |
 | `POST …/attachments?name=&level=&compartments=` | Upload a file for a message the user is about to write (issue 282): the body, with its `Content-Length` (`411 length_required` without), classified by `level` and `compartments` (comma-separated) - the channel's if no level is given -; answers `201` with the reference a message names by its `id` |
 | `GET …/messages/{mid}/attachments/{aid}` | Download an attachment of a message the user sees in the history, or what one of its tool results the user is shown gave or showed its model: a png, jpeg or webp image inline, anything else as a download |
 | `PUT …/read` | Mark the channel read up to a message (`message_id`): the newest of someone else the user was shown; `404 message_not_found` for one their view of the history does not reach |
-| `GET`, `PUT`, `DELETE …/messages/{mid}`; `PUT …/messages/{mid}/classification`; `POST …/messages/{mid}/retry` | Read a message as it stands (`404 message_not_found` where the user's view of the history does not reach it); modify or take back one's own message - a modification names its `attachments` as they are to stand, so that one naming none removes them all -; reclassify a message; ask the agent that said it to answer again |
+| `GET`, `PUT`, `DELETE …/messages/{mid}`; `PUT …/messages/{mid}/classification`; `POST …/messages/{mid}/retry` | Read a message as it stands (`404 message_not_found` where the user's view of the history does not reach it); modify or take back one's own message - a modification names its `attachments` as they are to stand, so that one naming none removes them all -; reclassify a message; ask the agent that said it to answer again, in the thread it was said in |
 | `POST …/approvals`, `POST …/questions/{qid}` | Approve or deny a tool call; answer or decline the questions of an agent's call |
 | `POST …/cancel` | End the current turn of every agent in the channel |
 | `POST`, `DELETE …/participants`, `…/participants/{aid}`; `GET …/participants/{aid}` | Add or remove a participant - one not in the session yet is taken into it, too; one participant, with who it is |
 | `GET …/participants/{aid}/usage` | What one participant's model calls used alone, as its state holds it - `null` for one that is no agent or counted no call yet -, failing if its state cannot be read: what a client reads again after an agent's turn |
-| `POST …/participants/{aid}/retry`, `…/cancel`, `…/tool-calls/{call_id}/cancel` | Ask one agent to answer again; end its turn alone; interrupt one tool call of its turn |
+| `POST …/participants/{aid}/retry`, `…/cancel`, `…/tool-calls/{call_id}/cancel` | Ask one agent to answer again - its turn `turn_id`, in the thread it runs or ran in -; end its turn alone; interrupt one tool call of its turn |
 | `POST …/participants/{aid}/leave` | Take oneself, or one's own agent, out of the channel by one's own act, without the right to change it; they stay in the session |
 | `POST …/threads/{tid}/participants`, `DELETE …/threads/{tid}/participants/{aid}` | Take a participant of the channel into a further thread of it (`participant`), or let them go from one thread alone, as whoever may change the channel (issue 602): `409 already_in_thread`, `409 in_one_thread_alone` for an external agent, `409 closed_circle` for a thread delegated into, `409 last_thread` for the one thread they take part in |
 | `POST …/threads/{tid}/participants/{aid}/join`, `…/leave` | Take oneself, or one's own agent, into a further thread of the channel, or out of one, by one's own act |
 | `GET …/notes` | The notes the channel's agents published |
 | `GET …/actors/{aid}/messages/{mid}/context` | What an agent's model saw when it wrote a message, its transcript read from the store on whichever branch: `403 context_forbidden`, `404 context_not_recorded` (not produced by that actor), `404 context_unavailable` (recorded, no longer resolvable), `500 context_failed` (the store could not be read) |
 | `GET …/actors/{aid}/history`, `…/components`, `…/tools` | A page of all that was offered to an agent and what it said; the components it was built from in the channel; the tools it has now |
-| `GET`, `POST …/commands` | The commands of the channel the user may see; issue one, as the line after the slash (`line`) |
+| `GET`, `POST …/commands` | The commands of the channel the user may see; issue one, as the line after the slash (`line`), in the thread `thread` names, the line if none - where what it sends happens, a nudge among it (issue 602) |
 | `GET …/channels/{cid}/events`, `GET /events` | The channel's stream; the global stream |
 
 Some rules hold across the endpoints:

@@ -810,7 +810,7 @@ mod tests {
         };
         let writer = channel.user_actor(owner).expect("the creator takes part");
         for text in ["one", "two", "three"] {
-            writer.send_message(Some(text.to_string()), None, Vec::new()).await.unwrap();
+            writer.send_message(None, Some(text.to_string()), None, Vec::new()).await.unwrap();
         }
         let before = history_of(&channel, 3).await;
         let mut rx = kernel.event_bus().subscribe_all();
@@ -888,7 +888,7 @@ mod tests {
                 "the join is announced: {events:?}");
 
         // What is written after joining is visible.
-        writer.send_message(Some("four".to_string()), None, Vec::new()).await.unwrap();
+        writer.send_message(None, Some("four".to_string()), None, Vec::new()).await.unwrap();
         history_of(&channel, 4).await;
         assert_eq!(channel.visible_messages(other).await.len(), 2);
 
@@ -915,7 +915,7 @@ mod tests {
             .user_actor(ctx.initiator_id.as_user_id().unwrap())
             .expect("the creator takes part");
         let mut mine = writer.watch();
-        writer.send_message(Some("before".to_string()), None, Vec::new()).await.unwrap();
+        writer.send_message(None, Some("before".to_string()), None, Vec::new()).await.unwrap();
         history_of(&channel, 1).await;
         async fn recorded(
             channel: &ChannelLoop,
@@ -1172,7 +1172,7 @@ mod tests {
             .await
             .expect("she keeps the channel, and comes back");
         let back = channel.user_actor(alice.id).expect("her actor");
-        back.send_message(Some("back".to_string()), None, Vec::new()).await.expect("said");
+        back.send_message(None, Some("back".to_string()), None, Vec::new()).await.expect("said");
         let heard = time::timeout(Duration::from_secs(5), async {
             loop {
                 let entries = channel.history_entries().await;
@@ -1374,7 +1374,10 @@ mod tests {
         given_nothing_before_its_join(&main, ActorId::Agent(first), "nothing said yet").await;
 
         let writer = main.user_actor(world.alice).expect("a founder");
-        writer.send_message(Some("@helper hello".to_string()), None, Vec::new()).await.unwrap();
+        writer
+            .send_message(None, Some("@helper hello".to_string()), None, Vec::new())
+            .await
+            .unwrap();
         let turn_ended_last = |entries: Vec<HistoryEntry>| {
             let said = entries.iter().rposition(|e| e.said().is_some());
             let ended =
@@ -1404,7 +1407,7 @@ mod tests {
         let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
         let ActorId::User(owner) = ctx.initiator_id else { unreachable!() };
         let writer = channel.user_actor(owner).expect("the creator takes part");
-        writer.send_message(Some("one".to_string()), None, Vec::new()).await.unwrap();
+        writer.send_message(None, Some("one".to_string()), None, Vec::new()).await.unwrap();
         history_of(&channel, 1).await;
 
         let more = HistoryAccess::LastMessages { count: 9 };

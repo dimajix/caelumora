@@ -243,9 +243,10 @@ impl AgentBody {
     /// The thread whose branch of the agent's transcript `envelope` is taken in on, answered on or
     /// carried out on (issue 602): the thread it happens in (`EventContext::thread_id`) if the
     /// agent follows it (`followed`), else the one it joined in
-    /// (`ActorRuntime::joined_thread_id`). A nudge, a request to answer again and a command reach
-    /// it from any thread, until they are routed by the thread they name; read on a branch of
-    /// their own, a request to answer again would be refused and a turn would begin empty.
+    /// (`ActorRuntime::joined_thread_id`): what reaches it by name of a thread it does not follow -
+    /// which the channel admits of a nudge, a request to answer again or a command no more, each
+    /// of an agent that takes part in the thread it names (issue 602) -, read again from the
+    /// history as it was before.
     pub(super) fn branch_of(&self, envelope: &Envelope) -> ThreadId {
         let happened_in = envelope.context.thread_id;
         if self.lock_followed().contains(&happened_in) {

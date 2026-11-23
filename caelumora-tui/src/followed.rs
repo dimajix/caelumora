@@ -1604,7 +1604,7 @@ mod tests {
         let mut followed =
             Followed::new(Arc::clone(&channel), views.clone()).await.expect("the owner takes part");
         let actor = followed.actor().expect("the owner's actor runs");
-        actor.send_message(Some("hello".to_string()), None, Vec::new()).await.expect("said");
+        actor.send_message(None, Some("hello".to_string()), None, Vec::new()).await.expect("said");
         let begun = async {
             loop {
                 if let Ok(Shown::Envelope(envelope)) = followed.next().await {
@@ -1774,7 +1774,7 @@ mod tests {
 
         let ActorId::User(user) = other else { unreachable!("a user") };
         let theirs = channel.user_actor(user).expect("they take part");
-        theirs.send_message(Some("hello".to_string()), None, Vec::new()).await.expect("said");
+        theirs.send_message(None, Some("hello".to_string()), None, Vec::new()).await.expect("said");
         let recorded = async {
             loop {
                 let talking_in = lines(&followed.talking_in().await);

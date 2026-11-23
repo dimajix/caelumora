@@ -1218,8 +1218,8 @@ impl Actor for AgentActor {
         self.body.control.wakeup();
     }
 
-    fn turn_under_way(&self) -> Option<TurnId> {
-        self.body.control.turn_under_way()
+    fn turn_under_way(&self) -> Option<(ThreadId, TurnId)> {
+        self.body.control.under_way()
     }
 
     fn retry_turn(&self, turn: TurnId) -> bool {

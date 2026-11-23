@@ -56,7 +56,7 @@ async fn an_agent_carries_out_a_command_in_a_turn_of_its_own_and_answers_the_iss
     let mut watch = actor.watch();
 
     // By its short form (issue 560): what is told and recorded is its name.
-    let reply = actor.execute_command("mk  @helper twice").await.expect("sent to the agent");
+    let reply = actor.execute_command(None, "mk  @helper twice").await.expect("sent to the agent");
     assert!(
         reply.output.is_none() && reply.span_id.is_some(),
         "answered later, on the stream: {reply:?}"
@@ -130,7 +130,7 @@ async fn a_command_its_issuer_may_see_but_not_ask_for_is_rejected_at_the_door() 
     let before = channel.history_entries().await.len();
 
     let reply =
-        actor.execute_command("mark @helper twice").await.expect("sent: the channel decides");
+        actor.execute_command(None, "mark @helper twice").await.expect("sent: the channel decides");
     assert!(reply.output.is_none() && reply.span_id.is_some(), "{reply:?}");
     let rejection = time::timeout(Duration::from_secs(5), async {
         loop {
@@ -172,7 +172,7 @@ async fn a_command_that_fails_is_told_to_the_issuer_and_leaves_nothing_behind() 
     let before = channel.history_entries().await.len();
     let ends_at = channel.stored_agent_channel_state(agent).await.unwrap().transcript.end();
 
-    actor.execute_command("mark @helper fail").await.expect("sent to the agent");
+    actor.execute_command(None, "mark @helper fail").await.expect("sent to the agent");
     let (started, _, answer) = command_events(&mut watch).await;
     let Some(ActorEvent::CommandStarted { turn_id: begun, .. }) = started.map(|e| e.event) else {
         panic!("it began")
@@ -218,33 +218,57 @@ async fn a_command_of_an_agent_names_its_agent() {
     let actor = channel.user_actor(alice_of(&context)).unwrap();
     let error = |result: Result<CommandReply>| result.expect_err("refused");
 
-    let unnamed = error(actor.execute_command("mark twice").await);
+    let unnamed = error(actor.execute_command(None, "mark twice").await);
     assert!(
         matches!(as_command_error(&unnamed), CommandError::InvalidArguments { reason, .. } if reason.contains("@helper") && reason.contains("@all")),
         "{unnamed}"
     );
     let named = actor
-        .execute_command("mark @Helper twice")
+        .execute_command(None, "mark @Helper twice")
         .await
         .expect("named regardless of case (issue 277)");
     assert!(named.span_id.is_some(), "it is asked: {named:?}");
-    let nobody = error(actor.execute_command("mark @nobody twice").await);
+    let nobody = error(actor.execute_command(None, "mark @nobody twice").await);
     assert!(
         matches!(as_command_error(&nobody), CommandError::InvalidArguments { reason, .. } if reason.contains("@helper")),
         "{nobody}"
     );
-    let unknown = error(actor.execute_command("nonsense @helper").await);
+    let unknown = error(actor.execute_command(None, "nonsense @helper").await);
     assert!(
         matches!(as_command_error(&unknown), CommandError::Unknown(name) if name == "nonsense"),
         "{unknown}"
     );
-    let all = actor.execute_command("mark @all").await.expect("every agent that carries it out");
+    let all =
+        actor.execute_command(None, "mark @all").await.expect("every agent that carries it out");
     assert!(all.span_id.is_some() && all.output.is_none(), "all of them asked: {all:?}");
     let channel_wide = actor
-        .execute_command("mark @channel")
+        .execute_command(None, "mark @channel")
         .await
         .expect("a group handle, as a mention (issue 401)");
     assert!(channel_wide.span_id.is_some(), "all of them asked: {channel_wide:?}");
+    running.abort();
+}
+
+/// Issue 602: a command is issued in the thread its issuer names, of an agent that takes part
+/// there: in a thread its agent takes no part in, it is carried out by nobody there; taken into
+/// the thread, the agent is asked.
+#[tokio::test]
+async fn a_command_of_an_agent_is_issued_in_a_thread_it_takes_part_in() {
+    use caelumora_domain::channel::ThreadOrigin;
+    let Stuck { channel, context, agent, running, .. } = with_a_marking_agent(false).await;
+    let actor = channel.user_actor(alice_of(&context)).unwrap();
+    let origin = ThreadOrigin { thread: ThreadId::line(channel.id()), message: MessageId::new() };
+    let thread = channel.open_thread_by_procedure(&context, origin, &[]).await.expect("opened");
+
+    let nobody = actor.execute_command(Some(thread), "mark @helper").await.expect_err("nobody");
+    assert!(
+        matches!(as_command_error(&nobody), CommandError::Unknown(name) if name == "mark"),
+        "{nobody}"
+    );
+    let helper = ActorId::Agent(agent);
+    channel.take_into_thread_by_procedure(&context, thread, helper).await.expect("taken in");
+    let asked = actor.execute_command(Some(thread), "mark @helper").await.expect("asked there");
+    assert!(asked.span_id.is_some(), "{asked:?}");
     running.abort();
 }
 
@@ -254,7 +278,7 @@ async fn a_sleeping_agent_carries_out_a_command_and_sleeps_on() {
     let actor = channel.user_actor(alice_of(&context)).unwrap();
     let mut watch = actor.watch();
 
-    actor.execute_command("mark @helper asleep").await.expect("sent to the agent");
+    actor.execute_command(None, "mark @helper asleep").await.expect("sent to the agent");
     let (started, states, answer) = command_events(&mut watch).await;
     assert!(
         matches!(answer.event, ActorEvent::CommandExecuted { .. }),
@@ -277,7 +301,8 @@ async fn help_lists_the_commands_of_the_agents_with_their_handles() {
     // as it would be among them.
     let executor = CommandExecutor::empty(Arc::new(AllowAllPolicy::new()));
     let issuer = channel.user_actor(alice_of(&context)).expect("alice takes part");
-    let help = CommandContext { issuer: &issuer, channel: &channel, executor: &executor };
+    let thread = ThreadId::line(channel.id());
+    let help = CommandContext { issuer: &issuer, channel: &channel, executor: &executor, thread };
 
     let all = HelpCommand::new().execute("", &help).await.expect("/help runs").text;
     assert!(all.contains("`/mark @agent [text]` (also `/mk`) — Marks. (@helper)"), "{all}");

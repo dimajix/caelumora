@@ -7,7 +7,7 @@ use caelumora_domain::actor::{ActorId, ActorState, SpanId};
 use caelumora_domain::agent::PersonalityKind;
 use caelumora_domain::approval::{ApprovalId, ApprovalRequest, ApprovalRule};
 use caelumora_domain::chain::Position;
-use caelumora_domain::channel::{ChannelId, HistoryAccess};
+use caelumora_domain::channel::{ChannelId, HistoryAccess, ThreadId};
 use caelumora_domain::command::CommandDescription;
 use caelumora_domain::confidentiality::{Classification, Confidentiality};
 use caelumora_domain::content::ContentId;
@@ -403,6 +403,10 @@ pub struct MessageRequest {
     /// channel's releases it: to a wider audience or a lower level, as long
     /// as it may flow into the channel.
     pub classification: Option<Classification>,
+    /// The thread a new message is said in (issue 602) - the channel's line if absent; a modified
+    /// one keeps its place.
+    #[serde(default)]
+    pub thread: Option<ThreadId>,
 }
 
 /// What a file uploaded for a message is (issue 282): its name, and how it
@@ -448,6 +452,10 @@ pub struct SendApprovalRequest {
 #[derive(Debug, Deserialize)]
 pub struct ExecuteCommandRequest {
     pub line: String,
+    /// The thread it is issued in (issue 602): where what it sends happens - the channel's line if
+    /// absent.
+    #[serde(default)]
+    pub thread: Option<ThreadId>,
 }
 
 /// What a command answered. `output` is set only if the answer is for the

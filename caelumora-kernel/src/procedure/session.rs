@@ -2784,7 +2784,7 @@ mod tests {
         channel
             .user_actor(alice.id)
             .unwrap()
-            .send_message(Some("hello".to_string()), None, Vec::new())
+            .send_message(None, Some("hello".to_string()), None, Vec::new())
             .await
             .unwrap();
         time::timeout(Duration::from_secs(5), async {

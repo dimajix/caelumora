@@ -508,7 +508,7 @@ async fn the_tools_are_discovered_in_the_name_of_whoever_acts() {
         .asked(async {
             main.user_actor(world.bob)
                 .expect("he takes part")
-                .send_message(Some("@helper do it".to_string()), None, Vec::new())
+                .send_message(None, Some("@helper do it".to_string()), None, Vec::new())
                 .await
                 .expect("sent");
             asked_for(&world, "alice as helper, asked by bob: ReadSecret yes").await;

@@ -160,8 +160,13 @@ impl RunControl {
     /// ended (issue 235) - not one ending already, which a cancel or a
     /// retry would find over.
     pub(crate) fn turn_under_way(&self) -> Option<TurnId> {
+        self.under_way().map(|(_, turn)| turn)
+    }
+
+    /// The turn under way, as `turn_under_way` says, with the thread it runs in (issue 602).
+    pub(crate) fn under_way(&self) -> Option<(ThreadId, TurnId)> {
         let (turn, _) = *self.lock_turn();
-        turn.map(|(_, turn)| turn).filter(|_| self.interruptible())
+        turn.filter(|_| self.interruptible())
     }
 
     /// The thread of the turn that runs or ran last (issue 602): whose part of the agent's state

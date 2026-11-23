@@ -179,7 +179,7 @@ pub async fn asked_for_a_call(
         .asked(async {
             main.user_actor(world.bob)
                 .unwrap()
-                .send_message(Some("@helper do it".to_string()), None, Vec::new())
+                .send_message(None, Some("@helper do it".to_string()), None, Vec::new())
                 .await
                 .expect("sent");
             timeout(Duration::from_secs(5), async {

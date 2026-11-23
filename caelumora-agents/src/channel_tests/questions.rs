@@ -145,7 +145,7 @@ async fn a_message_instead_of_the_answers_declines_them_and_is_heard_after_the_t
     channel
         .user_actor(alice_of(&context))
         .unwrap()
-        .send_message(Some("rather not".to_string()), None, Vec::new())
+        .send_message(None, Some("rather not".to_string()), None, Vec::new())
         .await
         .unwrap();
     let said: Vec<_> =

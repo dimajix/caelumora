@@ -48,20 +48,16 @@ impl ChannelLoop {
             self.thread(thread).and_then(|opened| opened.opening()).ok_or_else(not_open)?;
         let giver = context.caller_id;
         let origin = opening.origin.thread;
-        let runs_in = |participant: ActorId, thread: ThreadId| {
-            let actors = self.actors.load();
-            actors.get(&participant).is_some_and(|actor| actor.threads.load().contains(&thread))
-        };
         let not_in = |participant, thread| ChannelError::NotInThread {
             participant,
             thread,
             channel: self.id,
         };
         // An agent: what comes of a brief is the turn that answers it, which a person has not.
-        if !matches!(recipient, ActorId::Agent(_)) || !runs_in(recipient, thread) {
+        if !matches!(recipient, ActorId::Agent(_)) || !self.runs_in(recipient, thread) {
             return Err(not_in(recipient, thread).into());
         }
-        if !runs_in(giver, origin) {
+        if !self.runs_in(giver, origin) {
             return Err(not_in(giver, origin).into());
         }
         // Delegating does not wake a thread, so that a giver cannot undo a user's cancel.

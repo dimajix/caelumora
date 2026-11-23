@@ -259,12 +259,14 @@ impl Actor for ScriptedAgent {
         }
     }
 
-    fn turn_under_way(&self) -> Option<TurnId> {
-        self.turn.lock().ok().and_then(|turn| *turn)
+    // Its turns run in the thread it joined in.
+    fn turn_under_way(&self) -> Option<(ThreadId, TurnId)> {
+        let turn = self.turn.lock().ok().and_then(|turn| *turn)?;
+        Some((self.runtime.joined_thread_id(), turn))
     }
 
     fn retry_turn(&self, turn: TurnId) -> bool {
-        let under_way = self.turn_under_way() == Some(turn);
+        let under_way = self.turn_under_way().map(|(_, under_way)| under_way) == Some(turn);
         if under_way {
             self.ask(Interrupt::Retry);
         }

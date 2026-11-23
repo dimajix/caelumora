@@ -66,8 +66,8 @@ impl ParticipantRuntime {
     }
 
     /// The thread it counts as joined its channel in, of those it takes part in now (issue 602,
-    /// `channel::joined_in`): where it says of itself what names no thread of its own - what a
-    /// user says, until they name the thread they write in.
+    /// `channel::joined_in`): where an agent says of itself what names no thread of its own (its
+    /// `AgentRuntime`); a user names the thread of what they say (`UserActor`).
     pub(crate) fn joined_thread_id(&self) -> ThreadId {
         channel::joined_in(self.channel_id, &self.threads.load())
     }

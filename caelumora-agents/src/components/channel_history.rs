@@ -294,7 +294,7 @@ mod tests {
         let main = &session.channels()[0];
         let mut admitted = main.observe();
         let hers = main.user_actor(world.alice).unwrap();
-        hers.execute_command("workspace run echo notes.md").await.expect("hers to run");
+        hers.execute_command(None, "workspace run echo notes.md").await.expect("hers to run");
         while !matches!(
             admitted.recv().await.unwrap().event,
             ActorEvent::CompleteMessageGenerated(_)

@@ -410,7 +410,7 @@ mod tests {
         main.delegate(&alice, thread, helper, "and this".to_string()).await.expect("waits");
         let says = async |text: &str| {
             let user = main.user_actor(world.alice).expect("alice runs");
-            user.send_message(Some(text.to_string()), None, Vec::new()).await.expect("said");
+            user.send_message(None, Some(text.to_string()), None, Vec::new()).await.expect("said");
         };
         says("@lead, are you there?").await;
         for working in [helper, lead] {

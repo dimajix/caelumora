@@ -491,7 +491,7 @@ impl ChannelLoop {
         if let ActorEvent::RetryRequested { target: RetryTarget::Turn(turn), author } = &event.event
         {
             let interrupted = self.actor(*author).is_some_and(|actor| actor.retry_turn(*turn));
-            if !interrupted && !self.given_up_last(*author, *turn).await {
+            if !interrupted && self.given_up_last(*author, *turn).await.is_none() {
                 warn!(to = %author, "Dropped {}: turn {} is neither under way nor the last given up", event.describe(), turn);
                 return;
             }
@@ -661,8 +661,9 @@ impl ChannelLoop {
     ///   (`Message::modify`, `Message::revoke`); a reclassification (issue 239) by its author or
     ///   the channel's owner (`Reclassify`), never above the channel;
     /// - a request to answer again (`RetryMessage`): of a message, not taken back, or of a turn, of
-    ///   an agent taking part (issue 362), that can be answered again - under way, or its last
-    ///   turn given up with nothing after it (`retryable_turn`, issue 567);
+    ///   an agent taking part in the thread it is made in (issues 362, 602), that can be answered
+    ///   again - under way, or its last turn given up with nothing after it, in that thread
+    ///   (`retryable_turn`, issue 567);
     /// - an answer to an agent's questions (`AnswerQuestion`, issue 165) - whether its sender was
     ///   asked is the agent's to check;
     /// - a user's answer to an approval request (`ApprovalAnswered`), from that user, with their
@@ -671,9 +672,10 @@ impl ChannelLoop {
     ///   from an approver alone;
     /// - what an actor did not take (`EventRefused`, issue 567), from that actor in its own name,
     ///   to someone else in the channel;
-    /// - a command for an agent (issue 269) comes from a user, names an agent taking part that
-    ///   carries it out, and is one the issuer may see and ask for (`admit_command`, issue 516);
-    ///   a nudge (issue 278) comes from a user and names someone else taking part;
+    /// - a command for an agent (issue 269) comes from a user, names an agent taking part in the
+    ///   thread it is sent in (issue 602) that carries it out, and is one the issuer may see and
+    ///   ask for (`admit_command`, issue 516); a nudge (issue 278) comes from a user and names
+    ///   someone else taking part in the thread it is sent in;
     /// - something given to read (issue 557) comes from the delegate of a thread opened and gives
     ///   what its delegation says - the open brief into the thread, what came of it back where the
     ///   thread was opened -, in the delegating chain's name, to whom runs there; a text alone, as
@@ -766,7 +768,8 @@ impl ChannelLoop {
                 if message.revoked.is_some() {
                     return Err(Rejection::MessageUnchangeable);
                 }
-                (message.sender_id == *author && self.agent_actor(*author).is_some())
+                let there = self.runs_in(*author, event.context.thread_id);
+                (message.sender_id == *author && self.agent_actor(*author).is_some() && there)
                     .then_some(())
                     .ok_or(Rejection::Invalid)
             }
@@ -777,7 +780,11 @@ impl ChannelLoop {
                     .access_policy()
                     .require(context, ActionType::RetryMessage(&channel), forbidden)
                     .await?;
-                (self.agent_actor(*author).is_some() && self.retryable_turn(*author, *turn).await)
+                // Where the turn runs or ran, which the request names (issue 602).
+                let there = self.retryable_turn(*author, *turn).await;
+                let thread = event.context.thread_id;
+                let in_its_thread = there == Some(thread) && self.runs_in(*author, thread);
+                (self.agent_actor(*author).is_some() && in_its_thread)
                     .then_some(())
                     .ok_or(Rejection::Invalid)
             }
@@ -808,16 +815,21 @@ impl ChannelLoop {
                 && self.runs(*to))
             .then_some(())
             .ok_or(Rejection::Invalid),
+            // Of an agent that takes part in the thread it is issued in (issue 602).
             ActorEvent::CommandRequested { agent, command, .. } => {
                 event.context.sender_id.as_user_id().ok_or(Rejection::Invalid)?;
-                self.admit_command(context, *agent, command).await
+                self.admit_command(context, *agent, command).await?;
+                self.runs_in(*agent, event.context.thread_id)
+                    .then_some(())
+                    .ok_or(Rejection::Invalid)
             }
             // It asks nothing of the policy beyond what a message does - an
-            // `@`-mention asks the same.
+            // `@`-mention asks the same -, of someone who takes part in the thread it names (issue
+            // 602), whose moderator routes it.
             ActorEvent::NudgeRequested { participant } => {
                 (event.context.sender_id.as_user_id().is_some()
                     && *participant != event.context.sender_id
-                    && self.runs(*participant))
+                    && self.runs_in(*participant, event.context.thread_id))
                 .then_some(())
                 .ok_or(Rejection::Invalid)
             }
@@ -896,8 +908,7 @@ impl ChannelLoop {
                 gives && event.context.initiator_id == delegation.initiator
             })
         };
-        let running_there =
-            self.actors.load().get(&recipient).is_some_and(|r| r.threads.load().contains(&thread));
+        let running_there = self.runs_in(recipient, thread);
         let text = message.attachments.is_empty()
             && message.tool_calls.is_empty()
             && message.tool_results.is_empty();
@@ -1001,19 +1012,13 @@ impl ChannelLoop {
             self.wake(Some(event.context.thread_id));
         }
         // A nudge is deliberate, as `wakeup_actor` is (issue 278), and so is a request to answer
-        // again (issue 567): the threads of whom it asks are quiet no longer (issues 557, 602), so
-        // that the request is delivered, and whom it asks is woken with it, alone
-        // (`route_event_impl`).
-        if let ActorEvent::NudgeRequested { participant: asked }
-        | ActorEvent::RetryRequested { author: asked, .. } = event.event
-        {
-            let actors = self.actors.load();
-            match actors.get(&asked) {
-                Some(asked) => {
-                    asked.threads.load().iter().for_each(|thread| self.end_quiet(*thread))
-                }
-                None => self.end_quiet(event.context.thread_id),
-            }
+        // again (issue 567): the thread it names is quiet no longer (issues 557, 602), so that the
+        // request is delivered, and whom it asks is woken with it, alone (`route_event_impl`).
+        if matches!(
+            event.event,
+            ActorEvent::NudgeRequested { .. } | ActorEvent::RetryRequested { .. }
+        ) {
+            self.end_quiet(event.context.thread_id);
         }
 
         if let Some(routing) = routing {
@@ -1389,7 +1394,10 @@ mod tests {
             async move { channel.run().await }
         });
 
-        actor.send_message(Some("@bob, look".to_string()), None, Vec::new()).await.expect("sent");
+        actor
+            .send_message(None, Some("@bob, look".to_string()), None, Vec::new())
+            .await
+            .expect("sent");
 
         let shown = time::timeout(Duration::from_secs(5), following.recv())
             .await
@@ -3895,7 +3903,7 @@ mod tests {
         let actor = main.user_actor(world.alice).unwrap();
         let mut watch = actor.watch();
         actor
-            .send_message(None, None, vec![hers.id])
+            .send_message(None, None, None, vec![hers.id])
             .await
             .expect("an attachment alone is a message");
         let ActorEvent::CompleteMessageGenerated(message) =

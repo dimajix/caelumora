@@ -338,7 +338,7 @@ mod tests {
             async move { channel.run().await }
         });
         actor
-            .send_message(Some("hello".to_string()), None, Vec::new())
+            .send_message(None, Some("hello".to_string()), None, Vec::new())
             .await
             .expect("a running channel takes it");
         // Taken out of the inbox: `run` holds it now.
@@ -353,7 +353,7 @@ mod tests {
         let _ = running.await;
         let refused = time::timeout(
             Duration::from_secs(5),
-            actor.send_message(Some("anyone?".to_string()), None, Vec::new()),
+            actor.send_message(None, Some("anyone?".to_string()), None, Vec::new()),
         )
         .await
         .expect("an answer, not a wait");

@@ -103,7 +103,7 @@ impl ChannelCommand for RunCommand {
             finished_at: Some(Utc::now()),
             ..ToolCallResult::of(&call, ToolResultStatus::Ok, content, workspace.classification)
         };
-        context.issuer.send_call(call, result).await.map_err(failed)?;
+        context.issuer.send_call(context.thread, call, result).await.map_err(failed)?;
         Ok(CommandOutput::private(ended))
     }
 }
@@ -158,7 +158,7 @@ mod tests {
         let actor = channel.user_actor(owner).unwrap();
 
         let reply = actor
-            .execute_command("workspace run echo draft > notes.md; cat notes.md")
+            .execute_command(None, "workspace run echo draft > notes.md; cat notes.md")
             .await
             .expect("/workspace run runs");
         assert_eq!(reply.output.as_deref(), Some("The command exited with 0."));
@@ -261,14 +261,14 @@ mod tests {
             other => panic!("failed, saying why: {other:?}"),
         };
 
-        let none = actor.execute_command("workspace run ls").await.expect_err("no workspace");
+        let none = actor.execute_command(None, "workspace run ls").await.expect_err("no workspace");
         let none = reason(none);
         assert!(none.contains("workspace"), "{none}");
         // A workspace of the storage "main", which runs no commands.
         let docs = WorkspaceSpec::new("docs", Scope::UserScope { user_id: world.alice }, "main");
         let docs = world.kernel.workspace_manager().create(&alice, docs).await.unwrap();
         session.update_workspace(&alice, Some(docs.id), None).await.unwrap();
-        let shell = actor.execute_command("workspace run ls").await.expect_err("no shell");
+        let shell = actor.execute_command(None, "workspace run ls").await.expect_err("no shell");
         assert_eq!(reason(shell), "the workspace's storage runs no commands");
         world.manager.stop(&alice, session.id()).await.unwrap();
     }

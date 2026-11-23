@@ -86,7 +86,7 @@ async fn ask_to_remember(world: &World, session: &SessionLoop, helper: AgentId) 
     let main = &session.channels()[0];
     main.user_actor(world.bob)
         .expect("he takes part")
-        .send_message(Some("@helper remember this".to_string()), None, Vec::new())
+        .send_message(None, Some("@helper remember this".to_string()), None, Vec::new())
         .await
         .expect("sent");
     time::timeout(Duration::from_secs(5), async {
@@ -136,7 +136,7 @@ async fn an_agents_memory_is_shown_by_command_to_its_owner_alone() {
     let main = &session.channels()[0];
 
     let bob = main.user_actor(world.bob).unwrap();
-    let (refused, asked) = world.asked(bob.execute_command("memory @helper")).await;
+    let (refused, asked) = world.asked(bob.execute_command(None, "memory @helper")).await;
     let refused = refused.expect_err("not his");
     assert!(
         matches!(as_command_error(&refused), CommandError::Unknown(name) if name == "memory"),
@@ -152,7 +152,7 @@ async fn an_agents_memory_is_shown_by_command_to_its_owner_alone() {
     let mut hers = alice.watch();
     let (answer, asked) = world
         .asked(async {
-            alice.execute_command("memory @helper").await.expect("hers, as its owner");
+            alice.execute_command(None, "memory @helper").await.expect("hers, as its owner");
             shown(&mut hers, "CommandExecuted").await
         })
         .await;

@@ -538,15 +538,18 @@ async fn a_compaction_gives_again_the_skills_given_in_the_part_it_replaces_that_
     let mut events = main.observe();
     let mut hers = alice.watch();
 
-    alice.send_message(Some("@helper hello".to_string()), None, Vec::new()).await.unwrap();
+    alice.send_message(None, Some("@helper hello".to_string()), None, Vec::new()).await.unwrap();
     activities_until_the_turn_ends(&mut events, helper).await.1.expect("answered");
     for name in ["quiz-round", "release-notes"] {
-        alice.execute_command(&format!("{SKILL_COMMAND_NAME} @helper {name}")).await.expect("hers");
+        alice
+            .execute_command(None, &format!("{SKILL_COMMAND_NAME} @helper {name}"))
+            .await
+            .expect("hers");
         shown(&mut hers, "CommandExecuted").await;
     }
-    alice.send_message(Some("@helper next".to_string()), None, Vec::new()).await.unwrap();
+    alice.send_message(None, Some("@helper next".to_string()), None, Vec::new()).await.unwrap();
     activities_until_the_turn_ends(&mut events, helper).await.1.expect("answered");
-    alice.execute_command("compact @helper").await.expect("hers, as its owner");
+    alice.execute_command(None, "compact @helper").await.expect("hers, as its owner");
 
     let told = shown(&mut hers, "CommandExecuted").await;
     assert!(
@@ -797,7 +800,7 @@ async fn an_agent_loads_a_skill_for_its_owner_whoever_asked() {
         .asked(async {
             main.user_actor(world.bob)
                 .unwrap()
-                .execute_command("skill @helper release-notes")
+                .execute_command(None, "skill @helper release-notes")
                 .await
                 .expect("his to give");
             shown(&mut his, "CommandExecuted").await
@@ -861,14 +864,14 @@ async fn a_skill_classified_above_the_channel_is_neither_listed_nor_loaded() {
         .expect("the system's");
     let bob = main.user_actor(world.bob).unwrap();
 
-    bob.execute_command("skills @helper").await.expect("his to ask");
+    bob.execute_command(None, "skills @helper").await.expect("his to ask");
     let ActorEvent::CommandExecuted { output, .. } = shown(&mut his, "CommandExecuted").await
     else {
         unreachable!()
     };
     assert!(output.contains("release-notes") && !output.contains("secret-plan"), "{output}");
 
-    bob.execute_command("skill @helper secret-plan").await.expect("sent");
+    bob.execute_command(None, "skill @helper secret-plan").await.expect("sent");
     let ActorEvent::CommandFailed { reason, .. } = shown(&mut his, "CommandFailed").await else {
         unreachable!()
     };
@@ -952,7 +955,7 @@ async fn an_agents_skill_belongs_to_its_owner_and_lies_in_the_session() {
         .asked(async {
             main.user_actor(world.bob)
                 .unwrap()
-                .send_message(Some("@helper write it down".to_string()), None, Vec::new())
+                .send_message(None, Some("@helper write it down".to_string()), None, Vec::new())
                 .await
                 .expect("sent");
             asked_for(&world, "alice as helper, asked by bob: CreateSkill(alice's) yes").await;
@@ -991,7 +994,7 @@ async fn an_agent_changes_only_skills_of_its_owners() {
 
     main.user_actor(world.bob)
         .unwrap()
-        .send_message(Some("@helper change it".to_string()), None, Vec::new())
+        .send_message(None, Some("@helper change it".to_string()), None, Vec::new())
         .await
         .expect("sent");
     asked_for(&world, "alice as helper, asked by bob: UpdateSkill(bob's) no").await;

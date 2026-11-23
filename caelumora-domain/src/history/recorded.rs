@@ -825,7 +825,7 @@ mod tests {
         assert_eq!(items_of(&history).len(), 1, "the turn given up alone");
         assert_eq!(
             history.turn_given_up_last(agent),
-            Some((turn, GivenUpReason::Left)),
+            Some((turn, GivenUpReason::Left, context.thread_id)),
             "nothing of the conversation followed it"
         );
     }

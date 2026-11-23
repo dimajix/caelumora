@@ -169,7 +169,7 @@ async fn an_agent_is_offered_the_workspace_tools_its_list_lets_it_call_in_its_ch
         .asked(async {
             main.user_actor(world.bob)
                 .unwrap()
-                .send_message(Some("@helper write it".to_string()), None, Vec::new())
+                .send_message(None, Some("@helper write it".to_string()), None, Vec::new())
                 .await
                 .expect("sent");
             time::timeout(Duration::from_secs(5), async {

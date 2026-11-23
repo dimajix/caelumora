@@ -36,6 +36,7 @@ use caelumora_api::command::{
 };
 use caelumora_api::component::{ComponentImpl, ComponentResult};
 use caelumora_domain::actor::SpanId;
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::command::{CommandDescription, CommandOutput, CommandVisibility};
 use caelumora_domain::security::SecurityAttributes;
 use caelumora_domain::session::SessionId;
@@ -65,8 +66,8 @@ pub struct CommandReply {
     pub span_id: Option<SpanId>,
 }
 
-/// What a command of the channel runs with: who issued it, the channel,
-/// and the session's other commands. Deliberately no `Turn` - such a
+/// What a command of the channel runs with: who issued it, the channel, the session's other
+/// commands, and the thread it is issued in (issue 602). Deliberately no `Turn` - such a
 /// command runs outside of any agent's turn, often because none is
 /// running.
 pub struct CommandContext<'a> {
@@ -77,6 +78,8 @@ pub struct CommandContext<'a> {
     pub issuer: &'a UserActor,
     pub channel: &'a ChannelLoop,
     pub executor: &'a CommandExecutor,
+    /// The thread of the channel it is issued in (issue 602): where what it sends happens.
+    pub thread: ThreadId,
 }
 
 impl CommandContext<'_> {

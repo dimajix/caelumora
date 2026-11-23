@@ -19,7 +19,7 @@ use caelumora_domain::agent::AgentId;
 use caelumora_domain::approval::{
     ApprovalDecision, ApprovalId, ApprovalRequest, ApprovalRule, ApprovalRuleId, RuleDecision,
 };
-use caelumora_domain::channel::ChannelId;
+use caelumora_domain::channel::{ChannelId, ThreadId};
 use caelumora_domain::command::{addressed, CommandDescription, CommandVisibility};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::content::ContentId;
@@ -73,8 +73,9 @@ pub struct UserActor {
     /// until they close them, in the order they were first asked: those put to the user are what
     /// they may answer, and what a message of theirs declines. Those the user answered or declined
     /// are forgotten as the answer is sent, so that they are not offered again until they close,
-    /// and come back only where an agent asks them anew (issue 580).
-    open_questions: sync::Mutex<Vec<QuestionRequest>>,
+    /// and come back only where an agent asks them anew (issue 580). Each with the thread it was
+    /// asked in (issue 602), where it is answered: its context is that thread's.
+    open_questions: sync::Mutex<Vec<(QuestionRequest, ThreadId)>>,
 }
 
 /// The channel as a user follows it (issues 104, 220, 386): what their
@@ -185,33 +186,44 @@ impl UserActor {
         })
     }
 
-    /// An envelope from this user, in the span `span_id`, in the thread they joined the channel in
-    /// (`ParticipantRuntime::joined_thread_id`, issue 602). Envelopes are only ever built here, so
-    /// the sender, session and channel are always this actor's own (`Answering::own`), whatever
-    /// the caller of `send_message` is. Nothing of what a user says is for its owner alone: it is
-    /// sent as it is (`Answering::envelope`).
-    fn envelope(&self, event: ActorEvent, span_id: SpanId) -> Envelope {
-        let thread = self.participant_runtime.joined_thread_id();
+    /// An envelope from this user, in the span `span_id`, in `thread` (issue 602). Envelopes are
+    /// only ever built here, so the sender, session and channel are always this actor's own
+    /// (`Answering::own`), whatever the caller of `send_message` is. Nothing of what a user says is
+    /// for its owner alone: it is sent as it is (`Answering::envelope`).
+    fn envelope(&self, event: ActorEvent, span_id: SpanId, thread: ThreadId) -> Envelope {
         Answering::own(self.session_id, self.channel_id, thread, self.id(), self.name())
             .with_span(span_id)
             .envelope(event)
     }
 
-    /// The questions put to this user that are open, forgotten: a message
-    /// declines them all.
-    fn take_open_questions(&self) -> Vec<(QuestionId, AgentId)> {
+    /// The thread `thread` names, the channel's line if `None` (issue 602): where what this user
+    /// says, asks or issues happens.
+    fn in_thread(&self, thread: Option<ThreadId>) -> ThreadId {
+        thread.unwrap_or(ThreadId::line(self.channel_id))
+    }
+
+    /// An envelope from this user in the channel's line, in the span `span_id`: what happens in
+    /// the whole channel - a change of a message (issue 602).
+    fn in_line(&self, event: ActorEvent, span_id: SpanId) -> Envelope {
+        self.envelope(event, span_id, ThreadId::line(self.channel_id))
+    }
+
+    /// The questions put to this user that are open, forgotten, each with the agent that asked
+    /// and the thread it was asked in: a message declines them all, each in its thread.
+    fn take_open_questions(&self) -> Vec<(QuestionId, AgentId, ThreadId)> {
         let mut open = self.open_questions.lock().unwrap_or_else(PoisonError::into_inner);
         let (asked, others): (Vec<_>, Vec<_>) =
-            open.drain(..).partition(|request| request.questions.is_asked(self.id()));
+            open.drain(..).partition(|(request, _)| request.questions.is_asked(self.id()));
         *open = others;
-        asked.into_iter().map(|request| (request.id, request.agent_id)).collect()
+        asked.into_iter().map(|(request, thread)| (request.id, request.agent_id, thread)).collect()
     }
 
     /// The open questions put to this user that they have not answered or declined yet, the oldest
     /// first: what they may answer, and what a message of theirs declines.
     pub fn questions_to_answer(&self) -> Vec<QuestionRequest> {
         let open = self.open_questions.lock().unwrap_or_else(PoisonError::into_inner);
-        open.iter().filter(|request| request.questions.is_asked(self.id())).cloned().collect()
+        let asked = open.iter().map(|(request, _)| request);
+        asked.filter(|request| request.questions.is_asked(self.id())).cloned().collect()
     }
 
     /// Answers the questions `id` put to this user with `responses`, one per question (issue 165) -
@@ -222,7 +234,8 @@ impl UserActor {
     /// channel at all (`AnswerQuestion`) is the channel's to decide as it admits the answer, which
     /// tells them of a rejection (`EventRejected`, issue 304); the questions stay forgotten then,
     /// since the reason is a standing one, and asking them again would only be rejected again. The
-    /// agent asking checks again what it takes. Returns the `span_id`, as `send_message` does.
+    /// agent asking checks again what it takes. Sent in the thread the questions were asked in
+    /// (issue 602), whose context they are of. Returns the `span_id`, as `send_message` does.
     ///
     /// # Errors
     /// `ChannelError::Question` with why the answer cannot be given; an
@@ -235,36 +248,39 @@ impl UserActor {
         self.channel_loop()?;
         let refused =
             |reason| ChannelError::Question { question: id, channel: self.channel_id, reason };
-        let agent_id = {
+        let (request, thread) = {
             let mut open = self.open_questions.lock().unwrap_or_else(PoisonError::into_inner);
             let at = open
                 .iter()
-                .position(|request| request.id == id)
+                .position(|(request, _)| request.id == id)
                 .ok_or_else(|| refused(QuestionError::NotOpen))?;
-            if !open[at].questions.is_asked(self.id()) {
+            let (request, _) = &open[at];
+            if !request.questions.is_asked(self.id()) {
                 return Err(refused(QuestionError::NotAsked).into());
             }
             if let Some(responses) = &responses {
-                open[at].questions.check_responses(responses).map_err(refused)?;
+                request.questions.check_responses(responses).map_err(refused)?;
             }
-            open.remove(at).agent_id
+            open.remove(at)
         };
+        let agent_id = request.agent_id;
         let event = match responses {
             Some(responses) => ActorEvent::QuestionAnswered { id, agent_id, responses },
             None => ActorEvent::QuestionDeclined { id, agent_id },
         };
         let span_id = SpanId::new();
-        self.send(self.envelope(event, span_id)).await?;
+        self.send(self.envelope(event, span_id, thread)).await?;
         Ok(span_id)
     }
 
-    /// Sends a message from this user into the channel - its text `content` and the attachments
-    /// `attachments` names, which the user uploaded for the channel (`AttachmentManager::create`,
-    /// issue 282) -, classified `classification` - the channel's if `None` (issue 133). A user may
-    /// release what they write: classify it for a wider audience or a lower level than the channel,
-    /// as long as it may flow into the channel. Whether it may is the channel's to decide as it
-    /// admits the message, which tells the user of a rejection (`EventRejected`, issue 304) - the
-    /// user asks nothing of the policy for what they send.
+    /// Sends a message from this user into the channel, in `thread` - its line if `None` (issue
+    /// 602) -: its text `content` and the attachments `attachments` names, which the user uploaded
+    /// for the channel (`AttachmentManager::create`, issue 282), classified `classification` - the
+    /// channel's if `None` (issue 133). A user may release what they write: classify it for a wider
+    /// audience or a lower level than the channel, as long as it may flow into the channel. Whether
+    /// it may is the channel's to decide as it admits the message, which tells the user of a
+    /// rejection (`EventRejected`, issue 304) - the user asks nothing of the policy for what they
+    /// send.
     ///
     /// Returns the `span_id` of the envelopes it starts, which every envelope
     /// caused by the message carries as well (see `caelumora_api::logging`).
@@ -274,6 +290,7 @@ impl UserActor {
     /// user's uploads for the channel; an error if the channel is gone.
     pub async fn send_message(
         &self,
+        thread: Option<ThreadId>,
         content: Option<String>,
         classification: Option<Classification>,
         attachments: Vec<ContentId>,
@@ -302,31 +319,39 @@ impl UserActor {
             ..Message::new(classification)
         };
         // All stem from one user action: one span. A message instead of an
-        // answer declines every question put to the user (issue 165) -
+        // answer declines every question put to the user (issue 165), each in its thread -
         // before it, so that the agent asking goes on and then hears it.
         // Then the request to wake the channel's agents for it - the
         // channel does not wake by itself (issue 90). Said outside of any
         // turn, the message is answered by itself (issue 258).
         let span_id = SpanId::new();
-        for (id, agent_id) in self.take_open_questions() {
-            self.send(self.envelope(ActorEvent::QuestionDeclined { id, agent_id }, span_id))
-                .await?;
+        for (id, agent_id, asked_in) in self.take_open_questions() {
+            let declined = ActorEvent::QuestionDeclined { id, agent_id };
+            self.send(self.envelope(declined, span_id, asked_in)).await?;
         }
-        self.send(self.envelope(ActorEvent::WakeupRequested, span_id)).await?;
-        self.send(self.envelope(ActorEvent::CompleteMessageGenerated(msg), span_id)).await?;
+        let thread = self.in_thread(thread);
+        self.send(self.envelope(ActorEvent::WakeupRequested, span_id, thread)).await?;
+        let said = ActorEvent::CompleteMessageGenerated(msg);
+        self.send(self.envelope(said, span_id, thread)).await?;
         Ok(span_id)
     }
 
-    /// Sends `call`, a call this user made themselves - a command they ran in the workspace
-    /// (issue 587) -, with its `result` as their message, classified as the channel: the others
-    /// hear the call with its result, as what the user did, and it asks nobody to respond, saying
-    /// nothing in words (`Message::says_something`); nor does it wake anyone. Whether the result
-    /// may enter the channel is the channel's to decide as it admits the message. The kernel's
-    /// alone: what a frontend hands over as a result would be its word for what came out.
+    /// Sends `call`, a call this user made themselves - a command they ran in the workspace (issue
+    /// 587) -, with its `result` as their message, in `thread` (issue 602), classified as the
+    /// channel: the others hear the call with its result, as what the user did, and it asks nobody
+    /// to respond, saying nothing in words (`Message::says_something`); nor does it wake anyone.
+    /// Whether the result may enter the channel is the channel's to decide as it admits the
+    /// message. The kernel's alone: what a frontend hands over as a result would be its word for
+    /// what came out.
     ///
     /// # Errors
     /// An error if the channel is gone.
-    pub(crate) async fn send_call(&self, call: ToolCall, result: ToolCallResult) -> Result<()> {
+    pub(crate) async fn send_call(
+        &self,
+        thread: ThreadId,
+        call: ToolCall,
+        result: ToolCallResult,
+    ) -> Result<()> {
         let channel_loop = self.channel_loop()?;
         let msg = Message {
             role: MessageRole::User,
@@ -339,7 +364,8 @@ impl UserActor {
             timestamp: Utc::now(),
             ..Message::new(channel_loop.classification())
         };
-        self.send(self.envelope(ActorEvent::CompleteMessageGenerated(msg), SpanId::new())).await
+        let said = ActorEvent::CompleteMessageGenerated(msg);
+        self.send(self.envelope(said, SpanId::new(), thread)).await
     }
 
     /// Modifies this user's message `message` to read `content` from now on (issue 234), with the
@@ -401,7 +427,7 @@ impl UserActor {
             ..original
         };
         let span_id = SpanId::new();
-        self.send(self.envelope(ActorEvent::MessageModified(modified), span_id)).await?;
+        self.send(self.in_line(ActorEvent::MessageModified(modified), span_id)).await?;
         Ok(span_id)
     }
 
@@ -415,7 +441,7 @@ impl UserActor {
     /// channel decides as it admits the revocation (issue 567).
     pub async fn revoke_message(&self, message: MessageId) -> Result<SpanId> {
         let span_id = SpanId::new();
-        self.send(self.envelope(ActorEvent::MessageRevoked { message, at: Utc::now() }, span_id))
+        self.send(self.in_line(ActorEvent::MessageRevoked { message, at: Utc::now() }, span_id))
             .await?;
         Ok(span_id)
     }
@@ -438,19 +464,19 @@ impl UserActor {
     ) -> Result<SpanId> {
         let span_id = SpanId::new();
         self.send(
-            self.envelope(ActorEvent::MessageReclassified { message, classification }, span_id),
+            self.in_line(ActorEvent::MessageReclassified { message, classification }, span_id),
         )
         .await?;
         Ok(span_id)
     }
 
-    /// Asks the agent that said `message` to answer again instead of it (issue 234). Whether this
-    /// user may ask it (`RetryMessage`, whoever may read the channel) is the channel's to decide as
-    /// it admits the request, as for `send_message`; it goes to that agent alone: whether it can
-    /// answer again is the agent's to decide, by its own transcript, and it says so with
-    /// `RetryAccepted` or `RetryRefused` - this returns once the request is on its way. No
-    /// `WakeupRequested` goes ahead of it - that would wake every agent -; the channel wakes the
-    /// one it asks, as for a nudge (issue 567).
+    /// Asks the agent that said `message` to answer again instead of it (issue 234), in the
+    /// thread it was said in (issue 602). Whether this user may ask it (`RetryMessage`, whoever
+    /// may read the channel) is the channel's to decide as it admits the request, as for
+    /// `send_message`; it goes to that agent alone: whether it can answer again is the agent's to
+    /// decide, by its own transcript, and it says so with `RetryAccepted` or `RetryRefused` -
+    /// this returns once the request is on its way. No `WakeupRequested` goes ahead of it - that
+    /// would wake every agent -; the channel wakes the one it asks, as for a nudge (issue 567).
     ///
     /// Returns the `span_id` of the envelopes, as `send_message` does.
     ///
@@ -460,57 +486,69 @@ impl UserActor {
     /// decides as it admits the request (issue 567).
     pub async fn request_retry(&self, message: MessageId) -> Result<SpanId> {
         let channel_loop = self.channel_loop()?;
-        let author = self.message_of(&channel_loop, message).await?.sender_id;
-        self.send_retry(RetryTarget::Message(message), author).await
+        let not_found = ChannelError::MessageNotFound { message, channel: self.channel_id };
+        let (said, thread) = channel_loop.said_in(message).await.ok_or(not_found)?;
+        self.send_retry(RetryTarget::Message(message), said.sender_id, thread).await
     }
 
     /// Asks the agent `author` to answer again instead of its answer under way, its turn `turn`
-    /// (issue 235). Whether this user may ask it (`RetryMessage`), whether `author` is an agent of
-    /// the channel, and whether the turn can be answered again - the turn under way, or the agent's
-    /// last turn given up for a failure or a lowering, with nothing after it (issue 259) - the
-    /// channel decides as it admits the request, and tells the user if it does not
-    /// (`EventRejected`, issue 567). The channel ends a turn under way as it delivers the request -
-    /// if it is still the one under way, else it drops it - and the agent answers anew with
-    /// `RetryAccepted`; this returns once the request is on its way, as `request_retry` sends it.
+    /// (issue 235), in the thread the turn runs or ran in (issue 602). Whether this user may ask it
+    /// (`RetryMessage`), whether `author` is an agent of the channel, and whether the turn can be
+    /// answered again - the turn under way, or the agent's last turn given up for a failure or a
+    /// lowering, with nothing after it (issue 259) - the channel decides as it admits the request,
+    /// and tells the user if it does not (`EventRejected`, issue 567). The channel ends a turn
+    /// under way as it delivers the request - if it is still the one under way, else it drops it -
+    /// and the agent answers anew with `RetryAccepted`; this returns once the request is on its
+    /// way, as `request_retry` sends it.
     ///
     /// # Errors
     /// An error if the channel is gone.
     pub async fn request_retry_of_turn(&self, author: ActorId, turn: TurnId) -> Result<SpanId> {
-        self.send_retry(RetryTarget::Turn(turn), author).await
+        let channel_loop = self.channel_loop()?;
+        let thread = channel_loop.retryable_turn(author, turn).await;
+        self.send_retry(RetryTarget::Turn(turn), author, self.in_thread(thread)).await
     }
 
-    /// Asks `participant` - an agent, another user, any actor of the
-    /// channel - to respond to the conversation as it stands (issue 278),
-    /// without a message: a `NudgeRequested`, which the moderator turns into
-    /// the request to `participant` alone. An agent answers it in a turn with
-    /// this user's authority - or, asked as a turn of its own in this user's
-    /// authority ends, finds it answered by that turn (issue 567); a user is
-    /// shown it. It asks nothing of the
-    /// policy: an `@`-mention in a message asks the same. Whether
-    /// `participant` takes part is the channel's to decide as it admits the
-    /// request. No `WakeupRequested` goes ahead of it - that would wake every
-    /// agent -; the channel wakes the one it asks, and ends being quiet for it.
+    /// Asks `participant` - an agent, another user, any actor of the channel - to respond to the
+    /// conversation as it stands in `thread` - its line if `None` (issue 602) -, routed by that
+    /// thread's moderator (issue 278), without a message: a `NudgeRequested`, which the moderator
+    /// turns into the request to `participant` alone. An agent answers it in a turn with this
+    /// user's authority - or, asked as a turn of its own in this user's authority ends, finds it
+    /// answered by that turn (issue 567); a user is shown it. It asks nothing of the policy: an
+    /// `@`-mention in a message asks the same. Whether `participant` takes part in `thread` is the
+    /// channel's to decide as it admits the request. No `WakeupRequested` goes ahead of it - that
+    /// would wake every agent -; the channel wakes the one it asks, and ends being quiet for it.
     ///
     /// Returns the `span_id` of the envelope, as `send_message` does.
     ///
     /// # Errors
     /// `ChannelError::NudgesItself` if `participant` is this user; an error if
     /// the channel is gone.
-    pub async fn request_response(&self, participant: ActorId) -> Result<SpanId> {
+    pub async fn request_response(
+        &self,
+        participant: ActorId,
+        thread: Option<ThreadId>,
+    ) -> Result<SpanId> {
         if participant == self.id {
             return Err(ChannelError::NudgesItself { participant, channel: self.channel_id }.into());
         }
         let span_id = SpanId::new();
-        self.send(self.envelope(ActorEvent::NudgeRequested { participant }, span_id)).await?;
+        let nudge = ActorEvent::NudgeRequested { participant };
+        self.send(self.envelope(nudge, span_id, self.in_thread(thread))).await?;
         Ok(span_id)
     }
 
-    /// Sends the request to `author` to answer again instead of `target`: the
-    /// channel wakes `author` alone for it, as for a nudge (issue 567).
-    /// Returns the envelope's `span_id`.
-    async fn send_retry(&self, target: RetryTarget, author: ActorId) -> Result<SpanId> {
+    /// Sends the request to `author` to answer again instead of `target`, in `thread`: the channel
+    /// wakes `author` alone for it, as for a nudge (issue 567). Returns the envelope's `span_id`.
+    async fn send_retry(
+        &self,
+        target: RetryTarget,
+        author: ActorId,
+        thread: ThreadId,
+    ) -> Result<SpanId> {
         let span_id = SpanId::new();
-        self.send(self.envelope(ActorEvent::RetryRequested { target, author }, span_id)).await?;
+        let retry = ActorEvent::RetryRequested { target, author };
+        self.send(self.envelope(retry, span_id, thread)).await?;
         Ok(span_id)
     }
 
@@ -577,8 +615,10 @@ impl UserActor {
     /// Sends this user's answer to the approval request `id` (issue 567): whether they approve,
     /// with their part alone - their own, never one of their rules (`ApprovalDecision::by_rule`,
     /// issue 419). Which agent asked, and whether they may approve its calls, the approver tells,
-    /// which holds the request: an answer it does not count it refuses (`EventRefused`).
-    /// Returns the `span_id`, as `send_message` does.
+    /// which holds the request: an answer it does not count it refuses (`EventRefused`). Sent in
+    /// the thread the approval was asked in (`ChannelLoop::approval_thread`, issue 602) - the line
+    /// for one the approver does not hold, which it refuses. Returns the `span_id`, as
+    /// `send_message` does.
     ///
     /// # Errors
     /// An error if the channel is gone.
@@ -586,7 +626,8 @@ impl UserActor {
         let decision = self.decision(None);
         let span_id = SpanId::new();
         let answer = ActorEvent::ApprovalAnswered { id, approved, decision };
-        self.send(self.envelope(answer, span_id)).await?;
+        let thread = self.channel_loop()?.approval_thread(id).await;
+        self.send(self.envelope(answer, span_id, self.in_thread(thread))).await?;
         Ok(span_id)
     }
 
@@ -642,11 +683,12 @@ impl UserActor {
         info!(rule = %rule_id, approved, "UserActor {} answers approval {} by a rule", self.id(), request.id);
         let decision = self.decision(Some(rule_id));
         let answer = ActorEvent::ApprovalAnswered { id: request.id, approved, decision };
-        Some(self.envelope(answer, envelope.context.span_id))
+        Some(self.envelope(answer, envelope.context.span_id, envelope.context.thread_id))
     }
 
     /// Issues the user command `line` - the line after the slash - on behalf of this user (issue
-    /// 28). Commands are for people, so only a `UserActor` issues them.
+    /// 28), in `thread` - the line if `None` (issue 602): where what it sends happens. Commands are
+    /// for people, so only a `UserActor` issues them.
     ///
     /// A command of the channel - the one `line` begins with, by its name or an alias
     /// (`CommandExecutor::find`, issue 560) - runs here and answers either this user alone or the
@@ -660,20 +702,27 @@ impl UserActor {
     /// # Errors
     /// A `CommandError` if the line is empty, or the command is unknown, refused or fails; an error
     /// if the channel is gone.
-    pub async fn execute_command(&self, line: &str) -> Result<CommandReply> {
+    pub async fn execute_command(
+        &self,
+        thread: Option<ThreadId>,
+        line: &str,
+    ) -> Result<CommandReply> {
         if line.trim().is_empty() {
             return Err(CommandError::Empty.into());
         }
         let channel = self.channel_loop()?;
         let executor = self.participant_runtime.command_executor();
-        let context = CommandContext { issuer: self, channel: &channel, executor };
+        let thread = self.in_thread(thread);
+        let context = CommandContext { issuer: self, channel: &channel, executor, thread };
         let Some((command, args)) = executor.find(line) else {
-            return self.request_command(&channel, line).await;
+            return self.request_command(&channel, thread, line).await;
         };
         let name = &command.description().name;
         debug!("UserActor {} runs /{}", self.id, name);
         let output = match executor.execute(command, args, &context).await {
-            Err(CommandError::Unknown(_)) => return self.request_command(&channel, line).await,
+            Err(CommandError::Unknown(_)) => {
+                return self.request_command(&channel, thread, line).await
+            }
             result => result?,
         };
         if output.visibility == CommandVisibility::Channel {
@@ -684,7 +733,7 @@ impl UserActor {
                 to: None,
                 turn_id: None,
             };
-            self.send(self.envelope(event, SpanId::new())).await?;
+            self.send(self.envelope(event, SpanId::new(), thread)).await?;
         }
         Ok(CommandReply {
             command: name.to_string(),
@@ -694,28 +743,36 @@ impl UserActor {
         })
     }
 
-    /// Asks agents of `channel` to carry out the command `line` begins with (issue 269), by its
-    /// name or an alias, as each agent's commands split the line (issue 560). What follows the
-    /// command begins with whom: `@handle` names one agent, `@all` - or another group handle, as a
-    /// mention (issue 401) - every agent here that carries the command out; the rest is the
-    /// command's. Whom it names is found among the agents that carry it out as this user sees them
-    /// (`ChannelLoop::agent_commands`, `ShowAgentCommand`) - offering, which asks nothing of the
-    /// agent's queue. Whether this user may ask for it (`ExecuteAgentCommand`) is decided at the
-    /// channel's door; a rejection is its `EventRejected` (issue 516). Sent as `CommandRequested`,
-    /// by the command's name, one per agent under one span, through this actor's transport; no
-    /// wakeup ahead of it - a sleeping agent carries a command out asleep.
+    /// Asks agents of `channel` to carry out the command `line` begins with, in `thread` (issues
+    /// 269, 602), by its name or an alias, as each agent's commands split the line (issue 560).
+    /// What follows the command begins with whom: `@handle` names one agent, `@all` - or another
+    /// group handle, as a mention (issue 401) - every agent here that carries the command out;
+    /// the rest is the command's. Whom it names is found among the agents that take part in
+    /// `thread` and carry it out as this user sees them (`ChannelLoop::agent_commands`,
+    /// `ShowAgentCommand`) - offering, which asks nothing of the agent's queue. Whether this user
+    /// may ask for it (`ExecuteAgentCommand`) is decided at the channel's door; a rejection is
+    /// its `EventRejected` (issue 516). Sent as `CommandRequested`, by the command's name, one
+    /// per agent under one span, through this actor's transport; no wakeup ahead of it - a
+    /// sleeping agent carries a command out asleep.
     ///
     /// # Errors
     /// `CommandError::Unknown` if no agent here carries it out as this user sees it;
     /// `InvalidArguments` if the line names no agent that does; an error if a request cannot be
     /// sent.
-    async fn request_command(&self, channel: &ChannelLoop, line: &str) -> Result<CommandReply> {
+    async fn request_command(
+        &self,
+        channel: &ChannelLoop,
+        thread: ThreadId,
+        line: &str,
+    ) -> Result<CommandReply> {
         // Each agent that carries out a command the line begins with, with the command's name,
         // whom the line names after it and the rest, as that agent's commands split the line.
+        // Of the agents that take part in the thread it is issued in (issue 602).
         let understanding: Vec<_> = channel
             .agent_commands(&self.security_context())
             .await
             .into_iter()
+            .filter(|(agent, _)| channel.runs_in(agent.id, thread))
             .filter_map(|(agent, commands)| {
                 let (name, args) = commands.into_iter().find_map(|command| {
                     command.strip_from(line).map(|args| (command.name, args))
@@ -733,7 +790,13 @@ impl UserActor {
         for (agent, name, whom, rest) in &understanding {
             let addressed = match whom.strip_prefix('@') {
                 Some(group) if is_group_handle(&handle_of(group)) => true,
-                Some(handle) => match channel.agents_named(handle).as_slice() {
+                Some(handle) => match channel
+                    .agents_named(handle)
+                    .into_iter()
+                    .filter(|named| channel.runs_in(named.id, thread))
+                    .collect::<Vec<_>>()
+                    .as_slice()
+                {
                     [one] => one.id == agent.id,
                     [] => false,
                     several => {
@@ -770,7 +833,7 @@ impl UserActor {
                 args: args.to_string(),
                 agent: *agent,
             };
-            self.send(self.envelope(event, span_id)).await?;
+            self.send(self.envelope(event, span_id, thread)).await?;
         }
         Ok(CommandReply {
             command: name.to_string(),
@@ -804,16 +867,17 @@ impl UserActor {
             ActorEvent::ApprovalRequested(request) => self.answer_by_rule(&event, request).await,
             ActorEvent::QuestionRequested(request) => {
                 // Asked anew by an agent that resumed its turn: kept where it was first asked.
+                let asked = (request.clone(), event.context.thread_id);
                 let mut open = self.open_questions.lock().unwrap_or_else(PoisonError::into_inner);
-                match open.iter_mut().find(|open| open.id == request.id) {
-                    Some(known) => *known = request.clone(),
-                    None => open.push(request.clone()),
+                match open.iter_mut().find(|(open, _)| open.id == request.id) {
+                    Some(known) => *known = asked,
+                    None => open.push(asked),
                 }
                 None
             }
             ActorEvent::QuestionClosed { id, .. } => {
                 let mut open = self.open_questions.lock().unwrap_or_else(PoisonError::into_inner);
-                open.retain(|request| request.id != *id);
+                open.retain(|(request, _)| request.id != *id);
                 None
             }
             _ => None,
@@ -1066,7 +1130,7 @@ mod tests {
         });
 
         let span_id =
-            actor.send_message(Some("hello".to_string()), None, Vec::new()).await.unwrap();
+            actor.send_message(None, Some("hello".to_string()), None, Vec::new()).await.unwrap();
 
         let wakeup = channel_inbox.recv().await.expect("WakeupRequested");
         let complete = channel_inbox.recv().await.expect("CompleteMessageGenerated");
@@ -1113,7 +1177,7 @@ mod tests {
             "its run begins first (issue 386)"
         );
 
-        actor.send_message(Some("hello".to_string()), None, Vec::new()).await.unwrap();
+        actor.send_message(None, Some("hello".to_string()), None, Vec::new()).await.unwrap();
         for _ in ["WakeupRequested", "CompleteMessageGenerated"] {
             channel_inbox.recv().await.expect("forwarded");
         }
@@ -1165,7 +1229,7 @@ mod tests {
         let (output, channel_inbox) = mpsc::channel(1);
         drop(channel_inbox);
 
-        actor.send_message(Some("hello".to_string()), None, Vec::new()).await.unwrap();
+        actor.send_message(None, Some("hello".to_string()), None, Vec::new()).await.unwrap();
         let ended = time::timeout(
             Duration::from_secs(5),
             actor.run(
@@ -1199,6 +1263,49 @@ mod tests {
         let mut envelope = envelope_from(ActorId::Agent(request.agent_id));
         envelope.event = ActorEvent::QuestionRequested(request.clone());
         (request, envelope)
+    }
+
+    /// Issue 602: questions are answered in the thread they were asked in, whose context they are
+    /// of - also where a message, said elsewhere, declines them.
+    #[tokio::test]
+    async fn questions_are_answered_in_the_thread_they_were_asked_in() {
+        let (actor, _channel) = user_actor().await;
+        let actor = Arc::new(actor);
+        let (_inbox, rx) = mpsc::channel(1);
+        let (output, mut channel_inbox) = mpsc::channel(10);
+        let running = tokio::spawn({
+            let actor = Arc::clone(&actor);
+            async move {
+                actor
+                    .run(
+                        Box::new(InMemoryEventReceiver::new(rx)),
+                        Box::new(InMemoryEventSender::new(output)),
+                    )
+                    .await
+            }
+        });
+        let thread = ThreadId::new();
+        let asked_there = |envelope: Envelope| {
+            let context = EventContext { thread_id: thread, ..envelope.context };
+            Envelope { context, ..envelope }
+        };
+        let (answered, asked) = asked_of(actor.id());
+        assert!(!actor.handle_actor_envelope(Some(asked_there(asked)), &nowhere()).await);
+        let responses = vec![Response::Text { text: "Kaya".to_string() }];
+        actor.answer_questions(answered.id, Some(responses)).await.expect("answered");
+        let answer = channel_inbox.recv().await.expect("the answer");
+        assert_eq!(answer.context.thread_id, thread, "where the questions were asked");
+
+        let (_, asked) = asked_of(actor.id());
+        assert!(!actor.handle_actor_envelope(Some(asked_there(asked)), &nowhere()).await);
+        actor.send_message(None, Some("rather not".to_string()), None, Vec::new()).await.unwrap();
+        let declined = channel_inbox.recv().await.expect("the decline");
+        assert!(matches!(declined.event, ActorEvent::QuestionDeclined { .. }), "declined first");
+        assert_eq!(declined.context.thread_id, thread, "where they were asked");
+        let said = channel_inbox.recv().await.expect("the wakeup");
+        assert_ne!(said.context.thread_id, thread, "the message where it is said, the line");
+        actor.stop();
+        running.await.unwrap().unwrap();
     }
 
     /// The questions to answer are those put to the user, the oldest first, until they close;

@@ -119,10 +119,10 @@ pub trait Actor: Any + Debug + Send + Sync {
         false
     }
 
-    /// Its turn under way (issue 235), if it is in one that can still be
-    /// ended. None for an actor without such turns - a user, an approver,
-    /// an external agent, whose answers are its remote side's.
-    fn turn_under_way(&self) -> Option<TurnId> {
+    /// Its turn under way (issue 235), if it is in one that can still be ended, with the thread it
+    /// runs in (issue 602). None for an actor without such turns - a user, an approver, an external
+    /// agent, whose answers are its remote side's.
+    fn turn_under_way(&self) -> Option<(ThreadId, TurnId)> {
         None
     }
 

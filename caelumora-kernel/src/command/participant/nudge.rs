@@ -42,9 +42,9 @@ impl Command for NudgeCommand {
 #[async_trait]
 impl ChannelCommand for NudgeCommand {
     /// Runs `/participant nudge` with `args`: asks the participant named - an agent, another user -
-    /// to respond as an `@`-mention would, with nothing said (`UserActor::request_response`). Only
-    /// the issuer is told, and the one asked: the history keeps nothing of it, and the others see
-    /// the answer.
+    /// to respond as an `@`-mention would, with nothing said, in the thread it is issued in
+    /// (`UserActor::request_response`, issue 602). Only the issuer is told, and the one asked: the
+    /// history keeps nothing of it, and the others see the answer.
     async fn execute(
         &self,
         args: &str,
@@ -55,14 +55,16 @@ impl ChannelCommand for NudgeCommand {
             reason: reason.to_string(),
         };
         let wanted = args.trim();
-        let participant = named_one(
-            NUDGE_COMMAND_NAME,
-            wanted,
-            context.channel.participants(),
-            |m| &m.name,
-            "in this channel",
-        )?;
-        match context.issuer.request_response(participant.id).await {
+        // Of those who take part in the thread it is issued in (issue 602), where it asks.
+        let there: Vec<_> = context
+            .channel
+            .participants()
+            .into_iter()
+            .filter(|m| context.channel.runs_in(m.id, context.thread))
+            .collect();
+        let participant =
+            named_one(NUDGE_COMMAND_NAME, wanted, there, |m| &m.name, "in this thread")?;
+        match context.issuer.request_response(participant.id, Some(context.thread)).await {
             Ok(_) => Ok(CommandOutput::private(format!("Asked {} to respond.", participant.name))),
             Err(e) => match e.downcast_ref::<ChannelError>() {
                 Some(ChannelError::NudgesItself { .. }) => {

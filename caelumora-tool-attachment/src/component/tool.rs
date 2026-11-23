@@ -473,7 +473,7 @@ mod tests {
             attachments.create(&hers, &channel, "chart.png", None, bytes(PNG)).await.unwrap();
         main.user_actor(world.alice)
             .unwrap()
-            .send_message(Some("look".to_string()), None, vec![notes.id, chart.id])
+            .send_message(None, Some("look".to_string()), None, vec![notes.id, chart.id])
             .await
             .unwrap();
         let view =
