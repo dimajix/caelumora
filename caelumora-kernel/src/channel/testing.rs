@@ -459,10 +459,16 @@ impl ChannelLoop {
         Arc::clone(self.runtime.session_controller())
     }
 
-    /// The turn under way of the participant `actor`
+    /// The turn under way of the participant `actor` in the channel's line
     /// (`ChannelLoop::turn_under_way`).
     pub fn turn_of(&self, actor: ActorId) -> Option<TurnId> {
-        self.turn_under_way(actor)
+        self.turn_in(actor, ThreadId::line(self.id))
+    }
+
+    /// The turn under way of the participant `actor` in `thread`, running or set aside (issue
+    /// 602, `ChannelLoop::turn_under_way`).
+    pub fn turn_in(&self, actor: ActorId, thread: ThreadId) -> Option<TurnId> {
+        self.turn_under_way(actor, thread)
     }
 
     /// Stops every actor, as stopping the channel with its session does

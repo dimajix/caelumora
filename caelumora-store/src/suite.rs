@@ -1782,9 +1782,8 @@ pub async fn transcript_store_behaves(states: &dyn StateStore, transcripts: &dyn
     for n in 1..=300 {
         state.transcript.push(ThreadId::default(), make_message(id(n)));
     }
-    assert!(state
-        .transcript
-        .modify(Message { content: Some("changed".to_string()), ..make_message(id(1)) }));
+    let changed = Message { content: Some("changed".to_string()), ..make_message(id(1)) };
+    assert!(state.record_change(TranscriptEntry::Modified { message: changed }));
     let first = state.transcript.start_anew(ThreadId::default()).expect("a branch");
     state.transcript.push(ThreadId::default(), make_message(id(301)));
     let mut sent_again = state.clone();

@@ -30,8 +30,9 @@ impl ChannelLoop {
         Ok(())
     }
 
-    /// Ends the turn running in `thread` of every actor taking part in it - not one it runs in
-    /// another thread (issue 602) -, or every turn if `None`, and keeps the thread quiet: what
+    /// Ends the turn under way in `thread` of every actor taking part in it - running there, or set
+    /// aside there waiting for a person, not one in another thread (issue 602) -, or every turn if
+    /// `None`, and keeps the thread quiet: what
     /// `cancel` does once permitted, and `reclassify` as a consequence of lowering the channel.
     pub(super) fn cancel_actors(&self, thread: Option<ThreadId>) {
         for held in self.threads_in(thread) {
@@ -94,7 +95,8 @@ impl ChannelLoop {
         }
     }
 
-    /// Ends the current turn of one actor deliberately (issue 235), like
+    /// Ends the turns of one actor deliberately (issue 235) - the one it runs and those set aside
+    /// (issue 602) -, like
     /// `cancel` and under the same permission: the policy that lets someone
     /// stop the channel lets them stop one of its actors. Its thread is not
     /// kept quiet - that is the thread's state, not the actor's: the others

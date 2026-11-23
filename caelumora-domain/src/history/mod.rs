@@ -106,17 +106,22 @@ impl HistoryPage {
 }
 
 impl Chain<Recorded> {
-    /// The turn of `author` given up, why, and the thread it ran in (issue 602), if its end is the
-    /// last thing of the conversation (issue 259, `HistoryEntry::is_conversation`): what may be
-    /// asked for anew as long as nothing followed it - a notice or a request does not count.
-    pub fn turn_given_up_last(&self, author: ActorId) -> Option<(TurnId, GivenUpReason, ThreadId)> {
-        let last = self.entries().rev().map(|node| &node.entry).find(|r| r.entry.is_conversation());
-        match last {
+    /// The turn of `author` given up in `thread`, and why, if its end is the last thing of that
+    /// thread's conversation (issues 259, 602, `HistoryEntry::is_conversation`): what may be asked
+    /// for anew as long as nothing followed it there - a notice or a request does not count, nor
+    /// what happens in another thread.
+    pub fn turn_given_up_last(
+        &self,
+        author: ActorId,
+        thread: ThreadId,
+    ) -> Option<(TurnId, GivenUpReason)> {
+        let of_thread = |recorded: &&Recorded| recorded.thread() == Some(thread);
+        let mut conversation = self.entries().rev().map(|node| &node.entry).filter(of_thread);
+        match conversation.find(|recorded| recorded.entry.is_conversation()) {
             Some(Recorded {
                 entry: HistoryEntry::TurnGivenUp { turn_id, actor, reason, .. },
-                context,
                 ..
-            }) if *actor == author => Some((*turn_id, reason.clone(), context.thread_id)),
+            }) if *actor == author => Some((*turn_id, reason.clone())),
             _ => None,
         }
     }
@@ -260,7 +265,7 @@ mod tests {
         let turn = TurnId::new();
         let mut history = History::default();
         history.push(&context, make_message(id(1)));
-        assert_eq!(history.turn_given_up_last(agent), None, "no turn ended");
+        assert_eq!(history.turn_given_up_last(agent, context.thread_id), None, "no turn ended");
         history.record(
             &context,
             HistoryEntry::TurnGivenUp {
@@ -271,10 +276,10 @@ mod tests {
             },
         );
         assert_eq!(
-            history.turn_given_up_last(agent),
-            Some((turn, GivenUpReason::Left, context.thread_id))
+            history.turn_given_up_last(agent, context.thread_id),
+            Some((turn, GivenUpReason::Left))
         );
-        assert_eq!(history.turn_given_up_last(other), None, "another agent's");
+        assert_eq!(history.turn_given_up_last(other, context.thread_id), None, "another agent's");
         // What was only told or asked of it is no part of the conversation
         // (issue 417).
         history.record(
@@ -295,12 +300,37 @@ mod tests {
             },
         );
         assert_eq!(
-            history.turn_given_up_last(agent),
-            Some((turn, GivenUpReason::Left, context.thread_id)),
+            history.turn_given_up_last(agent, context.thread_id),
+            Some((turn, GivenUpReason::Left)),
             "a notice and a request do not count"
         );
         history.push(&context, make_message(id(2)));
-        assert_eq!(history.turn_given_up_last(agent), None, "something followed it");
+        assert_eq!(
+            history.turn_given_up_last(agent, context.thread_id),
+            None,
+            "something followed it"
+        );
+    }
+
+    /// Issue 602: a turn given up is found by the thread it ran in, whatever happens in another.
+    #[test]
+    fn a_turn_given_up_is_found_in_its_thread_whatever_happens_in_another() {
+        let context = context_in(ChannelId::new());
+        let elsewhere = EventContext { thread_id: ThreadId::new(), ..context.clone() };
+        let agent = ActorId::Agent(AgentId::new());
+        let turn = TurnId::new();
+        let mut history = History::default();
+        let given_up = HistoryEntry::TurnGivenUp {
+            turn_id: turn,
+            actor: agent,
+            reason: GivenUpReason::Left,
+            at: Utc::now(),
+        };
+        history.record(&context, given_up);
+        history.push(&elsewhere, make_message(id(1)));
+        let found = history.turn_given_up_last(agent, context.thread_id);
+        assert_eq!(found, Some((turn, GivenUpReason::Left)), "in its thread");
+        assert_eq!(history.turn_given_up_last(agent, elsewhere.thread_id), None, "not elsewhere");
     }
 
     #[test]

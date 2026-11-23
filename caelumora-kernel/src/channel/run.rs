@@ -576,7 +576,8 @@ impl ChannelLoop {
         if let ActorEvent::RetryRequested { target: RetryTarget::Turn(turn), author } = &event.event
         {
             let interrupted = self.actor(*author).is_some_and(|actor| actor.retry_turn(*turn));
-            if !interrupted && self.given_up_last(*author, *turn).await.is_none() {
+            let thread = event.context.thread_id;
+            if !interrupted && !self.given_up_last(*author, *turn, thread).await {
                 warn!(to = %author, "Dropped {}: turn {} is neither under way nor the last given up", event.describe(), turn);
                 return;
             }

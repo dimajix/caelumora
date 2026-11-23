@@ -1,6 +1,6 @@
 # 602 — An actor takes part in one thread of its channel alone
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Sessions and channels
@@ -601,3 +601,24 @@ above. The position of a predecessor (C) is no step yet.
   (`AgentBody::is_unfollowed`), instead of taking it in on another branch. Moved to 3d-2, where they
   have their first use: the run control keeping a turn per thread, and asking an actor for its turn
   under way in a thread.
+- **2026-11-23** — Step 3d-1 committed. Step 3d-2 done: a turn that waits for a person is set aside
+  (`RunControl::set_aside`), stored at that step in its thread, and the agent goes on between
+  turns, answering in its other threads meanwhile, one turn at a time. Between turns, what happens
+  in a waiting turn's thread stays queued, but what settles the turn - a decision on an approval,
+  answers to questions or their decline, another's leave there (`AgentBody::settles`) -, which is
+  taken in a batch of its own, in the order it came; a settled turn stands at `ExecutingTools` and
+  runs again before the agent waits for anything else, once it is awake. A change of a message of
+  the whole channel reaches a waiting turn's branch after its step
+  (`AgentChannelState::record_change`, `AfterStep::Noted`). A cancel of a thread and a request to
+  answer a turn again reach a turn set aside (`Actor::turn_under_way` of a thread); leaving the
+  channel gives up every turn; after a restart the turn that goes on runs and the others wait. The
+  agent tells of itself where it stands as a whole (`RunControl::standing`). A turn given up last
+  is asked per thread (`History::turn_given_up_last`). Someone's leave of another thread no longer
+  settles a waiting turn's questions. Left for later: a type of its own for a turn's step, and
+  `Situation::branch_thread_id`, which is now the work's thread everywhere. Stored agent states
+  holding what was put aside after a step are to be deleted (`AfterStep::Noted`).
+- **2026-11-23** — Step 3d-2 committed; the issue is done. Open for the maintainer: whether a leave
+  of the channel announced only in another thread is to settle a waiting turn's questions - it
+  depends on whether only those taking part in a thread may be asked there -, and whether
+  `ChannelLoop::cancel_actor` is to end an actor's turns set aside in other threads, as it does
+  now.

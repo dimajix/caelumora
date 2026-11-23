@@ -1089,11 +1089,12 @@ impl ParticipantView {
         self.state.agent().ok_or_else(no_context)
     }
 
-    /// The turn of the answer the participant is giving now (issue 240), from the
-    /// running channel - none of a former participant, nor in a channel that does
+    /// The turn of the answer the participant is giving now in the channel's line (issues 240,
+    /// 602), from the running channel - none of a former participant, nor in a channel that does
     /// not run.
     fn turn_under_way(&self) -> Option<TurnId> {
-        self.channel.running().filter(|_| !self.former)?.turn_under_way(self.id())
+        let running = self.channel.running().filter(|_| !self.former)?;
+        running.turn_under_way(self.id(), ThreadId::line(running.id()))
     }
 
     /// The participant as the viewer sees it at this moment (issue 80), with

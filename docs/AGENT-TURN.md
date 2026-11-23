@@ -93,8 +93,18 @@ its thread (see [The transcript as a tree](#the-transcript-as-a-tree)):
     asked, and a call whose questions nobody asked is left to answer goes unanswered (see
     [APPROVALS.md](APPROVALS.md#questions)). Their leave is noted at once, ahead of what is queued
     before it and whatever the turn hears, after the step's results like what is given (below).
-    Other events stay queued: what may be heard during a turn until the next call of the model, the
-    rest until the turn is over.
+    The turn is **set aside** while it waits (issue 602, `RunControl::set_aside`): stored at this
+    step in its thread, it runs no more, and the agent goes on between turns - it answers in its
+    other threads meanwhile, one turn at a time. What happens in the waiting turn's thread stays
+    queued - what is said, a request, a command, its own leave of the thread - but what settles the
+    turn, which is taken in as it comes, in a batch of its own (`AgentBody::settles`); a change of
+    a message of the whole channel reaches the waiting branch after the step
+    (`AgentChannelState::record_change`). Settled, the turn stands at `ExecutingTools` and runs
+    again before the agent waits for anything else - once it is awake, if it sleeps; a cancel of its
+    thread or a request to answer it again ends it from where it waits, and leaving the channel
+    gives up every turn. What the agent tells of itself is where it stands as a whole
+    (`RunControl::standing`): a turn's step while one runs, else `WaitingForUser` while it is awake
+    and a turn waits, else `Idle` or `Sleeping`.
 *   **`Reflecting`** takes the turn over, stores the state and announces its end. The agent then
     lands in the state a tool requested (`Sleeping` after `stop` or `bye`) or in `Idle`.
 *   **`Cancelling`** takes the turn over like `Reflecting` and returns to `Idle`. Calls of the step
@@ -304,8 +314,10 @@ published, the turn has seen it, and its digest is that of the message - framed 
 tool gives what it gives while it runs, but nothing may stand between the calls of a step and their
 results, which the models refuse: while the calls run, what is given is put aside with the turn
 (`TurnState::after_step`) and written right after the step's tool message - and so is a leave noted
-while the turn waits for a person. Knowledge that stands given already - the same, with the same
-text and classification, as the model is given it or put aside - is not given a second time:
+while the turn waits for a person, and a change of a message of the whole channel
+(`AgentChannelState::record_change`, issue 602). Knowledge that stands given already - the same,
+with the same text and classification, as the model is given it or put aside - is not given a
+second time:
 `Turn::give` records it with the turn and answers that it gave nothing, as a prompt part that stands
 is not given again.
 
@@ -331,7 +343,8 @@ resumed:
 *   `Busy` asks again which activity is due, and carries it out: one cut short is tried only once
     it is done.
 *   `Reflecting` takes the finished turn over.
-*   `WaitingForUser` keeps waiting.
+*   `WaitingForUser` keeps waiting, set aside (issue 602): of the turns stored, the one that goes
+    on by itself runs, the others wait.
 *   `Cancelling` ends the turn.
 *   `ExecutingTools` is the exception. A tool may have run without its result being stored, and
     running it again would repeat its effect. So every call that was ready to run is answered as

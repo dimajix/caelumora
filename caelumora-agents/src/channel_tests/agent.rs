@@ -16,12 +16,12 @@ use caelumora_domain::agent::{
     AgentChannelState, AgentId, HearsDuringTurn, HearsFrom, RetryRefused,
 };
 use caelumora_domain::approval::ApprovalRequest;
-use caelumora_domain::channel::ThreadId;
+use caelumora_domain::channel::{ThreadId, ThreadOrigin};
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::ModelProfile;
 use caelumora_domain::history::HistoryEntry;
-use caelumora_domain::message::{MessageEvent, MessageRole};
+use caelumora_domain::message::{MessageEvent, MessageId, MessageRole};
 use caelumora_domain::tool::testing::make_tool_call;
 use caelumora_domain::tool::{ToolDescription, ToolResultStatus};
 use caelumora_domain::transcript::TranscriptEntry;
@@ -2578,6 +2578,184 @@ async fn a_cancel_ends_a_turn_waiting_for_approval_at_once() {
     let last = stored.transcript.messages(line).pop().expect("the turn was taken over");
     let answered: Vec<_> = last.tool_results.iter().map(|r| r.status).collect();
     assert_eq!(answered, [ToolResultStatus::NotExecuted]);
+}
+
+/// Issue 602: a turn in a thread that waits for an approval is set aside: the agent answers in
+/// the line meanwhile, telling that it waits, and the approval given then resumes the thread's
+/// turn, which goes on where it waited.
+#[tokio::test]
+async fn a_turn_waiting_for_a_person_is_set_aside_while_the_agent_answers_elsewhere() {
+    let (call, components) = a_call_needing_approval();
+    let answers = [call, saying("In the line."), saying("Done.")];
+    let model = Arc::new(Scripted(Mutex::new(answers.into())));
+    let (channel, context, agent, alice) =
+        agent_channel(Arc::new(AllowAllPolicy::new()), model, components).await;
+    let mut events = channel.observe();
+    let running = tokio::spawn({
+        let channel = Arc::clone(&channel);
+        async move { channel.run().await }
+    });
+    let helper = channel.actor_of(ActorId::Agent(agent)).unwrap();
+    let line = ThreadId::line(channel.id());
+    let origin = ThreadOrigin { thread: line, message: MessageId::new() };
+    let thread =
+        channel.open_thread_by_procedure(&context, ThreadSpec::new(origin)).await.expect("opened");
+    let hers = channel.user_actor(alice).unwrap();
+    let say = |thread, text: &str| {
+        let hers = Arc::clone(&hers);
+        let text = text.to_string();
+        async move { hers.send_message(Some(thread), Some(text), None, Vec::new()).await.unwrap() }
+    };
+
+    say(thread, "@helper, sleep").await;
+    let asked = approval_requested(&mut events).await;
+    settled(&helper, ActorState::WaitingForUser).await;
+
+    say(line, "@helper, are you there?").await;
+    let in_line = answered_in(&mut events, agent).await;
+    assert_eq!(in_line.0, line, "it answers in the line meanwhile");
+    assert_eq!(texts(&in_line.1), ["In the line."]);
+    settled(&helper, ActorState::WaitingForUser).await;
+
+    hers.send_approval(asked.id, true).await.unwrap();
+    let resumed = answered_in(&mut events, agent).await;
+    assert_eq!(resumed.0, thread, "the approval resumes the thread's turn");
+    assert_eq!(texts(&resumed.1), ["Done."], "which goes on where it waited");
+    settled(&helper, ActorState::Idle).await;
+    running.abort();
+}
+
+/// Issue 602: a turn set aside is ended by a cancel of its thread, not by one of another; what was
+/// said in its thread while it waited the agent hears only once it ended - after the results of
+/// the turn's calls, never between them and the calls -, and then answers what asked it.
+#[tokio::test]
+async fn a_turn_set_aside_ends_with_its_thread_and_what_was_said_there_waits_for_it() {
+    let (call, components) = a_call_needing_approval();
+    let model = Arc::new(Scripted(Mutex::new([call].into())));
+    let (channel, context, agent, alice) =
+        agent_channel(Arc::new(AllowAllPolicy::new()), model, components).await;
+    let mut events = channel.observe();
+    let running = tokio::spawn({
+        let channel = Arc::clone(&channel);
+        async move { channel.run().await }
+    });
+    let helper = channel.actor_of(ActorId::Agent(agent)).unwrap();
+    let line = ThreadId::line(channel.id());
+    let origin = ThreadOrigin { thread: line, message: MessageId::new() };
+    let thread =
+        channel.open_thread_by_procedure(&context, ThreadSpec::new(origin)).await.expect("opened");
+    let hers = channel.user_actor(alice).unwrap();
+    let say = |text: &str| hers.send_message(Some(thread), Some(text.to_string()), None, vec![]);
+    say("@helper, sleep").await.unwrap();
+    approval_requested(&mut events).await;
+    settled(&helper, ActorState::WaitingForUser).await;
+    say("meanwhile").await.unwrap();
+
+    channel.cancel(&context, Some(line)).await.expect("permitted");
+    time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(helper.state(), ActorState::WaitingForUser, "a cancel of the line ends it not");
+    channel.cancel(&context, Some(thread)).await.expect("permitted");
+    let ended = answered_in(&mut events, agent).await;
+    assert_eq!(ended.0, thread, "a cancel of its thread ends it");
+    // Asked before the cancel, it answers what was said meanwhile, its model then silent.
+    settled(&helper, ActorState::Planning).await;
+    running.abort();
+
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
+    let messages = stored.transcript.messages(thread);
+    let results = messages.iter().position(|m| !m.tool_results.is_empty());
+    let meanwhile = messages.iter().position(|m| m.content.as_deref() == Some("meanwhile"));
+    assert!(results.is_some() && meanwhile > results, "heard after the results: {messages:?}");
+    let calls = messages.iter().position(|m| !m.tool_calls.is_empty());
+    assert_eq!(calls.map(|at| at + 1), results, "the results right after the calls");
+}
+
+/// Issue 602: a turn set aside is asked for again from where it waits: it is given up, and the
+/// request answers it anew in its thread; leaving the channel then gives up the turn set aside
+/// there too.
+#[tokio::test]
+async fn a_turn_set_aside_is_answered_again_and_given_up_as_its_agent_leaves() {
+    let (call, components) = a_call_needing_approval();
+    let (again, _) = a_call_needing_approval();
+    let model = Arc::new(Scripted(Mutex::new([call, again].into())));
+    let (channel, context, agent, alice) =
+        agent_channel(Arc::new(AllowAllPolicy::new()), model, components).await;
+    let mut events = channel.observe();
+    let running = tokio::spawn({
+        let channel = Arc::clone(&channel);
+        async move { channel.run().await }
+    });
+    let helper_id = ActorId::Agent(agent);
+    let helper = channel.actor_of(helper_id).unwrap();
+    let line = ThreadId::line(channel.id());
+    let origin = ThreadOrigin { thread: line, message: MessageId::new() };
+    let thread =
+        channel.open_thread_by_procedure(&context, ThreadSpec::new(origin)).await.expect("opened");
+    let hers = channel.user_actor(alice).unwrap();
+    hers.send_message(Some(thread), Some("@helper, sleep".to_string()), None, vec![])
+        .await
+        .unwrap();
+    approval_requested(&mut events).await;
+    settled(&helper, ActorState::WaitingForUser).await;
+
+    let waiting = channel.turn_in(helper_id, thread).expect("a turn set aside in the thread");
+    assert_eq!(channel.turn_of(helper_id), None, "none in the line");
+    hers.request_retry_of_turn(helper_id, waiting).await.expect("on its way");
+    let given_up = time::timeout(Duration::from_secs(5), async {
+        loop {
+            let envelope = events.recv().await.expect("the channel is running");
+            if let ActorEvent::TurnGivenUp { turn_id, reason } = envelope.event {
+                break (turn_id, reason, envelope.context.thread_id);
+            }
+        }
+    })
+    .await
+    .expect("given up");
+    assert_eq!(given_up, (waiting, GivenUpReason::Retried, thread), "from where it waits");
+    let asked_again = approval_requested(&mut events).await;
+    settled(&helper, ActorState::WaitingForUser).await;
+    let anew = channel.turn_in(helper_id, thread).expect("answered anew in its thread");
+    assert_ne!(anew, waiting, "by a turn of its own");
+
+    channel.remove_participant(&context, helper_id).await.expect("permitted");
+    let left = time::timeout(Duration::from_secs(5), async {
+        loop {
+            let envelope = events.recv().await.expect("the channel is running");
+            match envelope.event {
+                ActorEvent::TurnGivenUp { turn_id, reason } => break (turn_id, reason),
+                ActorEvent::ApprovalRequestWithdrawn { id } => assert_eq!(id, asked_again.id),
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("given up as it leaves");
+    assert_eq!(left, (anew, GivenUpReason::Left), "the turn set aside, as its agent leaves");
+    running.abort();
+}
+
+/// The thread and the messages of the next turn `agent` finished, from `events`.
+async fn answered_in(
+    events: &mut broadcast::Receiver<Envelope>,
+    agent: AgentId,
+) -> (ThreadId, Vec<Message>) {
+    time::timeout(Duration::from_secs(5), async {
+        loop {
+            let envelope = events.recv().await.expect("the channel is running");
+            if envelope.context.sender_id == ActorId::Agent(agent) {
+                if let ActorEvent::TurnFinished { messages, .. } = envelope.event {
+                    break (envelope.context.thread_id, messages);
+                }
+            }
+        }
+    })
+    .await
+    .expect("the agent answers")
+}
+
+/// What `messages` say.
+fn texts(messages: &[Message]) -> Vec<String> {
+    messages.iter().filter_map(|message| message.content.clone()).collect()
 }
 
 /// A call of `sleep` that needs approval, and the component that gives

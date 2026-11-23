@@ -1672,13 +1672,14 @@ mod tests {
         state.prompts.keep(prompt("notes"), || "notes".to_string());
 
         let at = Utc::now();
-        state.transcript.modify(Message {
+        let corrected = Message {
             content: Some("question, corrected".to_string()),
             timestamp: at,
             ..question.clone()
-        });
+        };
+        state.record_change(TranscriptEntry::Modified { message: corrected });
         let aside = state.transcript.messages(ThreadId::default())[1].id;
-        state.transcript.revoke(aside, at);
+        state.record_change(TranscriptEntry::Revoked { message: aside, at });
         let notes = PromptRef {
             text: prompt("notes"),
             role: MessageRole::User,

@@ -15,6 +15,7 @@ use caelumora_domain::agent::{AgentChannelState, HearsFrom};
 use caelumora_domain::channel::ThreadId;
 use caelumora_domain::message::Message;
 use caelumora_domain::transcript::TranscriptEntry;
+use std::collections::BTreeSet;
 use tracing::{debug, trace, warn, Instrument};
 
 impl AgentBody {
@@ -75,7 +76,7 @@ impl AgentBody {
         };
         let taken = match &perceived {
             Some(perceived) => state.modify(perceived.clone()),
-            None => state.transcript.revoke(id, at),
+            None => state.record_change(TranscriptEntry::Revoked { message: id, at }),
         };
         if taken {
             return None;
@@ -98,11 +99,15 @@ impl AgentBody {
     /// thread it happens in; what happens in a thread it does not follow it drops
     /// (`AgentBody::is_unfollowed`, issue 602). A request to respond on another branch than the one
     /// returned ends the batch too, and stays in `rx`, unheard: the oldest request is answered
-    /// first, and on each branch the last one. Its own
-    /// leave of a thread drops what it was asked there in the batch (`AgentBody::leaves`, issue
-    /// 602): let go from the thread, it no longer answers there. Where the agent stands in its
-    /// channel's history is written into `state` with what it took in (issue 223), so that every
-    /// store that follows stores both; when that happens is the actor's.
+    /// first, and on each branch the last one. What happens in the thread of a turn set aside,
+    /// which waits for a person (issue 602), waits there too, passed over (`waits_for_set_aside`),
+    /// but what settles that turn - a decision on an approval, answers to questions, another's
+    /// leave - ends the batch: taken alone if it comes first, returned, and stopped at otherwise,
+    /// so that it is taken in the order it came (`settles`). Its own leave of a thread drops what
+    /// it was asked there in the batch (`AgentBody::leaves`, issue 602): let go from the thread, it
+    /// no longer answers there. Where the agent stands in its channel's history is written into
+    /// `state` with what it took in (issue 223), so that every store that follows stores both; when
+    /// that happens is the actor's.
     pub(super) async fn take_in(
         &self,
         state: &mut AgentChannelState,
@@ -112,15 +117,19 @@ impl AgentBody {
         let mut request = None;
         let mut retries = Vec::new();
         let mut next = Some(received);
+        let waiting = self.control.set_aside_threads();
         while let Some(event) = next {
             if self.is_unfollowed(&event) {
                 envelope_span(&event.context, event.event.kind()).in_scope(|| {
                     debug!("Dropped {}: of a thread it does not follow", event.describe());
                 });
+            } else if self.settles(&event, &waiting) {
+                state.heard = rx.heard();
+                return TakenIn { request, retries, command: None, settled: Some(event) };
             } else {
                 if matches!(event.event, ActorEvent::CommandRequested { .. }) {
                     state.heard = rx.heard();
-                    return TakenIn { request, retries, command: Some(event) };
+                    return TakenIn { request, retries, command: Some(event), settled: None };
                 }
                 // Let go from a thread, it no longer answers what it was asked there (issue 602).
                 if let Some(left) = self.leaves(self.own_change(&event)) {
@@ -153,17 +162,59 @@ impl AgentBody {
                     && !self.is_unfollowed(envelope)
             };
             next = rx
-                .try_recv_if(&|envelope| {
-                    if on_another_branch(envelope) {
-                        Pick::Stop
-                    } else {
-                        Pick::Take
-                    }
+                .try_recv_if(&|envelope| match self.between_turns(envelope, &waiting) {
+                    Pick::Take if on_another_branch(envelope) => Pick::Stop,
+                    picked => picked,
                 })
                 .await;
         }
         state.heard = rx.heard();
-        TakenIn { request, retries, command: None }
+        TakenIn { request, retries, command: None, settled: None }
+    }
+
+    /// What is done between turns, after the first event of a batch, with `envelope` while the
+    /// turns of `waiting` are set aside (issue 602): passed over if it waits for its thread's turn
+    /// to end (`waits_for_set_aside`), stopped at if it settles that turn (`settles`), so that it
+    /// is taken first in a batch of its own, and taken otherwise.
+    pub(super) fn between_turns(&self, envelope: &Envelope, waiting: &BTreeSet<ThreadId>) -> Pick {
+        if self.settles(envelope, waiting) {
+            Pick::Stop
+        } else if self.waits_for_set_aside(envelope, waiting) {
+            Pick::PassOver
+        } else {
+            Pick::Take
+        }
+    }
+
+    /// Whether `envelope` settles the turn set aside in the thread it happens in, of the threads
+    /// `waiting` (issue 602): a decision on an approval, the answers to questions or that they were
+    /// declined (issue 165), or that someone else left there (issue 482) - what a turn waiting for
+    /// a person waits for.
+    fn settles(&self, envelope: &Envelope, waiting: &BTreeSet<ThreadId>) -> bool {
+        waiting.contains(&envelope.context.thread_id)
+            && match &envelope.event {
+                ActorEvent::ApprovalGranted(_)
+                | ActorEvent::ApprovalDenied(_)
+                | ActorEvent::ApprovalTimedOut(_)
+                | ActorEvent::QuestionAnswered { .. }
+                | ActorEvent::QuestionDeclined { .. } => true,
+                ActorEvent::ParticipantLeft { participant, .. } => *participant != self.id(),
+                _ => false,
+            }
+    }
+
+    /// Whether `envelope` waits between turns for the turn set aside in its thread, of the threads
+    /// `waiting`, to end (issue 602): whatever happens in that thread but what settles the turn -
+    /// what is said, a request, a command, its own leave of the thread -, as it waits while a turn
+    /// waits for a person: nothing may stand between a step's calls and their results, and no turn
+    /// begins in a thread whose turn is under way.
+    pub(super) fn waits_for_set_aside(
+        &self,
+        envelope: &Envelope,
+        waiting: &BTreeSet<ThreadId>,
+    ) -> bool {
+        envelope.thread().is_some_and(|thread| waiting.contains(&thread))
+            && !self.settles(envelope, waiting)
     }
 
     /// Drops the request to respond that is the very next event of the branch of `thread` in `rx`
@@ -267,11 +318,11 @@ impl AgentBody {
 
     /// Takes in `event` if it is something said, changed or noted - the same between turns
     /// (`take_in`), during one (`take_in_during_turn`), and for who left while a turn waits for a
-    /// person (`AgentActor::handle_waiting_for_user`, issue 482): what others said is perceived as
-    /// it comes (`perceive`), and so is a message modified or taken back since (issue 234); a
-    /// reclassification is recorded as it is (issue 239), in the transcript where it holds the
-    /// message on a branch, and so is who joined or left (issue 408); what a delegate gives
-    /// it to read is what it was given (`AgentChannelState::given`, issue 557). A modification or
+    /// person, set aside (`AgentActor::settle_set_aside`, issues 482, 602): what others said is
+    /// perceived as it comes (`perceive`), and so is a message modified or taken back since (issue
+    /// 234); a reclassification is recorded as it is (issue 239), in the transcript where it holds
+    /// the message on a branch, and so is who joined or left (issue 408); what a delegate gives it
+    /// to read is what it was given (`AgentChannelState::given`, issue 557). A modification or
     /// revocation the transcript did not take is handed over (`AgentBody::hand_over`, issue 236),
     /// as the agent hears it. What it appends goes on the branch of the thread the envelope happens
     /// in (issue 602); its own join or leave of a thread changes the threads it follows (`follow`),
@@ -298,7 +349,7 @@ impl AgentBody {
                 }
             }
             ActorEvent::MessageRevoked { message, at } => {
-                if !state.transcript.revoke(message, at) {
+                if !state.record_change(TranscriptEntry::Revoked { message, at }) {
                     (self.hand_over)(
                         &*self.runtime,
                         state,
@@ -308,7 +359,7 @@ impl AgentBody {
                 }
             }
             ActorEvent::MessageReclassified { message, classification } => {
-                state.transcript.reclassify(message, classification);
+                state.record_change(TranscriptEntry::Reclassified { message, classification });
             }
             // Given to read by a delegate (issue 557), as a skill loaded for it is given: its giver
             // is the message's sender, and the request to respond follows it.
@@ -338,11 +389,12 @@ impl AgentBody {
 
 /// What `take_in` found in what it took in: the last request to respond,
 /// the requests to answer again in order, and the command that ended the
-/// batch, if one did.
+/// batch, if one did - or what settles a turn set aside (issue 602), alone.
 pub(super) struct TakenIn {
     pub(super) request: Option<Envelope>,
     pub(super) retries: Vec<Envelope>,
     pub(super) command: Option<Envelope>,
+    pub(super) settled: Option<Envelope>,
 }
 
 impl TakenIn {
@@ -352,7 +404,8 @@ impl TakenIn {
     pub(super) fn then(self, next: TakenIn) -> TakenIn {
         let mut retries = self.retries;
         retries.extend(next.retries);
-        TakenIn { request: answered(self.request, next.request), retries, command: next.command }
+        let request = answered(self.request, next.request);
+        TakenIn { request, retries, command: next.command, settled: next.settled }
     }
 }
 
@@ -527,6 +580,7 @@ mod tests {
             request: Some(asked(RequestReason::Nudged)),
             retries: Vec::new(),
             command: None,
+            settled: None,
         }
         .then(only_chosen);
         assert_eq!(reason(&then), Some(RequestReason::Nudged), "across a command, too");

@@ -8,7 +8,8 @@ recorded with the turn. This document describes both. How tool calls are run is 
 ## Approvals
 
 Some tool calls need a person's approval before they run; the agent suspends its turn while it
-waits.
+waits, setting it aside, and answers in its other threads meanwhile (issue 602, see
+[AGENT-TURN.md](AGENT-TURN.md)).
 
 1.  **Interruption.** The agent registers the calls that require approval, runs whatever needs
     none, and moves to `WaitingForUser`. Its state, the waiting calls included, is stored.
@@ -65,8 +66,9 @@ with the same ids. The approver takes an unknown request up as new; one it still
 announces again, keeping the answers given so far. Answers given before a restart are lost: the
 users are asked again.
 
-Messages that arrive while the agent waits are queued and processed in order once it resumes, so
-its context stays consistent. Approval requests are not redacted by confidentiality: the approvers
+Messages that arrive in the thread of the waiting turn are queued and processed in order once it
+ends, so that its context stays consistent; those of the agent's other threads it takes in and
+answers meanwhile (issue 602). Approval requests are not redacted by confidentiality: the approvers
 see the arguments of the call they are asked to decide.
 
 ### What needs approval
@@ -253,10 +255,11 @@ the record of the answers, nothing raw.
 4.  **Declining.** A user may decline, and a message of theirs written while questions put to them
     are open declines them all: the declines are sent before the message, so that the turn goes on
     and the message is heard after it. A declined call is answered `declined` without running.
-5.  **Leaving.** One asked who leaves the channel is no longer asked, and has neither answered nor
-    declined. While others asked are left, the questions stay open for them; once nobody asked is
-    left, they go unanswered: the call is answered as not executed, without running and without a
-    record of answers - also a call still waiting for its approval, whose request is withdrawn.
+5.  **Leaving.** One asked who leaves is no longer asked, and has neither answered nor declined -
+    as their leave reaches the waiting turn: announced in its thread (issue 602). While others asked
+    are left, the questions stay open for them; once nobody asked is left, they go unanswered: the
+    call is answered as not executed, without running and without a record of answers - also a
+    call still waiting for its approval, whose request is withdrawn.
 6.  **Closing.** Once questions are no longer open, the agent tells those they were shown to, and
     every frontend closes its form. A cancel or a stop ends the waiting as for an approval.
 

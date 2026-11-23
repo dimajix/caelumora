@@ -41,7 +41,7 @@ impl EventReceiver for InMemoryEventReceiver {
         Some(self.took(event))
     }
 
-    async fn recv_matching(&mut self, pred: EventPredicate) -> Option<Envelope> {
+    async fn recv_matching(&mut self, pred: &EventPredicate<'_>) -> Option<Envelope> {
         let found = match self.buffer.iter().position(pred).and_then(|i| self.buffer.remove(i)) {
             Some(event) => event,
             None => loop {
@@ -197,7 +197,7 @@ mod tests {
             .expect("room");
         // Puts the request aside while it takes what it waits for.
         receiver
-            .recv_matching(|e| matches!(e.event, ActorEvent::TurnFinished { .. }))
+            .recv_matching(&|e| matches!(e.event, ActorEvent::TurnFinished { .. }))
             .await
             .expect("queued");
         assert!(

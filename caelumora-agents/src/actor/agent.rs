@@ -31,12 +31,14 @@ use caelumora_domain::history::Heard;
 use caelumora_domain::message::{Message, MessageEvent, MessageRole};
 use caelumora_domain::plan::PlanProgress;
 use caelumora_domain::tool::{ToolCall, ToolCallState, ToolSet};
+use caelumora_domain::transcript::TranscriptEntry;
 use caelumora_domain::turn::GivenUpReason;
 use caelumora_domain::turn::TurnState;
 use caelumora_domain::type_map::TypeKey;
 use caelumora_domain::value::name::Name;
 use caelumora_domain::work::{TurnId, Work};
 use chrono::Utc;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use tracing::{debug, info, warn, Instrument};
 
@@ -269,22 +271,40 @@ impl AgentActor {
         &self,
         state: &mut AgentChannelState,
         rx: &mut Box<dyn EventReceiver>,
-        given_up_for: &mut Option<TurnId>,
+        given_up_for: &mut BTreeMap<ThreadId, TurnId>,
         output: &dyn EventSender,
     ) -> Result<Option<ActorState>> {
-        // Woken by the channel without a message - `/wakeup` - it says so
-        // and waits on (issue 243).
-        let received = loop {
-            tokio::select! {
-                received = rx.recv() => break received,
-                () = self.body.control.woken() => self.body.announce_state(output).await,
-                () = self.body.control.ending() => return Ok(Some(self.body.control.state())),
+        // A turn set aside asked to end, or one that goes on, comes first (issue 602).
+        if let Some(next) = self.take_up_set_aside(state, given_up_for, output).await {
+            return Ok(Some(next));
+        }
+        // Woken by the channel without a message - `/wakeup` - it says so,
+        // and takes up a turn settled while it slept (issues 243, 602). What
+        // waits for a turn set aside is not taken.
+        let waiting = self.body.control.set_aside_threads();
+        let takes = |envelope: &Envelope| !self.body.waits_for_set_aside(envelope, &waiting);
+        let received = tokio::select! {
+            received = rx.recv_matching(&takes) => received,
+            () = self.body.control.woken() => {
+                self.body.announce_state(output).await;
+                // Awake, it resumes a turn settled while it slept.
+                return Ok(Some(self.body.control.state()));
             }
+            () = self.body.control.asked() => return Ok(Some(self.body.control.state())),
+            () = self.body.control.ending() => return Ok(Some(self.body.control.state())),
         };
         let Some(received) = received else { return Ok(None) };
         // It gives its transcript nowhere else: of a change it does not hold on
         // its path there is nobody to tell.
         let taken = self.body.hear(state, received, rx, output).await;
+        if let Some(settling) = taken.settled {
+            // A failure is the waiting turn's, not the agent's: it waits on.
+            if let Err(e) = self.settle_set_aside(state, &settling, output).await {
+                warn!("Agent {} cannot settle its turn set aside: {:#}", self.id(), e);
+            }
+            state.heard = rx.heard();
+            return Ok(Some(self.body.control.state()));
+        }
         let (request, mut retries) = (taken.request, taken.retries);
         // Read once taken in, not before waiting: the channel wakes an agent
         // before it delivers the message that asks it, and the request comes
@@ -292,17 +312,20 @@ impl AgentActor {
         let asleep = self.body.control.state() == ActorState::Sleeping;
         let request = request.filter(|_| !asleep);
 
-        let of_given_up = given_up_for.map(RetryTarget::Turn);
+        let of_given_up = |retry: &Envelope| {
+            given_up_for.get(&retry.context.thread_id).map(|t| RetryTarget::Turn(*t))
+        };
         let judged = retries
             .iter()
-            .rposition(|retry| retry_target(retry) == of_given_up)
+            .rposition(|retry| retry_target(retry) == of_given_up(retry))
             .or(retries.len().checked_sub(1));
         let judged = judged.map(|at| retries.remove(at));
         self.body.refuse_retries(retries, RetryRefused::AskedAgain, output).await;
         let mut accepted = None;
         if let Some(retry) = judged {
             let span = envelope_span(&retry.context, retry.event.kind());
-            match self.retry(state, &retry, *given_up_for, output).instrument(span).await {
+            let given_up = given_up_for.get(&retry.context.thread_id).copied();
+            match self.retry(state, &retry, given_up, output).instrument(span).await {
                 Ok(true) => accepted = Some(retry),
                 Ok(false) => {}
                 Err(e) => {
@@ -310,14 +333,135 @@ impl AgentActor {
                 }
             }
         }
-        let started = match request.as_ref().or(accepted.as_ref()) {
+        let answered = request.as_ref().or(accepted.as_ref());
+        let started = match answered {
             Some(answered) => self.begin_answer(state, answered, output).await,
             None => false,
         };
-        if started {
-            *given_up_for = None;
+        if let Some(answered) = answered.filter(|_| started) {
+            given_up_for.remove(&answered.context.thread_id);
         }
         Ok(Some(if started { ActorState::Planning } else { self.body.control.state() }))
+    }
+
+    /// Takes up a turn set aside, between turns (issue 602): one that `cancel` or `retry` asked to
+    /// end - whether the agent sleeps or not - or else, awake, one that goes on by itself - settled
+    /// meanwhile, or resumed after a restart (`AgentThreadState::has_work_under_way`) - runs again
+    /// at the step it stands at (`RunControl::resume`), which is where the run loop goes on. One
+    /// asked to end is ended at once, from where it waits - taken over, or given up as `Retried`,
+    /// its thread remembered in `given_up_for` for the request on its way - and the agent stands
+    /// as it stood, asleep or idle - given up as lowered if it no longer flows into its channel.
+    /// `None` if no turn set aside is to be taken up.
+    async fn take_up_set_aside(
+        &self,
+        state: &mut AgentChannelState,
+        given_up_for: &mut BTreeMap<ThreadId, TurnId>,
+        output: &dyn EventSender,
+    ) -> Option<ActorState> {
+        let control = &self.body.control;
+        let asleep = control.state() == ActorState::Sleeping;
+        let goes_on =
+            |thread: &ThreadId| state.thread(*thread).is_some_and(|part| part.has_work_under_way());
+        let going_on = || control.set_aside_threads().into_iter().find(goes_on);
+        let thread = control.asked_of_set_aside().or_else(|| going_on().filter(|_| !asleep))?;
+        let turn = control.turn_under_way(thread);
+        let step = state.turn(thread).map_or(ActorState::Idle, |turn| turn.step);
+        let Some(asked) = control.resume(thread, step)? else { return Some(step) };
+        // One that no longer flows into its channel is given up as lowered (issue 141), as before
+        // every step of a turn that runs.
+        let lowered = self.body.under_way(state).and_then(|turn| self.lowered(turn));
+        if asked == Interrupt::Retry {
+            if let Some(turn) = turn {
+                given_up_for.insert(thread, turn);
+            }
+            self.give_up(state, GivenUpReason::Retried, output).await;
+        } else if let Some(channel) = lowered {
+            self.give_up(state, GivenUpReason::Lowered { channel }, output).await;
+        } else if let Err(e) = self.end_turn(state, true, output).await {
+            warn!(
+                "Agent {} cannot end its turn set aside in thread {}: {:#}",
+                self.id(),
+                thread,
+                e
+            );
+        }
+        let stood = if asleep { ActorState::Sleeping } else { ActorState::Idle };
+        self.settle(state, stood).await;
+        Some(stood)
+    }
+
+    /// Records what `envelope`, taken between turns, settles of the turn set aside in its thread
+    /// (issue 602) - a decision on an approval, or the answers to questions, or that they were
+    /// declined (issue 165) - or that someone left there, noted as between turns, which leaves the
+    /// questions nobody asked is left to answer unanswered (issue 482). What the event leads to -
+    /// questions an approved call now asks, the closing of questions answered, an approval
+    /// withdrawn - is sent at once, and the turn stands at `ExecutingTools`, to run what may run
+    /// once it is taken up (`take_up_set_aside`). Answers that do not count - from someone not
+    /// asked, to questions no longer open, not of the kind asked - are left out, logged without
+    /// what they say, and the turn waits on.
+    async fn settle_set_aside(
+        &self,
+        state: &mut AgentChannelState,
+        envelope: &Envelope,
+        output: &dyn EventSender,
+    ) -> Result<()> {
+        let thread = envelope.context.thread_id;
+        // Who left is noted as between turns - after the step's results, where it may stand
+        // (`AgentChannelState::note_announced`) -, before they are taken off the questions.
+        if matches!(envelope.event, ActorEvent::ParticipantLeft { .. }) {
+            self.body.take_in_said(state, envelope.clone()).await;
+        }
+        let Some(mut turn) = self.body.turn(state, thread) else {
+            warn!("Agent {} has no turn set aside in thread {} to settle", self.id(), thread);
+            return Ok(());
+        };
+        let sender = envelope.context.sender_id;
+        let settled = match envelope.event.clone() {
+            ActorEvent::ApprovalGranted(r) => self.decided(&mut turn, r, ApprovalStatus::Approved),
+            ActorEvent::ApprovalDenied(r) => self.decided(&mut turn, r, ApprovalStatus::Denied),
+            ActorEvent::ApprovalTimedOut(r) => self.decided(&mut turn, r, ApprovalStatus::Timeout),
+            ActorEvent::QuestionAnswered { id, responses, .. } => turn
+                .tool_calls()
+                .answer(id, sender, envelope.context.sender_name.clone(), responses)
+                .map(|closed| vec![closed])
+                .inspect_err(|e| {
+                    info!(
+                        "Agent {} leaves out an answer of {} to questions {}: {}",
+                        self.id(),
+                        sender,
+                        id,
+                        e
+                    )
+                })
+                .ok(),
+            ActorEvent::QuestionDeclined { id, .. } => turn
+                .tool_calls()
+                .decline(id, sender, envelope.context.sender_name.clone())
+                .map(|closed| vec![closed])
+                .inspect_err(|e| {
+                    info!(
+                        "Agent {} leaves out that {} declined questions {}: {}",
+                        self.id(),
+                        sender,
+                        id,
+                        e
+                    )
+                })
+                .ok(),
+            ActorEvent::ParticipantLeft { participant, .. } => {
+                Some(turn.tool_calls().left(participant)).filter(|settled| !settled.is_empty())
+            }
+            _ => None,
+        };
+        let Some(events) = settled else { return Ok(()) };
+        for event in events {
+            turn.send_event(event, output).await?;
+        }
+        if let Some(turn) = state.turn_mut(thread) {
+            turn.step = ActorState::ExecutingTools;
+        }
+        self.body.store(state).await;
+        Ok(())
     }
 
     /// Begins a turn in answer to `request` (`request_response`), and
@@ -376,7 +520,7 @@ impl AgentActor {
         answering.send(ActorEvent::RetryAccepted { target }, output).await?;
         let at = Utc::now();
         for id in taken_back {
-            state.transcript.revoke(id, at);
+            state.record_change(TranscriptEntry::Revoked { message: id, at });
             answering.send(ActorEvent::MessageRevoked { message: id, at }, output).await?;
         }
         Ok(true)
@@ -461,98 +605,6 @@ impl AgentActor {
             &channel,
         );
         (!flows).then_some(channel)
-    }
-
-    /// Waits for a person while in `WaitingForUser` in the turn under way in
-    /// `state`, and records what one event settles: a decision on an
-    /// approval, or the answers to questions, or that they were declined
-    /// (issue 165) - or that someone left the channel, noted as between
-    /// turns, which leaves the questions nobody asked is left to answer
-    /// unanswered (issue 482). What the event leads to - questions an approved call now
-    /// asks, the closing of questions answered, an approval withdrawn - is
-    /// sent at once; the run loop runs what may run via `ExecutingTools`.
-    /// Answers that do not count - from someone not asked, to questions no
-    /// longer open, not of the kind asked - are left out, logged without
-    /// what they say, and the turn waits on.
-    async fn handle_waiting_for_user(
-        &self,
-        state: &mut AgentChannelState,
-        rx: &mut Box<dyn EventReceiver>,
-        output: &dyn EventSender,
-    ) -> Result<Option<ActorState>> {
-        let for_the_waiting = |env: &Envelope| {
-            matches!(
-                env.event,
-                ActorEvent::ApprovalGranted(_)
-                    | ActorEvent::ApprovalDenied(_)
-                    | ActorEvent::ApprovalTimedOut(_)
-                    | ActorEvent::QuestionAnswered { .. }
-                    | ActorEvent::QuestionDeclined { .. }
-                    | ActorEvent::ParticipantLeft { .. }
-            )
-        };
-
-        // A cancel or a stop ends the waiting, not only an approval: the run
-        // loop then finds what it was told to do.
-        let cancelled = self.body.control.token();
-        let received = tokio::select! {
-            received = rx.recv_matching(for_the_waiting) => received,
-            _ = cancelled.cancelled() => return Ok(Some(ActorState::WaitingForUser)),
-        };
-        // Channel is closed
-        let Some(envelope) = received else { return Ok(None) };
-        // Who left is noted as between turns - after the step's results,
-        // where it may stand (`AgentChannelState::note_announced`) -, with
-        // where the agent stands, before it is taken off the questions
-        // (issue 482).
-        if matches!(envelope.event, ActorEvent::ParticipantLeft { .. }) {
-            self.body.take_in_said(state, envelope.clone()).await;
-            state.heard = rx.heard();
-        }
-        let mut turn = self.turn_under_way(state)?;
-        let sender = envelope.context.sender_id;
-        let settled = match envelope.event {
-            ActorEvent::ApprovalGranted(r) => self.decided(&mut turn, r, ApprovalStatus::Approved),
-            ActorEvent::ApprovalDenied(r) => self.decided(&mut turn, r, ApprovalStatus::Denied),
-            ActorEvent::ApprovalTimedOut(r) => self.decided(&mut turn, r, ApprovalStatus::Timeout),
-            ActorEvent::QuestionAnswered { id, responses, .. } => turn
-                .tool_calls()
-                .answer(id, sender, envelope.context.sender_name.clone(), responses)
-                .map(|closed| vec![closed])
-                .inspect_err(|e| {
-                    info!(
-                        "Agent {} leaves out an answer of {} to questions {}: {}",
-                        self.id(),
-                        sender,
-                        id,
-                        e
-                    )
-                })
-                .ok(),
-            ActorEvent::QuestionDeclined { id, .. } => turn
-                .tool_calls()
-                .decline(id, sender, envelope.context.sender_name.clone())
-                .map(|closed| vec![closed])
-                .inspect_err(|e| {
-                    info!(
-                        "Agent {} leaves out that {} declined questions {}: {}",
-                        self.id(),
-                        sender,
-                        id,
-                        e
-                    )
-                })
-                .ok(),
-            ActorEvent::ParticipantLeft { participant, .. } => {
-                Some(turn.tool_calls().left(participant)).filter(|settled| !settled.is_empty())
-            }
-            _ => None,
-        };
-        let Some(events) = settled else { return Ok(Some(ActorState::WaitingForUser)) };
-        for event in events {
-            turn.send_event(event, output).await?;
-        }
-        Ok(Some(ActorState::ExecutingTools))
     }
 
     /// Records the approver's `decision` on the approval `response` names,
@@ -1020,8 +1072,8 @@ impl Actor for AgentActor {
             .map_err(|_| anyhow!("AgentActor {} already running", self.id()))?;
 
         info!("AgentActor {} is starting", self.id());
-        // Whoever watches already learns where it starts.
-        self.body.announce(self.body.control.state(), &*output).await;
+        // Whoever watches already learns where it starts, as a whole (issue 602).
+        self.body.announce(self.body.control.standing(), &*output).await;
         if self.body.control.state().in_turn() {
             info!(
                 "AgentActor {} resumes a turn in state {:?}",
@@ -1029,30 +1081,36 @@ impl Actor for AgentActor {
                 self.body.control.state()
             );
         }
-        // Whatever step it resumes at, a turn may wait for approvals: one
-        // stored right after asking resumes executing its tools, then waits.
-        if self.body.control.state().in_turn()
-            && self.body.control.state() != ActorState::Cancelling
-        {
-            if let Some(mut turn) = self.turn(&mut state) {
+        // Whatever step they resume at, its turns may wait for approvals - the one that runs and
+        // those set aside (issue 602): one stored right after asking resumes executing its tools,
+        // then waits.
+        let resumed: Vec<ThreadId> = state
+            .threads
+            .iter()
+            .filter(|(_, part)| {
+                part.turn.as_ref().is_some_and(|turn| turn.step != ActorState::Cancelling)
+            })
+            .map(|(thread, _)| *thread)
+            .collect();
+        for thread in resumed {
+            if let Some(mut turn) = self.body.turn(&mut state, thread) {
                 if let Err(e) = self.request_pending(&mut turn, &*output).await {
                     warn!("AgentActor {} cannot ask again for the approvals and answers it waits for: {:#}", self.id(), e);
                 }
             }
         }
 
-        // The turn given up because its answer was asked for again (issue
-        // 235), until a turn begins: the request that is on its way finds
-        // it so.
-        let mut given_up_for: Option<TurnId> = None;
+        // The turn given up in a thread because its answer was asked for again (issues 235, 602),
+        // until a turn begins there: the request that is on its way finds it so.
+        let mut given_up_for: BTreeMap<ThreadId, TurnId> = BTreeMap::new();
         loop {
             // Every step announces what the steps before moved it to, and
             // tells its channel what they recorded of what it saw.
             self.body.announce_state(&*output).await;
             self.body.tell_recorded(&mut state, &*output).await;
             let current_state = self.body.control.state();
-            // Idle/WaitingForUser/Sleep may consume no event before the actor's
-            // input channel closes (Ok(None)) - that's the only way this loop ends.
+            // Idle and Sleeping may consume no event before the actor's input
+            // channel closes (Ok(None)) - that's the only way this loop ends.
             // Every other state always produces a next state.
             let span = agent_span(
                 self.body.agent_id(),
@@ -1091,13 +1149,11 @@ impl Actor for AgentActor {
                         self.handle_waiting(&mut state, &mut rx, &mut given_up_for, &*output)
                             .await?
                     }
+                    // A turn that waits for a person is set aside, stored at that step, and the
+                    // agent goes on between turns (issue 602): what settles it is taken in there.
                     ActorState::WaitingForUser => {
-                        let next =
-                            self.handle_waiting_for_user(&mut state, &mut rx, &*output).await?;
-                        // What it took ahead is stored with the turn it settled
-                        // (issue 223).
-                        state.heard = rx.heard();
-                        next
+                        self.body.control.set_aside();
+                        Some(ActorState::Idle)
                     }
                     ActorState::Planning => {
                         Some(self.handle_planning(&mut state, &mut rx, &*output).await?)
@@ -1144,6 +1200,11 @@ impl Actor for AgentActor {
             let interrupt = self.body.control.take_interrupt();
             if interrupt == Some(Interrupt::Leave) {
                 self.give_up(&mut state, GivenUpReason::Left, &*output).await;
+                // And every turn set aside (issue 602).
+                for thread in self.body.control.set_aside_threads() {
+                    self.body.control.resume(thread, ActorState::WaitingForUser);
+                    self.give_up(&mut state, GivenUpReason::Left, &*output).await;
+                }
                 self.settle(&mut state, ActorState::Idle).await;
                 break;
             }
@@ -1154,7 +1215,9 @@ impl Actor for AgentActor {
             // then finds its turn over.
             if interrupt == Some(Interrupt::Retry) && next_state.is_some_and(|next| next.in_turn())
             {
-                given_up_for = self.body.under_way(&state).map(|t| t.work.turn_id);
+                if let Some((thread, turn)) = self.body.control.under_way() {
+                    given_up_for.insert(thread, turn);
+                }
                 self.give_up(&mut state, GivenUpReason::Retried, &*output)
                     .instrument(span.clone())
                     .await;
@@ -1187,7 +1250,7 @@ impl Actor for AgentActor {
     }
 
     fn state(&self) -> ActorState {
-        self.body.control.state()
+        self.body.control.standing()
     }
 
     async fn tool_sets(&self) -> Vec<ToolSet> {
@@ -1217,8 +1280,8 @@ impl Actor for AgentActor {
         self.body.control.wakeup();
     }
 
-    fn turn_under_way(&self) -> Option<(ThreadId, TurnId)> {
-        self.body.control.under_way()
+    fn turn_under_way(&self, thread: ThreadId) -> Option<TurnId> {
+        self.body.control.turn_under_way(thread)
     }
 
     fn retry_turn(&self, turn: TurnId) -> bool {
@@ -1262,17 +1325,12 @@ impl Actor for AgentActor {
     }
 
     fn cancel(&self, thread: Option<ThreadId>) {
-        let there = thread.is_none_or(|thread| self.body.control.thread() == Some(thread));
-        match self.body.control.turn_under_way().filter(|_| there) {
-            Some(turn) => {
-                info!("Cancelling agent {} {} in turn {}", self.id(), self.body.scoped_name(), turn)
-            }
-            None => info!(
-                "Cancelling agent {} {}: no turn is under way there",
-                self.id(),
-                self.body.scoped_name()
-            ),
-        }
+        info!(
+            "Cancelling agent {} {} in {}",
+            self.id(),
+            self.body.scoped_name(),
+            thread.map_or("every thread".to_string(), |thread| format!("thread {thread}"))
+        );
         self.body.control.cancel(thread);
     }
 

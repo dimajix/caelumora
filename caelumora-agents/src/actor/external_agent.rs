@@ -1275,7 +1275,7 @@ mod tests {
         let mut revoked = AgentChannelState::default();
         revoked.remote.conversation = Some(ConversationId("c-1".to_string()));
         revoked.transcript.push(ThreadId::default(), first.clone());
-        revoked.transcript.revoke(first.id, at);
+        revoked.record_change(TranscriptEntry::Revoked { message: first.id, at });
         revoked.transcript.start_anew(ThreadId::default());
         tell_from(&MemoryStore::new(), &mut revoked, modified("again")).await;
         assert!(

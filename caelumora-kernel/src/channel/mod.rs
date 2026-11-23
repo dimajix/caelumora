@@ -712,11 +712,11 @@ impl ChannelLoop {
         actor_id.as_agent_id().and_then(|_| self.actor(actor_id))
     }
 
-    /// The turn under way of the participant `actor` (issue 235), if it is
-    /// in one that can still be ended - what a request to answer it again
+    /// The turn under way of the participant `actor` in `thread` (issues 235, 602), if it is in one
+    /// there that can still be ended, running or set aside - what a request to answer it again
     /// names.
-    pub(crate) fn turn_under_way(&self, actor: ActorId) -> Option<TurnId> {
-        self.actor(actor)?.turn_under_way().map(|(_, turn)| turn)
+    pub(crate) fn turn_under_way(&self, actor: ActorId, thread: ThreadId) -> Option<TurnId> {
+        self.actor(actor)?.turn_under_way(thread)
     }
 
     /// The thread the turn `turn` of `author` runs or ran in, if it can be asked for again: under
@@ -724,19 +724,25 @@ impl ChannelLoop {
     /// and with nothing after it in the channel's history (issue 259) - where a request to answer
     /// it again is made (issue 602).
     pub(crate) async fn retryable_turn(&self, author: ActorId, turn: TurnId) -> Option<ThreadId> {
-        let under_way = self.actor(author).and_then(|actor| actor.turn_under_way());
-        match under_way {
-            Some((thread, under_way)) if under_way == turn => Some(thread),
-            _ => self.given_up_last(author, turn).await,
+        let threads = self.threads_taken_part_in(author).await;
+        let under_way = |thread: &ThreadId| self.turn_under_way(author, *thread) == Some(turn);
+        if let Some(thread) = threads.iter().copied().find(under_way) {
+            return Some(thread);
         }
+        for thread in threads {
+            if self.given_up_last(author, turn, thread).await {
+                return Some(thread);
+            }
+        }
+        None
     }
 
-    /// The thread of `author`'s last turn given up, if it is `turn` and may be answered anew
-    /// after (issue 259).
-    async fn given_up_last(&self, author: ActorId, turn: TurnId) -> Option<ThreadId> {
+    /// Whether `turn` is `author`'s last turn given up in `thread` and may be answered anew after
+    /// (issues 259, 602).
+    async fn given_up_last(&self, author: ActorId, turn: TurnId, thread: ThreadId) -> bool {
         let state = self.state.lock().await;
-        let (last, reason, thread) = state.history.turn_given_up_last(author)?;
-        (last == turn && reason.may_be_answered_again()).then_some(thread)
+        let given_up = state.history.turn_given_up_last(author, thread);
+        given_up.is_some_and(|(last, reason)| last == turn && reason.may_be_answered_again())
     }
 
     /// The actor `user` acts through in this channel, or `None` if they are

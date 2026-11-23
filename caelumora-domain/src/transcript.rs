@@ -471,54 +471,35 @@ impl Transcript {
         Some(moved)
     }
 
-    /// Records that the message `modified.id` is given as `modified` from now
-    /// on (issue 234), on every branch that holds it as it stands. `false`,
-    /// and nothing is recorded, if no branch does - never given to the
-    /// model, on a branch no head reaches, or taken back - or it cannot be
-    /// modified so (`Message::modify`). Taken in between turns - a change
-    /// waits for a turn's end even where what is said is heard during it
-    /// (issue 431) -: a turn under way produces its next message from the
-    /// transcript as its context names it.
-    pub fn modify(&mut self, modified: Message) -> bool {
-        let taking = self.threads_where(modified.id, |mut message| message.modify(&modified));
-        for &thread in &taking {
-            self.append(thread, TranscriptEntry::Modified { message: modified.clone() });
+    /// The threads whose branch takes `change` - a modification, a taking back or a
+    /// reclassification of a message (`TranscriptEntry::changed`): it holds the message as it
+    /// stands and, for a modification, it can be modified so (`Message::modify`). None for an
+    /// entry that changes no message.
+    pub fn holding(&self, change: &TranscriptEntry) -> Vec<ThreadId> {
+        match change {
+            TranscriptEntry::Modified { message: modified } => {
+                self.threads_where(modified.id, |mut message| message.modify(modified))
+            }
+            TranscriptEntry::Revoked { message, .. }
+            | TranscriptEntry::Reclassified { message, .. } => {
+                self.threads_where(*message, |_| true)
+            }
+            _ => Vec::new(),
         }
-        !taking.is_empty()
+    }
+
+    /// Records `change` - a modification, a taking back or a reclassification of a message that
+    /// the branch of `thread` takes (`holding`) - on that branch alone (issue 602): what a change
+    /// of the whole channel is recorded on once the branch's turn has its step's results.
+    pub fn record_change(&mut self, thread: ThreadId, change: TranscriptEntry) {
+        debug_assert!(change.changed().is_some(), "a change of a message");
+        self.append(thread, change);
     }
 
     /// Whether `modify` takes `modified`: a change of a message a branch
     /// holds as it stands that it can be modified to.
     pub fn takes(&self, modified: &Message) -> bool {
         !self.threads_where(modified.id, |mut message| message.modify(modified)).is_empty()
-    }
-
-    /// Records that the message `id` was taken back at `at` (issue 234), on
-    /// every branch that holds it as it stands, so that the model is no
-    /// longer given it. `false`, and nothing is recorded, if no branch
-    /// does, as for `modify`.
-    pub fn revoke(&mut self, id: MessageId, at: DateTime<Utc>) -> bool {
-        let holding = self.threads_where(id, |_| true);
-        for &thread in &holding {
-            self.append(thread, TranscriptEntry::Revoked { message: id, at });
-        }
-        !holding.is_empty()
-    }
-
-    /// Records that the message `id` is classified `classification` from now
-    /// on (issue 239), on every branch that holds it as it stands: what a
-    /// turn begun afterwards has seen of it (issue 168). `false`, and
-    /// nothing is recorded, if no branch does, as for `modify`.
-    pub fn reclassify(&mut self, id: MessageId, classification: Classification) -> bool {
-        let holding = self.threads_where(id, |_| true);
-        for &thread in &holding {
-            let reclassified = TranscriptEntry::Reclassified {
-                message: id,
-                classification: classification.clone(),
-            };
-            self.append(thread, reclassified);
-        }
-        !holding.is_empty()
     }
 
     /// The threads whose branch holds the message `id` as it stands - not
@@ -824,6 +805,16 @@ mod tests {
     use chrono::Duration;
     use std::slice;
 
+    /// Records `change` on every branch that takes it, as a change of the whole channel is; whether
+    /// any did.
+    fn change(transcript: &mut Transcript, change: TranscriptEntry) -> bool {
+        let holding = transcript.holding(&change);
+        for &thread in &holding {
+            transcript.record_change(thread, change.clone());
+        }
+        !holding.is_empty()
+    }
+
     /// `transcript` as a store gives it back (`Transcript::loaded`): the branch of every thread
     /// it has a head for, read from its root, with nothing to store.
     fn reloaded(transcript: &Transcript) -> Transcript {
@@ -939,15 +930,24 @@ mod tests {
         transcript.push(other, make_message(id(2)));
         let corrected = Message { content: Some("corrected".to_string()), ..make_message(id(1)) };
 
-        assert!(transcript.modify(corrected));
+        assert!(change(&mut transcript, TranscriptEntry::Modified { message: corrected }));
         let content = |thread| transcript.messages(thread)[0].content.clone().unwrap_or_default();
         assert_eq!(
             (content(line), content(side)),
             ("corrected".to_string(), "corrected".to_string())
         );
         assert_eq!(content(other), "hello", "a branch without it is left as it is");
-        assert!(transcript.revoke(id(2), Utc::now()));
-        assert!(transcript.messages(other).is_empty() && !transcript.revoke(id(2), Utc::now()));
+        assert!(change(
+            &mut transcript,
+            TranscriptEntry::Revoked { message: id(2), at: Utc::now() }
+        ));
+        assert!(
+            transcript.messages(other).is_empty()
+                && !change(
+                    &mut transcript,
+                    TranscriptEntry::Revoked { message: id(2), at: Utc::now() }
+                )
+        );
     }
 
     /// Issues 380, 602: what no head reaches stays until it is stored - every position given
@@ -1252,19 +1252,26 @@ mod tests {
         );
         let before = transcript.digest(ThreadId::default()).unwrap();
 
-        assert!(transcript.modify(Message {
+        let corrected = Message {
             content: Some("corrected".to_string()),
             timestamp: at,
             ..make_message(id(1))
-        }));
-        assert!(transcript.revoke(id(2), at));
-        assert!(!transcript.revoke(id(2), at), "taken back already");
+        };
+        assert!(change(&mut transcript, TranscriptEntry::Modified { message: corrected }));
+        assert!(change(&mut transcript, TranscriptEntry::Revoked { message: id(2), at }));
         assert!(
-            !transcript
-                .modify(Message { content: Some("too late".to_string()), ..make_message(id(2)) }),
+            !change(&mut transcript, TranscriptEntry::Revoked { message: id(2), at }),
             "taken back already"
         );
-        assert!(!transcript.revoke(id(9), at), "never given");
+        let too_late = Message { content: Some("too late".to_string()), ..make_message(id(2)) };
+        assert!(
+            !change(&mut transcript, TranscriptEntry::Modified { message: too_late }),
+            "taken back already"
+        );
+        assert!(
+            !change(&mut transcript, TranscriptEntry::Revoked { message: id(9), at }),
+            "never given"
+        );
         transcript.push(ThreadId::default(), make_message(id(3)));
 
         assert_eq!(
@@ -1304,15 +1311,30 @@ mod tests {
         transcript.mark_stored();
         let before = transcript.digest(ThreadId::default()).unwrap();
 
-        assert!(transcript.reclassify(id(1), public.clone()));
+        assert!(change(
+            &mut transcript,
+            TranscriptEntry::Reclassified { message: id(1), classification: public.clone() }
+        ));
         assert_ne!(
             transcript.digest(ThreadId::default()),
             Some(before),
             "recorded: the digest covers it"
         );
-        transcript.revoke(id(2), Utc::now());
-        assert!(!transcript.reclassify(id(2), public.clone()), "taken back");
-        assert!(!transcript.reclassify(id(9), public.clone()), "never given");
+        change(&mut transcript, TranscriptEntry::Revoked { message: id(2), at: Utc::now() });
+        assert!(
+            !change(
+                &mut transcript,
+                TranscriptEntry::Reclassified { message: id(2), classification: public.clone() }
+            ),
+            "taken back"
+        );
+        assert!(
+            !change(
+                &mut transcript,
+                TranscriptEntry::Reclassified { message: id(9), classification: public.clone() }
+            ),
+            "never given"
+        );
 
         let internal = make_message(id(1)).classification;
         assert_eq!(
@@ -1343,12 +1365,13 @@ mod tests {
         let at = Utc::now();
         let mut transcript = Transcript::default();
         transcript.extend(ThreadId::default(), vec![make_message(id(1)), make_message(id(2))]);
-        assert!(transcript.modify(Message {
+        let corrected = Message {
             content: Some("corrected".to_string()),
             timestamp: at,
             ..make_message(id(1))
-        }));
-        transcript.revoke(id(2), at);
+        };
+        assert!(change(&mut transcript, TranscriptEntry::Modified { message: corrected }));
+        change(&mut transcript, TranscriptEntry::Revoked { message: id(2), at });
         transcript.start_anew(ThreadId::default());
         transcript.push(ThreadId::default(), make_message(id(3)));
 
@@ -1395,7 +1418,10 @@ mod tests {
         transcript.push(ThreadId::default(), make_message(id(2)));
         transcript.start_anew(ThreadId::default());
         transcript.push(ThreadId::default(), make_message(id(1)));
-        assert!(!transcript.revoke(id(2), Utc::now()), "not given to the model any more");
+        assert!(
+            !change(&mut transcript, TranscriptEntry::Revoked { message: id(2), at: Utc::now() }),
+            "not given to the model any more"
+        );
         assert_eq!(unstored(&transcript).len(), 2, "nothing recorded, the first entry the same");
     }
 
@@ -1418,8 +1444,9 @@ mod tests {
             TranscriptEntry::TurnFinished { turn_id: turn, at: Utc::now() },
         );
         transcript.extend(ThreadId::default(), vec![make_message(id(3)), make_message(id(4))]);
-        transcript.modify(Message { content: Some("changed".to_string()), ..make_message(id(3)) });
-        transcript.revoke(id(4), Utc::now());
+        let changed = Message { content: Some("changed".to_string()), ..make_message(id(3)) };
+        change(&mut transcript, TranscriptEntry::Modified { message: changed });
+        change(&mut transcript, TranscriptEntry::Revoked { message: id(4), at: Utc::now() });
         transcript.record(ThreadId::default(), TranscriptEntry::Compacted { at: Utc::now() });
         let old: Vec<Digest> = transcript.entries(ThreadId::default()).map(|n| n.digest).collect();
         let head = transcript.digest(ThreadId::default());
@@ -1521,7 +1548,7 @@ mod tests {
         );
         transcript.push(ThreadId::default(), make_message(id(3)));
         transcript.push(ThreadId::default(), make_message(id(4)));
-        transcript.revoke(id(2), Utc::now());
+        change(&mut transcript, TranscriptEntry::Revoked { message: id(2), at: Utc::now() });
         let roster = transcript.entries(ThreadId::default()).next().unwrap().digest;
         let keep_from = transcript.entries(ThreadId::default()).nth(5).map(|node| node.digest);
 

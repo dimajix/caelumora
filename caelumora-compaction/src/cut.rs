@@ -551,7 +551,12 @@ mod tests {
         transcript.give(ThreadId::default(), gift, source);
         transcript.push(ThreadId::default(), said("u3"));
         for id in taken_back {
-            assert!(transcript.revoke(id, Utc::now()));
+            let revoked = TranscriptEntry::Revoked { message: id, at: Utc::now() };
+            let holding = transcript.holding(&revoked);
+            assert!(!holding.is_empty(), "held");
+            for thread in holding {
+                transcript.record_change(thread, revoked.clone());
+            }
         }
 
         let positions = [0, 10, 20, 30, 40, 50, 60, 60, 60];

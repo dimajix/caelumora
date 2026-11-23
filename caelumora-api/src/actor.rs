@@ -68,7 +68,8 @@ pub trait Actor: Any + Debug + Send + Sync {
         None
     }
 
-    /// Returns the current processing state of the actor.
+    /// Where the actor stands now, as a whole (issue 602): an agent's turn that runs at its step,
+    /// else waiting for a person while a turn of it waits for one, else idle or asleep.
     fn state(&self) -> ActorState;
 
     /// The tools it has now, in their tool sets (issue 194), as it would
@@ -119,10 +120,10 @@ pub trait Actor: Any + Debug + Send + Sync {
         false
     }
 
-    /// Its turn under way (issue 235), if it is in one that can still be ended, with the thread it
-    /// runs in (issue 602). None for an actor without such turns - a user, an approver, an external
-    /// agent, whose answers are its remote side's.
-    fn turn_under_way(&self) -> Option<(ThreadId, TurnId)> {
+    /// Its turn under way in `thread` that can still be ended (issues 235, 602): the one that runs
+    /// there, or one set aside there because it waits for a person. None for an actor without
+    /// such turns - a user, an approver, an external agent, whose answers are its remote side's.
+    fn turn_under_way(&self, _thread: ThreadId) -> Option<TurnId> {
         None
     }
 

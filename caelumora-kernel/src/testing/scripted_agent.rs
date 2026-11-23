@@ -186,6 +186,11 @@ impl ScriptedAgent {
         self.interrupted.notify_one();
     }
 
+    /// The turn it answers in, with the thread of the request it answers.
+    fn answering(&self) -> Option<(ThreadId, TurnId)> {
+        self.turn.lock().ok().and_then(|turn| *turn)
+    }
+
     fn set_turn(&self, turn: Option<(ThreadId, TurnId)>) {
         if let Ok(mut current) = self.turn.lock() {
             *current = turn;
@@ -199,7 +204,7 @@ impl ScriptedAgent {
         let runtime = &self.runtime;
         let (session, channel) = (runtime.session_id(), runtime.channel_id());
         // In the thread of its turn, else in the line: where it stands is its own.
-        let thread = self.turn_under_way().map_or(ThreadId::line(channel), |(thread, _)| thread);
+        let thread = self.answering().map_or(ThreadId::line(channel), |(thread, _)| thread);
         Answering::own(session, channel, thread, self.id, self.name())
             .send_all(vec![ActorEvent::StateChanged(state)], output)
             .await;
@@ -255,18 +260,18 @@ impl Actor for ScriptedAgent {
     }
 
     fn cancel(&self, thread: Option<ThreadId>) {
-        let there = |thread| self.turn_under_way().is_some_and(|(there, _)| there == thread);
+        let there = |thread| self.answering().is_some_and(|(there, _)| there == thread);
         if thread.is_none_or(there) {
             self.ask(Interrupt::Cancel);
         }
     }
 
-    fn turn_under_way(&self) -> Option<(ThreadId, TurnId)> {
-        self.turn.lock().ok().and_then(|turn| *turn)
+    fn turn_under_way(&self, thread: ThreadId) -> Option<TurnId> {
+        self.answering().filter(|(there, _)| *there == thread).map(|(_, turn)| turn)
     }
 
     fn retry_turn(&self, turn: TurnId) -> bool {
-        let under_way = self.turn_under_way().map(|(_, under_way)| under_way) == Some(turn);
+        let under_way = self.answering().map(|(_, under_way)| under_way) == Some(turn);
         if under_way {
             self.ask(Interrupt::Retry);
         }

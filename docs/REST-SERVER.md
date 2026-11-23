@@ -401,7 +401,8 @@ state they start from:
     and the notes its agents published; for a participant, also the approvals and questions its
     agents wait for, read from their stored turns, so that one asked before the client connected or
     before a restart is shown - a sensitive question only to whom it was asked. A participant giving
-    an answer carries its turn (`turn_under_way`) and an agent participant where it stands
+    an answer carries its turn in the line (`turn_under_way`), running or set aside, and an agent
+participant where it stands
     (`state`), both read from the running channel - none of a channel that does not run - and kept
     up by the stream; a client that connects during an answer shows it as under way. Only here, not
     where channels are listed, do participants carry what their model calls used, since that reads

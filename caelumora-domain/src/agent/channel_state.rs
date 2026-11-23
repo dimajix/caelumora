@@ -252,7 +252,23 @@ impl AgentChannelState {
             return false;
         }
         self.attachments.number(&mut modified);
-        self.transcript.modify(modified)
+        self.record_change(TranscriptEntry::Modified { message: modified })
+    }
+
+    /// Records `change` - a modification, a taking back or a reclassification of a message, of the
+    /// whole channel - on every branch that holds the message (`Transcript::holding`): at once,
+    /// but on the branch of a turn whose step's calls have no results yet - one set aside, waiting
+    /// for a person (issue 602) - after the step's tool message, since nothing may stand between
+    /// calls and their results. `false`, and nothing is recorded, if no branch holds it.
+    pub fn record_change(&mut self, change: TranscriptEntry) -> bool {
+        let holding = self.transcript.holding(&change);
+        for &thread in &holding {
+            match self.turn_mut(thread).filter(|turn| !turn.tool_calls.is_empty()) {
+                Some(turn) => turn.after_step.push(AfterStep::Noted { entry: change.clone() }),
+                None => self.transcript.record_change(thread, change.clone()),
+            }
+        }
+        !holding.is_empty()
     }
 
     /// Takes note of `entry` of the channel's history, which the agent is told of rather than
@@ -268,16 +284,20 @@ impl AgentChannelState {
             return;
         };
         if let Some(turn) = self.turn_mut(thread).filter(|turn| !turn.tool_calls.is_empty()) {
-            turn.after_step.push(AfterStep::Announced { entry: told });
+            turn.after_step.push(AfterStep::Noted { entry: told });
             return;
         }
         self.note(thread, told);
     }
 
-    /// Records `told`, who joined or left, into the branch of `thread`, and
-    /// moves the turn under way there, if any, on past it.
+    /// Records `told`, who joined or left or a change of a message put aside after a step, into
+    /// the branch of `thread`, and moves the turn under way there, if any, on past it.
     fn note(&mut self, thread: ThreadId, told: TranscriptEntry) {
-        self.transcript.record(thread, told);
+        if told.changed().is_some() {
+            self.transcript.record_change(thread, told);
+        } else {
+            self.transcript.record(thread, told);
+        }
         let head = self.transcript.digest(thread);
         if let Some(turn) = self.turn_mut(thread) {
             turn.work.context.transcript = head;
@@ -325,7 +345,7 @@ impl AgentChannelState {
                     AfterStep::Given { message, knowledge } => {
                         self.given(thread, message, knowledge);
                     }
-                    AfterStep::Announced { entry } => self.note(thread, entry),
+                    AfterStep::Noted { entry } => self.note(thread, entry),
                 }
             }
         }
@@ -408,7 +428,7 @@ impl AgentChannelState {
             known.extend(results.flat_map(|r| &r.knowledge).map(|k| k.source.clone()));
             let put_aside = turn.after_step.iter().filter_map(|put| match put {
                 AfterStep::Given { knowledge, .. } => knowledge.as_ref(),
-                AfterStep::Announced { .. } => None,
+                AfterStep::Noted { .. } => None,
             });
             known.extend(put_aside.map(|k| k.source.clone()));
         }
@@ -438,7 +458,9 @@ impl AgentChannelState {
         };
         let at = Utc::now();
         for stood in &standing {
-            if !among(stood, &parts) && self.transcript.revoke(stood.1.id, at) {
+            if !among(stood, &parts)
+                && self.record_change(TranscriptEntry::Revoked { message: stood.1.id, at })
+            {
                 let withdrawn = ActorEvent::MessageWithdrawn { message: stood.1.id, at };
                 self.to_tell.push((thread, withdrawn));
             }
@@ -953,6 +975,29 @@ mod tests {
             threads: BTreeMap::from([(thread, part)]),
             ..AgentChannelState::default()
         }
+    }
+
+    /// Issue 602: a change of a message reaches every branch that holds it - at once, but on the
+    /// branch of a turn whose step's calls wait for their results only after the step.
+    #[test]
+    fn a_change_of_a_message_waits_on_a_branch_for_its_turns_step() {
+        let (line, there) = (ThreadId::default(), ThreadId::new());
+        let mut state = AgentChannelState::default();
+        let heard = Message { content: Some("heard".to_string()), ..make_message(id(1)) };
+        state.perceive(line, vec![heard.clone()]);
+        state.join_thread(there, None);
+        state.perceive(there, vec![heard]);
+        let call = ToolCallState::approved(make_tool_call("write_note"));
+        let step = ActorState::WaitingForUser;
+        let turn = TurnState { step, tool_calls: vec![call], ..TurnState::default() };
+        state.thread_mut(there).turn = Some(turn);
+
+        let revoked = TranscriptEntry::Revoked { message: id(1), at: Utc::now() };
+        assert!(state.record_change(revoked));
+        assert!(state.transcript.messages(line).is_empty(), "taken back on the line at once");
+        assert_eq!(state.transcript.messages(there).len(), 1, "not yet where the turn waits");
+        let put_aside = state.turn(there).map(|turn| turn.after_step.len());
+        assert_eq!(put_aside, Some(1), "but after its step");
     }
 
     #[test]
@@ -1563,7 +1608,7 @@ mod tests {
             state.given(ThreadId::default(), public("Collect, group."), Some(skill.clone())),
             "changed"
         );
-        assert!(state.transcript.revoke(first.id, Utc::now()));
+        assert!(state.record_change(TranscriptEntry::Revoked { message: first.id, at: Utc::now() }));
         assert!(state.given(ThreadId::default(), public("Collect."), Some(skill)), "taken back");
         assert!(
             state.given(ThreadId::default(), public("a summary"), None)
@@ -1670,7 +1715,7 @@ mod tests {
 
         turn_slot(&mut state).as_mut().unwrap().tool_calls.clear();
         turn_slot(&mut state).as_mut().unwrap().after_step.clear();
-        assert!(state.transcript.revoke(read.id, Utc::now()));
+        assert!(state.record_change(TranscriptEntry::Revoked { message: read.id, at: Utc::now() }));
         assert_eq!(last(&state, "a.txt"), None, "taken back, as the model is no longer given it");
 
         let lowered = state.turn(ThreadId::default()).unwrap().work.turn_id;
@@ -1948,9 +1993,8 @@ mod tests {
             .entries(ThreadId::default())
             .find(|n| n.entry.message().is_some_and(|m| m.id == kept.id))
             .map(|n| n.digest);
-        state
-            .transcript
-            .modify(Message { content: Some("changed!".to_string()), ..changed.clone() });
+        let changed_now = Message { content: Some("changed!".to_string()), ..changed.clone() };
+        state.record_change(TranscriptEntry::Modified { message: changed_now });
         let change_at = state.transcript.digest(ThreadId::default());
         begin(&mut state, Vec::new());
         let parts = [
@@ -2607,7 +2651,10 @@ mod tests {
         state
             .transcript
             .extend(ThreadId::default(), vec![classified(3, Confidentiality::Internal)]);
-        state.transcript.reclassify(id(3), Classification::PUBLIC);
+        state.record_change(TranscriptEntry::Reclassified {
+            message: id(3),
+            classification: Classification::PUBLIC,
+        });
 
         let given = state.classifications_given(ThreadId::default()).to_vec();
         let expected = [
@@ -2656,7 +2703,10 @@ mod tests {
     fn a_turn_begun_after_a_release_is_labelled_by_the_message_as_it_stands() {
         let mut state = a_state_that_heard("the numbers", Classification::CHANNEL_DEFAULT);
         let heard = state.transcript.messages(ThreadId::default())[0].id;
-        assert!(state.transcript.reclassify(heard, Classification::PUBLIC));
+        assert!(state.record_change(TranscriptEntry::Reclassified {
+            message: heard,
+            classification: Classification::PUBLIC
+        }));
 
         begin(&mut state, Vec::new());
         assert_eq!(
@@ -2673,7 +2723,10 @@ mod tests {
             ..said("hi", Classification::CHANNEL_DEFAULT)
         };
         state.transcript.push(ThreadId::default(), answer.clone());
-        state.transcript.reclassify(answer.id, Classification::PUBLIC);
+        state.record_change(TranscriptEntry::Reclassified {
+            message: answer.id,
+            classification: Classification::PUBLIC,
+        });
         assert_eq!(
             state.retried(ThreadId::default(), answer.id, agent),
             Ok(vec![answer.id]),
@@ -2715,9 +2768,8 @@ mod tests {
         );
 
         // The user corrects the question: a change, not something said.
-        state
-            .transcript
-            .modify(Message { content: Some("hello there".to_string()), ..question.clone() });
+        let corrected = Message { content: Some("hello there".to_string()), ..question.clone() };
+        state.record_change(TranscriptEntry::Modified { message: corrected });
         assert_eq!(
             state.retried(ThreadId::default(), first.id, agent),
             Ok(vec![first.id]),
@@ -2815,7 +2867,7 @@ mod tests {
 
         let mut state = a_state_that_heard("hello", Classification::CHANNEL_DEFAULT);
         state.transcript.push(ThreadId::default(), first.clone());
-        state.transcript.revoke(first.id, Utc::now());
+        state.record_change(TranscriptEntry::Revoked { message: first.id, at: Utc::now() });
         assert_eq!(
             state.retried(ThreadId::default(), first.id, agent),
             Err(RetryRefused::NotItsAnswer),

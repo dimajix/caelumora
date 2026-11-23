@@ -1017,8 +1017,9 @@ decision for the whole channel rather than one per actor.
 
 ### Cancelling
 
-`ChannelLoop::cancel` (`CancelChannel`) ends the turns that run in a thread - not the turn an
-actor taking part in it runs in another (issue 602) -, or in every thread of the channel - the web
+`ChannelLoop::cancel` (`CancelChannel`) ends the turns that run in a thread, or wait there for a
+person, set aside - not the turn an actor taking part in it runs in another (issue 602) -, or in
+every thread of the channel - the web
 UI's stop button, which cancels them all (issue 557). It is an operation on the channel, like
 renaming or deleting it, not an act of taking part: the policy decides who may, and nobody has to
 be a participant for it; a thread is part of its channel, and asks the same.
@@ -1040,7 +1041,8 @@ is not delegated into a quiet thread (`ThreadQuiet`), so that a giver cannot und
 and a brief that waited there is given back as one its recipient could not be asked; what a
 delegate gives back into a quiet thread is delivered, and nobody there is asked.
 
-`ChannelLoop::cancel_actor` ends the turn of one actor alone, under the same permission, asked
+`ChannelLoop::cancel_actor` ends the turns of one actor alone - the one it runs and those set
+aside (issue 602) -, under the same permission, asked
 before the actor is looked up, so that who may not learns nothing of who is in the channel. The
 thread does not become quiet: being quiet is the thread's state, not one actor's. The others go
 on, and the answer the cancelled turn is taken over with reaches everyone as any answer does.

@@ -403,18 +403,22 @@ impl AgentBody {
             if awake {
                 self.control.go_to(ActorState::Idle);
             }
-            let Some(next) = rx.try_recv().await else { break };
+            let waiting = self.control.set_aside_threads();
+            let between_turns = |envelope: &Envelope| self.between_turns(envelope, &waiting);
+            let Some(next) = rx.try_recv_if(&between_turns).await else { break };
             taken = taken.then(self.take_in(state, next, rx).await);
         }
         taken
     }
 
     /// Tells the users that its actor stands at `state` (issue 243) - in its own context (`own`):
-    /// in a turn, in the turn's thread, else in its channel's line, as the channel names what is of
-    /// no thread (issue 602) - the state is the agent's, not a turn's. Not sent is only logged.
+    /// a step of the turn it runs, in the turn's thread, else in its channel's line, as the channel
+    /// names what is of no thread - waiting for a person while a turn set aside waits among it
+    /// (issue 602) -: the state is the agent's, not a turn's. Not sent is only logged.
     pub(super) async fn announce(&self, state: ActorState, output: &dyn EventSender) {
         let changed = ActorEvent::StateChanged(state);
-        let in_turn = self.control.thread().filter(|_| state.in_turn());
+        let running = state.in_turn() && self.control.state() == state;
+        let in_turn = self.control.thread().filter(|_| running);
         let thread = in_turn.unwrap_or_else(|| ThreadId::line(self.runtime.channel_id()));
         if let Err(e) = self.own(thread).send(changed, output).await {
             warn!("{:#}", e);
@@ -633,7 +637,9 @@ mod tests {
         body.begin_turn(&mut state, there, work);
         let (tx, mut rx) = mpsc::channel(8);
         let output = InMemoryEventSender::new(tx);
+        body.control.go_to(ActorState::Planning);
         body.announce(ActorState::Planning, &output).await;
+        body.control.go_to(ActorState::Idle);
         body.announce(ActorState::Idle, &output).await;
 
         let line = ThreadId::line(body.runtime.channel_id());

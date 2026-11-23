@@ -36,8 +36,9 @@ pub trait EventSender: Send + Sync {
 
 /// A test on an event, for `EventReceiver::recv_matching`. Spelt with its
 /// lifetime bound for every reference, so that `async_trait` does not bind it
-/// to one lifetime of the future.
-pub type EventPredicate = for<'a> fn(&'a Envelope) -> bool;
+/// to one lifetime of the future; a closure, so that it may ask what its
+/// caller knows (issue 602).
+pub type EventPredicate<'p> = dyn for<'a> Fn(&'a Envelope) -> bool + Sync + 'p;
 
 /// What is done with each event looked at, for `EventReceiver::try_recv_if`
 /// (issue 435). Spelt with its lifetime bound for every reference, as
@@ -60,7 +61,7 @@ pub trait EventReceiver: Send {
     /// of what does not, which stays where it is, in order, to be taken
     /// next. A search: it passes over whatever does not match, wherever the
     /// match is - unlike `try_recv_if`, which stops where it is told to.
-    async fn recv_matching(&mut self, predicate: EventPredicate) -> Option<Envelope>;
+    async fn recv_matching(&mut self, predicate: &EventPredicate<'_>) -> Option<Envelope>;
 
     /// The next event that is there already, without waiting for one to
     /// arrive. `None` says that nothing is there now, not that the input

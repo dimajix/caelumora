@@ -390,7 +390,7 @@ impl EventReceiver for InboxReceiver {
     /// Searches the queue, then what was read of the history, then the
     /// history itself, without keeping what it passes over: that stays
     /// where it is, to be read again in order.
-    async fn recv_matching(&mut self, predicate: EventPredicate) -> Option<Envelope> {
+    async fn recv_matching(&mut self, predicate: &EventPredicate<'_>) -> Option<Envelope> {
         self.next(true, &|envelope| if predicate(envelope) { Pick::Take } else { Pick::PassOver })
             .await
     }
@@ -565,7 +565,7 @@ mod tests {
             inbox.deliver(history.record(event));
         }
         let found = rx
-            .recv_matching(|e| matches!(e.event, ActorEvent::ApprovalGranted(_)))
+            .recv_matching(&|e| matches!(e.event, ActorEvent::ApprovalGranted(_)))
             .await
             .expect("in the history");
         assert_eq!(found.context.position, Some(Position::new((CAPACITY + 20) as u64)));
@@ -575,7 +575,7 @@ mod tests {
         assert_eq!(rx.heard(), Heard::at(history.end()));
 
         let waiting = tokio::spawn(async move {
-            rx.recv_matching(|e| matches!(e.event, ActorEvent::ApprovalDenied(_)))
+            rx.recv_matching(&|e| matches!(e.event, ActorEvent::ApprovalDenied(_)))
                 .await
                 .map(|e| e.event.kind())
         });
