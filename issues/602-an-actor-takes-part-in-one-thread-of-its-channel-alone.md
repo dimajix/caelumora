@@ -581,3 +581,23 @@ above. The position of a predecessor (C) is no step yet.
   message mentions by name but its thread did not draw in, the thread's moderator tells whoever
   said it (`Notice::NotDrawnIn`, `ActorEvent::NotDrawnIn`, `HistoryEntry::NotDrawnIn`, the REST
   item `not_drawn_in`), and the web UI shows it.
+- **2026-11-23** — Step 3c-2 committed. Decided by the maintainer: all stored data may be deleted;
+  `MentionDirectory::resolve` keeps returning its two lists as a tuple; an agent's intake is to pass
+  over the notices it takes no note of - found unneeded on looking: an agent's inbox takes only what
+  its `Actor::event_filter` lets through, live and read again from the history alike, which none of
+  the moderator's notices passes, so its intake never meets one. Decided for step 3d, on the
+  author's plan: it goes in two - 3d-1, a restructuring, and 3d-2, a turn that waits for a person
+  set aside while the agent answers elsewhere -; the agent's state is told as a whole, the running
+  turn's step, else waiting while a turn waits, else idle or asleep; a turn settled while the agent
+  sleeps resumes as it wakes; a settled turn and a new request are taken in the order they reach the
+  agent; a change of a message reaches a waiting turn's branch after its step; a channel's view
+  shows the turn under way in its line; a turn keeps the step it stands at. Step 3d-1 done: where an
+  agent stands outside a turn is its own as a whole (`AgentChannelState::asleep`), a turn keeps its
+  step (`TurnState::step`, no longer `AgentThreadState::processing_state`), and a turn found in a
+  second thread asleep is no longer lost, nor a stale sleep of the line found again, after a
+  restart. `joined_thread_id` is gone: what an agent says of itself outside a turn - where it
+  stands, the tools it would be offered - happens in the line; an external agent's one thread is
+  the one it takes part in; what happens in a thread an agent does not follow it does not take in
+  (`AgentBody::is_unfollowed`), instead of taking it in on another branch. Moved to 3d-2, where they
+  have their first use: the run control keeping a turn per thread, and asking an actor for its turn
+  under way in a thread.

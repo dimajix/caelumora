@@ -66,11 +66,6 @@ pub trait ActorRuntime: Send + Sync + Debug {
     /// it was opened at; `None` for its line, or a thread its channel does not hold open.
     fn origin_of(&self, thread: ThreadId) -> Option<ThreadOrigin>;
 
-    /// The thread it counts as joined its channel in, of those it takes part in now (issue 602):
-    /// its line if it takes part there, else the first. Where it says of itself what names no
-    /// thread of its own - the tools it would be offered, where it stands before its first turn.
-    fn joined_thread_id(&self) -> ThreadId;
-
     /// The agent as it is now, as its session holds it (issue 120).
     fn agent(&self) -> Arc<Agent>;
 

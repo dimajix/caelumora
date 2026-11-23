@@ -132,11 +132,11 @@ impl ExternalAgentActor {
         TypeKey::of::<dyn CommandProvider<dyn AgentCommand>>(),
     ];
 
-    /// The one thread it takes part in, the one it joined in (`ActorRuntime::joined_thread_id`),
-    /// whose branch of its transcript all its work reads and extends (issue 602): its remote agent
-    /// keeps one conversation, so an external agent keeps to one thread.
+    /// The one thread it takes part in (`one_thread`), whose branch of its transcript all its work
+    /// reads and extends (issue 602): its remote agent keeps one conversation, so an external agent
+    /// keeps to one thread.
     fn thread(&self) -> ThreadId {
-        self.body.runtime.joined_thread_id()
+        one_thread(&*self.body.runtime)
     }
 
     /// The actor of the external agent of `actor_runtime` (issue 516), built from its
@@ -157,10 +157,9 @@ impl ExternalAgentActor {
             )],
         };
         // It resumes no answer: the remote agent's tasks are followed again
-        // (`follow_open_tasks`), and it starts idle.
-        let resume = |state: &mut AgentChannelState| {
-            state.threads.values_mut().for_each(|part| part.processing_state = ActorState::Idle);
-        };
+        // (`follow_open_tasks`), and it starts idle - it keeps no turn of its own in its state, and
+        // never sleeps (issue 602).
+        let resume = |_: &mut AgentChannelState| {};
         let (body, components) =
             AgentBody::build(Self::COMPONENT_FACETS, &defaults, actor_runtime, resume).await?;
         let remote = components.one::<dyn ExternalAgent>().await?;
@@ -903,6 +902,13 @@ impl Answer {
     }
 }
 
+/// The one thread an external agent takes part in (issue 602): it keeps to one, as its remote
+/// agent keeps one conversation (`Actor::takes_part_in_several_threads`); its channel's line if,
+/// gone, it takes part in none.
+fn one_thread(runtime: &dyn ActorRuntime) -> ThreadId {
+    runtime.threads().first().copied().unwrap_or_else(|| ThreadId::line(runtime.channel_id()))
+}
+
 /// Tells the remote agent of `change`, a modification or revocation the
 /// transcript of `state` did not take (issue 236, handed over by `take_in`
 /// where it came): of a message it was given - one the transcript holds on
@@ -912,8 +918,7 @@ impl Answer {
 /// was not given yet, by modifying that one, so that it is told once, of
 /// the message as it stands then. Nothing for a message never given or
 /// taken back where it was given, or while the remote agent keeps no
-/// conversation: then it is given everything anew. In its one thread, the one it joined in
-/// (`ExternalAgentActor::thread`, issue 602).
+/// conversation: then it is given everything anew. In its one thread (`one_thread`, issue 602).
 ///
 /// What the remote agent was given of the message is read from the store
 /// (`ActorRuntime::transcript_message`, issue 380): it lies on a branch no
@@ -930,7 +935,7 @@ fn tell<'a>(
             return;
         };
         match runtime.transcript_message(id).await {
-            Ok(was) => give_notice(state, runtime.joined_thread_id(), change, was),
+            Ok(was) => give_notice(state, one_thread(runtime), change, was),
             Err(e) => warn!("External agent cannot read message {} as it was given, to tell of its change: {:#}", id, e),
         }
     })

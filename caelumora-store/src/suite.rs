@@ -1236,11 +1236,10 @@ pub async fn work_under_way_is_indexed(store: &dyn StateStore) {
     };
     assert!(listed().await.is_empty(), "nothing stored, nothing under way");
 
-    let in_turn = |processing_state: ActorState| {
+    let in_turn = |step: ActorState| {
         let mut state = AgentChannelState::default();
-        let part = state.thread_mut(ThreadId::default());
-        part.processing_state = processing_state;
-        part.turn = Some(TurnState::default());
+        state.thread_mut(ThreadId::default()).turn =
+            Some(TurnState { step, ..TurnState::default() });
         state
     };
     let mut planning = in_turn(ActorState::Planning);

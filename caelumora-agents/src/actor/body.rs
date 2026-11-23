@@ -139,7 +139,7 @@ impl AgentBody {
             CommandSet::new(components.get_all::<dyn CommandProvider<dyn AgentCommand>>(None)?)?;
         let mut state = runtime.load_channel_state().await?;
         resume(&mut state);
-        let control = RunControl::resuming(&state, runtime.joined_thread_id());
+        let control = RunControl::resuming(&state);
         let followed =
             sync::Mutex::new(runtime.threads().union(&state.threads_held()).copied().collect());
         let body = Self {
@@ -240,20 +240,16 @@ impl AgentBody {
         state.turn(self.control.thread()?)
     }
 
-    /// The thread whose branch of the agent's transcript `envelope` is taken in on, answered on or
-    /// carried out on (issue 602): the thread it happens in (`EventContext::thread_id`) if the
-    /// agent follows it (`followed`), else the one it joined in
-    /// (`ActorRuntime::joined_thread_id`): what reaches it by name of a thread it does not follow -
-    /// which the channel admits of a nudge, a request to answer again or a command no more, each
-    /// of an agent that takes part in the thread it names (issue 602) -, read again from the
-    /// history as it was before.
-    pub(super) fn branch_of(&self, envelope: &Envelope) -> ThreadId {
-        let happened_in = envelope.context.thread_id;
-        if self.lock_followed().contains(&happened_in) {
-            happened_in
-        } else {
-            self.runtime.joined_thread_id()
-        }
+    /// Whether `envelope` happens in a thread the agent does not follow (issue 602): of a thread
+    /// (`Envelope::thread`), not of the whole channel, and not its own join of it, which it begins
+    /// to follow (`own_change`). What reaches it so - late, after it was let go from the thread,
+    /// or by name, read again from the history as it was before the channel admitted a nudge, a
+    /// request to answer again or a command only of one taking part (issue 602) - it does not take
+    /// in: everything it takes in goes on the branch of the thread it happens in.
+    pub(super) fn is_unfollowed(&self, envelope: &Envelope) -> bool {
+        let joins = matches!(self.own_change(envelope), Some(OwnChange::Joined(_)));
+        let followed = |thread| self.lock_followed().contains(&thread);
+        !joins && envelope.thread().is_some_and(|thread| !followed(thread))
     }
 
     /// The agent's own join or leave of a thread that `envelope` announces (issue 602): what
@@ -355,10 +351,15 @@ impl AgentBody {
         })
     }
 
-    /// Stores its `state` in the channel, with where its actor stands now, in the thread it stands
-    /// in (`standing_in`). A failure is logged: the actor carries on with the state in memory.
+    /// Stores its `state` in the channel, with where its actor stands now (issue 602): the step of
+    /// the turn under way, with the turn, and whether it sleeps, its own as a whole. A failure is
+    /// logged: the actor carries on with the state in memory.
     pub(super) async fn store(&self, state: &mut AgentChannelState) {
-        state.thread_mut(self.standing_in()).processing_state = self.control.state();
+        let standing = self.control.state();
+        state.asleep = standing == ActorState::Sleeping;
+        if let Some(turn) = self.control.thread().and_then(|thread| state.turn_mut(thread)) {
+            turn.step = standing;
+        }
         if let Err(e) = self.runtime.store_channel_state(state).await {
             warn!(
                 "Agent {} cannot store its state in channel {}: {:#}",
@@ -408,22 +409,16 @@ impl AgentBody {
         taken
     }
 
-    /// Tells the users that its actor stands at `state` (issue 243) - in
-    /// its own context (`own`), in the thread it stands in (`standing_in`): the state is the
-    /// agent's, not a turn's. Not sent is only logged.
+    /// Tells the users that its actor stands at `state` (issue 243) - in its own context (`own`):
+    /// in a turn, in the turn's thread, else in its channel's line, as the channel names what is of
+    /// no thread (issue 602) - the state is the agent's, not a turn's. Not sent is only logged.
     pub(super) async fn announce(&self, state: ActorState, output: &dyn EventSender) {
         let changed = ActorEvent::StateChanged(state);
-        if let Err(e) = self.own(self.standing_in()).send(changed, output).await {
+        let in_turn = self.control.thread().filter(|_| state.in_turn());
+        let thread = in_turn.unwrap_or_else(|| ThreadId::line(self.runtime.channel_id()));
+        if let Err(e) = self.own(thread).send(changed, output).await {
             warn!("{:#}", e);
         }
-    }
-
-    /// The thread its actor stands in (issue 602): the one of the turn that runs or ran last
-    /// (`RunControl::thread`) while it follows that thread, else - before its first turn, or once
-    /// it left that thread - the one it counts as joined in.
-    pub(super) fn standing_in(&self) -> ThreadId {
-        let followed = |thread: &ThreadId| self.lock_followed().contains(thread);
-        self.control.thread().filter(followed).unwrap_or_else(|| self.runtime.joined_thread_id())
     }
 
     /// Tells its channel what the agent recorded since it last did - what it was given to read,
@@ -540,8 +535,8 @@ mod testing {
             Self { runtime: Arc::new(runtime), ..self }
         }
 
-        /// This body, its agent taking part in `thread` as well as in the one it joined in
-        /// (issue 602), with a runtime of its own: what `hearing` gave it before is gone.
+        /// This body, its agent taking part in `thread` as well as in its line (issue 602), with a
+        /// runtime of its own: what `hearing` gave it before is gone.
         pub(in crate::actor) fn taking_part_also_in(self, thread: ThreadId) -> Self {
             let runtime = detached_participant(self.agent_id()).taking_part_also_in(thread);
             Self { runtime: agent_runtime(runtime), ..self }.following_its_threads()
@@ -555,25 +550,31 @@ mod tests {
     use caelumora_domain::actor::EventContext;
     use caelumora_domain::chain::Position;
     use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::message::testing::make_message;
     use caelumora_domain::message::MessageId;
     use caelumora_domain::value::time_zone::TimeZone;
     use caelumora_kernel::transport::InMemoryEventSender;
     use chrono::Utc;
     use tokio::sync::mpsc;
 
-    /// Issue 602: what happens in a thread the agent takes part in goes on that thread's branch,
-    /// what happens in another on the branch of the one it joined in.
+    /// Issue 602: what happens in a thread the agent does not follow it does not take in - but its
+    /// own join of the thread, and what happens in the whole channel.
     #[test]
-    fn an_envelope_goes_on_the_branch_of_its_thread_where_the_agent_takes_part() {
-        let (joined, there, elsewhere) = (ThreadId::default(), ThreadId::new(), ThreadId::new());
+    fn what_happens_in_a_thread_it_does_not_follow_is_not_for_it() {
+        let (line, there, elsewhere) = (ThreadId::default(), ThreadId::new(), ThreadId::new());
         let body = AgentBody::detached(Vec::new()).taking_part_also_in(there);
-        let in_thread = |thread_id| {
-            let context = EventContext { thread_id, ..EventContext::default() };
-            Envelope::new(context, ActorEvent::WakeupRequested)
+        let in_thread = |thread_id, event| {
+            Envelope::new(EventContext { thread_id, ..EventContext::default() }, event)
         };
-        assert_eq!(body.branch_of(&in_thread(joined)), joined, "the one it joined in");
-        assert_eq!(body.branch_of(&in_thread(there)), there, "a further one");
-        assert_eq!(body.branch_of(&in_thread(elsewhere)), joined, "one it takes no part in");
+        let said = || ActorEvent::CompleteMessageGenerated(make_message(MessageId::new()));
+        assert!(!body.is_unfollowed(&in_thread(line, said())), "its line");
+        assert!(!body.is_unfollowed(&in_thread(there, said())), "a further thread of its");
+        assert!(body.is_unfollowed(&in_thread(elsewhere, said())), "one it takes no part in");
+        let name = "helper".to_string();
+        let its_join = ActorEvent::ParticipantJoined { participant: body.id(), name };
+        assert!(!body.is_unfollowed(&in_thread(elsewhere, its_join)), "but its join of it");
+        let revoked = ActorEvent::MessageRevoked { message: MessageId::new(), at: Utc::now() };
+        assert!(!body.is_unfollowed(&in_thread(elsewhere, revoked)), "and the whole channel's");
     }
 
     /// Issue 602: what the agent recorded is told in the thread of the branch it was recorded on,
@@ -600,34 +601,73 @@ mod tests {
         assert!(state.to_tell.is_empty(), "taken");
     }
 
-    /// Issue 602: an agent's state is stored with where its actor stands in the thread of its turn,
-    /// and before its first turn in the thread it joined in.
+    /// Issue 602: an agent's state is stored with where its actor stands - outside a turn its own
+    /// as a whole, asleep or not, in a turn with the turn, in the turn's thread - and nothing of a
+    /// thread is begun for it.
     #[tokio::test]
-    async fn where_it_stands_is_stored_in_the_thread_of_its_turn() {
-        let (joined, there) = (ThreadId::default(), ThreadId::new());
+    async fn where_it_stands_is_stored_its_own_or_with_its_turn() {
+        let there = ThreadId::new();
         let body = AgentBody::detached(Vec::new()).taking_part_also_in(there);
         let mut state = AgentChannelState::default();
         body.control.go_to(ActorState::Sleeping);
         body.store(&mut state).await;
-        let standing = |state: &AgentChannelState, thread| {
-            state.thread(thread).map(|part| part.processing_state)
-        };
-        assert_eq!(standing(&state, joined), Some(ActorState::Sleeping), "before its first turn");
+        assert!(state.asleep && state.threads.is_empty(), "asleep, of no thread");
 
         let work = Work::new(EventContext::default(), None, Classification::PUBLIC, TimeZone::UTC);
         body.begin_turn(&mut state, there, work);
         body.control.go_to(ActorState::Planning);
         body.store(&mut state).await;
-        assert_eq!(standing(&state, there), Some(ActorState::Planning), "in its turn's thread");
-        assert_eq!(standing(&state, joined), Some(ActorState::Sleeping), "not where it joined");
+        let step = state.turn(there).map(|turn| turn.step);
+        assert_eq!(step, Some(ActorState::Planning), "its turn's step, with its turn");
+        assert!(!state.asleep, "awake in a turn");
     }
 
-    /// Issue 602: let go from the thread of its last turn, the agent stands in the one it counts as
-    /// joined in, and nothing of the thread it left comes back as its state is stored; a leave of a
-    /// thread it takes part in again - one read back as it joins the channel again - leaves what
-    /// it kept there as it was.
+    /// Issue 602: where its actor stands is announced in the thread of its turn while it is in one,
+    /// and else in its channel's line, as what names no thread is.
     #[tokio::test]
-    async fn let_go_from_the_thread_of_its_last_turn_it_stands_where_it_joined() {
+    async fn where_it_stands_is_announced_in_its_turns_thread_else_in_the_line() {
+        let there = ThreadId::new();
+        let body = AgentBody::detached(Vec::new()).taking_part_also_in(there);
+        let mut state = AgentChannelState::default();
+        let work = Work::new(EventContext::default(), None, Classification::PUBLIC, TimeZone::UTC);
+        body.begin_turn(&mut state, there, work);
+        let (tx, mut rx) = mpsc::channel(8);
+        let output = InMemoryEventSender::new(tx);
+        body.announce(ActorState::Planning, &output).await;
+        body.announce(ActorState::Idle, &output).await;
+
+        let line = ThreadId::line(body.runtime.channel_id());
+        let mut told = Vec::new();
+        while let Ok(envelope) = rx.try_recv() {
+            told.push(envelope.context.thread_id);
+        }
+        assert_eq!(told, [there, line], "in its turn's thread, then in the line");
+    }
+
+    /// Issue 602: an agent that went to sleep after a turn in a thread other than its line resumes
+    /// asleep, as it stood - not as any thread's part says.
+    #[tokio::test]
+    async fn asleep_after_a_turn_in_another_thread_it_resumes_asleep() {
+        let there = ThreadId::new();
+        let body = AgentBody::detached(Vec::new()).taking_part_also_in(there);
+        let mut state = AgentChannelState::default();
+        let work = Work::new(EventContext::default(), None, Classification::PUBLIC, TimeZone::UTC);
+        body.begin_turn(&mut state, there, work);
+        body.control.go_to(ActorState::Planning);
+        body.store(&mut state).await;
+        // The turn ended, and the agent went to sleep.
+        state.thread_mut(there).turn = None;
+        body.control.go_to(ActorState::Sleeping);
+        body.store(&mut state).await;
+
+        assert_eq!(RunControl::resuming(&state).state(), ActorState::Sleeping, "asleep again");
+    }
+
+    /// Issue 602: let go from the thread of its last turn, nothing of the thread it left comes back
+    /// as its state is stored; a leave of a thread it takes part in again - one read back as it
+    /// joins the channel again - leaves what it kept there as it was.
+    #[tokio::test]
+    async fn let_go_from_the_thread_of_its_last_turn_nothing_of_it_comes_back() {
         let (joined, there) = (ThreadId::default(), ThreadId::new());
         let body = AgentBody::detached(Vec::new());
         let in_thread = |thread_id, event| {
@@ -648,8 +688,8 @@ mod tests {
         body.take_in_said(&mut state, in_thread(there, its_leave())).await;
         body.store(&mut state).await;
         assert!(state.thread(there).is_none(), "nothing of the thread it left comes back");
-        assert_eq!(body.standing_in(), joined, "it stands where it joined");
 
+        state.thread_mut(joined);
         body.take_in_said(&mut state, in_thread(joined, its_leave())).await;
         assert!(state.thread(joined).is_some(), "a thread it takes part in keeps its part");
     }

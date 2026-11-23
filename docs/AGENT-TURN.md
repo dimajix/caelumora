@@ -182,8 +182,8 @@ a plan may cost is bounded by its steps: `create_plan` refuses a plan of more th
 
 The agent announces its state to the users as it changes (`StateChanged`), each state once, in its
 own context rather than a turn's: its state is the agent's, not part of an answer. It announces it
-in the thread of the turn that runs or ran last, and before its first turn in the thread it counts
-as joined in (`ActorRuntime::joined_thread_id`, issue 602). One move is not
+in the thread of its turn while it is in one, and else in its channel's line, as the channel names
+what is of no thread (issue 602). One move is not
 the run loop's: the channel wakes a sleeping agent itself, synchronously, because the moderator,
 deciding right after whom to ask, leaves the sleeping out; the run loop is notified and announces
 `Idle`.
@@ -203,11 +203,13 @@ of every thread, so these stay on `AgentChannelState`. `Turn` calls these and do
 them.
 
 The working state of a turn is one value per thread, the `turn` of the agent's part of the thread
-(`AgentThreadState`, issue 602), `None` between turns - beside where the actor stands there
-(`processing_state`) and what its calls there used (`used`). What reads them without a thread reads
-every thread's: the approvals and questions waiting, the work under way, what a state lets go of
-(`keep_window`). Its `Work` is what every piece of work of an agent has, a turn as much as an
-external agent's exchange with its remote agent (`caelumora_domain::work`):
+(`AgentThreadState`, issue 602), `None` between turns, at the step it stands at
+(`TurnState::step`) - beside what its calls there used (`used`). Where the agent stands outside a
+turn is its own as a whole, not a thread's: whether it sleeps (`AgentChannelState::asleep`). What
+reads them without a thread reads every thread's: the approvals and questions waiting, the work
+under way, what a state lets go of (`keep_window`). Its `Work` is what every piece of work of an
+agent has, a turn as much as an external agent's exchange with its remote agent
+(`caelumora_domain::work`):
 
 *   which turn it is (`TurnId`),
 *   the envelope it answers, why it was asked to (see [Why the agent was
@@ -335,8 +337,6 @@ resumed:
     running it again would repeat its effect. So every call that was ready to run is answered as
     *not executed*, and the model decides again.
 
-A turn state stored without the turn's working state cannot be resumed; the agent starts `Idle`.
-
 What the agent took in is stored with where it stands in its channel's history (`heard`, issue
 223): taking in writes both into the state, so that every store after it - the run loop's after
 each step, a command's, a turn's end - stores them together. When the agent runs again, its inbox
@@ -426,11 +426,12 @@ the channel ends its actor, and one read back as it joins again, of a thread it 
 leaves its state as it was kept -, with what it was asked there and has not answered yet. During a
 turn its own join stops what the turn takes in, and its leave waits after what came before it of the
 thread. What it takes in, answers again or carries out goes on the branch of the thread the envelope
-happens in where the agent follows it, and else on the branch of the thread it counts as joined in
-(`ActorRuntime::joined_thread_id`, `AgentBody::branch_of`) - so what was delivered of a thread
-before its leave goes on that thread's branch, though taken in after the channel announced the
-leave; a nudge, a request to answer again and a command are of a thread the agent takes part in,
-which the channel asks as it admits them. A turn runs on the branch it was begun on (`Turn::of`,
+happens in; what happens in a thread it does not follow - late, after it was let go from it, or by
+name, read again from the history as it was before - it does not take in
+(`AgentBody::is_unfollowed`) - so what was delivered of a thread before its leave goes on that
+thread's branch, though taken in after the channel announced the leave; a nudge, a request to
+answer again and a command are of a thread the agent takes part in, which the channel asks as it
+admits them. A turn runs on the branch it was begun on (`Turn::of`,
 `Situation::branch_thread_id`), and the actor keeps the thread of the turn that runs or ran last
 (`RunControl::thread`). Taking in goes by branch: a request to respond on another branch than the
 one to be answered ends the batch and waits, unheard, for a turn of its own; during a turn and as it

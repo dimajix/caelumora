@@ -6,7 +6,7 @@ use super::ActingKind;
 use super::{Acting, ChannelRuntime, Kernel};
 use crate::actor::ActorManager;
 use crate::attachment::AttachmentManager;
-use crate::channel::{self, ChannelLoop};
+use crate::channel::ChannelLoop;
 use crate::command::CommandExecutor;
 use crate::controller::{ChannelController, SessionController};
 use crate::event::EventSubscription;
@@ -63,13 +63,6 @@ impl ParticipantRuntime {
     /// channel is gone.
     pub(crate) fn origin_of(&self, thread: ThreadId) -> Option<ThreadOrigin> {
         self.channel_loop()?.origin_of(thread)
-    }
-
-    /// The thread it counts as joined its channel in, of those it takes part in now (issue 602,
-    /// `channel::joined_in`): where an agent says of itself what names no thread of its own (its
-    /// `AgentRuntime`); a user names the thread of what they say (`UserActor`).
-    pub(crate) fn joined_thread_id(&self) -> ThreadId {
-        channel::joined_in(self.channel_id, &self.threads.load())
     }
 
     /// The kernel of the process the participant runs in, which the runtime of its agent answers by

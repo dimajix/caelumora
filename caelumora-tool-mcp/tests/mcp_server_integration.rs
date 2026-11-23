@@ -15,6 +15,7 @@ use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::{AgentChannelState, AgentId, Personality};
 use caelumora_domain::channel::Channel;
 use caelumora_domain::channel::ChannelId;
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::component::{
     ComponentBundle, ComponentConfig, ComponentDescriptor, ComponentFailPolicy,
 };
@@ -156,11 +157,11 @@ async fn executed(
     let mut state = AgentChannelState::default();
     let runtime = detached_actor_runtime(AgentId::default());
     state.begin_turn(
-        runtime.joined_thread_id(),
+        ThreadId::line(runtime.channel_id()),
         Work::new(Default::default(), None, Default::default(), Default::default()),
     );
-    let mut turn =
-        Turn::of(&mut state, runtime.joined_thread_id(), runtime).expect("a turn was begun");
+    let mut turn = Turn::of(&mut state, ThreadId::line(runtime.channel_id()), runtime)
+        .expect("a turn was begun");
     tool_named(provider, name).execute(&params, None, &mut turn).await
 }
 

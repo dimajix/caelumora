@@ -1,5 +1,5 @@
 //! What an agent keeps of one thread of its channel (`AgentThreadState`, issue 602): its turn
-//! there, where it stands in it, and what its model calls there used.
+//! there, at the step it stands at, and what its model calls there used.
 
 use crate::actor::ActorState;
 use crate::message::TokenUsage;
@@ -8,18 +8,16 @@ use crate::turn::TurnState;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-/// What an agent keeps of one thread of its channel (issue 602): its turn there, where it stands
-/// in it, and what its model calls there used. Its branch of the conversation is the head of the
-/// thread in its transcript, which holds every thread's (`AgentChannelState::transcript`).
+/// What an agent keeps of one thread of its channel (issue 602): its turn there, at the step it
+/// stands at, and what its model calls there used. Its branch of the conversation is the head of
+/// the thread in its transcript, which holds every thread's (`AgentChannelState::transcript`).
+/// Where the agent stands outside a turn is its own as a whole (`AgentChannelState::asleep`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AgentThreadState {
-    /// Where the agent's actor stood in the thread when the state was stored - a turn state if it
-    /// was cut off in the middle of one (issue 75). The actor owns the live value and writes it in
-    /// when it stores. An external agent does not resume from it: it is resumed from its open
-    /// tasks, and starts `Idle` (issue 363).
-    pub processing_state: ActorState,
-    /// The turn under way in the thread, `None` between turns (issue 85). Stored with the rest, so
-    /// that a turn cut off by a crash is resumed (issue 75).
+    /// The turn under way in the thread, `None` between turns (issue 85), at the step it stands at
+    /// (`TurnState::step`). Stored with the rest, so that a turn cut off by a crash is resumed
+    /// (issue 75). An external agent does not resume from it: it is resumed from its open tasks
+    /// (issue 363).
     pub turn: Option<TurnState>,
     /// What the agent's model calls in the thread used (issue 209), each counted once, as the
     /// message it produced is recorded - said, or replacing older messages in a compaction
@@ -31,12 +29,11 @@ pub struct AgentThreadState {
 }
 
 impl AgentThreadState {
-    /// Makes it fit to run from (issue 75). A state stored between two steps of a turn is a turn
-    /// to resume - the server stopped or crashed in the middle of it - stored with the step that
-    /// was to come next (issue 85), and most states resume as they are: `Planning` asks the model
-    /// with the turn so far, `Reflecting` takes the finished turn over, `WaitingForUser` keeps
-    /// waiting, `Cancelling` ends the turn. A deliberate end never leaves a turn in the store
-    /// (`stop`, `cancel`, the stop tool).
+    /// Makes it fit to run from (issue 75). A turn stored is a turn to resume - the server stopped
+    /// or crashed in the middle of it - stored with the step that was to come next (issue 85), and
+    /// most steps resume as they are: `Planning` asks the model with the turn so far, `Reflecting`
+    /// takes the finished turn over, `WaitingForUser` keeps waiting, `Cancelling` ends the turn. A
+    /// deliberate end never leaves a turn in the store (`stop`, `cancel`, the stop tool).
     ///
     /// `ExecutingTools` is the exception: a tool may have run without its result being stored, and
     /// running it again would repeat its effect (issue 20). Every approved call without a result
@@ -44,9 +41,6 @@ impl AgentThreadState {
     /// told of it, in the variant the turn was begun with -, so that the next step builds the tool
     /// message and the model decides again; results already stored stay. Returns how many calls
     /// were answered so.
-    ///
-    /// A state in the middle of a turn without the turn's working state cannot be resumed; it
-    /// starts idle.
     pub fn prepare_resume(&mut self, not_executed: impl Fn(&TurnState) -> String) -> usize {
         // A command turn is carried out between two stores and never stored under way (issue
         // 269); one found is dropped as its request would have been, unanswered - and so is
@@ -55,13 +49,7 @@ impl AgentThreadState {
             warn!("A command turn was stored under way; it is dropped");
             self.turn = None;
         }
-        if (self.processing_state.in_turn() && self.turn.is_none())
-            || self.processing_state == ActorState::CarryingOutCommand
-        {
-            self.processing_state = ActorState::Idle;
-        }
-        let Some(turn) =
-            self.turn.as_mut().filter(|_| self.processing_state == ActorState::ExecutingTools)
+        let Some(turn) = self.turn.as_mut().filter(|turn| turn.step == ActorState::ExecutingTools)
         else {
             return 0;
         };
@@ -86,9 +74,9 @@ impl AgentThreadState {
     /// at a step it resumes from - not one waiting for a person, whose answer starts the channel
     /// anyway, nor a command turn, which is never resumed.
     pub fn has_work_under_way(&self) -> bool {
-        self.turn.as_ref().is_some_and(|turn| turn.command.is_none())
-            && self.processing_state.in_turn()
-            && self.processing_state != ActorState::WaitingForUser
+        self.turn.as_ref().is_some_and(|turn| {
+            turn.command.is_none() && turn.step.in_turn() && turn.step != ActorState::WaitingForUser
+        })
     }
 }
 
@@ -125,9 +113,9 @@ mod tests {
             )),
             None,
         );
-        let state_in = |processing_state: ActorState| AgentThreadState {
-            processing_state,
+        let state_in = |step: ActorState| AgentThreadState {
             turn: Some(TurnState {
+                step,
                 tool_calls: vec![ready.clone(), done.clone(), waiting.clone()],
                 ..Default::default()
             }),
@@ -160,31 +148,26 @@ mod tests {
             let mut state = state_in(other);
             assert_eq!(state.prepare_resume(|_| "not executed".to_string()), 0, "{other:?}");
             assert!(matches!(calls(&state)[0].status, ToolCallStatus::Ready { .. }));
-            assert_eq!(state.processing_state, other);
+            assert_eq!(state.turn.map(|turn| turn.step), Some(other));
         }
-
-        // A turn state without the turn cannot be resumed.
-        let mut lost =
-            AgentThreadState { processing_state: ActorState::Planning, ..Default::default() };
-        lost.prepare_resume(|_| "not executed".to_string());
-        assert_eq!(lost.processing_state, ActorState::Idle);
 
         // A command turn is never resumed, nor carrying it out.
         let mut command = AgentThreadState {
-            processing_state: ActorState::CarryingOutCommand,
-            turn: Some(TurnState { command: Some(a_command()), ..Default::default() }),
+            turn: Some(TurnState {
+                step: ActorState::CarryingOutCommand,
+                command: Some(a_command()),
+                ..Default::default()
+            }),
             used: None,
         };
         command.prepare_resume(|_| "not executed".to_string());
         assert!(command.turn.is_none());
-        assert_eq!(command.processing_state, ActorState::Idle);
     }
 
     #[test]
     fn work_under_way_is_what_goes_on_by_itself_when_the_channel_runs_again() {
-        let in_turn = |processing_state: ActorState| AgentThreadState {
-            processing_state,
-            turn: Some(TurnState::default()),
+        let in_turn = |step: ActorState| AgentThreadState {
+            turn: Some(TurnState { step, ..TurnState::default() }),
             used: None,
         };
         for going_on in [
@@ -198,12 +181,13 @@ mod tests {
         }
         assert!(!in_turn(ActorState::WaitingForUser).has_work_under_way(), "it waits for a person");
         assert!(!AgentThreadState::default().has_work_under_way(), "idle");
-        let lost =
-            AgentThreadState { processing_state: ActorState::Planning, ..Default::default() };
-        assert!(!lost.has_work_under_way(), "a turn state without the turn starts idle");
         let command = AgentThreadState {
-            turn: Some(TurnState { command: Some(a_command()), ..Default::default() }),
-            ..in_turn(ActorState::Planning)
+            turn: Some(TurnState {
+                step: ActorState::Planning,
+                command: Some(a_command()),
+                ..Default::default()
+            }),
+            used: None,
         };
         assert!(!command.has_work_under_way(), "a command turn is dropped");
     }

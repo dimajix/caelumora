@@ -125,9 +125,8 @@ impl AgentActor {
         self.body.turn(state, self.body.control.thread()?)
     }
 
-    /// The turn under way in `state`, for a step of a turn. Without one -
-    /// `prepare_resume` makes sure a state in a turn has its working state -
-    /// the step fails as a turn's step does.
+    /// The turn under way in `state`, for a step of a turn. Without one - a step of a turn is
+    /// stored with the turn (`TurnState::step`) - the step fails as a turn's step does.
     fn turn_under_way<'s>(&self, state: &'s mut AgentChannelState) -> Result<Turn<'s>> {
         self.turn(state).ok_or_else(|| {
             anyhow!("Agent {} has no turn under way in {:?}", self.id(), self.body.control.state())
@@ -147,7 +146,7 @@ impl AgentActor {
         output: &dyn EventSender,
     ) -> Result<()> {
         let (_, work) = self.body.work_for(request);
-        let thread = self.body.branch_of(request);
+        let thread = request.context.thread_id;
         let turn_id = self.body.begin_turn(state, thread, work.given_as(self.body.profile));
         let mut turn = self.turn_under_way(state)?;
         // Judged for whoever asked, in the channel as the turn begins.
@@ -341,7 +340,7 @@ impl AgentActor {
     }
 
     /// Answers the `RetryRequested` in `request` (issues 234, 235), in its context continued in the
-    /// agent's name, on the branch of the request (`AgentBody::branch_of`, issue 602). The turn
+    /// agent's name, on the branch of the thread of the request (issue 602). The turn
     /// `given_up_for` it can be answered again, its answer being gone already; another turn is over
     /// (`Ended`); a message can be if it is the agent's last answer (`AgentChannelState::retried`).
     /// If it can, the agent says so with `RetryAccepted`, takes back what the retry replaces - in
@@ -357,7 +356,7 @@ impl AgentActor {
     ) -> Result<bool> {
         let Some(target) = retry_target(request) else { return Ok(false) };
         let answering = Answering::to(request, self.id(), self.body.scoped_name());
-        let thread = self.body.branch_of(request);
+        let thread = request.context.thread_id;
         let can = match target {
             RetryTarget::Turn(turn) if Some(turn) == given_up_for => Ok(Vec::new()),
             // Its last turn given up: answered anew after it, nothing taken
@@ -1203,9 +1202,9 @@ impl Actor for AgentActor {
                 return Vec::new();
             }
         };
-        // As the agent's own, nobody having asked, in the thread it joined in: the caller names
-        // none.
-        let at = self.body.own(runtime.joined_thread_id()).event_context;
+        // As the agent's own, nobody having asked, in its channel's line, as the channel names what
+        // is of no thread: the caller names none, and no tool offered reads it (issue 602).
+        let at = self.body.own(ThreadId::line(runtime.channel_id())).event_context;
         let work =
             Work::new(at, None, runtime.channel_classification(), runtime.session_time_zone());
         let thread = work.event_context.thread_id;

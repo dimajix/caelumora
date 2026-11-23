@@ -457,9 +457,8 @@ mod tests {
         // restart, finds what was under way.
         let (agent, channel) = (AgentId::new(), ChannelId::new());
         let mut planning = AgentChannelState::default();
-        let part = planning.thread_mut(ThreadId::default());
-        part.processing_state = ActorState::Planning;
-        part.turn = Some(TurnState::default());
+        let turn = TurnState { step: ActorState::Planning, ..TurnState::default() };
+        planning.thread_mut(ThreadId::default()).turn = Some(turn);
         states(dir.path()).put_agent_channel_state(agent, channel, &mut planning).await.unwrap();
         assert_eq!(states(dir.path()).channels_with_work_under_way().await.unwrap(), [channel]);
     }
@@ -522,7 +521,7 @@ mod tests {
 
         said(&mut state, 3, 5);
         opened.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
-        state.thread_mut(ThreadId::default()).processing_state = ActorState::WaitingForUser;
+        state.asleep = true;
         opened.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
         assert_eq!(journal_lines(&opened, agent, channel).await, Some(2), "one line per put");
         assert_eq!(

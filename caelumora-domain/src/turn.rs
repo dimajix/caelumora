@@ -126,6 +126,10 @@ pub struct TurnState {
     /// were before work was one type.
     #[serde(flatten)]
     pub work: Work,
+    /// The step the turn stands at (issues 75, 85, 602): where its agent resumes it, written in by
+    /// its actor whenever it stores - a turn cut off in the middle stands at the step that was to
+    /// come next.
+    pub step: ActorState,
     /// What the turn staged for system services - the agent's memory -, committed by the kernel
     /// when the turn completes (issue 518).
     #[serde(default, skip_serializing_if = "StagedChanges::is_empty")]

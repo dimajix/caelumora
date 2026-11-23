@@ -2890,11 +2890,10 @@ mod tests {
         }
         let [interrupted, waiting, idle, deleted] =
             sessions.map(|session| (session.id, session.channels[0]));
-        let in_turn = |processing_state| {
+        let in_turn = |step| {
             let mut state = AgentChannelState::default();
-            let part = state.thread_mut(ThreadId::default());
-            part.processing_state = processing_state;
-            part.turn = Some(TurnState::default());
+            let turn = TurnState { step, ..TurnState::default() };
+            state.thread_mut(ThreadId::default()).turn = Some(turn);
             state
         };
         let states = kernel.state_store();

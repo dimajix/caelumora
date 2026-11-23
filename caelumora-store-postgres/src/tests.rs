@@ -327,7 +327,6 @@ async fn what_an_agent_waiting_for_an_approval_stored_survives_a_restart() {
     channel_state.history.push(&context_in(channel), said("look it up"));
 
     let mut state = AgentChannelState::default();
-    state.thread_mut(ThreadId::default()).processing_state = ActorState::WaitingForUser;
     let context = EventContext {
         sender_id: ActorId::Agent(agent),
         channel_id: channel,
@@ -345,6 +344,7 @@ async fn what_an_agent_waiting_for_an_approval_stored_survives_a_restart() {
     let call =
         ToolCall { id: Some("1".to_string()), arguments: json!({}), ..make_tool_call("search") };
     let turn = state.thread_mut(ThreadId::default()).turn.as_mut().expect("a turn");
+    turn.step = ActorState::WaitingForUser;
     turn.work.context.frame.prompts.push(system.clone());
     turn.tool_calls.push(ToolCallState::pending(call, false, None, None));
     let asked: Vec<_> = turn.pending_approvals().into_iter().map(|request| request.id).collect();
@@ -373,7 +373,7 @@ async fn what_an_agent_waiting_for_an_approval_stored_survives_a_restart() {
     assert_eq!(pending, asked, "the same request, asked again from the turn");
     assert_eq!(
         (
-            loaded.thread(ThreadId::default()).map(|part| part.processing_state),
+            loaded.turn(ThreadId::default()).map(|turn| turn.step),
             loaded.transcript.digest(ThreadId::default())
         ),
         (Some(ActorState::WaitingForUser), state.transcript.digest(ThreadId::default())),

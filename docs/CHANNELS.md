@@ -214,9 +214,8 @@ founded, and those it was taken into since (see below). The channel and the part
 share the set (`ChannelActor::threads`, `ParticipantRuntime::threads`, an agent's
 `ActorRuntime::threads`), which the channel alone changes: only their moderators may ask it, and its
 join and its leave are announced in each of them. What an agent says of itself without a thread to
-name happens in the thread it counts as joined in (`joined_thread_id`, `channel::joined_in`): its
-line if it takes part there, else the first of its threads - where it joined the channel, but for
-one taken into the line since -: before its first turn. A user names the thread of what they say,
+name - where it stands outside a turn, the tools it would be offered - happens in the channel's
+line, as what names no thread does. A user names the thread of what they say,
 nudge or issue, the line where they name none (see [Acting in a channel](#acting-in-a-channel)); a
 request to answer again happens where what it asks again was said or runs. Whether something happens
 in one thread or in the whole channel is the kind of what the history records of it
@@ -1346,8 +1345,8 @@ The actor of an agent is on the agent side, and is given less (issue 516): its k
 `AgentRuntime` serves. It holds the agent's participant runtime and the controllers of the agent and
 of its personality, and answers what only an agent asks itself: who the agent
 and its personality are as they are now (`agent`, `personality`), the ids of its session and its
-channel, the threads it takes part in, where each hangs and the one it joined in (`threads`,
-`origin_of`, `joined_thread_id`, issues 557, 602) and the channel's classification; its
+channel, the threads it takes part in and where each hangs (`threads`, `origin_of`, issues 557,
+602) and the channel's classification; its
 state in the channel and its transcript; what a turn
 staged for a system service, handed to the writer that commits it (`commit_staged`, issue 518); the
 attachments of its messages; its session and its channel to read, as readers at the classification

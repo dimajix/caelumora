@@ -308,6 +308,7 @@ mod tests {
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
     use caelumora_domain::channel::testing::bare_channel;
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_domain::config::AppConfig;
     use caelumora_domain::context::ModelProfile;
@@ -479,7 +480,7 @@ mod tests {
         ));
         let work = Work::default().given_as(Gemma.profile());
         let state = AgentChannelState::default();
-        let thread = actor_runtime.joined_thread_id();
+        let thread = ThreadId::line(actor_runtime.channel_id());
         let situation = Situation::new(&work, thread, &state, &*actor_runtime);
         let time = built.get_all::<dyn PromptProvider>(None).unwrap().remove(0);
         assert!(

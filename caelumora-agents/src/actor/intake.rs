@@ -94,9 +94,11 @@ impl AgentBody {
     /// answer again (issue 234), which are returned in order, each to be answered. A command it is
     /// asked to carry out (issue 269) ends the batch: it is returned, and what follows it stays in
     /// `rx`, so that the actor carries it out where it came - after what was said before it, before
-    /// what was said after - and then takes in the rest. A request to respond on another branch
-    /// than the one returned (`branch_of`, issue 602) ends the batch too, and stays in `rx`,
-    /// unheard: the oldest request is answered first, and on each branch the last one. Its own
+    /// what was said after - and then takes in the rest. Everything goes on the branch of the
+    /// thread it happens in; what happens in a thread it does not follow it drops
+    /// (`AgentBody::is_unfollowed`, issue 602). A request to respond on another branch than the one
+    /// returned ends the batch too, and stays in `rx`, unheard: the oldest request is answered
+    /// first, and on each branch the last one. Its own
     /// leave of a thread drops what it was asked there in the batch (`AgentBody::leaves`, issue
     /// 602): let go from the thread, it no longer answers there. Where the agent stands in its
     /// channel's history is written into `state` with what it took in (issue 223), so that every
@@ -111,35 +113,44 @@ impl AgentBody {
         let mut retries = Vec::new();
         let mut next = Some(received);
         while let Some(event) = next {
-            if matches!(event.event, ActorEvent::CommandRequested { .. }) {
-                state.heard = rx.heard();
-                return TakenIn { request, retries, command: Some(event) };
-            }
-            // Let go from a thread, it no longer answers what it was asked there (issue 602).
-            if let Some(left) = self.leaves(self.own_change(&event)) {
-                request = request.filter(|request: &Envelope| self.branch_of(request) != left);
-                retries.retain(|retry| self.branch_of(retry) != left);
-            }
-            let span = envelope_span(&event.context, event.event.kind());
-            let asked = async {
-                debug!("Received {}", event.describe());
-                let event = self.take_in_said(state, event).await?;
-                match event.event {
-                    ActorEvent::ResponseRequested { .. } => Some(event),
-                    ActorEvent::RetryRequested { .. } => {
-                        retries.push(event);
-                        None
-                    }
-                    _ => None,
+            if self.is_unfollowed(&event) {
+                envelope_span(&event.context, event.event.kind()).in_scope(|| {
+                    debug!("Dropped {}: of a thread it does not follow", event.describe());
+                });
+            } else {
+                if matches!(event.event, ActorEvent::CommandRequested { .. }) {
+                    state.heard = rx.heard();
+                    return TakenIn { request, retries, command: Some(event) };
                 }
+                // Let go from a thread, it no longer answers what it was asked there (issue 602).
+                if let Some(left) = self.leaves(self.own_change(&event)) {
+                    request =
+                        request.filter(|request: &Envelope| request.context.thread_id != left);
+                    retries.retain(|retry| retry.context.thread_id != left);
+                }
+                let span = envelope_span(&event.context, event.event.kind());
+                let asked = async {
+                    debug!("Received {}", event.describe());
+                    let event = self.take_in_said(state, event).await?;
+                    match event.event {
+                        ActorEvent::ResponseRequested { .. } => Some(event),
+                        ActorEvent::RetryRequested { .. } => {
+                            retries.push(event);
+                            None
+                        }
+                        _ => None,
+                    }
+                }
+                .instrument(span)
+                .await;
+                request = answered(request, asked);
             }
-            .instrument(span)
-            .await;
-            request = answered(request, asked);
-            let asked_on = request.as_ref().map(|request| self.branch_of(request));
+            let asked_on = request.as_ref().map(|request| request.context.thread_id);
+            // What happens in a thread it does not follow is taken, to be dropped.
             let on_another_branch = |envelope: &Envelope| {
                 matches!(envelope.event, ActorEvent::ResponseRequested { .. })
-                    && asked_on.is_some_and(|asked_on| self.branch_of(envelope) != asked_on)
+                    && asked_on.is_some_and(|asked_on| envelope.context.thread_id != asked_on)
+                    && !self.is_unfollowed(envelope)
             };
             next = rx
                 .try_recv_if(&|envelope| {
@@ -262,8 +273,8 @@ impl AgentBody {
     /// message on a branch, and so is who joined or left (issue 408); what a delegate gives
     /// it to read is what it was given (`AgentChannelState::given`, issue 557). A modification or
     /// revocation the transcript did not take is handed over (`AgentBody::hand_over`, issue 236),
-    /// as the agent hears it. What it appends goes on the branch of the envelope (`branch_of`,
-    /// issue 602); its own join or leave of a thread changes the threads it follows (`follow`),
+    /// as the agent hears it. What it appends goes on the branch of the thread the envelope happens
+    /// in (issue 602); its own join or leave of a thread changes the threads it follows (`follow`),
     /// each noted on the thread's branch first - its join on the branch it begins. Returns any
     /// other event, for the caller to handle.
     pub(super) async fn take_in_said(
@@ -275,7 +286,7 @@ impl AgentBody {
         if let Some(joined @ OwnChange::Joined(_)) = own_change {
             self.follow(state, joined);
         }
-        let thread = self.branch_of(&event);
+        let thread = event.context.thread_id;
         match event.event {
             ActorEvent::CompleteMessageGenerated(message) => {
                 trace!("Heard {:?}", message.content);
@@ -318,10 +329,10 @@ impl AgentBody {
         None
     }
 
-    /// Whether `envelope` happens on another branch than the one of `thread` (`branch_of`): of a
-    /// thread (`Envelope::thread`), not of the whole channel, which reaches every branch.
+    /// Whether `envelope` happens on another branch than the one of `thread`: of another thread
+    /// (`Envelope::thread`), not of the whole channel, which reaches every branch.
     fn is_elsewhere(&self, envelope: &Envelope, thread: ThreadId) -> bool {
-        envelope.thread().is_some() && self.branch_of(envelope) != thread
+        envelope.thread().is_some() && envelope.context.thread_id != thread
     }
 }
 
@@ -521,23 +532,19 @@ mod tests {
         assert_eq!(reason(&then), Some(RequestReason::Nudged), "across a command, too");
     }
 
-    /// Until a request names its thread, what reaches the agent from a thread it takes no part in -
-    /// routed to it by name, as a nudge, a request to answer again or a command is - goes on the
-    /// branch of the thread it joined in (issue 602): read on a branch of its own, a turn would
-    /// begin empty. Its requests and those of its thread are one branch's, the last answering.
+    /// Issue 602: what reaches the agent from a thread it does not follow - late, or by name, read
+    /// again from the history as it was before the channel admitted a request only of one taking
+    /// part - it does not take in: nothing of it on any branch, no request of it answered.
     #[tokio::test]
-    async fn what_reaches_it_from_another_thread_goes_on_the_branch_it_joined_in() {
+    async fn what_reaches_it_from_a_thread_it_does_not_follow_is_dropped() {
         let body = AgentBody::detached(Vec::new());
-        // The thread the detached runtime's agent joined in.
+        // The thread the detached runtime's agent takes part in.
         let (taking_part, elsewhere) = (ThreadId::default(), ThreadId::new());
         let in_thread = |thread_id, event| {
             Envelope::new(EventContext { thread_id, ..EventContext::default() }, event)
         };
         let aside = Message { sender_id: ActorId::User(UserId::new()), ..said("aside") };
         let from_elsewhere = in_thread(elsewhere, ActorEvent::CompleteMessageGenerated(aside));
-        assert_eq!(body.branch_of(&from_elsewhere), taking_part, "another thread's");
-        let its_own = in_thread(taking_part, ActorEvent::WakeupRequested);
-        assert_eq!(body.branch_of(&its_own), taking_part, "its own thread's");
 
         let (tx, rx) = mpsc::channel(8);
         let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
@@ -549,18 +556,18 @@ mod tests {
         }
         let mut state = AgentChannelState::default();
         let taken = body.take_in(&mut state, from_elsewhere, &mut rx).await;
-        assert_eq!(texts(&state.transcript.messages(taking_part)), ["aside"]);
-        assert!(state.transcript.digest(elsewhere).is_none(), "no branch of its own");
+        assert!(state.transcript.messages(taking_part).is_empty(), "nothing of it on its branch");
+        assert!(state.transcript.digest(elsewhere).is_none(), "nor on one of its own");
         assert!(state.thread(elsewhere).is_none(), "nor a part");
         let answered = taken.request.map(|request| request.context.thread_id);
-        assert_eq!(answered, Some(elsewhere), "the last request answers both");
-        assert!(left_in(&mut rx).await.is_empty(), "nothing waits for another branch");
+        assert_eq!(answered, Some(taking_part), "the request of its own thread alone");
+        assert!(left_in(&mut rx).await.is_empty(), "nothing waits");
     }
 
     /// Issue 602: the agent follows a thread from its own join of it, as it takes the join in,
     /// and up to its own leave - what reached it of the thread before it left goes on that
-    /// thread's branch, not on the one it joined the channel in, though taken in after the channel
-    /// announced the leave -, and then holds nothing of the thread.
+    /// thread's branch, not on another, though taken in after the channel announced the leave -,
+    /// and then holds nothing of the thread.
     #[tokio::test]
     async fn it_follows_a_thread_from_its_join_up_to_its_leave_in_the_order_they_reach_it() {
         let body = AgentBody::detached(Vec::new());
@@ -589,7 +596,7 @@ mod tests {
         body.take_in(&mut state, heard("before it left"), &mut rx).await;
         assert!(state.transcript.messages(joined).is_empty(), "nothing of the thread it left");
         assert!(!state.threads_held().contains(&there), "and nothing held there any more");
-        assert_eq!(body.branch_of(&heard("later")), joined, "no longer followed");
+        assert!(body.is_unfollowed(&heard("later")), "no longer followed");
     }
 
     /// Issue 602: a request to respond on another branch than the one to be answered ends the
@@ -630,9 +637,9 @@ mod tests {
     }
 
     /// What happens on another branch than the turn's is passed over, during the turn and as it
-    /// ends (issue 602), for a turn there: a turn begun in a thread the agent takes no part in -
-    /// everything heard goes on the branch of the one it joined in (`branch_of`) - takes in none
-    /// of it, and drops no request, which a turn on that branch takes and drops.
+    /// ends (issue 602), for a turn there: a turn begun on the branch of another thread takes in
+    /// none of what happens in the agent's own, and drops no request of it, which a turn there
+    /// takes and drops.
     #[tokio::test]
     async fn a_turn_takes_in_nothing_of_another_branch() {
         let alice = ActorId::User(UserId::new());

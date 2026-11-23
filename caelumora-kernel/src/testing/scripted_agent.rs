@@ -73,8 +73,8 @@ pub struct ScriptedAgent {
     runtime: Arc<dyn ActorRuntime>,
     script: Script,
     state: Mutex<ActorState>,
-    /// The turn under way, if one is.
-    turn: Mutex<Option<TurnId>>,
+    /// The turn under way, if one is, with the thread of the request it answers.
+    turn: Mutex<Option<(ThreadId, TurnId)>>,
     /// Everything it was given, in order.
     heard: Mutex<Vec<Envelope>>,
     /// Whether it was woken (`wakeup`).
@@ -116,7 +116,7 @@ impl ScriptedAgent {
     async fn respond(&self, request: &Envelope, output: &dyn EventSender) -> bool {
         let answering = Answering::to(request, self.id, self.name());
         let turn_id = TurnId::new();
-        self.set_turn(Some(turn_id));
+        self.set_turn(Some((request.context.thread_id, turn_id)));
         self.go_to(ActorState::Planning, output).await;
         answering.send_all(vec![ActorEvent::ResponseStarted { turn_id }], output).await;
         let (events, ended) = match &self.script {
@@ -186,7 +186,7 @@ impl ScriptedAgent {
         self.interrupted.notify_one();
     }
 
-    fn set_turn(&self, turn: Option<TurnId>) {
+    fn set_turn(&self, turn: Option<(ThreadId, TurnId)>) {
         if let Ok(mut current) = self.turn.lock() {
             *current = turn;
         }
@@ -198,7 +198,9 @@ impl ScriptedAgent {
         }
         let runtime = &self.runtime;
         let (session, channel) = (runtime.session_id(), runtime.channel_id());
-        Answering::own(session, channel, runtime.joined_thread_id(), self.id, self.name())
+        // In the thread of its turn, else in the line: where it stands is its own.
+        let thread = self.turn_under_way().map_or(ThreadId::line(channel), |(thread, _)| thread);
+        Answering::own(session, channel, thread, self.id, self.name())
             .send_all(vec![ActorEvent::StateChanged(state)], output)
             .await;
     }
@@ -253,16 +255,14 @@ impl Actor for ScriptedAgent {
     }
 
     fn cancel(&self, thread: Option<ThreadId>) {
-        // Its turns answer in the thread it joined in.
-        if thread.is_none_or(|thread| thread == self.runtime.joined_thread_id()) {
+        let there = |thread| self.turn_under_way().is_some_and(|(there, _)| there == thread);
+        if thread.is_none_or(there) {
             self.ask(Interrupt::Cancel);
         }
     }
 
-    // Its turns run in the thread it joined in.
     fn turn_under_way(&self) -> Option<(ThreadId, TurnId)> {
-        let turn = self.turn.lock().ok().and_then(|turn| *turn)?;
-        Some((self.runtime.joined_thread_id(), turn))
+        self.turn.lock().ok().and_then(|turn| *turn)
     }
 
     fn retry_turn(&self, turn: TurnId) -> bool {

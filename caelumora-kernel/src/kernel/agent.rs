@@ -217,10 +217,6 @@ impl ActorRuntime for AgentRuntime {
         self.participant.origin_of(thread)
     }
 
-    fn joined_thread_id(&self) -> ThreadId {
-        self.participant.joined_thread_id()
-    }
-
     fn agent(&self) -> Arc<Agent> {
         Arc::clone(&self.agent.load())
     }
@@ -454,7 +450,6 @@ mod tests {
     use super::*;
     use crate::kernel::ChannelRuntime;
     use crate::session::testing::test_kernel;
-    use caelumora_domain::actor::ActorState;
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::channel::testing::bare_channel;
     use caelumora_domain::session::testing::bare_session;
@@ -471,17 +466,12 @@ mod tests {
             AgentRuntime::in_test(participant)
         };
         let its = agent_in_channel(&channel);
-        let mut asleep = AgentChannelState::default();
-        asleep.thread_mut(its.joined_thread_id()).processing_state = ActorState::Sleeping;
+        let mut asleep = AgentChannelState { asleep: true, ..AgentChannelState::default() };
 
         its.store_channel_state(&mut asleep).await.expect("its own state in its channel");
         let loaded = its.load_channel_state().await.expect("and back");
-        assert_eq!(
-            loaded.thread(its.joined_thread_id()).map(|part| part.processing_state),
-            Some(ActorState::Sleeping),
-            "as it was stored"
-        );
+        assert!(loaded.asleep, "as it was stored");
         let other = agent_in_channel(&channel).load_channel_state().await.expect("its own");
-        assert!(other.threads.is_empty(), "not the first agent's");
+        assert!(!other.asleep, "not the first agent's");
     }
 }

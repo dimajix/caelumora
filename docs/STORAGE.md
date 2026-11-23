@@ -496,8 +496,9 @@ The `StateStore` (in `caelumora-store`) stores the runtime state of channels and
     whom, its circle (issue 602) - and what was delegated into it and is not done (`threads`,
     `Opening`, `Delegation`, issue 557).
 *   **`AgentChannelState`**: an agent in one channel, of either kind - transcript, notes, prompt
-    texts and tool sets, and its part of each thread: the processing state, the turn under way and
-    the tokens its calls used (`AgentThreadState`, issue 602, see [AGENT-TURN.md](AGENT-TURN.md));
+    texts and tool sets, whether it sleeps, and its part of each thread: the turn under way at its
+    step and the tokens its calls used (`AgentThreadState`, issue 602, see
+    [AGENT-TURN.md](AGENT-TURN.md));
     its transcript, its prompt texts and its tool sets kept apart (see [Transcripts](#transcripts),
     [Prompt texts and tool sets](#prompt-texts-and-tool-sets)). It keeps no history of its own:
     what it was offered and said is its channel's history, as it saw it (issue 417) - and where it
@@ -523,9 +524,10 @@ against an update of the entity.
     across every branch of a transcript, written as its number -, and so is everything that
     addresses entries by one: a page and its cursor, a delivery, a mark of what was read, a
     participant's range, where a window begins.
-*   A small part - an agent's part of each thread, with its processing state, its turn under way
-    and the tokens its calls used there, an external agent's open tasks and the classifications it
-    was given, where an agent stands in its channel's history and the last message it took in - is
+*   A small part - an agent's part of each thread, with its turn under way at its step and the
+    tokens its calls used there, whether it sleeps, an external agent's open tasks and the
+    classifications it was given, where an agent stands in its channel's history and the last
+    message it took in - is
     recorded whole: it is changed in place and bounded by a turn per thread, one exchange, or the
     labels in use. What would be summed over a whole chain is kept as such a part instead, so that
     a chain is never read whole for it. Every part a state stores is among its changes: one left

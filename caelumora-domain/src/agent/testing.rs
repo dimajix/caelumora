@@ -61,11 +61,8 @@ pub fn waiting_for_approval(
             ToolCallState::pending(ToolCall { description, ..call }, false, None, None)
         })
         .collect();
-    let waiting = AgentThreadState {
-        processing_state: ActorState::WaitingForUser,
-        turn: Some(turn),
-        used: None,
-    };
+    turn.step = ActorState::WaitingForUser;
+    let waiting = AgentThreadState { turn: Some(turn), used: None };
     AgentChannelState {
         threads: BTreeMap::from([(ThreadId::line(channel_id), waiting)]),
         ..AgentChannelState::default()

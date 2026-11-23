@@ -466,6 +466,7 @@ mod tests {
     use crate::testing::{self, agent_runtime};
     use caelumora_domain::agent::{AgentChannelState, AgentId};
     use caelumora_domain::channel::testing::bare_channel;
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::message::MessageId;
     use caelumora_domain::session::testing::bare_session;
     use caelumora_domain::session::SessionId;
@@ -498,10 +499,10 @@ mod tests {
     fn turn_of(agent: AgentId, state: &mut AgentChannelState) -> Turn<'_> {
         let runtime = agent_runtime(owned_runtime_of(agent));
         state.begin_turn(
-            runtime.joined_thread_id(),
+            ThreadId::line(runtime.channel_id()),
             Work::new(Default::default(), None, Default::default(), Default::default()),
         );
-        Turn::of(state, runtime.joined_thread_id(), runtime).expect("a turn was begun")
+        Turn::of(state, ThreadId::line(runtime.channel_id()), runtime).expect("a turn was begun")
     }
 
     fn note(id: u32, text: &str) -> Note {

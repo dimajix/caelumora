@@ -76,8 +76,7 @@ impl<'a> Situation<'a> {
     }
 
     /// The thread whose branch of the agent's transcript the work reads and extends (issue 602):
-    /// the thread of the envelope it answers (`thread_id`) where the agent takes part in it, else
-    /// the one it joined in (`AgentBody::branch_of`).
+    /// the thread of the envelope it answers.
     pub fn branch_thread_id(&self) -> ThreadId {
         self.branch_thread_id
     }

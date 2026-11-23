@@ -35,6 +35,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::mem;
+use std::ops::Not;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -48,6 +49,12 @@ pub struct AgentChannelState {
     /// in it, what its calls there used. Begun as the agent first does something there
     /// (`thread_mut`).
     pub threads: BTreeMap<ThreadId, AgentThreadState>,
+    /// Whether the agent sleeps in its channel (issue 602): where it stands outside a turn, its
+    /// own as a whole, not of a thread - awake it waits idle. The actor owns the live value and
+    /// writes it in when it stores; a turn under way stands at a step of its own
+    /// (`TurnState::step`).
+    #[serde(default, skip_serializing_if = "Not::not")]
+    pub asleep: bool,
     /// What the agent's model is given of the conversation: its own
     /// messages in full, internal steps included, and what others said
     /// (issue 50). Of an external agent, what the remote agent was given,
@@ -857,6 +864,8 @@ pub enum AgentChannelStateChange {
     /// Its part of every thread, whole (issue 602): each changed in place at every step of its turn
     /// (`prepare_resume`, the turn's own methods), and bounded by a turn per thread.
     Threads(BTreeMap<ThreadId, AgentThreadState>),
+    /// Whether the agent sleeps in its channel, whole (issue 602).
+    Asleep(bool),
     /// What an external agent keeps of the remote side, whole: small, and
     /// bounded by its open tasks.
     Remote(RemoteState),
@@ -878,6 +887,7 @@ impl Journaled for AgentChannelState {
         changes.extend(self.notes.changes().map(AgentChannelStateChange::Notes));
         changes.extend(self.private_notes.changes().map(AgentChannelStateChange::PrivateNotes));
         changes.push(AgentChannelStateChange::Threads(self.threads.clone()));
+        changes.push(AgentChannelStateChange::Asleep(self.asleep));
         changes.push(AgentChannelStateChange::Remote(self.remote.clone()));
         changes.push(AgentChannelStateChange::LastMessage(self.last_message));
         changes.push(AgentChannelStateChange::Heard(self.heard.clone()));
@@ -900,6 +910,7 @@ impl Journaled for AgentChannelState {
             AgentChannelStateChange::Notes(change) => self.notes.apply(change)?,
             AgentChannelStateChange::PrivateNotes(change) => self.private_notes.apply(change)?,
             AgentChannelStateChange::Threads(threads) => self.threads = threads,
+            AgentChannelStateChange::Asleep(asleep) => self.asleep = asleep,
             AgentChannelStateChange::Remote(remote) => self.remote = remote,
             AgentChannelStateChange::LastMessage(message) => self.last_message = message,
             AgentChannelStateChange::Heard(heard) => self.heard = heard,
@@ -934,13 +945,10 @@ mod tests {
         &mut state.thread_mut(ThreadId::default()).turn
     }
 
-    /// A state whose part of `thread` stands at `processing_state` in `turn`.
-    fn in_thread(
-        thread: ThreadId,
-        processing_state: ActorState,
-        turn: Option<TurnState>,
-    ) -> AgentChannelState {
-        let part = AgentThreadState { processing_state, turn, used: None };
+    /// A state whose part of `thread` holds `turn`, standing at `step`.
+    fn in_thread(thread: ThreadId, step: ActorState, turn: Option<TurnState>) -> AgentChannelState {
+        let turn = turn.map(|turn| TurnState { step, ..turn });
+        let part = AgentThreadState { turn, used: None };
         AgentChannelState {
             threads: BTreeMap::from([(thread, part)]),
             ..AgentChannelState::default()
@@ -949,24 +957,11 @@ mod tests {
 
     #[test]
     fn every_thread_is_made_fit_to_run_from() {
-        let lost =
-            AgentThreadState { processing_state: ActorState::Planning, ..Default::default() };
-        let mut state = in_thread(ThreadId::default(), ActorState::Idle, None);
-        state.threads.insert(ThreadId::new(), lost);
-        state.prepare_resume(|_| "not executed".to_string());
-        assert!(
-            state.threads.values().all(|part| part.processing_state == ActorState::Idle),
-            "a turn state without the turn starts idle, in whichever thread"
-        );
-
         let executing = || {
             let call = ToolCallState::approved(make_tool_call("write_note"));
-            let turn = TurnState { tool_calls: vec![call], ..TurnState::default() };
-            AgentThreadState {
-                processing_state: ActorState::ExecutingTools,
-                turn: Some(turn),
-                used: None,
-            }
+            let step = ActorState::ExecutingTools;
+            let turn = TurnState { step, tool_calls: vec![call], ..TurnState::default() };
+            AgentThreadState { turn: Some(turn), used: None }
         };
         let mut state = AgentChannelState::default();
         let (one, other) = (ThreadId::default(), ThreadId::new());
@@ -1016,8 +1011,7 @@ mod tests {
         state.threads.insert(
             ThreadId::new(),
             AgentThreadState {
-                processing_state: ActorState::Planning,
-                turn: Some(TurnState::default()),
+                turn: Some(TurnState { step: ActorState::Planning, ..TurnState::default() }),
                 used: None,
             },
         );
@@ -1056,10 +1050,7 @@ mod tests {
             "the transcript is a store's to keep apart (issue 380)"
         );
         decoded.transcript = waiting.transcript.clone();
-        assert_eq!(
-            decoded.thread(thread).map(|part| part.processing_state),
-            Some(ActorState::WaitingForUser)
-        );
+        assert_eq!(decoded.turn(thread).map(|turn| turn.step), Some(ActorState::WaitingForUser));
         let turn_id = decoded
             .turn(ThreadId::default())
             .map(|t| t.work.turn_id)
@@ -2369,8 +2360,9 @@ mod tests {
             Default::default(),
             id(2),
         );
-        state.thread_mut(ThreadId::default()).processing_state = ActorState::WaitingForUser;
-        *turn_slot(&mut state) = Some(TurnState { model_calls: 3, ..TurnState::default() });
+        state.asleep = true;
+        let step = ActorState::WaitingForUser;
+        *turn_slot(&mut state) = Some(TurnState { step, model_calls: 3, ..TurnState::default() });
         state.thread_mut(ThreadId::default()).used =
             TokenUsage::counted(None, &Message { prompt_tokens: Some(5), ..make_message(id(2)) });
         state.last_message = Some(id(2));
@@ -2384,13 +2376,14 @@ mod tests {
                 AgentChannelStateChange::Notes(_) => "notes",
                 AgentChannelStateChange::PrivateNotes(_) => "private_notes",
                 AgentChannelStateChange::Threads(_) => "threads",
+                AgentChannelStateChange::Asleep(_) => "asleep",
                 AgentChannelStateChange::Remote(_) => "remote",
                 AgentChannelStateChange::LastMessage(_) => "last_message",
                 AgentChannelStateChange::Heard(_) => "heard",
                 AgentChannelStateChange::Attachments(_) => "attachments",
             })
             .collect();
-        assert_eq!(parts, ["notes", "private_notes", "threads", "remote", "last_message", "heard", "attachments"], "what was added, then the small parts whole; the transcript, the prompt parts and the tool sets are the store's to write");
+        assert_eq!(parts, ["notes", "private_notes", "threads", "asleep", "remote", "last_message", "heard", "attachments"], "what was added, then the small parts whole; the transcript, the prompt parts and the tool sets are the store's to write");
         replayed(&state, &mut copy);
         assert!(
             !copy.attachments.is_empty(),
@@ -2402,10 +2395,11 @@ mod tests {
             "the running total with them"
         );
         assert_eq!(
-            copy.thread(ThreadId::default()).map(|part| part.processing_state),
+            copy.turn(ThreadId::default()).map(|turn| turn.step),
             Some(ActorState::WaitingForUser),
-            "where it stands in the thread"
+            "where its turn stands in the thread"
         );
+        assert!(copy.asleep, "and whether it sleeps, its own as a whole");
         assert_eq!(
             (copy.last_message, &copy.heard),
             (Some(id(2)), &state.heard),
@@ -2415,7 +2409,7 @@ mod tests {
         state.mark_stored();
         *turn_slot(&mut state) = None;
         state.heard.took(Position::new(5));
-        assert_eq!(state.changes().len(), 4, "between turns a step is the small parts alone");
+        assert_eq!(state.changes().len(), 5, "between turns a step is the small parts alone");
         replayed(&state, &mut copy);
         assert!(copy.turn(ThreadId::default()).is_none());
     }
@@ -2648,12 +2642,12 @@ mod tests {
             unsaid: Some("so far".to_string()),
             work: None,
         });
-        assert_eq!(state.changes().len(), 4, "the small parts; the transcript is the store's");
+        assert_eq!(state.changes().len(), 5, "the small parts; the transcript is the store's");
         replayed(&state, &mut copy);
 
         state.mark_stored();
         state.remote.open_tasks.clear();
-        assert_eq!(state.changes().len(), 4, "the small parts alone");
+        assert_eq!(state.changes().len(), 5, "the small parts alone");
         replayed(&state, &mut copy);
         assert!(copy.remote.open_tasks.is_empty());
     }

@@ -99,19 +99,18 @@ impl RunControl {
     }
 
     /// The run control of an agent whose state in its channel is `state`, as it resumes: in the
-    /// turn stored under way, in whichever thread - one at a time (issue 557) -, standing where it
-    /// stood there, or else standing where it stood in `joined_in`, the thread it joined in.
-    pub(crate) fn resuming(state: &AgentChannelState, joined_in: ThreadId) -> Self {
+    /// turn stored under way, in whichever thread - one at a time (issue 557) -, at the step it
+    /// stands at (`TurnState::step`), or else asleep or idle as it stood outside a turn, its own as
+    /// a whole (`AgentChannelState::asleep`, issue 602).
+    pub(crate) fn resuming(state: &AgentChannelState) -> Self {
         let resumed = state.threads.iter().find_map(|(thread, part)| {
             let turn = part.turn.as_ref()?;
-            Some((part.processing_state, (*thread, turn.work.turn_id)))
+            Some((turn.step, (*thread, turn.work.turn_id)))
         });
         match resumed {
-            Some((standing, turn)) => Self::new(standing, Some(turn)),
-            None => {
-                let part = state.thread(joined_in);
-                Self::new(part.map(|part| part.processing_state).unwrap_or_default(), None)
-            }
+            Some((step, turn)) => Self::new(step, Some(turn)),
+            None if state.asleep => Self::new(ActorState::Sleeping, None),
+            None => Self::new(ActorState::Idle, None),
         }
     }
 
@@ -372,24 +371,26 @@ mod tests {
     use std::time::Duration;
     use tokio::time;
 
-    /// Issue 602: an agent resumes the turn stored under way in whichever thread it runs, standing
-    /// where it stood there; without one, where it stood in the thread it joined in.
+    /// Issue 602: an agent resumes the turn stored under way in whichever thread it runs, at the
+    /// step it stands at; without one, asleep or idle as it stood outside a turn, its own as a
+    /// whole and of no thread.
     #[test]
-    fn it_resumes_the_turn_under_way_in_whichever_thread() {
-        let (joined, there) = (ThreadId::default(), ThreadId::new());
-        let mut state = AgentChannelState::default();
-        state.thread_mut(joined).processing_state = ActorState::Sleeping;
-        let control = RunControl::resuming(&state, joined);
-        assert_eq!(control.state(), ActorState::Sleeping, "where it stood in the one it joined in");
+    fn it_resumes_the_turn_under_way_in_whichever_thread_or_as_it_stood() {
+        let there = ThreadId::new();
+        let mut state = AgentChannelState { asleep: true, ..AgentChannelState::default() };
+        let control = RunControl::resuming(&state);
+        assert_eq!(control.state(), ActorState::Sleeping, "asleep, as it stood");
         assert_eq!(control.thread(), None, "no turn");
+        state.asleep = false;
+        assert_eq!(RunControl::resuming(&state).state(), ActorState::Idle, "or awake");
 
         let work = Work::new(EventContext::default(), None, Classification::PUBLIC, TimeZone::UTC);
         let turn = state.begin_turn(there, work);
-        state.thread_mut(there).processing_state = ActorState::WaitingForUser;
-        let control = RunControl::resuming(&state, joined);
+        state.turn_mut(there).expect("its turn").step = ActorState::WaitingForUser;
+        let control = RunControl::resuming(&state);
         assert_eq!(control.thread(), Some(there), "the turn's thread");
         assert_eq!(control.turn_under_way(), Some(turn), "the turn");
-        assert_eq!(control.state(), ActorState::WaitingForUser, "standing where it stood there");
+        assert_eq!(control.state(), ActorState::WaitingForUser, "at the step it stands at");
     }
 
     #[test]

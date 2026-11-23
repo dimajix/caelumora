@@ -1994,8 +1994,8 @@ async fn a_turn_is_stored_with_the_step_that_comes_next() {
             });
             if has_result
                 && state
-                    .thread(ThreadId::line(channel.id()))
-                    .is_some_and(|part| part.processing_state == ActorState::Planning)
+                    .turn(ThreadId::line(channel.id()))
+                    .is_some_and(|turn| turn.step == ActorState::Planning)
             {
                 break state;
             }
@@ -3013,7 +3013,7 @@ async fn an_agent_stopped_in_a_model_call_keeps_its_turn_and_asks_again_when_its
     stop_and_wait(&channel, running).await;
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     assert_eq!(
-        stored.thread(ThreadId::line(channel.id())).map(|part| part.processing_state),
+        stored.turn(ThreadId::line(channel.id())).map(|turn| turn.step),
         Some(ActorState::Planning),
         "stored at the step it stood at"
     );
@@ -3041,7 +3041,7 @@ async fn an_agent_stopped_while_a_tool_runs_records_the_call_as_stopped_and_goes
     stop_and_wait(&channel, running).await;
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     assert_eq!(
-        stored.thread(ThreadId::line(channel.id())).map(|part| part.processing_state),
+        stored.turn(ThreadId::line(channel.id())).map(|turn| turn.step),
         Some(ActorState::ExecutingTools),
         "the second call has no result yet"
     );
@@ -3080,10 +3080,7 @@ async fn an_idle_agent_stopped_ends_at_once_where_it_stands() {
 
     stop_and_wait(&channel, running).await;
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
-    assert_eq!(
-        stored.thread(ThreadId::line(channel.id())).map(|part| part.processing_state),
-        Some(ActorState::Idle)
-    );
+    assert!(!stored.asleep, "idle");
     assert!(
         stored.turns().next().is_none()
             && given_up_turns(&stored, ThreadId::line(channel.id())).is_empty(),
@@ -3299,10 +3296,7 @@ async fn a_removed_agent_gives_its_turn_up_says_so_and_leaves_an_idle_state_behi
     let stored = time::timeout(Duration::from_secs(5), async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
-            if state
-                .thread(ThreadId::line(channel.id()))
-                .is_some_and(|part| part.processing_state == ActorState::Idle)
-            {
+            if state.turn(ThreadId::line(channel.id())).is_none() && !state.asleep {
                 break state;
             }
             time::sleep(Duration::from_millis(10)).await;
@@ -3589,7 +3583,7 @@ async fn an_activity_cut_short_by_a_stop_is_carried_out_again_as_the_turn_resume
     stop_and_wait(&channel, running).await;
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     assert_eq!(
-        stored.thread(ThreadId::line(channel.id())).map(|part| part.processing_state),
+        stored.turn(ThreadId::line(channel.id())).map(|turn| turn.step),
         Some(ActorState::Busy),
         "stored at the step it stood at"
     );

@@ -213,10 +213,9 @@ fn cannot_run(error: &Error) -> bool {
 /// part in (issue 602): the line if it takes part there, else the first. Where it joined the
 /// channel - its line, or the thread it founded -, but for one that founded a thread and was taken
 /// into the line since, or let go from where it joined: which thread an actor joined in first,
-/// nothing keeps but its attendance. What tells it is where one says of oneself what names no
-/// thread (`ParticipantRuntime::joined_thread_id`), and where `run` announces what a newcomer
-/// was given.
-pub(crate) fn joined_in(channel: ChannelId, taking_part: &BTreeSet<ThreadId>) -> ThreadId {
+/// nothing keeps but its attendance. What tells it is where `run` announces what a newcomer was
+/// given, and the newcomer's join first.
+pub(super) fn joined_in(channel: ChannelId, taking_part: &BTreeSet<ThreadId>) -> ThreadId {
     let line = ThreadId::line(channel);
     match taking_part.contains(&line) {
         true => line,
