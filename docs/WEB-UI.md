@@ -64,6 +64,9 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/command.ts`, `src/mention.ts` | The rules of what is typed, mirrored from the domain |
 | `src/actor.ts` | Who an `ActorId` names, and the `ActorId` of a user or an agent |
 | `src/shownChannel.ts` | What the messages shown of a channel need of it, as a React context |
+| `src/chatChannel.ts` | What the parts of the chat are given of the channel - who is in it, what the user may do there -, as a React context |
+| `src/conversation.ts` | One conversation of a channel - its line, or a thread -: what is shown of it, and how an event of the stream and a page of the history change it |
+| `src/composer.ts` | What a user is writing: its text, kept as a draft, what is attached and how it is classified |
 | `src/page.ts`, `src/pageList.ts` | What is shown in the place of a channel, and the lists in the sidebar it is opened from |
 | `src/App.tsx` | Login state, keep-alive, the error banner, the layout |
 | `src/components/` | One exported component per file, named after what it shows; its own parts share its file, as do the parts of one thing shown that other components draw too (`MessageView.tsx`, `QuestionView.tsx`) |
@@ -73,7 +76,10 @@ where it is used, not a prop each component on the way takes only to hand it on;
 component's own - its message, its call - stays a prop. `ShownChannel` is such a context: what a
 message and its cards need of the channel - its attachments, the workspace's files, the artifacts,
 the commands ended, what each turn carries, opening a page and ending a command. The chat provides
-all of it; the context and history panels, a record, provide the attachments alone.
+all of it; the context and history panels, a record, provide the attachments alone. The chat
+provides a second, `ChatChannel`: who takes part and what the user may do there - ask for
+another answer, change or take back a message, stop an answer -, which a conversation's list and
+the field to write in read.
 
 ## Talking to the server
 
@@ -282,11 +288,13 @@ from the dialog that adds someone to a channel (see below).
 
 ### A channel
 
-`ChatView` shows one channel. Only a participant follows it live, over the channel's stream; anyone
-else who may read it - the session's owner, say - is shown its history and no input, and what
-others say in it as the global stream announces it. A channel that does not run, its components
-unreadable, says so and why above the input (`unavailable`); what is done there tries it again, and
-it is fetched anew as it starts.
+`ChatView` shows one channel: what is the channel's - its participants, approvals, questions,
+panels -, and its line as a conversation (`ConversationView`, `Composer`), to which it hands on
+what the stream says of the line (`withEvent`, issue 595). Only a participant follows it live, over
+the channel's stream; anyone else who may read it - the session's owner, say - is shown its history
+and no input, and what others say in it as the global stream announces it. A channel that does not
+run, its components unreadable, says so and why above the input (`unavailable`); what is done there
+tries it again, and it is fetched anew as it starts.
 
 *   **What was read.** The chat marks the channel read up to the newest message of someone else it
     shows, while the tab is visible - as the channel is opened, as messages arrive and as the tab

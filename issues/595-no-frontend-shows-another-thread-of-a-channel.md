@@ -203,3 +203,29 @@ which its event already carries in its context - or only in the snapshot.
   thread it happened in (`Recorded::thread`), its entry -, as the stores read it (`seen`,
   `page_of`), named as the REST API's item is, on review; the terminal takes only an agent's answer
   of the line on a page as what `/retry` asks for, as it does live.
+- **2026-11-23** — Step 2 decided by the maintainer, on tracing the web UI: `ChatView` holds one
+  conversation, and a single handler of the stream mixes what changes it with what changes the
+  whole channel. A conversation becomes a part of its own - a pure function applying an event to
+  its state, and a view of its list, its pages and its input -, which the line and a thread's pane
+  both are; `ChatView` keeps what is the channel's and hands each event on once. Not a second list
+  beside it, which would repeat the conversation's logic. Step 2 is cut in two: 2a takes the
+  conversation out of `ChatView` without a change of behaviour; 2b shows a thread with it, with
+  what the backend is to give for it (*Interface of step 2*). One thread is open at a time; for
+  the others the channel keeps what the mark at the message they hang at needs. The pane takes the
+  place of the channel's side panel, with a width of its own, and on a narrow screen that of the
+  chat. Planned beside the steps, as step 6, after 2b: **what is read in a thread** - where a user
+  read up to in it, what is new in it at its mark, and how that counts in the channel's unread -,
+  to be decided as it comes; until then, what is read stays the channel's and follows the line.
+- **2026-11-23** — Step 2a: the conversation taken out of `ChatView` in the web UI.
+  `conversation.ts` holds one conversation - its messages, its answers under way, where its earlier
+  pages are read - and how an event of the stream (`withEvent`) and a page of the history change
+  it; `ConversationView` shows it whole: its list, what waits for the user between the list and the
+  field to write in (`children`), the field (`Composer`, its state `useComposer`) and the files
+  dropped onto it. It reads the channel from a context of the chat, `ChatChannel`, beside
+  `ShownChannel`. `ChatView` keeps what is the channel's and hands on what the stream says of the
+  line. Decided on review, beside the interface agreed: the field is part of the conversation's
+  view, so that the list follows the user's own words without a signal across components; a
+  message read back replaces one shown (`withReplaced`), one announced elsewhere is added once
+  (`withAdded`); the context named `ChatChannel` for what it is. One change of behaviour, as
+  agreed: an event of another thread no longer ends an answer shown in the line. Keyed by the
+  channel, the conversation keeps the draft typed in one channel out of another.
