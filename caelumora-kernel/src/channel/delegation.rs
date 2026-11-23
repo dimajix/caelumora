@@ -4,16 +4,16 @@
 
 use super::run::RunningActor;
 use super::ResolvedParticipant;
-use super::{ActorChange, ChannelError, ChannelLoop};
+use super::{ActorChange, ChannelActor, ChannelError, ChannelLoop};
 use crate::actor::delegate::DelegateActor;
 use anyhow::{anyhow, Result};
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::channel::{Brief, Channel, Delegation, ThreadId};
+use caelumora_domain::channel::{Brief, Channel, Circle, Delegation, ThreadId};
 use caelumora_domain::message::{Message, MessageId, MessageRole};
 use caelumora_domain::store::Stored;
 use caelumora_security::{ActionType, SecurityContext};
 use std::any::Any;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::Arc;
 use tracing::{debug, warn};
 
@@ -21,14 +21,14 @@ impl ChannelLoop {
     /// Has the delegate of `thread` give its recipient `recipient` the brief `brief` to read on
     /// behalf of whom `context` acts for - its caller, the giver -, and bring what came of it back
     /// to them where the thread was opened; it waits behind a brief still open. Asked: that the
-    /// giver reads the channel; that the thread is an open one opened at another; that the
-    /// recipient runs in it and the giver where it was opened; that a thread delegated into
-    /// before is delegated by the same giver to the same recipient; that the thread is not quiet
-    /// after a cancel. The brief is classified as the channel is, and both directions answer the
-    /// chain `context` belongs to (its initiator).
+    /// giver reads the channel; that the thread is not closed and was opened at another, its circle
+    /// closed (issue 602); that the recipient runs in it and the giver where it was opened; that a
+    /// thread delegated into before is delegated by the same giver to the same recipient; that the
+    /// thread is not quiet after a cancel. The brief is classified as the channel is, and both
+    /// directions answer the chain `context` belongs to (its initiator).
     ///
     /// # Errors
-    /// `ChannelError::Forbidden`, `ThreadNotOpen`, `NotInThread`, `ThreadQuiet` or
+    /// `ChannelError::Forbidden`, `ThreadNotOpen`, `OpenCircle`, `NotInThread`, `ThreadQuiet` or
     /// `DelegatedOtherwise`.
     pub async fn delegate(
         &self,
@@ -46,22 +46,22 @@ impl ChannelLoop {
         let not_open = || ChannelError::ThreadNotOpen { thread, channel: self.id };
         let opening =
             self.thread(thread).and_then(|opened| opened.opening()).ok_or_else(not_open)?;
+        // Into a closed circle alone (issue 602): what answers a brief is the recipient's turn.
+        if opening.circle == Circle::Open {
+            return Err(ChannelError::OpenCircle { thread, channel: self.id }.into());
+        }
         let giver = context.caller_id;
         let origin = opening.origin.thread;
-        let runs_in = |participant: ActorId, thread: ThreadId| {
-            let actors = self.actors.load();
-            actors.get(&participant).is_some_and(|actor| actor.thread == thread)
-        };
         let not_in = |participant, thread| ChannelError::NotInThread {
             participant,
             thread,
             channel: self.id,
         };
         // An agent: what comes of a brief is the turn that answers it, which a person has not.
-        if !matches!(recipient, ActorId::Agent(_)) || !runs_in(recipient, thread) {
+        if !matches!(recipient, ActorId::Agent(_)) || !self.runs_in(recipient, thread) {
             return Err(not_in(recipient, thread).into());
         }
-        if !runs_in(giver, origin) {
+        if !self.runs_in(giver, origin) {
             return Err(not_in(giver, origin).into());
         }
         // Delegating does not wake a thread, so that a giver cannot undo a user's cancel.
@@ -162,7 +162,7 @@ impl ChannelLoop {
     /// Starts the delegate of `thread`, in it.
     async fn start_delegate(&self, thread: ThreadId) {
         let resolved = ResolvedParticipant::delegate(thread, self.session_id, self.id);
-        if let Err(e) = self.add_actor(resolved, thread, None, None).await {
+        if let Err(e) = self.add_actor(resolved, BTreeSet::from([thread]), None, None).await {
             warn!("The delegate of thread {} of channel {} cannot start: {:#}", thread, self.id, e);
         }
     }
@@ -204,8 +204,9 @@ impl ChannelLoop {
         running: &mut HashMap<ActorId, RunningActor>,
     ) {
         let delegate = ActorId::Delegate(thread);
-        if let Some(actor) = self.actor(delegate) {
-            self.drop_actor(delegate, &actor, thread);
+        let taken_in = self.actors.load().get(&delegate).cloned();
+        if let Some(ChannelActor { actor, threads, .. }) = taken_in {
+            self.drop_actor(delegate, &actor, &threads.load());
         }
         running.remove(&delegate);
         if let Some(held) = self.state.lock().await.threads.get_mut(&thread) {

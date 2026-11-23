@@ -411,6 +411,7 @@ mod tests {
     use caelumora_api::terminal::ByteStream;
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::content::ContentRef;
     use caelumora_domain::context::ModelProfile;
     use caelumora_domain::history::HistoryEntry;
@@ -472,7 +473,7 @@ mod tests {
             attachments.create(&hers, &channel, "chart.png", None, bytes(PNG)).await.unwrap();
         main.user_actor(world.alice)
             .unwrap()
-            .send_message(Some("look".to_string()), None, vec![notes.id, chart.id])
+            .send_message(None, Some("look".to_string()), None, vec![notes.id, chart.id])
             .await
             .unwrap();
         let view =
@@ -508,7 +509,10 @@ mod tests {
         let tool = tool();
         let mut state = AgentChannelState::default();
         let said = said_with_attachments(&world, &session, &LONG_LINE).await;
-        state.perceive(vec![Message { role: MessageRole::User, ..said }]);
+        state.perceive(
+            ThreadId::line(session.channels()[0].id()),
+            vec![Message { role: MessageRole::User, ..said }],
+        );
         let mut turn = testing::turn(&session, helper, world.alice, &mut state);
 
         let args = json!({ "ref": "a1" });
@@ -554,7 +558,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         let unrecorded =
             Message { attachments: kept, classification, ..make_message(MessageId::new()) };
-        state.perceive(vec![unrecorded]);
+        state.perceive(ThreadId::line(session.channels()[0].id()), vec![unrecorded]);
         let mut turn = testing::turn(&session, helper, world.alice, &mut state);
         let tool = tool();
 
@@ -593,7 +597,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         let unrecorded =
             Message { attachments: kept, classification, ..make_message(MessageId::new()) };
-        state.perceive(vec![unrecorded]);
+        state.perceive(ThreadId::line(session.channels()[0].id()), vec![unrecorded]);
         let mut turn = testing::turn(&session, helper, world.alice, &mut state);
         let tool = tool();
 
@@ -631,9 +635,12 @@ mod tests {
             [READ_ATTACHMENT, COPY_ATTACHMENT, ATTACH],
             "before anything is numbered too: a tool may give one in the turn under way"
         );
-        state.turn = None;
+        state.thread_mut(ThreadId::line(session.channels()[0].id())).turn = None;
         let said = said_with_attachments(&world, &session, b"line one\nline two\n").await;
-        state.perceive(vec![Message { role: MessageRole::User, ..said.clone() }]);
+        state.perceive(
+            ThreadId::line(session.channels()[0].id()),
+            vec![Message { role: MessageRole::User, ..said.clone() }],
+        );
         let mut turn = testing::turn(&session, helper, world.alice, &mut state);
         let offered: Vec<String> = tool
             .offered(&turn.situation())
@@ -712,8 +719,13 @@ mod tests {
             .execute(&json!({ "ref": "a1" }), None, &mut turn)
             .await
             .unwrap();
-        let aside: Vec<ContentRef> =
-            turn.situation().agent_channel_state().turn.as_ref().unwrap().attachments.clone();
+        let aside: Vec<ContentRef> = turn
+            .situation()
+            .agent_channel_state()
+            .turn(turn.situation().branch_thread_id())
+            .unwrap()
+            .attachments
+            .clone();
         assert_eq!(aside.len(), 1);
         assert!(
             aside[0].id != notes.id && aside[0].key != notes.key && aside[0].digest == notes.digest,
@@ -760,12 +772,15 @@ mod tests {
 
         // A model that sees is offered to look at an image again.
         drop(testing::turn(&session, helper, world.alice, &mut state));
-        if let Some(begun) = state.turn.as_mut() {
+        if let Some(begun) =
+            state.thread_mut(ThreadId::line(session.channels()[0].id())).turn.as_mut()
+        {
             begun.work.context.frame.profile =
                 ModelProfile { max_images: 4, ..ModelProfile::default() };
         }
         let seeing = Turn::of(
             &mut state,
+            ThreadId::line(session.channels()[0].id()),
             agent_runtime(participant_runtime_in(&session.channels()[0], ActorId::Agent(helper))),
         )
         .unwrap();
@@ -791,7 +806,10 @@ mod tests {
         let (session, helper, _) = session_with_helper(&world).await;
         let said = said_with_attachments(&world, &session, b"line one\nline two\n").await;
         let mut state = AgentChannelState::default();
-        state.perceive(vec![Message { role: MessageRole::User, ..said }]);
+        state.perceive(
+            ThreadId::line(session.channels()[0].id()),
+            vec![Message { role: MessageRole::User, ..said }],
+        );
         let mut turn = testing::turn(&session, helper, world.alice, &mut state);
         let tool = tool();
         let (_, read) = world

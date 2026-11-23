@@ -1,5 +1,6 @@
 //! A running channel: `ChannelLoop`, how it is built, and what it tells of itself and its actors;
-//! a thread within it is `thread`'s, opening and closing one `threads`'.
+//! a thread within it is `thread`'s, what is chosen of a new one `spec`'s, opening and closing one
+//! `threads`'.
 
 mod control;
 mod delegation;
@@ -10,6 +11,7 @@ mod participation;
 mod resolved;
 mod run;
 mod settings;
+mod spec;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 #[cfg(test)]
@@ -19,6 +21,7 @@ mod threads;
 
 pub(crate) use participation::Participation;
 pub(crate) use resolved::{ResolvedKind, ResolvedParticipant};
+pub use spec::ThreadSpec;
 pub(crate) use threads::require_opening;
 
 use crate::actor::approval::ApproverActor;
@@ -38,6 +41,7 @@ use caelumora_api::component::{ComponentError, ComponentImpl};
 use caelumora_domain::actor::ActorId;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_domain::actor::Envelope;
+use caelumora_domain::approval::ApprovalId;
 use caelumora_domain::chain::Position;
 use caelumora_domain::channel::{
     Channel, ChannelId, ChannelState, Delegation, Opening, Participant, ThreadId,
@@ -58,7 +62,7 @@ use caelumora_store::history::HistoryStore;
 use caelumora_store::StateStore;
 use futures::future;
 use std::any::Any;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync;
 use std::sync::Arc;
 use std::time::Duration;
@@ -155,9 +159,34 @@ pub enum ChannelError {
     #[error("thread {thread} of channel {channel} is not closed while someone takes part in it")]
     ThreadNotEmpty { thread: ThreadId, channel: ChannelId },
     /// A participant that does not run in the thread named of the channel (issue 557): whom a
-    /// brief is delegated to there, or whoever delegates it where the thread was opened.
+    /// brief is delegated to there, or whoever delegates it where the thread was opened; one let go
+    /// from a thread it takes no part in (issue 602).
     #[error("{participant} takes no part in thread {thread} of channel {channel}")]
     NotInThread { participant: ActorId, thread: ThreadId, channel: ChannelId },
+    /// One taken into a thread of the channel it takes part in already (issue 602).
+    #[error("{participant} already takes part in thread {thread} of channel {channel}")]
+    AlreadyInThread { participant: ActorId, thread: ThreadId, channel: ChannelId },
+    /// One taken into a further thread that takes part in one thread alone (issue 602): an
+    /// external agent, which keeps one remote state in its channel.
+    #[error("{participant} takes part in one thread of channel {channel} alone")]
+    InOneThreadAlone { participant: ActorId, channel: ChannelId },
+    /// One let go from the last thread it takes part in (issue 602): it leaves the channel
+    /// instead.
+    #[error("{participant} takes part in no other thread of channel {channel} than {thread}")]
+    LastThread { participant: ActorId, thread: ThreadId, channel: ChannelId },
+    /// Someone taken into a thread whose circle is closed (issue 602): those it was opened with
+    /// take part in it, and nobody else.
+    #[error(
+        "the circle of thread {thread} of channel {channel} is closed: nobody is taken into it"
+    )]
+    ClosedCircle { thread: ThreadId, channel: ChannelId },
+    /// Delegating into a thread whose circle is open (issue 602): what its recipient makes of a
+    /// brief is the first turn it ends there, which a thread others write in and are drawn into
+    /// would mistake.
+    #[error(
+        "the circle of thread {thread} of channel {channel} is open: nothing is delegated into it"
+    )]
+    OpenCircle { thread: ThreadId, channel: ChannelId },
     /// A thread delegated into by another giver, or to another recipient, than a brief names
     /// (issue 557): a thread has one delegation, which brings back to its giver what its recipient
     /// made of it.
@@ -180,19 +209,43 @@ fn cannot_run(error: &Error) -> bool {
             .any(|e| e.downcast_ref::<ComponentError>().is_some_and(ComponentError::is_unavailable))
 }
 
+/// The thread a participant of `channel` counts as joined in, of the threads `taking_part` it takes
+/// part in (issue 602): the line if it takes part there, else the first. Where it joined the
+/// channel - its line, or the thread it founded -, but for one that founded a thread and was taken
+/// into the line since, or let go from where it joined: which thread an actor joined in first,
+/// nothing keeps but its attendance. What tells it is where `run` announces what a newcomer was
+/// given, and the newcomer's join first.
+pub(super) fn joined_in(channel: ChannelId, taking_part: &BTreeSet<ThreadId>) -> ThreadId {
+    let line = ThreadId::line(channel);
+    match taking_part.contains(&line) {
+        true => line,
+        false => taking_part.first().copied().unwrap_or(line),
+    }
+}
+
 /// The actor of a channel's participant, with the participant it was built
 /// from, resolved, and what tells when its task has ended.
 #[derive(Debug, Clone)]
 struct ChannelActor {
     actor: Arc<dyn Actor>,
     participant: ResolvedParticipant,
-    /// The thread it takes part in (issue 557): whose moderator may ask it, and what of the channel
-    /// is delivered to it - an agent's.
-    thread: ThreadId,
+    /// The threads it takes part in (issues 557, 602): whose moderators may ask it, and what of the
+    /// channel is delivered to it - an agent's. Shared with its runtime
+    /// (`ParticipantRuntime::threads`), and changed by the channel alone, as it takes the actor
+    /// into a further thread or lets it go from one.
+    threads: Arc<ArcSwap<BTreeSet<ThreadId>>>,
     /// Tracks the actor's task while `run` runs it, so that whoever stops
     /// the actor can wait for the task to end without going through `run`
     /// (issue 187) - `run`'s `JoinSet` alone owns the task.
     task: TaskTracker,
+}
+
+impl ChannelActor {
+    /// Whether it takes part in `thread` (issue 602): whether the thread's moderator may ask it,
+    /// and what happens there is delivered to it.
+    fn takes_part_in(&self, thread: ThreadId) -> bool {
+        self.threads.load().contains(&thread)
+    }
 }
 
 /// The actors of a channel's participants.
@@ -249,23 +302,36 @@ enum ActorChange {
     /// as a participant joins -, from which position on it is given the history - `None`: what is
     /// said from its start on, a founder's (issue 420), a newcomer's granted no message (issue 568)
     /// or an actor's that starts again with its channel -, and on whose behalf it joined, in whose
-    /// name `run` announces it as it starts it (`ParticipantJoined`, issue 408), with what it was
-    /// given (`HistoryShared`, issue 417) - `None` for an actor that starts again with its channel,
-    /// or an internal one, which join nothing.
+    /// name `run` announces it as it starts it (`ParticipantJoined`, issue 408) in each thread it
+    /// takes part in (issue 602), with what it was given (`HistoryShared`, issue 417) before the
+    /// join in the thread it joined in - `None` for an actor that starts again with its channel, or
+    /// an internal one, which join nothing.
     Start(ChannelActor, Option<Position>, Option<SecurityContext>),
+    /// The participants to take into the thread as far as it draws them in, and on whose behalf
+    /// (issue 602): `run` takes them in as `ChannelLoop::draw_in` says.
+    DrawIn(ThreadId, Vec<ActorId>, SecurityContext),
+    /// The running actor taken into a further thread or let go from one, as `ThreadChange` says,
+    /// what it is called, and on whose behalf (issue 602): `run` has it take part there or no
+    /// longer as it announces its join or its leave there in the name of their caller
+    /// (`ChannelLoop::change_thread`), the actor going on in its other threads.
+    Thread(ActorId, String, ThreadId, ThreadChange, SecurityContext),
     /// The actor that leaves, what it was called as it left, on whose behalf it was removed - in
     /// whose name `run` announces it once its task has ended (`ParticipantLeft`, issues 162, 262,
-    /// 408) -, and the thread it took part in, where it is announced (issue 557). Also for one
-    /// that has no actor but takes part in the history (issue 590) - left out as the channel
-    /// started, or let go while it did not run (`reconcile`) -, which `run` announces at once.
-    Leave(ActorId, String, SecurityContext, ThreadId),
+    /// 408) -, and the threads it took part in, in each of which it is announced (issues 557,
+    /// 602): its actor's own, which `run` reads as it takes the leave in, since a thread may have
+    /// drawn it in while it was let go. Also for one that has no actor but takes part in the
+    /// history (issue 590) - left out as the channel started, or let go while it did not run
+    /// (`reconcile`) -, which `run` announces at once.
+    Leave(ActorId, String, SecurityContext, Arc<ArcSwap<BTreeSet<ThreadId>>>),
     /// The thread opened as `Opening` says, on whose behalf - in whose name `run` announces it
     /// (`ThreadOpened`, issue 557), before anyone founding it joins it, and records it among the
     /// channel's threads (`ChannelState::threads`).
     Open(ThreadId, Opening, SecurityContext),
     /// The thread to close, on whose behalf - in whose name `run` announces it (`ThreadClosed`) -,
     /// recorded closed at once: whoever closes it holds it, as whoever lets someone go from it does
-    /// until they have left (issue 593).
+    /// until they have left (issue 593). Left open while anyone takes part in it, whom it drew in
+    /// since closing it was asked (issue 602): `run` answers all the same, and whoever asked finds
+    /// it open.
     Close(ThreadId, SecurityContext),
     /// What is delegated into the thread (issue 557): `run` records its briefs behind those of the
     /// thread's delegation, starting the delegation with it if the thread has none, and hands them
@@ -276,6 +342,14 @@ enum ActorChange {
     /// until then routed - or were aborted after `STOP_GRACE` (issue 593). Nobody is taken out of
     /// the channel, and no leave is announced.
     End,
+}
+
+/// What changes of where a running actor takes part (issue 602): it joins a further thread, or
+/// leaves one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ThreadChange {
+    Joins,
+    Leaves,
 }
 
 /// How the actors of a channel end as it stops (`ChannelLoop::end_actors`): stopped, to be resumed
@@ -310,8 +384,8 @@ pub struct ChannelLoop {
     /// one set.
     actors: ArcSwap<Actors>,
     /// Its open threads (issue 557), each with a moderator of its own: what an event's thread
-    /// decides of it is what the channel delivers. Its line, in which every actor takes part but
-    /// those that founded another, and the threads opened since (`threads`); replaced as a whole
+    /// decides of it is what the channel delivers. Its line, and the threads opened since
+    /// (`threads`), each with the actors that take part in it (issue 602); replaced as a whole
     /// when one is opened or closed, as `actors` is.
     threads: ArcSwap<HashMap<ThreadId, Arc<Thread>>>,
     mentions: ArcSwap<MentionDirectory>,
@@ -399,7 +473,7 @@ impl ChannelLoop {
         let internal_actors = channel_loop.channel.load().internal_actors.clone();
         for internal in &internal_actors {
             let resolved = ResolvedParticipant::internal(internal, session_id, id);
-            channel_loop.add_actor(resolved, line, None, None).await?;
+            channel_loop.add_actor(resolved, BTreeSet::from([line]), None, None).await?;
         }
         // The delegates of what is still delegated (issue 557), each reading on from where its
         // open brief was given, before the participants they give to.
@@ -416,14 +490,14 @@ impl ChannelLoop {
             // keep everyone else out, nor can a third party - the
             // personality's owner, or the components' - stop someone's
             // channel so.
-            // In the thread it takes part in, as its attendance says (issue 557).
-            let thread = channel_loop.open_or_line(attending.get(&participant.actor_id()).copied());
+            // In the threads its attendance holds open (issues 557, 602).
+            let threads = channel_loop.taking_part(attending.get(&participant.actor_id()));
             let started = async {
                 let Some(resolved) = channel_loop.resolve(participant).await? else {
                     return Ok(false);
                 };
                 channel_loop.participation.require_runnable(&resolved).await?;
-                channel_loop.add_actor(resolved, thread, None, None).await?;
+                channel_loop.add_actor(resolved, threads, None, None).await?;
                 Ok(true)
             }
             .await;
@@ -478,10 +552,15 @@ impl ChannelLoop {
         self.threads.load().get(&thread).map(Arc::clone)
     }
 
-    /// `thread` if it is open in the channel, its line otherwise - and for `None`: where someone
-    /// takes part who is to take part in `thread`, which may have been closed meanwhile.
-    fn open_or_line(&self, thread: Option<ThreadId>) -> ThreadId {
-        thread.filter(|thread| self.is_open(*thread)).unwrap_or(ThreadId::line(self.id))
+    /// The threads a participant takes part in as its actor starts again, of those `attending`
+    /// its ranges of attendance hold open (issue 602): those still open, or else the line.
+    fn taking_part(&self, attending: Option<&BTreeSet<ThreadId>>) -> BTreeSet<ThreadId> {
+        let open = attending.into_iter().flatten().copied().filter(|thread| self.is_open(*thread));
+        let threads: BTreeSet<ThreadId> = open.collect();
+        match threads.is_empty() {
+            true => BTreeSet::from([ThreadId::line(self.id)]),
+            false => threads,
+        }
     }
 
     /// `participant` with what its actor is built from
@@ -499,30 +578,32 @@ impl ChannelLoop {
     }
 
     /// Takes `actor` into the channel and hands it to `run` to start (`ActorChange::Start`, given
-    /// `from` and `joined` as it says): it takes part in `thread` (issue 557), whose moderator
-    /// routes to it, it is among the participants' actors, and it can be mentioned. The one way an
-    /// actor enters the channel - when the channel is built and when a participant joins (issue
-    /// 91). What `run` answers once it started it (issue 593).
+    /// `from` and `joined` as it says): it takes part in `threads` (issues 557, 602), whose
+    /// moderators route to it, it is among the participants' actors, and it can be mentioned. The
+    /// one way an actor enters the channel - when the channel is built and when a participant joins
+    /// (issue 91). What `run` answers once it started it (issue 593).
     async fn adopt(
         &self,
         actor: Arc<dyn Actor>,
         resolved: ResolvedParticipant,
-        thread: ThreadId,
+        threads: Arc<ArcSwap<BTreeSet<ThreadId>>>,
         from: Option<Position>,
         joined: Option<SecurityContext>,
     ) -> Answer {
-        match self.thread(thread) {
-            Some(taking_part) => taking_part.add_actor(Arc::clone(&actor)),
-            None => warn!(
-                "{} takes part in thread {} the channel {} has not",
-                actor.id(),
-                thread,
-                self.id
-            ),
+        for thread in threads.load().iter() {
+            match self.thread(*thread) {
+                Some(taking_part) => taking_part.add_actor(Arc::clone(&actor)),
+                None => warn!(
+                    "{} takes part in thread {} the channel {} has not",
+                    actor.id(),
+                    thread,
+                    self.id
+                ),
+            }
         }
         let id = actor.id();
         let task = TaskTracker::new();
-        let adopted = ChannelActor { actor, participant: resolved, thread, task };
+        let adopted = ChannelActor { actor, participant: resolved, threads, task };
         self.actors.rcu(|actors| {
             let mut actors = HashMap::clone(actors);
             actors.insert(id, adopted.clone());
@@ -618,35 +699,50 @@ impl ChannelLoop {
         self.actors.load().contains_key(&actor_id)
     }
 
+    /// Whether an actor of `actor_id` runs in the channel and takes part in `thread` (issues 557,
+    /// 602): whom a nudge, a request to answer again, a command or a brief there may ask.
+    pub(crate) fn runs_in(&self, actor_id: ActorId, thread: ThreadId) -> bool {
+        let actors = self.actors.load();
+        actors.get(&actor_id).is_some_and(|actor| actor.takes_part_in(thread))
+    }
+
     /// The actor of `actor_id` if it is an agent of this channel - whom a
     /// request to answer again or to carry out a command may name.
     fn agent_actor(&self, actor_id: ActorId) -> Option<Arc<dyn Actor>> {
         actor_id.as_agent_id().and_then(|_| self.actor(actor_id))
     }
 
-    /// The turn under way of the participant `actor` (issue 235), if it is
-    /// in one that can still be ended - what a request to answer it again
+    /// The turn under way of the participant `actor` in `thread` (issues 235, 602), if it is in one
+    /// there that can still be ended, running or set aside - what a request to answer it again
     /// names.
-    pub(crate) fn turn_under_way(&self, actor: ActorId) -> Option<TurnId> {
-        self.actor(actor)?.turn_under_way()
+    pub(crate) fn turn_under_way(&self, actor: ActorId, thread: ThreadId) -> Option<TurnId> {
+        self.actor(actor)?.turn_under_way(thread)
     }
 
-    /// Whether the turn `turn` of `author` can be asked for again: under
-    /// way (issue 235), or `author`'s last turn, given up for a reason that
-    /// may be answered again and with nothing after it in the channel's
-    /// history (issue 259).
-    async fn retryable_turn(&self, author: ActorId, turn: TurnId) -> bool {
-        self.turn_under_way(author) == Some(turn) || self.given_up_last(author, turn).await
+    /// The thread the turn `turn` of `author` runs or ran in, if it can be asked for again: under
+    /// way (issue 235), or `author`'s last turn, given up for a reason that may be answered again
+    /// and with nothing after it in the channel's history (issue 259) - where a request to answer
+    /// it again is made (issue 602).
+    pub(crate) async fn retryable_turn(&self, author: ActorId, turn: TurnId) -> Option<ThreadId> {
+        let threads = self.threads_taken_part_in(author).await;
+        let under_way = |thread: &ThreadId| self.turn_under_way(author, *thread) == Some(turn);
+        if let Some(thread) = threads.iter().copied().find(under_way) {
+            return Some(thread);
+        }
+        for thread in threads {
+            if self.given_up_last(author, turn, thread).await {
+                return Some(thread);
+            }
+        }
+        None
     }
 
-    /// Whether `turn` is `author`'s last turn given up, which may be
-    /// answered anew after (issue 259).
-    async fn given_up_last(&self, author: ActorId, turn: TurnId) -> bool {
+    /// Whether `turn` is `author`'s last turn given up in `thread` and may be answered anew after
+    /// (issues 259, 602).
+    async fn given_up_last(&self, author: ActorId, turn: TurnId, thread: ThreadId) -> bool {
         let state = self.state.lock().await;
-        state
-            .history
-            .turn_given_up_last(author)
-            .is_some_and(|(last, reason)| last == turn && reason.may_be_answered_again())
+        let given_up = state.history.turn_given_up_last(author, thread);
+        given_up.is_some_and(|(last, reason)| last == turn && reason.may_be_answered_again())
     }
 
     /// The actor `user` acts through in this channel, or `None` if they are
@@ -661,13 +757,23 @@ impl ChannelLoop {
         Arc::downcast::<UserActor>(any_actor).ok()
     }
 
-    /// The actor of `resolved`, built but not yet taken in (`adopt`).
+    /// The thread the approval `id` was asked in (issue 602), while the channel's approver holds it
+    /// open: where a user answers it.
+    pub(crate) async fn approval_thread(&self, id: ApprovalId) -> Option<ThreadId> {
+        let actors = self.actors.load();
+        let (_, approver) = actors.iter().find(|(id, _)| matches!(id, ActorId::Approver(_)))?;
+        let actor = Arc::clone(&approver.actor);
+        let any_actor: Arc<dyn Any + Send + Sync> = actor;
+        Arc::downcast::<ApproverActor>(any_actor).ok()?.thread_of(id).await
+    }
+
+    /// The actor of `resolved`, taking part in `threads`, built but not yet taken in (`adopt`).
     async fn create_actor(
         &self,
         resolved: &ResolvedParticipant,
-        thread: ThreadId,
+        threads: &Arc<ArcSwap<BTreeSet<ThreadId>>>,
     ) -> Result<Box<dyn Actor>> {
-        let participant_runtime = self.runtime.participant_runtime(resolved, thread);
+        let participant_runtime = self.runtime.participant_runtime(resolved, threads);
         Ok(match resolved.kind().clone() {
             ResolvedKind::User(user) => Box::new(UserActor::new(user, participant_runtime).await?),
             ResolvedKind::Agent(agent, personality) => {

@@ -385,6 +385,22 @@ fn session_routes() -> Router<Arc<AppState>> {
         .route("/sessions/{id}/channels/{cid}/participants/{aid}/leave", post(channels::leave))
         .route("/sessions/{id}/channels/{cid}/participants/{aid}/retry", post(channels::retry_turn))
         .route(
+            "/sessions/{id}/channels/{cid}/threads/{tid}/participants",
+            post(channels::add_thread_participant),
+        )
+        .route(
+            "/sessions/{id}/channels/{cid}/threads/{tid}/participants/{aid}",
+            routing::delete(channels::remove_thread_participant),
+        )
+        .route(
+            "/sessions/{id}/channels/{cid}/threads/{tid}/participants/{aid}/join",
+            post(channels::join_thread),
+        )
+        .route(
+            "/sessions/{id}/channels/{cid}/threads/{tid}/participants/{aid}/leave",
+            post(channels::leave_thread),
+        )
+        .route(
             "/sessions/{id}/channels/{cid}/participants/{aid}/tool-calls/{call_id}/cancel",
             post(channels::interrupt_tool_call),
         )

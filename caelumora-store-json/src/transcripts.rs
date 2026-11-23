@@ -9,18 +9,20 @@
 //! per digest, `prompt-<digest>.json`, `tools-<digest>.json` and `frame-<digest>.json`, read by its
 //! digest and written once - one there already is not written again.
 
-use super::chains::{self, read_chain, read_head, segment_before, segment_of, SEGMENT};
+use super::chains::{
+    self, read_chain, read_end, read_head, segment_before, segment_of, ChainHead, SEGMENT,
+};
 use super::states::{size_of, JsonStates};
 use super::{read_json_opt, to_backend_error, write_json_atomic};
 use async_trait::async_trait;
 use caelumora_domain::agent::{AgentChannelState, AgentId};
 use caelumora_domain::chain::{Node, Position};
-use caelumora_domain::channel::ChannelId;
+use caelumora_domain::channel::{ChannelId, ThreadId};
 use caelumora_domain::context::FrameRef;
 use caelumora_domain::digest::Digest;
 use caelumora_domain::kept::Kept;
 use caelumora_domain::message::{Message, MessageId};
-use caelumora_domain::store::StoreResult;
+use caelumora_domain::store::{StoreError, StoreResult};
 use caelumora_domain::tool::ToolSet;
 use caelumora_domain::transcript::{known, Transcript, TranscriptEntry};
 use caelumora_store::transcript::{transcript_of, TranscriptStore};
@@ -74,7 +76,7 @@ impl JsonStates {
     ) -> StoreResult<()> {
         let Some(changes) = transcript.changes() else { return Ok(()) };
         let dir = self.transcript_dir(agent, channel).await?;
-        chains::append(&dir, transcript_of(agent, channel), changes).await?;
+        chains::append(&dir, transcript_of(agent, channel), changes.entries, changes.heads).await?;
         transcript.mark_stored();
         Ok(())
     }
@@ -104,16 +106,23 @@ impl JsonStates {
         Ok(())
     }
 
-    /// The transcript of `agent` in `channel` from the position `from` on,
-    /// as its state holds it; empty if none is kept.
+    /// The transcript of `agent` in `channel`, as its state holds it: the
+    /// branch of every thread, read back from its head; empty if none is
+    /// kept.
     pub(super) async fn load_transcript(
         &self,
         agent: AgentId,
         channel: ChannelId,
-        from: Position,
     ) -> StoreResult<Transcript> {
         let dir = self.transcript_dir(agent, channel).await?;
-        chains::load(&dir, transcript_of(agent, channel), from).await
+        let key = transcript_of(agent, channel);
+        let head: ChainHead<BTreeMap<ThreadId, Position>> = read_head(&dir).await?;
+        let mut branches = BTreeMap::new();
+        for (thread, at) in head.head {
+            branches.insert(thread, chains::path_to(&dir, &key, at).await?);
+        }
+        Transcript::loaded(head.end, branches)
+            .map_err(|e| StoreError::Backend(format!("{key} cannot be read: {e}")))
     }
 }
 
@@ -136,7 +145,7 @@ impl TranscriptStore for JsonStates {
         id: MessageId,
     ) -> StoreResult<Option<Message>> {
         let dir = self.transcript_dir(agent, channel).await?;
-        let end = read_head(&dir).await?.end;
+        let end = read_end(&dir).await?;
         let nodes: Vec<Node<TranscriptEntry>> = read_chain(&dir, Position::START, end).await?;
         Ok(known(nodes.iter(), id))
     }
@@ -148,7 +157,7 @@ impl TranscriptStore for JsonStates {
         ids: &[MessageId],
     ) -> StoreResult<HashSet<MessageId>> {
         let dir = self.transcript_dir(agent, channel).await?;
-        let end = read_head(&dir).await?.end;
+        let end = read_end(&dir).await?;
         let mut wanted: HashSet<MessageId> = ids.iter().copied().collect();
         let mut found = HashSet::new();
         let mut segment = end.previous().map(segment_of);

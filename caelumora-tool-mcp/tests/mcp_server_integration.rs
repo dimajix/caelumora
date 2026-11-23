@@ -15,6 +15,7 @@ use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::{AgentChannelState, AgentId, Personality};
 use caelumora_domain::channel::Channel;
 use caelumora_domain::channel::ChannelId;
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::component::{
     ComponentBundle, ComponentConfig, ComponentDescriptor, ComponentFailPolicy,
 };
@@ -154,9 +155,13 @@ async fn executed(
     params: Value,
 ) -> ToolResult<ToolOutput> {
     let mut state = AgentChannelState::default();
-    state.begin_turn(Work::new(Default::default(), None, Default::default(), Default::default()));
-    let mut turn =
-        Turn::of(&mut state, detached_actor_runtime(AgentId::default())).expect("a turn was begun");
+    let runtime = detached_actor_runtime(AgentId::default());
+    state.begin_turn(
+        ThreadId::line(runtime.channel_id()),
+        Work::new(Default::default(), None, Default::default(), Default::default()),
+    );
+    let mut turn = Turn::of(&mut state, ThreadId::line(runtime.channel_id()), runtime)
+        .expect("a turn was begun");
     tool_named(provider, name).execute(&params, None, &mut turn).await
 }
 
@@ -504,7 +509,7 @@ async fn the_tools_are_discovered_in_the_name_of_whoever_acts() {
         .asked(async {
             main.user_actor(world.bob)
                 .expect("he takes part")
-                .send_message(Some("@helper do it".to_string()), None, Vec::new())
+                .send_message(None, Some("@helper do it".to_string()), None, Vec::new())
                 .await
                 .expect("sent");
             asked_for(&world, "alice as helper, asked by bob: ReadSecret yes").await;

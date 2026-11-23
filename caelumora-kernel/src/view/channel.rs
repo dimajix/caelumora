@@ -410,7 +410,7 @@ impl ChannelView {
             .said(self.channel.id, &self.reading_as(), id)
             .await
             .map_err(|e| self.failed_reading(e))?;
-        let seen = said.and_then(|(_, item)| item.said().cloned());
+        let seen = said.and_then(|(_, item)| item.entry.said().cloned());
         match seen {
             Some(message) if self.may_read_entry(&message.classification) => Ok(message),
             _ if self.reading != Reading::Whole => Err(self.nothing_released()),
@@ -633,9 +633,9 @@ impl ChannelView {
             ])
         };
         let new = self.readable_items(Some(heard_from_others()));
-        let mentioning = self.readable_items(Some(Filter::all_of([
+        let addressing = self.readable_items(Some(Filter::all_of([
             heard_from_others(),
-            Filter::mentioning(viewer),
+            Filter::addressing(viewer),
         ])));
         let key = self.channel.id;
         let reader = Reader::Participant(viewer);
@@ -646,15 +646,15 @@ impl ChannelView {
             .await
             .map_err(|e| self.failed_reading(e))?;
         // A mention among those not counted is looked for on its own.
-        let mentions_viewer = |item: &HistoryEntry| {
-            item.said().is_some_and(|message| message.mentions.contains(&viewer))
+        let addresses_viewer = |item: &HistoryEntry| {
+            item.said().is_some_and(|message| message.addressees.contains(&viewer))
         };
-        let mentioned = counted.entries().any(mentions_viewer)
+        let mentioned = counted.entries().any(addresses_viewer)
             || (counted.items.len() == Unread::CAP
                 && !self
                     .views()
                     .histories()
-                    .page(key, &reader, from, None, 1, mentioning.as_ref())
+                    .page(key, &reader, from, None, 1, addressing.as_ref())
                     .await
                     .map_err(|e| self.failed_reading(e))?
                     .items
@@ -1017,7 +1017,7 @@ impl ParticipantView {
     /// `Failed` if the agent's state cannot be read.
     pub async fn usage(&self) -> ViewResult<Option<TokenUsage>> {
         let Some(agent) = self.state.agent() else { return Ok(None) };
-        Ok(agent.stored().await?.used)
+        Ok(agent.stored().await?.used())
     }
 
     /// Of the notes the agent published, as its `state` holds them, those
@@ -1089,11 +1089,12 @@ impl ParticipantView {
         self.state.agent().ok_or_else(no_context)
     }
 
-    /// The turn of the answer the participant is giving now (issue 240), from the
-    /// running channel - none of a former participant, nor in a channel that does
+    /// The turn of the answer the participant is giving now in the channel's line (issues 240,
+    /// 602), from the running channel - none of a former participant, nor in a channel that does
     /// not run.
     fn turn_under_way(&self) -> Option<TurnId> {
-        self.channel.running().filter(|_| !self.former)?.turn_under_way(self.id())
+        let running = self.channel.running().filter(|_| !self.former)?;
+        running.turn_under_way(self.id(), ThreadId::line(running.id()))
     }
 
     /// The participant as the viewer sees it at this moment (issue 80), with
@@ -1142,7 +1143,7 @@ impl ParticipantView {
         let (mut pending_approvals, mut pending_questions) = (Vec::new(), Vec::new());
         if let Some(state) = &state {
             if wanted.contains(Detail::USAGE) {
-                usage = state.used;
+                usage = state.used();
             }
             if wanted.contains(Detail::NOTES) {
                 notes = self.notes_in(state).await;

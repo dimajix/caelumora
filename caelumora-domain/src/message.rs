@@ -6,6 +6,7 @@ use crate::actor::ActorId;
 use crate::confidentiality::{Classification, Visibility};
 use crate::content::ContentRef;
 use crate::digest::Digest;
+use crate::mention::MentionDirectory;
 use crate::query::FieldValue;
 use crate::tool::{ToolCall, ToolCallResult};
 use crate::work::TurnId;
@@ -83,12 +84,18 @@ pub struct Message {
     /// covered by the digest, like `timestamp`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_id: Option<TurnId>,
-    /// Participants addressed by `@`-mentions in `content`, resolved once
-    /// when the message entered the channel (see `crate::mention`). Stored
-    /// rather than re-parsed so that a later rename cannot change whom a past
-    /// message addressed.
+    /// The participants `content` mentions by name, by their handles - whom it draws into its
+    /// thread (issue 602) -, resolved once as the message entered the channel (see
+    /// `crate::mention`). Stored rather than re-parsed so that a later rename cannot change whom
+    /// a past message mentioned.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mentions: Vec<ActorId>,
+    /// Everyone `content` addresses: those it mentions by name, and everyone a group handle
+    /// (`@all`, `@channel`) addressed as it entered the channel (issues 401, 602) - whom a
+    /// moderator asks, and whom it mentions as a frontend shows it. Resolved and stored with
+    /// `mentions`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub addressees: Vec<ActorId>,
     // Usage statistics
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_tokens: Option<u64>,
@@ -165,6 +172,7 @@ impl Message {
             internal: false,
             turn_id: None,
             mentions: Vec::new(),
+            addressees: Vec::new(),
             prompt_tokens: None,
             completion_tokens: None,
             prompt_duration: None,
@@ -181,6 +189,14 @@ impl Message {
 }
 
 impl Message {
+    /// Resolves whom its content mentions by name and whom it addresses (`mentions`,
+    /// `addressees`, issues 29, 602) by the handles of `directory`: as it enters the channel,
+    /// which keeps them so; neither for a message without content.
+    pub fn resolve_mentions(&mut self, directory: &MentionDirectory) {
+        let resolved = self.content.as_deref().map(|content| directory.resolve(content));
+        (self.mentions, self.addressees) = resolved.unwrap_or_default();
+    }
+
     /// About how many tokens the message takes in a model's context (issue
     /// 284): its text, its reasoning, its calls and their results, as
     /// `estimated_tokens` estimates. For where no call measured it - on the
@@ -367,6 +383,7 @@ impl Message {
             self.reasoning_visibility = modified.reasoning_visibility;
             self.classification = modified.classification.clone();
             self.mentions = modified.mentions.clone();
+            self.addressees = modified.addressees.clone();
             self.modified = Some(modified.timestamp);
         }
         applies
@@ -410,6 +427,7 @@ impl Message {
             self.tool_calls.clear();
             self.tool_results.clear();
             self.mentions.clear();
+            self.addressees.clear();
             self.revoked = Some(at);
         }
         applies
@@ -1028,6 +1046,26 @@ pub(crate) mod tests {
         assert!(plain.get("attachments").is_none(), "nor of attachments, where it has none");
     }
 
+    /// Issue 602: a message keeps whom it mentions by name apart from whom it addresses, a group
+    /// handle among them; one without content mentions and addresses nobody.
+    #[test]
+    fn a_message_resolves_whom_it_mentions_by_name_and_whom_it_addresses() {
+        use crate::mention::MentionDirectory;
+        let (bob, sassy) = (ActorId::System, ActorId::None);
+        let directory = MentionDirectory::new([(bob, "Bob"), (sassy, "Sassy")]);
+        let mut message =
+            Message { content: Some("@bob and @all".to_string()), ..make_message(id(1)) };
+        message.resolve_mentions(&directory);
+        assert_eq!(
+            (message.mentions.clone(), message.addressees.clone()),
+            (vec![bob], vec![bob, sassy])
+        );
+
+        message.content = None;
+        message.resolve_mentions(&directory);
+        assert!(message.mentions.is_empty() && message.addressees.is_empty(), "without content");
+    }
+
     #[test]
     fn a_message_is_modified_and_taken_back_as_it_stands() {
         let turn = TurnId::new();
@@ -1038,12 +1076,15 @@ pub(crate) mod tests {
         };
         let public = Classification::general(Confidentiality::Public);
         let when = said.timestamp + Duration::minutes(5);
+        let (named, everyone) = (ActorId::System, ActorId::None);
         let modified = Message {
             content: Some("hello, corrected".to_string()),
             classification: public.clone(),
             timestamp: when,
             tool_calls: Vec::new(),
             turn_id: None,
+            mentions: vec![named],
+            addressees: vec![named, everyone],
             ..said.clone()
         };
 
@@ -1051,6 +1092,11 @@ pub(crate) mod tests {
         assert!(message.modify(&modified));
         assert_eq!(message.content.as_deref(), Some("hello, corrected"));
         assert_eq!(message.classification, public, "how it is classified, too");
+        assert_eq!(
+            (message.mentions.clone(), message.addressees.clone()),
+            (vec![named], vec![named, everyone]),
+            "and whom it mentions and addresses, as resolved anew (issue 602)"
+        );
         assert_eq!(
             (message.timestamp, message.modified),
             (said.timestamp, Some(when)),
@@ -1090,6 +1136,7 @@ pub(crate) mod tests {
             message.content.is_none() && message.tool_calls.is_empty(),
             "nothing of what it said"
         );
+        assert!(message.mentions.is_empty() && message.addressees.is_empty(), "nor whom");
         assert!(!message.is_heard(), "nobody hears it");
         let before = serde_json::to_value(&message).unwrap();
         assert!(

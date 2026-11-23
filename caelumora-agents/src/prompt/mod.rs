@@ -308,6 +308,7 @@ mod tests {
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
     use caelumora_domain::channel::testing::bare_channel;
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_domain::config::AppConfig;
     use caelumora_domain::context::ModelProfile;
@@ -479,7 +480,8 @@ mod tests {
         ));
         let work = Work::default().given_as(Gemma.profile());
         let state = AgentChannelState::default();
-        let situation = Situation::new(&work, &state, &*actor_runtime);
+        let thread = ThreadId::line(actor_runtime.channel_id());
+        let situation = Situation::new(&work, thread, &state, &*actor_runtime);
         let time = built.get_all::<dyn PromptProvider>(None).unwrap().remove(0);
         assert!(
             time.get_prompt(&situation).await.unwrap().text.starts_with("[Now]\n"),
@@ -491,7 +493,7 @@ mod tests {
         );
         let elsewhere = Work::default();
         assert!(
-            denied_result(&Situation::new(&elsewhere, &state, &*actor_runtime).texts())
+            denied_result(&Situation::new(&elsewhere, thread, &state, &*actor_runtime).texts())
                 .contains("The user declined"),
             "work of another profile, as it"
         );

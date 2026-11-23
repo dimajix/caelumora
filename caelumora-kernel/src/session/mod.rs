@@ -691,10 +691,11 @@ mod tests {
         session.add_participant(&ctx, agent, into).await.expect("taken in");
         let side = session.create_channel(&ctx, spec("side", vec![other, agent])).await.unwrap();
         let channels = [&*main, &*side];
-        assert!(channels.iter().all(|c| c.mentions().resolve("@helper") == [agent]), "as named");
+        assert!(channels.iter().all(|c| c.mentions().resolve("@helper").0 == [agent]), "as named");
 
-        let mentioned =
-            |handle: &str, actor| channels.iter().all(|c| c.mentions().resolve(handle) == [actor]);
+        let mentioned = |handle: &str, actor| {
+            channels.iter().all(|c| c.mentions().resolve(handle).0 == [actor])
+        };
 
         let event = AgentUpdateEvent::NameChanged("Assistant".to_string());
         let event = GlobalEvent::updated::<Agent>(&helper.id, &event);
@@ -705,7 +706,7 @@ mod tests {
         let by_new_name = || mentioned("@bea", other);
         assert!(done_once_renamed(&kernel, event, by_new_name).await, "the user by their new name");
         for old in ["@helper", "@other"] {
-            assert!(channels.iter().all(|c| c.mentions().resolve(old).is_empty()), "{old}");
+            assert!(channels.iter().all(|c| c.mentions().resolve(old).0.is_empty()), "{old}");
         }
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
@@ -731,7 +732,7 @@ mod tests {
         // runs again: the announcement of the rename is lost.
         kernel.event_bus().publish_past_capacity(&GlobalEvent::created::<Agent>(&helper.id));
         let mentioned = async {
-            while main.mentions().resolve("@assistant") != [agent] {
+            while main.mentions().resolve("@assistant").0 != [agent] {
                 time::sleep(Duration::from_millis(10)).await;
             }
         };

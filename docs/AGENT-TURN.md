@@ -16,7 +16,8 @@ turn](#a-command-turn)).
 
 `Idle` and `Sleeping` wait for the next event, and take it in together with everything there
 behind it in the inbox - queued, or in the history behind the queue -, in order, and write where
-the agent stands into its state with it (`AgentBody::take_in`, issue 223):
+the agent stands into its state with it (`AgentBody::take_in`, issue 223), each on the branch of
+its thread (see [The transcript as a tree](#the-transcript-as-a-tree)):
 
 *   **Perceive.** A complete message of another participant - all that was offered to it, live or
     read from the history, which records it as gone to it (issue 417) - is heard as the sender's
@@ -92,8 +93,18 @@ the agent stands into its state with it (`AgentBody::take_in`, issue 223):
     asked, and a call whose questions nobody asked is left to answer goes unanswered (see
     [APPROVALS.md](APPROVALS.md#questions)). Their leave is noted at once, ahead of what is queued
     before it and whatever the turn hears, after the step's results like what is given (below).
-    Other events stay queued: what may be heard during a turn until the next call of the model, the
-    rest until the turn is over.
+    The turn is **set aside** while it waits (issue 602, `RunControl::set_aside`): stored at this
+    step in its thread, it runs no more, and the agent goes on between turns - it answers in its
+    other threads meanwhile, one turn at a time. What happens in the waiting turn's thread stays
+    queued - what is said, a request, a command, its own leave of the thread - but what settles the
+    turn, which is taken in as it comes, in a batch of its own (`AgentBody::settles`); a change of
+    a message of the whole channel reaches the waiting branch after the step
+    (`AgentChannelState::record_change`). Settled, the turn stands at `ExecutingTools` and runs
+    again before the agent waits for anything else - once it is awake, if it sleeps; a cancel of its
+    thread or a request to answer it again ends it from where it waits, and leaving the channel
+    gives up every turn. What the agent tells of itself is where it stands as a whole
+    (`RunControl::standing`): a turn's step while one runs, else `WaitingForUser` while it is awake
+    and a turn waits, else `Idle` or `Sleeping`.
 *   **`Reflecting`** takes the turn over, stores the state and announces its end. The agent then
     lands in the state a tool requested (`Sleeping` after `stop` or `bye`) or in `Idle`.
 *   **`Cancelling`** takes the turn over like `Reflecting` and returns to `Idle`. Calls of the step
@@ -132,7 +143,9 @@ with `from: none` an agent hears what was said when the turn has ended, as betwe
     again, a command. So the order every rule of taking in relies on holds. The exceptions are
     `others: when_asked`, below: what is left behind what it took is only ever another's request,
     and requests are not in the transcript; and one who leaves while the turn waits for a person
-    (`WaitingForUser`, above), whose leave settles what nobody else asked is left to answer.
+    (`WaitingForUser`, above), whose leave settles what nobody else asked is left to answer. What
+    happens on another branch than the turn's it passes over (see
+    [The transcript as a tree](#the-transcript-as-a-tree)).
 *   **In whose authority.** A turn acts in the authority of whoever began the chain it answers
     (`EventContext::initiator_id`). With `others: wait`, it hears only what is said in that
     authority - by them, or an agent working for them -, so that nobody steers what it does in an
@@ -178,7 +191,9 @@ a plan may cost is bounded by its steps: `create_plan` refuses a plan of more th
 `Plan::MAX_STEPS`, those it is extended by included, and the plan in play stays as it was.
 
 The agent announces its state to the users as it changes (`StateChanged`), each state once, in its
-own context rather than a turn's: its state is the agent's, not part of an answer. One move is not
+own context rather than a turn's: its state is the agent's, not part of an answer. It announces it
+in the thread of its turn while it is in one, and else in its channel's line, as the channel names
+what is of no thread (issue 602). One move is not
 the run loop's: the channel wakes a sleeping agent itself, synchronously, because the moderator,
 deciding right after whom to ask, leaves the sleeping out; the run loop is notified and announces
 `Idle`.
@@ -193,11 +208,18 @@ works on the state itself, and taking a turn over or giving it up uses the handl
 
 What a turn does to the state - beginning, saying something, finishing, giving up - is a rule of the
 state, kept with it in the domain (`AgentChannelState::begin_turn`, `offer_tools`, `said`,
-`finish_turn`, `give_up_turn`). `Turn` calls these and does what runs around them.
+`finish_turn`, `give_up_turn`), each given the thread it happens in: the transcript holds the branch
+of every thread, so these stay on `AgentChannelState`. `Turn` calls these and does what runs around
+them.
 
-The working state of a turn is one value, `AgentChannelState::turn`, `None` between turns. Its
-`Work` is what every piece of work of an agent has, a turn as much as an external agent's exchange
-with its remote agent (`caelumora_domain::work`):
+The working state of a turn is one value per thread, the `turn` of the agent's part of the thread
+(`AgentThreadState`, issue 602), `None` between turns, at the step it stands at
+(`TurnState::step`) - beside what its calls there used (`used`). Where the agent stands outside a
+turn is its own as a whole, not a thread's: whether it sleeps (`AgentChannelState::asleep`). What
+reads them without a thread reads every thread's: the approvals and questions waiting, the work
+under way, what a state lets go of (`keep_window`). Its `Work` is what every piece of work of an
+agent has, a turn as much as an external agent's exchange with its remote agent
+(`caelumora_domain::work`):
 
 *   which turn it is (`TurnId`),
 *   the envelope it answers, why it was asked to (see [Why the agent was
@@ -292,8 +314,10 @@ published, the turn has seen it, and its digest is that of the message - framed 
 tool gives what it gives while it runs, but nothing may stand between the calls of a step and their
 results, which the models refuse: while the calls run, what is given is put aside with the turn
 (`TurnState::after_step`) and written right after the step's tool message - and so is a leave noted
-while the turn waits for a person. Knowledge that stands given already - the same, with the same
-text and classification, as the model is given it or put aside - is not given a second time:
+while the turn waits for a person, and a change of a message of the whole channel
+(`AgentChannelState::record_change`, issue 602). Knowledge that stands given already - the same,
+with the same text and classification, as the model is given it or put aside - is not given a
+second time:
 `Turn::give` records it with the turn and answers that it gave nothing, as a prompt part that stands
 is not given again.
 
@@ -319,13 +343,12 @@ resumed:
 *   `Busy` asks again which activity is due, and carries it out: one cut short is tried only once
     it is done.
 *   `Reflecting` takes the finished turn over.
-*   `WaitingForUser` keeps waiting.
+*   `WaitingForUser` keeps waiting, set aside (issue 602): of the turns stored, the one that goes
+    on by itself runs, the others wait.
 *   `Cancelling` ends the turn.
 *   `ExecutingTools` is the exception. A tool may have run without its result being stored, and
     running it again would repeat its effect. So every call that was ready to run is answered as
     *not executed*, and the model decides again.
-
-A turn state stored without the turn's working state cannot be resumed; the agent starts `Idle`.
 
 What the agent took in is stored with where it stands in its channel's history (`heard`, issue
 223): taking in writes both into the state, so that every store after it - the run loop's after
@@ -354,42 +377,79 @@ Either way the channel aborts the task only if it does not end within `STOP_GRAC
 
 For every message an agent produced, it can be told what its model saw when it wrote it.
 
-### The transcript as a chain
+### The transcript as a tree
 
 The `Transcript` is what the agent's context is built from: its own messages in full, with tool
 calls and internal steps, and what others said as it received them. The `History` is all that
 was offered to the agent and what it said, with how its turns ended. The history is informational:
 it is the record of what was said and what it was produced from, for people to read, and it is never
-read to build what the model is given - that is built from the transcript alone (issue 387). Both
-are a `caelumora_domain::chain::Chain` of entries, each with a `Digest` over its content and the
-digest before it, so one digest names everything up to that point by content. What a message's
-digest covers is what the model sees of it, not what only describes it afterwards
+read to build what the model is given - that is built from the transcript alone (issue 387). The
+history is a `caelumora_domain::chain::Chain` of entries, the transcript a tree of the same nodes
+with a head for every thread (`Transcript`, issue 602); each entry has a `Digest` over its content
+and the digest before it, so one digest names everything up to that point by content. What a
+message's digest covers is what the model sees of it, not what only describes it afterwards
 (`digest::message_chain`). A message does not name its predecessor: the same message is in several
 chains with a different one in each, so the predecessor belongs to the chain.
 
 Each chain holds one entry type, an enum of what can happen; what stands is read from the entries.
 Notes and memory are chains too, ledgers of numbered items (see [MEMORY.md](MEMORY.md)).
 
-A chain is a tree with a head:
+A chain is only appended to:
 
-*   Appending makes the new entry the head; moving the head back leaves what followed as a branch
-    no longer active. Nothing is removed, and nothing changes an entry once added.
-*   What the chain says is its *active path*, root to head: the conversation as it stands. What
-    must consider every branch - looking up a message by id, the next number of a note - reads the
-    entries of every branch, and only as far back as it has to.
-*   A digest recorded earlier finds its entry on any branch, so a reference into a branch no longer
-    active still resolves.
+*   Every entry follows the one added before it. Nothing is removed, and nothing changes an entry
+    once added.
+*   What the chain says is read from its entries, in the order they were added; looking up a
+    message by id or the next number of a note reads only as far back as it has to.
+*   Every entry has a *position*, the order it was added in, beside its digest: the digest names
+    what the chain held up to it, the position where it is. A range of the chain - the entries
+    after a position, a page before one - is read by positions.
+*   Whoever holds a chain in memory may hold only the part of it from a position on; the store
+    holds all of it.
+
+The transcript is a tree of the same nodes, the one that branches:
+
+*   Appending makes the new entry the head of its thread; a compaction begins a branch anew, and
+    what it replaces stays as a branch no head reaches. Nothing is removed, and nothing changes an
+    entry once added.
+*   A digest recorded earlier finds its entry on any branch, so a reference into a branch no head
+    reaches still resolves.
 *   An entry appended with the digest of one already there is that entry: the head moves to it.
-*   Every entry has a *position*, the order it was added in across every branch, beside its
-    digest: the digest names what the chain held up to it, the position where it is. A range of
-    the chain - the entries after a position, a page before one - is read by positions.
+*   Positions are counted across every branch.
 *   An external agent's transcript starts anew with every call, since the remote agent keeps what
     it was given: every call before is a branch from the root.
-*   Whoever holds a chain in memory may hold only a window of it, from a position on; the store
-    holds all of it. A digest whose entry lies before the window is found in the store, and an
-    entry appended with the digest of one only the store holds is added a second time - the same
-    content after the same predecessors, which the store keeps both of (see
+*   Whoever holds a transcript in memory holds the branches its heads reach; the store holds all
+    of it. A digest whose entry lies outside them is found in the store, and an entry appended
+    with the digest of one only the store holds is added a second time - the same content after
+    the same predecessors, which the store keeps both of (see
     [What is held in memory](#what-is-held-in-memory)).
+
+The transcript has a head for every thread the agent takes part in (issue 602): the *branch* of a
+thread is the path from its root up to its head, and what the agent's model is given in that thread.
+Every method that reads or extends a branch names its thread; a change of a message is recorded on
+every branch that holds it. The transcript gives every position, on whichever branch, so that its
+threads never give one twice. An agent takes part in the threads its runtime names
+(`ActorRuntime::threads`), which the channel changes as it takes the agent into a further thread or
+lets it go from one, announcing it there; the agent follows them as it takes its own join or leave
+in, in the order of what reaches it (`AgentBody::follow`): its branch of a thread it joined forks as
+its branch of the thread that one hangs at stood at the message it hangs at, however far that branch
+went on since (`ActorRuntime::origin_of`, `AgentChannelState::join_thread`, `Transcript::fork`), or
+begins at the root without a branch there, and its part and its branch of a thread it left go where
+it no longer takes part there (`AgentBody::leaves`, `AgentChannelState::leave_thread`) - a leave of
+the channel ends its actor, and one read back as it joins again, of a thread it takes part in again,
+leaves its state as it was kept -, with what it was asked there and has not answered yet. During a
+turn its own join stops what the turn takes in, and its leave waits after what came before it of the
+thread. What it takes in, answers again or carries out goes on the branch of the thread the envelope
+happens in; what happens in a thread it does not follow - late, after it was let go from it, or by
+name, read again from the history as it was before - it does not take in
+(`AgentBody::is_unfollowed`) - so what was delivered of a thread before its leave goes on that
+thread's branch, though taken in after the channel announced the leave; a nudge, a request to
+answer again and a command are of a thread the agent takes part in, which the channel asks as it
+admits them. A turn runs on the branch it was begun on (`Turn::of`,
+`Situation::branch_thread_id`), and the actor keeps the thread of the turn that runs or ran last
+(`RunControl::thread`). Taking in goes by branch: a request to respond on another branch than the
+one to be answered ends the batch and waits, unheard, for a turn of its own; during a turn and as it
+ends, what happens on another branch is passed over (`AgentBody::take_in_during_turn`,
+`drop_answered`). With one thread, everything goes on its one branch.
 
 Neither ending a turn nor changing a message moves a head: each is an entry after what it is about.
 Nor does the end of what a compaction wrote, which is an entry of the transcript after it (see
@@ -417,7 +477,7 @@ nothing. What stands is read by one rule, kept with the message (`Message::modif
 
 In the transcript, a change applies only within the path that holds it, so a reference taken
 before the change resolves to the message as the model saw it then, and one taken after to what
-stands. In the history, a change applies to the message on whichever branch, as a change made in the
+stands. In the history, a change applies to the message said before it, as a change made in the
 channel does. Either way a change comes after what it changes, so the messages of a range of the
 chain that runs to its end are read as they stand from that range alone: what asks for one message,
 or for what a turn said, reads from where the message was said or the turn began, not from the start
@@ -437,35 +497,39 @@ An agent keeps no history of its own (issue 417): what it was offered and what i
 channel's history, which records every message it says - in full, with what it was produced from
 (`Message::produced_from`) - and what it was given to read, when it stopped reading a prompt part
 given, and when it compacted, as gone to nobody. Its actor tells the channel the latter after every
-step (`AgentChannelState::to_tell`, `MessageGiven`, `MessageWithdrawn`, `ContextCompacted`). What
+step, each in the thread whose branch it was recorded on (`AgentChannelState::to_tell`,
+`MessageGiven`, `MessageWithdrawn`, `ContextCompacted`). What
 a turn said is its answer, kept with the turn as it is said (`TurnState::answer`), since a
-compaction in the middle of it may leave nothing of it on the transcript's active branch. What
+compaction in the middle of it may leave nothing of it on the branch it reads. What
 reads further back - what the agent saw when it produced an old message, a page of what it was
 offered and said - reads the channel's history in the store, as the agent, through the views.
 Where it stands in the channel's history is its state's (`AgentChannelState::heard`, issue 223):
 what its inbox opens at when it runs again, or when it joins again - unless its new view begins
 later. The last message it heard, said or was given is kept beside it
-(`AgentChannelState::last_message`), for its notes and memory to anchor at, since the active branch
+(`AgentChannelState::last_message`), for its notes and memory to anchor at, since a branch
 begins anew with every compaction and every call of an external agent.
 
-Of its transcript the actor holds the active branch alone, from its root on (`transcript_from`,
-issue 380): right after the transcript began anew - a compaction, an external agent's call -,
-nothing. Every reader in memory reads that branch: a turn and its next call, a compaction, how full
-the context is, answering again, taking in a change of a message. What lies on an older branch is
-read from the store (`TranscriptStore`): the path to a digest, for the context of an older message;
+Of its transcript the actor holds what its heads reach, the branch of every thread from its root on
+(issues 380, 602): right after a branch began anew - a compaction, an external agent's call -,
+nothing of it. What no head reaches any more it lets go of once it is stored
+(`Transcript::keep_window`): every position given has to reach the store. Every reader in memory
+reads the branch of a thread: a turn and its next call, a compaction, how full the context is,
+answering again, taking in a change of a message. What lies on a branch no head reaches is read
+from the store (`TranscriptStore`): the path to a digest, for the context of an older message;
 which messages reached the transcript, for a page of the agent's history; and, for an external
 agent, a message as its remote agent was given it, before it tells of a change (`tell`, through
 `ActorRuntime::transcript_message`). Its sums are parts of its state, not read over the branches:
-the tokens used (`used`), the classifications the remote agent was given (`RemoteState`), and the
-numbers its transcript gave attachments (`attachments`, see [attachments](#attachments)).
+the tokens used in each thread (`AgentThreadState::used`), the classifications the remote agent was
+given (`RemoteState`), and the numbers its transcript gave attachments (`attachments`, see
+[attachments](#attachments)).
 
-Of the prompt texts and the tool sets, kept once by digest, the actor holds those its turn under way
-names, and between turns none (issue 383): the turn's calls, how full its context is and the tools
-its calls are checked against read them, and nothing reads them between turns - how full the context
-is then is kept, not read (issue 390), answering again begins a turn that assembles its parts anew,
-and an external agent tells what it gave by digest. A text kept again in the next turn is written as
-the same. What the context of an older message names is read from the store, with the path of its
-transcript (see [STORAGE.md](STORAGE.md#prompt-texts-and-tool-sets)).
+Of the prompt texts and the tool sets, kept once by digest, the actor holds those its turns under
+way name, and between turns none (issue 383): the turn's calls, how full its context is and the
+tools its calls are checked against read them, and nothing reads them between turns - how full the
+context is then is kept, not read (issue 390), answering again begins a turn that assembles its
+parts anew, and an external agent tells what it gave by digest. A text kept again in the next turn
+is written as the same. What the context of an older message names is read from the store, with the
+path of its transcript (see [STORAGE.md](STORAGE.md#prompt-texts-and-tool-sets)).
 
 ### What is recorded
 
@@ -602,11 +666,13 @@ of the agent's transcript.
 ### Tokens used
 
 Every message the model produces carries the tokens of its call and the size of the context the call
-had. What an agent used in a channel is a running total kept with its state, counted as each of its
-calls' messages is recorded - said in a turn, or written as a summary in a compaction - so that a
-call is counted once, on whichever branch, the turn under way's included; it is not summed over the
-transcript, whose older branches need not be at hand (`AgentChannelState::used`). Two groups mean
-different things:
+had. What an agent used in a thread of a channel is a running total kept with its part of the
+thread, counted as each of its calls' messages is recorded - said in a turn, or written as a summary
+in a compaction - so that a call is counted once, the turn under way's included; it is not summed
+over the transcript, whose older branches need not be at hand (`AgentThreadState::used`). What it
+used in the channel, as a view and `/agent usage` show it, is the totals of all its threads with the
+context of the thread whose context is fullest (`AgentChannelState::used`, issue 602). Two groups
+mean different things:
 
 *   **context** - how full the context is against its size (`TokenUsage::context_tokens`): the
     last call's prompt and answer, as counted. A compaction replaces it once, when it is made:
@@ -665,7 +731,7 @@ the same code: the agent itself before a model call, as an activity of the compo
 464), and `/compact`, which the component carries out as a command. An agent whose personality does
 not list `compaction` does not compact at all. Before every call of a turn - the first of the next
 turn as well, with what was heard since - the activity is due once the context fills `threshold` of
-the model's context size, as soon as a call made on the active branch measured it; a model that
+the model's context size, as soon as a call made on the branch measured it; a model that
 reports no context size gives nothing to measure against, which the component says once. The agent
 then compacts in the state `Busy` (see [In a turn](#in-a-turn)); the strategy's calls do not count
 against `MAX_MODEL_CALLS`. A compaction that fails gives the turn up: the call it was to make room
@@ -968,10 +1034,10 @@ What the model is given is not stored; it is resolved from what is (`caelumora_d
     texts and the tool sets, each as the profile gives it; what it resolves holds references to
     attachments alone, whose content the turn has put on what its model is given along before each
     call ([attachments](#attachments)). The turn's next call and every later
-    question about a message go through it: the turn against the active branch, the texts and the
-    tool sets the agent's state holds (`ContextResolver::of`), a question about an older message
-    against the path, the texts and the tool sets its reference names, loaded from the store
-    (`ContextResolver::on_path`). An external agent's remote agent is given the transcript's
+    question about a message go through it: the turn against the branch it reads, the texts
+    and the tool sets the agent's state holds (`ContextResolver::of`), a question about an older
+    message against the path, the texts and the tool sets its reference names, loaded from the
+    store (`ContextResolver::on_path`). An external agent's remote agent is given the transcript's
     messages through it as well, each framed as the profile says
     (`ContextResolver::given_messages`).
 

@@ -17,7 +17,7 @@ use caelumora_api::staging::{CommitError, CommitResult};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::{Agent, AgentChannelState, Personality};
 use caelumora_domain::approval::{ApprovalRule, ApprovalRuleId, RuleDecision};
-use caelumora_domain::channel::{self, Channel, ChannelId, ThreadId};
+use caelumora_domain::channel::{self, Channel, ChannelId, ThreadId, ThreadOrigin};
 use caelumora_domain::component::ComponentConfig;
 use caelumora_domain::confidentiality::{Classification, Place};
 use caelumora_domain::content::{ContentId, ContentRef};
@@ -36,6 +36,7 @@ use caelumora_domain::value::time_zone::TimeZone;
 use caelumora_security::confidentiality::ConfidentialityQuestions;
 use caelumora_security::{ActionType, Enforcement, Reclassified, SecurityContext};
 use chrono::Utc;
+use std::collections::BTreeSet;
 use std::fmt::Debug;
 use std::sync::Arc;
 use tracing::warn;
@@ -208,8 +209,12 @@ impl ActorRuntime for AgentRuntime {
         self.participant.channel_id
     }
 
-    fn thread_id(&self) -> ThreadId {
-        self.participant.thread_id()
+    fn threads(&self) -> BTreeSet<ThreadId> {
+        self.participant.threads()
+    }
+
+    fn origin_of(&self, thread: ThreadId) -> Option<ThreadOrigin> {
+        self.participant.origin_of(thread)
     }
 
     fn agent(&self) -> Arc<Agent> {
@@ -445,7 +450,6 @@ mod tests {
     use super::*;
     use crate::kernel::ChannelRuntime;
     use crate::session::testing::test_kernel;
-    use caelumora_domain::actor::ActorState;
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::channel::testing::bare_channel;
     use caelumora_domain::session::testing::bare_session;
@@ -462,13 +466,12 @@ mod tests {
             AgentRuntime::in_test(participant)
         };
         let its = agent_in_channel(&channel);
-        let mut asleep =
-            AgentChannelState { processing_state: ActorState::Sleeping, ..Default::default() };
+        let mut asleep = AgentChannelState { asleep: true, ..AgentChannelState::default() };
 
         its.store_channel_state(&mut asleep).await.expect("its own state in its channel");
         let loaded = its.load_channel_state().await.expect("and back");
-        assert_eq!(loaded.processing_state, ActorState::Sleeping, "as it was stored");
+        assert!(loaded.asleep, "as it was stored");
         let other = agent_in_channel(&channel).load_channel_state().await.expect("its own");
-        assert_eq!(other.processing_state, ActorState::Idle, "not the first agent's");
+        assert!(!other.asleep, "not the first agent's");
     }
 }

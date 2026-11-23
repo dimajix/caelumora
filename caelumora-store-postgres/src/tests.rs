@@ -13,6 +13,7 @@ use caelumora_domain::actor::{ActorId, ActorState, EventContext};
 use caelumora_domain::agent::{AgentChannelState, AgentId};
 use caelumora_domain::approval::ApproverId;
 use caelumora_domain::chain::Position;
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::channel::{ChannelId, ChannelState};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::config::{AppConfig, BackendConfig};
@@ -305,6 +306,7 @@ async fn keeps_the_transcripts() {
     let Some(database) = Database::new() else { return };
     let store = database.backend();
     suite::transcript_store_behaves(store.as_ref(), store.as_ref()).await;
+    suite::transcripts_keep_a_branch_per_thread(store.as_ref()).await;
     suite::given_store_behaves(store.as_ref(), store.as_ref()).await;
     database.drop().await;
 }
@@ -324,24 +326,25 @@ async fn what_an_agent_waiting_for_an_approval_stored_survives_a_restart() {
     let mut channel_state = ChannelState::new(channel);
     channel_state.history.push(&context_in(channel), said("look it up"));
 
-    let mut state = AgentChannelState {
-        processing_state: ActorState::WaitingForUser,
-        ..AgentChannelState::default()
-    };
+    let mut state = AgentChannelState::default();
     let context = EventContext {
         sender_id: ActorId::Agent(agent),
         channel_id: channel,
         ..EventContext::default()
     };
-    state.begin_turn(Work::new(context, None, Classification::CHANNEL_DEFAULT, Default::default()));
+    state.begin_turn(
+        ThreadId::default(),
+        Work::new(context, None, Classification::CHANNEL_DEFAULT, Default::default()),
+    );
     let sets = vec![ToolSet::new("search", "searches", Vec::new())];
-    state.offer_tools(sets.clone());
+    state.offer_tools(ThreadId::default(), sets.clone());
     let system =
         state.keep_prompt(MessageRole::System, "system".to_string(), PromptAt::Start, None);
-    state.transcript.push(said("look it up"));
+    state.transcript.push(ThreadId::default(), said("look it up"));
     let call =
         ToolCall { id: Some("1".to_string()), arguments: json!({}), ..make_tool_call("search") };
-    let turn = state.turn.as_mut().expect("a turn");
+    let turn = state.thread_mut(ThreadId::default()).turn.as_mut().expect("a turn");
+    turn.step = ActorState::WaitingForUser;
     turn.work.context.frame.prompts.push(system.clone());
     turn.tool_calls.push(ToolCallState::pending(call, false, None, None));
     let asked: Vec<_> = turn.pending_approvals().into_iter().map(|request| request.id).collect();
@@ -361,8 +364,7 @@ async fn what_an_agent_waiting_for_an_approval_stored_survives_a_restart() {
     restarted.open().await.expect("opened again");
     let loaded = restarted.get_agent_channel_state(agent, channel).await.unwrap();
     let pending: Vec<_> = loaded
-        .turn
-        .as_ref()
+        .turn(ThreadId::default())
         .expect("the turn under way")
         .pending_approvals()
         .into_iter()
@@ -370,8 +372,11 @@ async fn what_an_agent_waiting_for_an_approval_stored_survives_a_restart() {
         .collect();
     assert_eq!(pending, asked, "the same request, asked again from the turn");
     assert_eq!(
-        (loaded.processing_state, loaded.transcript.digest()),
-        (ActorState::WaitingForUser, state.transcript.digest()),
+        (
+            loaded.turn(ThreadId::default()).map(|turn| turn.step),
+            loaded.transcript.digest(ThreadId::default())
+        ),
+        (Some(ActorState::WaitingForUser), state.transcript.digest(ThreadId::default())),
         "with its transcript"
     );
     assert_eq!(
@@ -460,10 +465,10 @@ async fn the_database_gives_a_reader_what_the_model_gives_them() {
     }
     store.put_channel_state(channel, &mut state).await.unwrap();
     let asked_of_all = |state: &ChannelState| {
-        state.history.all_entries().filter(|node| node.entry.entry.is_item()).count()
+        state.history.entries().filter(|node| node.entry.entry.is_item()).count()
     };
     let pool = database.connection.pool().await.unwrap();
-    let attendance = Attendance::of(state.history.all_entries());
+    let attendance = Attendance::of(state.history.entries());
     for reader in [
         Reader::Channel,
         Reader::Outsider,
@@ -475,7 +480,7 @@ async fn the_database_gives_a_reader_what_the_model_gives_them() {
         let ranges = attendance.of_reader(&reader);
         let given: Vec<i64> = state
             .history
-            .all_entries()
+            .entries()
             .filter(|node| {
                 node.entry.entry.is_item() && node.entry.seen_by(node.seq, &reader, &ranges)
             })

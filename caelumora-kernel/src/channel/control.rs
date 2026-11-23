@@ -12,8 +12,8 @@ use tokio::time;
 use tracing::warn;
 
 impl ChannelLoop {
-    /// Ends the current turn of every actor taking part in `thread` - in every thread of the
-    /// channel if `None` -, on behalf of `context`'s initiator, and keeps the thread quiet - nobody
+    /// Ends the turns that run in `thread` - in every thread of the channel if `None` (issue
+    /// 602) -, on behalf of `context`'s initiator, and keeps the thread quiet - nobody
     /// is asked to respond in it - until it is woken again, usually by the next message said in it
     /// (issue 557).
     ///
@@ -30,16 +30,18 @@ impl ChannelLoop {
         Ok(())
     }
 
-    /// Ends the current turn of every actor taking part in `thread`, or in every thread if `None`,
-    /// and keeps the thread quiet: what `cancel` does once permitted, and `reclassify` as a
-    /// consequence of lowering the channel.
+    /// Ends the turn under way in `thread` of every actor taking part in it - running there, or set
+    /// aside there waiting for a person, not one in another thread (issue 602) -, or every turn if
+    /// `None`, and keeps the thread quiet: what
+    /// `cancel` does once permitted, and `reclassify` as a consequence of lowering the channel.
     pub(super) fn cancel_actors(&self, thread: Option<ThreadId>) {
         for held in self.threads_in(thread) {
             held.set_quiet(true);
         }
-        let in_scope = |actor: &&ChannelActor| thread.is_none_or(|thread| actor.thread == thread);
+        let in_scope =
+            |actor: &&ChannelActor| thread.is_none_or(|thread| actor.takes_part_in(thread));
         for ChannelActor { actor, .. } in self.actors.load().values().filter(in_scope) {
-            actor.cancel();
+            actor.cancel(thread);
         }
     }
 
@@ -66,7 +68,7 @@ impl ChannelLoop {
             .actors
             .load()
             .values()
-            .filter(|a| thread.is_none_or(|thread| a.thread == thread))
+            .filter(|a| thread.is_none_or(|thread| a.takes_part_in(thread)))
             .map(|a| &a.actor)
             .filter(|a| a.state() == ActorState::Sleeping)
             .map(|a| a.name().to_string())
@@ -93,7 +95,8 @@ impl ChannelLoop {
         }
     }
 
-    /// Ends the current turn of one actor deliberately (issue 235), like
+    /// Ends the turns of one actor deliberately (issue 235) - the one it runs and those set aside
+    /// (issue 602) -, like
     /// `cancel` and under the same permission: the policy that lets someone
     /// stop the channel lets them stop one of its actors. Its thread is not
     /// kept quiet - that is the thread's state, not the actor's: the others
@@ -109,7 +112,7 @@ impl ChannelLoop {
             .await?;
         self.actor(actor)
             .ok_or(ChannelError::NotAParticipant { participant: actor, channel: self.id })?
-            .cancel();
+            .cancel(None);
         Ok(())
     }
 
@@ -165,14 +168,14 @@ impl ChannelLoop {
             "waking the agents of",
         )
         .await?;
-        let ChannelActor { actor, thread, .. } = self
+        let ChannelActor { actor, threads, .. } = self
             .actors
             .load()
             .get(&actor)
             .cloned()
             .ok_or(ChannelError::NotAParticipant { participant: actor, channel: self.id })?;
         let was_asleep = actor.state() == ActorState::Sleeping;
-        self.end_quiet(thread);
+        threads.load().iter().for_each(|thread| self.end_quiet(*thread));
         actor.wakeup();
         Ok(was_asleep)
     }
@@ -213,7 +216,8 @@ impl ChannelLoop {
         for held in self.threads_in(thread) {
             held.set_quiet(false);
         }
-        let in_scope = |actor: &&ChannelActor| thread.is_none_or(|thread| actor.thread == thread);
+        let in_scope =
+            |actor: &&ChannelActor| thread.is_none_or(|thread| actor.takes_part_in(thread));
         for ChannelActor { actor, .. } in self.actors.load().values().filter(in_scope) {
             actor.wakeup();
         }
@@ -293,6 +297,40 @@ mod tests {
         allowed.wakeup(&context, None).await.expect("permitted");
     }
 
+    /// Issue 602: cancelling a thread ends the turns that run there alone - not the turn of an
+    /// agent taking part in it that runs in another -, and so does letting the agent go from it.
+    #[tokio::test]
+    async fn cancelling_a_thread_ends_the_turns_that_run_there_alone() {
+        use crate::channel::ThreadSpec;
+        use caelumora_domain::channel::{ThreadId, ThreadOrigin};
+        use caelumora_domain::message::MessageId;
+        let Stuck { channel, context, agent, running, .. } = stuck_in_a_turn().await;
+        let helper = ActorId::Agent(agent);
+        let line = ThreadId::line(channel.id());
+        let origin = ThreadOrigin { thread: line, message: MessageId::new() };
+        let thread = channel
+            .open_thread_by_procedure(&context, ThreadSpec::new(origin))
+            .await
+            .expect("open");
+        channel.take_into_thread_by_procedure(&context, thread, helper).await.expect("taken in");
+
+        channel.cancel(&context, Some(thread)).await.expect("cancelled");
+        let system = SecurityContext::system();
+        let left = channel.let_go_from_thread(helper, thread, &system).expect("let go");
+        assert!(left.carried_out().await, "its leave announced");
+        assert!(channel.turn_of(helper).is_some(), "its turn in the line goes on");
+
+        channel.cancel(&context, Some(line)).await.expect("cancelled");
+        time::timeout(Duration::from_secs(5), async {
+            while channel.turn_of(helper).is_some() {
+                time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("its turn in the line ends");
+        running.abort();
+    }
+
     #[tokio::test]
     async fn a_stopped_channel_refuses_what_a_user_sends() {
         let alice = make_user("alice");
@@ -304,7 +342,7 @@ mod tests {
             async move { channel.run().await }
         });
         actor
-            .send_message(Some("hello".to_string()), None, Vec::new())
+            .send_message(None, Some("hello".to_string()), None, Vec::new())
             .await
             .expect("a running channel takes it");
         // Taken out of the inbox: `run` holds it now.
@@ -319,7 +357,7 @@ mod tests {
         let _ = running.await;
         let refused = time::timeout(
             Duration::from_secs(5),
-            actor.send_message(Some("anyone?".to_string()), None, Vec::new()),
+            actor.send_message(None, Some("anyone?".to_string()), None, Vec::new()),
         )
         .await
         .expect("an answer, not a wait");

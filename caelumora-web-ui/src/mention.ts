@@ -1,6 +1,6 @@
 // `@`-mentions (issue 29). Mirrors `caelumora_domain::mention`: the server
-// resolves mentions and stores them in `Message.mentions`; the UI only needs
-// to find them in the text again to highlight the resolved ones, and to
+// resolves mentions and stores them in `Message.mentions` and `Message.addressees`;
+// the UI only needs to find them in the text again to highlight the resolved ones, and to
 // derive handles for completion.
 
 import anyAscii from 'any-ascii';
@@ -63,12 +63,12 @@ export function mentionSpans(text: string): MentionSpan[] {
 export const GROUP_HANDLES = ['all', 'channel'] as const;
 
 /**
- * The handles of the participants a message mentions, i.e. the mentions to
- * highlight - and the group handles, if it mentions anyone taking part: they
+ * The handles of the participants a message addresses, i.e. the mentions to
+ * highlight - and the group handles, if it addresses anyone taking part: they
  * address everyone. As `MentionDirectory::mentioned_spans` decides it.
  */
 export function mentionedHandles(message: Message, participants: ChannelParticipant[]): Set<string> {
-  const keys = new Set((message.mentions ?? []).map(actorKey));
+  const keys = new Set((message.addressees ?? []).map(actorKey));
   const mentioned = participants.filter(m => keys.has(actorKey(m.id)));
   const groups = mentioned.length > 0 ? GROUP_HANDLES : [];
   return new Set([...groups, ...mentioned.flatMap(m => (m.handle ? [m.handle] : []))]);

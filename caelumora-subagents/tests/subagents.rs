@@ -103,7 +103,7 @@ async fn an_agent_starts_a_sub_agent_is_given_back_its_answer_asks_it_again_and_
 
     main.user_actor(world.alice)
         .expect("alice takes part")
-        .send_message(Some("@lead find it".to_string()), None, Vec::new())
+        .send_message(None, Some("@lead find it".to_string()), None, Vec::new())
         .await
         .expect("said");
     let given_back = |text: &'static str| {

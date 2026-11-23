@@ -99,6 +99,7 @@ mod tests {
     use crate::prompt::PromptPosition;
     use crate::testing::detached_actor_runtime;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::component::ComponentFailPolicy;
     use caelumora_domain::digest;
     use caelumora_domain::work::Work;
@@ -134,6 +135,7 @@ mod tests {
         let (parts, knowledge) = provider
             .current_context(&Situation::new(
                 &work,
+                ThreadId::default(),
                 &state,
                 &*detached_actor_runtime(AgentId::new()),
             ))
@@ -172,7 +174,11 @@ mod tests {
     ) -> Vec<PromptPart> {
         let work = Work::default();
         let runtime = detached_actor_runtime(AgentId::new());
-        provider.current_context(&Situation::new(&work, state, &*runtime)).await.unwrap().0
+        provider
+            .current_context(&Situation::new(&work, ThreadId::default(), state, &*runtime))
+            .await
+            .unwrap()
+            .0
     }
 
     #[tokio::test]

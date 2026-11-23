@@ -68,7 +68,8 @@ pub trait Actor: Any + Debug + Send + Sync {
         None
     }
 
-    /// Returns the current processing state of the actor.
+    /// Where the actor stands now, as a whole (issue 602): an agent's turn that runs at its step,
+    /// else waiting for a person while a turn of it waits for one, else idle or asleep.
     fn state(&self) -> ActorState;
 
     /// The tools it has now, in their tool sets (issue 194), as it would
@@ -98,10 +99,16 @@ pub trait Actor: Any + Debug + Send + Sync {
     /// purpose: it is called from other tasks and must take effect at once.
     fn wakeup(&self) {}
 
-    /// Ends the actor's current turn. Synchronous and infallible on
-    /// purpose: a cancel comes from another task and must reach a running
-    /// model call without waiting for anything.
-    fn cancel(&self) {}
+    /// Ends the actor's current turn if it runs in `thread`, wherever it runs if `None` (issue
+    /// 602). Synchronous and infallible on purpose: a cancel comes from another task and must
+    /// reach a running model call without waiting for anything.
+    fn cancel(&self, _thread: Option<ThreadId>) {}
+
+    /// Whether it can take part in several threads of its channel (issue 602): every actor but an
+    /// external agent's, which keeps one remote state in its channel.
+    fn takes_part_in_several_threads(&self) -> bool {
+        true
+    }
 
     /// Interrupts its tool call `call` of the turn `turn` alone (issue 276),
     /// on behalf of `by`, called so, if that call runs or waits to run in
@@ -113,10 +120,10 @@ pub trait Actor: Any + Debug + Send + Sync {
         false
     }
 
-    /// Its turn under way (issue 235), if it is in one that can still be
-    /// ended. None for an actor without such turns - a user, an approver,
-    /// an external agent, whose answers are its remote side's.
-    fn turn_under_way(&self) -> Option<TurnId> {
+    /// Its turn under way in `thread` that can still be ended (issues 235, 602): the one that runs
+    /// there, or one set aside there because it waits for a person. None for an actor without
+    /// such turns - a user, an approver, an external agent, whose answers are its remote side's.
+    fn turn_under_way(&self, _thread: ThreadId) -> Option<TurnId> {
         None
     }
 

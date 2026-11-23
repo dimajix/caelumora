@@ -24,6 +24,7 @@ use caelumora_compaction::KnowledgeRestorer;
 use caelumora_domain::actor::{ActorEvent, ActorId};
 use caelumora_domain::agent::{AgentChannelState, AgentId, Personality};
 use caelumora_domain::channel::ChannelId;
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::{Classification, Confidentiality, Place};
 use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
@@ -187,7 +188,9 @@ async fn the_catalogue_lists_what_may_be_loaded_and_load_skill_gives_its_text_as
         "classified as the skill, as the catalogue names it"
     );
     drop(turn);
-    let read = state.turn.as_ref().unwrap().work.context.frame.knowledge.clone();
+    let line = ThreadId::line(session.channels()[0].id());
+    let turn = state.turn(line);
+    let read = turn.unwrap().work.context.frame.knowledge.clone();
     let as_read = |source: &KnowledgeSource| {
         source.about::<Skill>() == Some((made.id, Some(skill::digest("1. Collect.\n2. Group."))))
     };
@@ -195,7 +198,8 @@ async fn the_catalogue_lists_what_may_be_loaded_and_load_skill_gives_its_text_as
         matches!(read.as_slice(), [KnowledgeRef { source, .. }] if as_read(source)),
         "{read:?}"
     );
-    let given = state.transcript.last().map(|node| &node.entry);
+    let given =
+        state.transcript.last(ThreadId::line(session.channels()[0].id())).map(|node| &node.entry);
     assert!(
         matches!(given, Some(TranscriptEntry::Given { message, source: Some(GivenSource::Knowledge(source)) }) if as_read(source) && message.content.as_deref() == Some("[Skill: release-notes]\n1. Collect.\n2. Group.\n") && message.classification == internal),
         "its text given to read, under its title, as what it is (issue 389): {given:?}"
@@ -459,7 +463,11 @@ async fn a_skill_that_stands_given_as_it_is_is_not_given_again() {
     let changed = call(tools.as_ref(), &mut turn, LOAD_SKILL_TOOL_NAME, load).await.unwrap();
     assert_eq!(changed.value["status"], "loaded", "changed, it is given");
     drop(turn);
-    let given = state.transcript.entries().filter(|node| node.entry.knowledge().is_some()).count();
+    let given = state
+        .transcript
+        .entries(ThreadId::line(session.channels()[0].id()))
+        .filter(|node| node.entry.knowledge().is_some())
+        .count();
     assert_eq!(given, 2, "as it was, once, and as it is now");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
@@ -530,15 +538,18 @@ async fn a_compaction_gives_again_the_skills_given_in_the_part_it_replaces_that_
     let mut events = main.observe();
     let mut hers = alice.watch();
 
-    alice.send_message(Some("@helper hello".to_string()), None, Vec::new()).await.unwrap();
+    alice.send_message(None, Some("@helper hello".to_string()), None, Vec::new()).await.unwrap();
     activities_until_the_turn_ends(&mut events, helper).await.1.expect("answered");
     for name in ["quiz-round", "release-notes"] {
-        alice.execute_command(&format!("{SKILL_COMMAND_NAME} @helper {name}")).await.expect("hers");
+        alice
+            .execute_command(None, &format!("{SKILL_COMMAND_NAME} @helper {name}"))
+            .await
+            .expect("hers");
         shown(&mut hers, "CommandExecuted").await;
     }
-    alice.send_message(Some("@helper next".to_string()), None, Vec::new()).await.unwrap();
+    alice.send_message(None, Some("@helper next".to_string()), None, Vec::new()).await.unwrap();
     activities_until_the_turn_ends(&mut events, helper).await.1.expect("answered");
-    alice.execute_command("compact @helper").await.expect("hers, as its owner");
+    alice.execute_command(None, "compact @helper").await.expect("hers, as its owner");
 
     let told = shown(&mut hers, "CommandExecuted").await;
     assert!(
@@ -546,7 +557,12 @@ async fn a_compaction_gives_again_the_skills_given_in_the_part_it_replaces_that_
         "{told:?}"
     );
     let state = world.store.state_store().get_agent_channel_state(helper, main.id()).await.unwrap();
-    let texts: Vec<_> = state.transcript.messages().into_iter().filter_map(|m| m.content).collect();
+    let texts: Vec<_> = state
+        .transcript
+        .messages(ThreadId::line(main.id()))
+        .into_iter()
+        .filter_map(|m| m.content)
+        .collect();
     assert_eq!(
         texts[1..],
         ["[Skill: release-notes]\n1. Collect.\n", "Fine."],
@@ -784,7 +800,7 @@ async fn an_agent_loads_a_skill_for_its_owner_whoever_asked() {
         .asked(async {
             main.user_actor(world.bob)
                 .unwrap()
-                .execute_command("skill @helper release-notes")
+                .execute_command(None, "skill @helper release-notes")
                 .await
                 .expect("his to give");
             shown(&mut his, "CommandExecuted").await
@@ -802,7 +818,8 @@ async fn an_agent_loads_a_skill_for_its_owner_whoever_asked() {
     );
 
     let state = world.store.state_store().get_agent_channel_state(helper, main.id()).await.unwrap();
-    let given = state.transcript.messages().into_iter().last().expect("given");
+    let given =
+        state.transcript.messages(ThreadId::line(main.id())).into_iter().last().expect("given");
     assert!(
         given
             .content
@@ -847,14 +864,14 @@ async fn a_skill_classified_above_the_channel_is_neither_listed_nor_loaded() {
         .expect("the system's");
     let bob = main.user_actor(world.bob).unwrap();
 
-    bob.execute_command("skills @helper").await.expect("his to ask");
+    bob.execute_command(None, "skills @helper").await.expect("his to ask");
     let ActorEvent::CommandExecuted { output, .. } = shown(&mut his, "CommandExecuted").await
     else {
         unreachable!()
     };
     assert!(output.contains("release-notes") && !output.contains("secret-plan"), "{output}");
 
-    bob.execute_command("skill @helper secret-plan").await.expect("sent");
+    bob.execute_command(None, "skill @helper secret-plan").await.expect("sent");
     let ActorEvent::CommandFailed { reason, .. } = shown(&mut his, "CommandFailed").await else {
         unreachable!()
     };
@@ -938,7 +955,7 @@ async fn an_agents_skill_belongs_to_its_owner_and_lies_in_the_session() {
         .asked(async {
             main.user_actor(world.bob)
                 .unwrap()
-                .send_message(Some("@helper write it down".to_string()), None, Vec::new())
+                .send_message(None, Some("@helper write it down".to_string()), None, Vec::new())
                 .await
                 .expect("sent");
             asked_for(&world, "alice as helper, asked by bob: CreateSkill(alice's) yes").await;
@@ -977,7 +994,7 @@ async fn an_agent_changes_only_skills_of_its_owners() {
 
     main.user_actor(world.bob)
         .unwrap()
-        .send_message(Some("@helper change it".to_string()), None, Vec::new())
+        .send_message(None, Some("@helper change it".to_string()), None, Vec::new())
         .await
         .expect("sent");
     asked_for(&world, "alice as helper, asked by bob: UpdateSkill(bob's) no").await;

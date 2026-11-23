@@ -18,6 +18,7 @@ use caelumora_compaction::component::COMPACTION_KIND;
 use caelumora_compaction::library::CompactionLibrary;
 use caelumora_domain::actor::ActorEvent;
 use caelumora_domain::agent::{AgentId, Personality};
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::history::HistoryEntry;
@@ -107,9 +108,12 @@ async fn napping_with(
     let (session, main, helper) = helper_with(&world, [vec![sleep], listed].concat()).await;
     let mut events = main.observe();
     let alice = main.user_actor(world.alice).unwrap();
-    alice.send_message(Some("@helper hello".to_string()), None, Vec::new()).await.unwrap();
+    alice.send_message(None, Some("@helper hello".to_string()), None, Vec::new()).await.unwrap();
     activities_until_the_turn_ends(&mut events, helper).await.1.expect("answered");
-    alice.send_message(Some("@helper take a nap".to_string()), None, Vec::new()).await.unwrap();
+    alice
+        .send_message(None, Some("@helper take a nap".to_string()), None, Vec::new())
+        .await
+        .unwrap();
     let napped = activities_until_the_turn_ends(&mut events, helper).await;
     (world, session, main, helper, napped)
 }
@@ -144,7 +148,7 @@ async fn an_agent_whose_context_fills_up_compacts_it_on_its_own_before_its_next_
     let stored = main.stored_agent_channel_state(helper).await.unwrap();
     let now: Vec<_> = stored
         .transcript
-        .messages()
+        .messages(ThreadId::line(main.id()))
         .into_iter()
         .filter_map(|m| m.content)
         .filter(|c| !c.is_empty())
@@ -154,7 +158,11 @@ async fn an_agent_whose_context_fills_up_compacts_it_on_its_own_before_its_next_
             && !now.iter().any(|c| c == "@helper hello" || c == "Hi."),
         "the older messages replaced: {now:?}"
     );
-    assert_eq!(stored.used.map(|u| u.calls), Some(4), "the summary's call counts as used");
+    assert_eq!(
+        stored.thread(ThreadId::line(main.id())).and_then(|part| part.used).map(|u| u.calls),
+        Some(4),
+        "the summary's call counts as used"
+    );
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
@@ -172,7 +180,11 @@ async fn a_compaction_that_fails_ends_the_turn() {
     );
     let stored = main.stored_agent_channel_state(helper).await.unwrap();
     assert!(
-        stored.transcript.messages().iter().any(|m| m.content.as_deref() == Some("Hi.")),
+        stored
+            .transcript
+            .messages(ThreadId::line(main.id()))
+            .iter()
+            .any(|m| m.content.as_deref() == Some("Hi.")),
         "the transcript as it was"
     );
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
@@ -187,7 +199,11 @@ async fn an_agent_whose_personality_does_not_list_compaction_does_not_compact() 
     assert!(answer.is_ok(), "the call made with the context as it is");
     let stored = main.stored_agent_channel_state(helper).await.unwrap();
     assert!(
-        stored.transcript.messages().iter().any(|m| m.content.as_deref() == Some("Hi.")),
+        stored
+            .transcript
+            .messages(ThreadId::line(main.id()))
+            .iter()
+            .any(|m| m.content.as_deref() == Some("Hi.")),
         "nothing replaced"
     );
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
@@ -203,8 +219,9 @@ async fn only_an_agents_owner_compacts_its_context() {
     let (session, main, _) = helper_with(&world, vec![compaction()]).await;
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
 
-    let (refused, asked) =
-        world.asked(main.user_actor(world.bob).unwrap().execute_command("compact @helper")).await;
+    let (refused, asked) = world
+        .asked(main.user_actor(world.bob).unwrap().execute_command(None, "compact @helper"))
+        .await;
     let refused = refused.expect_err("not his");
     assert!(
         matches!(refused.downcast_ref::<CommandError>(), Some(CommandError::Unknown(name)) if name == "compact"),
@@ -218,7 +235,7 @@ async fn only_an_agents_owner_compacts_its_context() {
     let mut hers = main.user_actor(world.alice).unwrap().watch();
     main.user_actor(world.alice)
         .unwrap()
-        .execute_command("compact @helper")
+        .execute_command(None, "compact @helper")
         .await
         .expect("hers, as its owner");
     assert!(

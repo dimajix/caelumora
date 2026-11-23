@@ -9,8 +9,8 @@ use crate::chain::Position;
 use crate::channel::ThreadId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::ops::Not;
-use std::slice;
 
 /// What happened in a channel, recorded (issue 417): the entry, the actor
 /// whose envelope it was - the system for what the channel says itself -,
@@ -107,12 +107,18 @@ impl Recipients {
         }
     }
 
-    /// Whether it goes to `actor`, which takes part in `thread` now, having happened in
+    /// Whether it goes to `actor`, which takes part in `threads` now, having happened in
     /// `happened_in` - `None`: in the whole channel -: as `reaches` decides for one that takes part
-    /// all along (issue 557).
-    pub fn goes_to(&self, actor: ActorId, thread: ThreadId, happened_in: Option<ThreadId>) -> bool {
-        let now = Attended { thread, range: EVERY_POSITION };
-        self.reaches(actor, Position::START, happened_in, slice::from_ref(&now))
+    /// all along (issues 557, 602).
+    pub fn goes_to(
+        &self,
+        actor: ActorId,
+        threads: &BTreeSet<ThreadId>,
+        happened_in: Option<ThreadId>,
+    ) -> bool {
+        let now: Vec<Attended> =
+            threads.iter().map(|&thread| Attended { thread, range: EVERY_POSITION }).collect();
+        self.reaches(actor, Position::START, happened_in, &now)
     }
 
     /// Whether it goes to `actor` for what it is: a user or an agent of the
@@ -250,24 +256,31 @@ impl Recorded {
         }
     }
 
-    /// What `reader` may see of the entry at the position `seq`, with
-    /// `attended` as `seen_by` takes it: nothing unless it sees it; then the
-    /// entry as it was recorded for its sender and the channel, and as
-    /// everybody was given it for anyone else (`HistoryEntry::published`).
+    /// What `reader` may see of the entry at the position `seq`, with `attended` as `seen_by` takes
+    /// it: nothing unless it sees it; then the entry as it was recorded for its sender and the
+    /// channel, and as everybody was given it for anyone else (`HistoryEntry::published`), with
+    /// what else was recorded of it - its context among it, which names its thread.
     pub fn as_seen_by(
         &self,
         seq: Position,
         reader: &Reader,
         attended: &[Attended],
-    ) -> Option<HistoryEntry> {
+    ) -> Option<Self> {
         if !self.seen_by(seq, reader, attended) {
             return None;
         }
-        match reader {
-            Reader::Channel => Some(self.entry.clone()),
-            Reader::Participant(actor) if *actor == self.sender => Some(self.entry.clone()),
-            Reader::Participant(_) | Reader::Outsider => self.entry.published(),
-        }
+        let entry = match reader {
+            Reader::Channel => self.entry.clone(),
+            Reader::Participant(actor) if *actor == self.sender => self.entry.clone(),
+            Reader::Participant(_) | Reader::Outsider => self.entry.published()?,
+        };
+        Some(Self {
+            entry,
+            sender: self.sender,
+            recipients: self.recipients.clone(),
+            context: self.context.clone(),
+            timestamp: self.timestamp,
+        })
     }
 }
 
@@ -299,17 +312,31 @@ mod tests {
     #[test]
     fn an_agent_is_reached_in_its_thread_and_a_user_in_every_one() {
         let (here, elsewhere) = (ThreadId::new(), ThreadId::new());
+        let in_here = BTreeSet::from([here]);
         let agent = ActorId::Agent(AgentId::new());
         let user = ActorId::User(UserId::new());
         let to_all = Recipients::participants(true);
-        assert!(to_all.goes_to(agent, here, Some(here)), "an agent, in its thread");
-        assert!(to_all.goes_to(agent, here, None), "an agent, in the whole channel");
-        assert!(!to_all.goes_to(agent, here, Some(elsewhere)), "an agent, not in another thread");
-        assert!(to_all.goes_to(user, here, Some(elsewhere)), "a user, in every thread");
+        assert!(to_all.goes_to(agent, &in_here, Some(here)), "an agent, in its thread");
+        assert!(to_all.goes_to(agent, &in_here, None), "an agent, in the whole channel");
+        assert!(!to_all.goes_to(agent, &in_here, Some(elsewhere)), "an agent, not in another");
+        assert!(to_all.goes_to(user, &in_here, Some(elsewhere)), "a user, in every thread");
         assert!(
-            Recipients::only(vec![agent]).goes_to(agent, here, Some(elsewhere)),
+            Recipients::only(vec![agent]).goes_to(agent, &in_here, Some(elsewhere)),
             "by name, wherever it happened"
         );
+    }
+
+    /// Issue 602: an agent taking part in several threads is reached in each of them, and in no
+    /// other.
+    #[test]
+    fn an_agent_is_reached_in_every_thread_it_takes_part_in() {
+        let (here, there, elsewhere) = (ThreadId::new(), ThreadId::new(), ThreadId::new());
+        let in_both = BTreeSet::from([here, there]);
+        let agent = ActorId::Agent(AgentId::new());
+        let to_all = Recipients::participants(true);
+        assert!(to_all.goes_to(agent, &in_both, Some(here)), "in the one");
+        assert!(to_all.goes_to(agent, &in_both, Some(there)), "in the other");
+        assert!(!to_all.goes_to(agent, &in_both, Some(elsewhere)), "not in a third");
     }
 
     /// Issue 557: a thread's delegate is given what goes to the users and happens in its thread or
@@ -318,13 +345,17 @@ mod tests {
     #[test]
     fn a_delegate_is_given_what_the_users_are_of_its_thread() {
         let (here, elsewhere) = (ThreadId::new(), ThreadId::new());
+        let in_here = BTreeSet::from([here]);
         let delegate = ActorId::Delegate(here);
         let to_users = Recipients::participants(false);
-        assert!(to_users.goes_to(delegate, here, Some(here)), "in its thread");
-        assert!(to_users.goes_to(delegate, here, None), "in the whole channel");
-        assert!(!to_users.goes_to(delegate, here, Some(elsewhere)), "not in another thread");
+        assert!(to_users.goes_to(delegate, &in_here, Some(here)), "in its thread");
+        assert!(to_users.goes_to(delegate, &in_here, None), "in the whole channel");
+        assert!(!to_users.goes_to(delegate, &in_here, Some(elsewhere)), "not in another thread");
         let to_agents = Recipients { users: false, ..Recipients::participants(true) };
-        assert!(!to_agents.goes_to(delegate, here, Some(here)), "not what goes to agents alone");
+        assert!(
+            !to_agents.goes_to(delegate, &in_here, Some(here)),
+            "not what goes to agents alone"
+        );
     }
 
     /// Issue 417: a reader is given an entry only if it went to them or
@@ -362,10 +393,9 @@ mod tests {
             Audience::Everybody,
             &context,
         );
-        let calls = |entry: Option<HistoryEntry>| {
-            entry
-                .as_ref()
-                .and_then(HistoryEntry::said)
+        let calls = |seen: Option<Recorded>| {
+            seen.as_ref()
+                .and_then(|seen| seen.entry.said())
                 .map(|m| (m.tool_calls.len(), m.content.clone()))
         };
 
@@ -376,7 +406,7 @@ mod tests {
         );
         assert!(
             said.as_seen_by(Position::START, &Reader::Participant(agent), all)
-                .and_then(|e| e.context().map(|_| ()))
+                .and_then(|seen| seen.entry.context().map(|_| ()))
                 .is_some(),
             "with what it was produced from"
         );
@@ -388,7 +418,7 @@ mod tests {
                 "{reader:?}: as it was published"
             );
             assert!(
-                seen.and_then(|e| e.context().map(|_| ())).is_none(),
+                seen.and_then(|seen| seen.entry.context().map(|_| ())).is_none(),
                 "{reader:?}: without what it was produced from"
             );
         }
@@ -579,6 +609,7 @@ mod tests {
                 not_asked: vec![agent],
             },
             ActorEvent::ResponderUndecided { message: heard.id },
+            ActorEvent::NotDrawnIn { message: heard.id, mentioned: vec![agent] },
             ActorEvent::EventRejected {
                 rejected: "MessageModified".to_string(),
                 message: Some(heard.id),
@@ -675,7 +706,11 @@ mod tests {
                         &Reader::Participant(participant),
                         &taking_part_all_along
                     ),
-                    envelope.recipients().goes_to(participant, thread, envelope.thread()),
+                    envelope.recipients().goes_to(
+                        participant,
+                        &BTreeSet::from([thread]),
+                        envelope.thread()
+                    ),
                     "{kind} of {sender} for {participant}"
                 );
             }
@@ -796,7 +831,7 @@ mod tests {
         }
         assert_eq!(items_of(&history).len(), 1, "the turn given up alone");
         assert_eq!(
-            history.turn_given_up_last(agent),
+            history.turn_given_up_last(agent, context.thread_id),
             Some((turn, GivenUpReason::Left)),
             "nothing of the conversation followed it"
         );

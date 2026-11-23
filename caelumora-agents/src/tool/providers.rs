@@ -92,6 +92,7 @@ mod tests {
     use async_trait::async_trait;
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::question::{Addressee, Answers, Question, Questions};
     use caelumora_domain::tool::testing::make_tool_description;
     use caelumora_domain::turn::TurnState;
@@ -141,10 +142,10 @@ mod tests {
     }
 
     fn agent_state() -> AgentChannelState {
-        AgentChannelState {
-            turn: Some(TurnState { work: Work::default(), ..Default::default() }),
-            ..Default::default()
-        }
+        let mut state = AgentChannelState::default();
+        state.thread_mut(ThreadId::default()).turn =
+            Some(TurnState { work: Work::default(), ..Default::default() });
+        state
     }
 
     #[tokio::test]

@@ -6,29 +6,31 @@
 //! (issue 223); what it was
 //! offered is its channel's history (issue 417). Its body's (`AgentBody`).
 
-use super::body::AgentBody;
+use super::body::{AgentBody, OwnChange};
 use crate::message::apply_stage_processors;
 use caelumora_api::logging::envelope_span;
 use caelumora_api::transport::EventReceiver;
 use caelumora_domain::actor::{ActorEvent, ActorId, Envelope, Pick};
 use caelumora_domain::agent::{AgentChannelState, HearsFrom};
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::message::Message;
 use caelumora_domain::transcript::TranscriptEntry;
+use std::collections::BTreeSet;
 use tracing::{debug, trace, warn, Instrument};
 
 impl AgentBody {
-    /// Takes what others said, `heard`, into the agent's `state` (issues
-    /// 196, 206, 224), the same for both kinds of agent and every way in:
-    /// what it hears of it - `Message::as_heard` - as it passes its perceive
-    /// processors, into its transcript. A failing stage is logged and leaves
-    /// the transcript as it was: what was heard stays in the channel's
-    /// history, and is not offered again.
+    /// Takes what others said, `heard`, into the agent's `state` (issues 196,
+    /// 206, 224), the same for both kinds of agent and every way in: what it
+    /// hears of it - `Message::as_heard` - as it passes its perceive
+    /// processors, onto the branch of `thread` in its transcript. A failing
+    /// stage is logged and leaves the transcript as it was: what was heard
+    /// stays in the channel's history, and is not offered again.
     ///
     /// What is heard is never the agent's own: the channel delivers nothing
     /// back to its sender (`ChannelLoop::route_event_impl`), live or from its
     /// history, and every message an envelope carries is its sender's
     /// (`OriginEventSender`); what a delegate gives it to read is not heard but given.
-    async fn perceive(&self, state: &mut AgentChannelState, heard: Vec<Message>) {
+    async fn perceive(&self, state: &mut AgentChannelState, thread: ThreadId, heard: Vec<Message>) {
         let Some(last) = heard.last() else {
             return;
         };
@@ -41,14 +43,14 @@ impl AgentBody {
                 Vec::new()
             }
         };
-        state.perceive(perceived);
+        state.perceive(thread, perceived);
     }
 
     /// Takes in that a message of another reads as `modified` from now on
     /// (issue 234), the same for both kinds of agent - never its own, as
     /// nothing heard is (`perceive`): as the agent hears it -
     /// `Message::as_heard`, through its perceive processors, as everything
-    /// heard - into its transcript, if the message is on its active path,
+    /// heard - into its transcript, if the message is on a branch of it,
     /// as what its processors made of it under the message's id. Where nothing is left
     /// under it, or the stage fails, the message is taken back there: the
     /// version given before does not stand any more. Returns the change the
@@ -74,7 +76,7 @@ impl AgentBody {
         };
         let taken = match &perceived {
             Some(perceived) => state.modify(perceived.clone()),
-            None => state.transcript.revoke(id, at),
+            None => state.record_change(TranscriptEntry::Revoked { message: id, at }),
         };
         if taken {
             return None;
@@ -85,21 +87,27 @@ impl AgentBody {
         })
     }
 
-    /// Takes in what an agent was told while it could not listen (issue 222),
-    /// the same for both kinds of agent: `received`, and everything `rx` holds
-    /// already behind it, in order. What was said, changed or noted is taken
-    /// in as it comes (`take_in_said`). Of the requests to respond the last is
-    /// returned - one answer to the conversation as it stands, in the
-    /// authority of the last who asked - and the others are dropped, as is
-    /// every other event but the requests to answer again (issue 234), which
-    /// are returned in order, each to be answered. A command it is asked to
-    /// carry out (issue 269) ends the batch: it is returned, and what follows
-    /// it stays in `rx`, so that the actor carries it out where it came -
-    /// after what was said before it, before what was said after - and then
-    /// takes in the rest. Where the agent stands in its channel's history
-    /// is written into `state` with what it took in (issue 223), so that
-    /// every store that follows stores both; when that happens is the
-    /// actor's.
+    /// Takes in what an agent was told while it could not listen (issue 222), the same for both
+    /// kinds of agent: `received`, and everything `rx` holds already behind it, in order. What was
+    /// said, changed or noted is taken in as it comes (`take_in_said`). Of the requests to respond
+    /// the last is returned - one answer to the conversation as it stands, in the authority of the
+    /// last who asked - and the others are dropped, as is every other event but the requests to
+    /// answer again (issue 234), which are returned in order, each to be answered. A command it is
+    /// asked to carry out (issue 269) ends the batch: it is returned, and what follows it stays in
+    /// `rx`, so that the actor carries it out where it came - after what was said before it, before
+    /// what was said after - and then takes in the rest. Everything goes on the branch of the
+    /// thread it happens in; what happens in a thread it does not follow it drops
+    /// (`AgentBody::is_unfollowed`, issue 602). A request to respond on another branch than the one
+    /// returned ends the batch too, and stays in `rx`, unheard: the oldest request is answered
+    /// first, and on each branch the last one. What happens in the thread of a turn set aside,
+    /// which waits for a person (issue 602), waits there too, passed over (`waits_for_set_aside`),
+    /// but what settles that turn - a decision on an approval, answers to questions, another's
+    /// leave - ends the batch: taken alone if it comes first, returned, and stopped at otherwise,
+    /// so that it is taken in the order it came (`settles`). Its own leave of a thread drops what
+    /// it was asked there in the batch (`AgentBody::leaves`, issue 602): let go from the thread, it
+    /// no longer answers there. Where the agent stands in its channel's history is written into
+    /// `state` with what it took in (issue 223), so that every store that follows stores both; when
+    /// that happens is the actor's.
     pub(super) async fn take_in(
         &self,
         state: &mut AgentChannelState,
@@ -109,45 +117,121 @@ impl AgentBody {
         let mut request = None;
         let mut retries = Vec::new();
         let mut next = Some(received);
+        let waiting = self.control.set_aside_threads();
         while let Some(event) = next {
-            if matches!(event.event, ActorEvent::CommandRequested { .. }) {
+            if self.is_unfollowed(&event) {
+                envelope_span(&event.context, event.event.kind()).in_scope(|| {
+                    debug!("Dropped {}: of a thread it does not follow", event.describe());
+                });
+            } else if self.settles(&event, &waiting) {
                 state.heard = rx.heard();
-                return TakenIn { request, retries, command: Some(event) };
-            }
-            let span = envelope_span(&event.context, event.event.kind());
-            let asked = async {
-                debug!("Received {}", event.describe());
-                let event = self.take_in_said(state, event).await?;
-                match event.event {
-                    ActorEvent::ResponseRequested { .. } => Some(event),
-                    ActorEvent::RetryRequested { .. } => {
-                        retries.push(event);
-                        None
-                    }
-                    _ => None,
+                return TakenIn { request, retries, command: None, settled: Some(event) };
+            } else {
+                if matches!(event.event, ActorEvent::CommandRequested { .. }) {
+                    state.heard = rx.heard();
+                    return TakenIn { request, retries, command: Some(event), settled: None };
                 }
+                // Let go from a thread, it no longer answers what it was asked there (issue 602).
+                if let Some(left) = self.leaves(self.own_change(&event)) {
+                    request =
+                        request.filter(|request: &Envelope| request.context.thread_id != left);
+                    retries.retain(|retry| retry.context.thread_id != left);
+                }
+                let span = envelope_span(&event.context, event.event.kind());
+                let asked = async {
+                    debug!("Received {}", event.describe());
+                    let event = self.take_in_said(state, event).await?;
+                    match event.event {
+                        ActorEvent::ResponseRequested { .. } => Some(event),
+                        ActorEvent::RetryRequested { .. } => {
+                            retries.push(event);
+                            None
+                        }
+                        _ => None,
+                    }
+                }
+                .instrument(span)
+                .await;
+                request = answered(request, asked);
             }
-            .instrument(span)
-            .await;
-            request = answered(request, asked);
-            next = rx.try_recv().await;
+            let asked_on = request.as_ref().map(|request| request.context.thread_id);
+            // What happens in a thread it does not follow is taken, to be dropped.
+            let on_another_branch = |envelope: &Envelope| {
+                matches!(envelope.event, ActorEvent::ResponseRequested { .. })
+                    && asked_on.is_some_and(|asked_on| envelope.context.thread_id != asked_on)
+                    && !self.is_unfollowed(envelope)
+            };
+            next = rx
+                .try_recv_if(&|envelope| match self.between_turns(envelope, &waiting) {
+                    Pick::Take if on_another_branch(envelope) => Pick::Stop,
+                    picked => picked,
+                })
+                .await;
         }
         state.heard = rx.heard();
-        TakenIn { request, retries, command: None }
+        TakenIn { request, retries, command: None, settled: None }
     }
 
-    /// Drops the request to respond that is the very next event in `rx` as a turn in the
-    /// authority of `initiator` ended (issue 567): nothing unheard lies ahead of it, so that the
-    /// conversation stands as the turn answered it, and the turn answered the request with it - as
-    /// one taken in during a turn is answered by it. One in another authority waits for a turn in
-    /// its own (issue 435). Writes where the agent stands into `state`, and does not store.
+    /// What is done between turns, after the first event of a batch, with `envelope` while the
+    /// turns of `waiting` are set aside (issue 602): passed over if it waits for its thread's turn
+    /// to end (`waits_for_set_aside`), stopped at if it settles that turn (`settles`), so that it
+    /// is taken first in a batch of its own, and taken otherwise.
+    pub(super) fn between_turns(&self, envelope: &Envelope, waiting: &BTreeSet<ThreadId>) -> Pick {
+        if self.settles(envelope, waiting) {
+            Pick::Stop
+        } else if self.waits_for_set_aside(envelope, waiting) {
+            Pick::PassOver
+        } else {
+            Pick::Take
+        }
+    }
+
+    /// Whether `envelope` settles the turn set aside in the thread it happens in, of the threads
+    /// `waiting` (issue 602): a decision on an approval, the answers to questions or that they were
+    /// declined (issue 165), or that someone else left there (issue 482) - what a turn waiting for
+    /// a person waits for.
+    fn settles(&self, envelope: &Envelope, waiting: &BTreeSet<ThreadId>) -> bool {
+        waiting.contains(&envelope.context.thread_id)
+            && match &envelope.event {
+                ActorEvent::ApprovalGranted(_)
+                | ActorEvent::ApprovalDenied(_)
+                | ActorEvent::ApprovalTimedOut(_)
+                | ActorEvent::QuestionAnswered { .. }
+                | ActorEvent::QuestionDeclined { .. } => true,
+                ActorEvent::ParticipantLeft { participant, .. } => *participant != self.id(),
+                _ => false,
+            }
+    }
+
+    /// Whether `envelope` waits between turns for the turn set aside in its thread, of the threads
+    /// `waiting`, to end (issue 602): whatever happens in that thread but what settles the turn -
+    /// what is said, a request, a command, its own leave of the thread -, as it waits while a turn
+    /// waits for a person: nothing may stand between a step's calls and their results, and no turn
+    /// begins in a thread whose turn is under way.
+    pub(super) fn waits_for_set_aside(
+        &self,
+        envelope: &Envelope,
+        waiting: &BTreeSet<ThreadId>,
+    ) -> bool {
+        envelope.thread().is_some_and(|thread| waiting.contains(&thread))
+            && !self.settles(envelope, waiting)
+    }
+
+    /// Drops the request to respond that is the very next event of the branch of `thread` in `rx`
+    /// as a turn there in the authority of `initiator` ended (issue 567): nothing unheard of that
+    /// branch lies ahead of it, so that the conversation stands as the turn answered it, and the
+    /// turn answered the request with it - as one taken in during a turn is answered by it. What
+    /// happens on another branch is passed over (issue 602). One in another authority waits for a
+    /// turn in its own (issue 435). Writes where the agent stands into `state`, and does not store.
     pub(super) async fn drop_answered(
         &self,
         state: &mut AgentChannelState,
+        thread: ThreadId,
         initiator: ActorId,
         rx: &mut Box<dyn EventReceiver>,
     ) {
         let answered = |envelope: &Envelope| match envelope.event {
+            _ if self.is_elsewhere(envelope, thread) => Pick::PassOver,
             ActorEvent::ResponseRequested { .. } if envelope.in_authority_of(initiator) => {
                 Pick::Take
             }
@@ -161,38 +245,50 @@ impl AgentBody {
         }
     }
 
-    /// Takes in what `rx` holds already while a turn is under way in `state`
-    /// (issue 431), between two of its steps - before its model is called
-    /// again, so that the call is given it: what others said, as `take_in`
-    /// perceives it, and who joined or left. What its personality hears
-    /// then, and what the turn may hear at all, is the model's to say
-    /// (`HearsDuringTurn::pick`). A request to respond it takes is dropped:
-    /// the turn answers it, its message heard. It takes up to the first
-    /// event it may not take and leaves that event and everything behind it
-    /// where they are, in order, for `take_in` to take after the turn -
-    /// unless a request in the turn's own authority lies further on, which
-    /// lets it hear what waited only for the authority it was said in
-    /// (`HearsDuringTurn::pick_request`, issue 435): it takes that request
-    /// ahead and then what came before it, passing over the requests of
-    /// others, which wait for a turn in theirs. Returns whether it took in
-    /// anything. Writes where the agent stands into `state`, as `take_in`
-    /// does, and does not store.
+    /// Takes in what `rx` holds already while a turn is under way in `state` (issue 431), between
+    /// two of its steps - before its model is called again, so that the call is given it: what
+    /// others said, as `take_in` perceives it, and who joined or left. What its personality hears
+    /// then, and what the turn may hear at all, is the model's to say (`HearsDuringTurn::pick`). A
+    /// request to respond it takes is dropped: the turn answers it, its message heard. It takes up
+    /// to the first event it may not take and leaves that event and everything behind it where they
+    /// are, in order, for `take_in` to take after the turn - unless a request in the turn's own
+    /// authority lies further on, which lets it hear what waited only for the authority it was said
+    /// in (`HearsDuringTurn::pick_request`, issue 435): it takes that request ahead and then what
+    /// came before it, passing over the requests of others, which wait for a turn in theirs.
+    /// Returns whether it took in anything. What happens on another branch than the turn's it
+    /// passes over (issue 602), for a turn there. Writes where the agent stands into `state`, as
+    /// `take_in` does, and does not store.
     pub(super) async fn take_in_during_turn(
         &self,
         state: &mut AgentChannelState,
         rx: &mut Box<dyn EventReceiver>,
     ) -> bool {
         let hears = self.hears_during_turn();
-        let Some(under_way) = state.turn.as_ref().filter(|_| hears.from != HearsFrom::None) else {
+        let Some(thread) = self.control.thread() else { return false };
+        let Some(under_way) = state.turn(thread).filter(|_| hears.from != HearsFrom::None) else {
             return false;
         };
         let work = under_way.work.clone();
+        // In the order things reach it (issue 602): its own join of a thread stops the turn's
+        // taking in, so that nothing of the thread is taken for the turn's before the agent
+        // follows it; its own leave waits, after what came before it of the thread, which is
+        // passed over as elsewhere - its leave of the turn's thread for the turn to end, which
+        // uses its part there.
+        let pick = |envelope: &Envelope, picked: Pick| match self.own_change(envelope) {
+            Some(OwnChange::Joined(_)) => Pick::Stop,
+            Some(OwnChange::Left(_)) => Pick::PassOver,
+            None if self.is_elsewhere(envelope, thread) => Pick::PassOver,
+            None => picked,
+        };
         let mut taken = false;
         // Where the last request in the turn's authority taken ahead was.
         let mut asked = None;
         loop {
-            while let Some(event) =
-                rx.try_recv_if(&|envelope: &Envelope| hears.pick(&work, envelope, asked)).await
+            while let Some(event) = rx
+                .try_recv_if(&|envelope: &Envelope| {
+                    pick(envelope, hears.pick(&work, envelope, asked))
+                })
+                .await
             {
                 taken = true;
                 let span = envelope_span(&event.context, event.event.kind());
@@ -204,8 +300,11 @@ impl AgentBody {
                 .instrument(span)
                 .await;
             }
-            let Some(request) =
-                rx.try_recv_if(&|envelope: &Envelope| hears.pick_request(&work, envelope)).await
+            let Some(request) = rx
+                .try_recv_if(&|envelope: &Envelope| {
+                    pick(envelope, hears.pick_request(&work, envelope))
+                })
+                .await
             else {
                 break;
             };
@@ -219,22 +318,30 @@ impl AgentBody {
 
     /// Takes in `event` if it is something said, changed or noted - the same between turns
     /// (`take_in`), during one (`take_in_during_turn`), and for who left while a turn waits for a
-    /// person (`AgentActor::handle_waiting_for_user`, issue 482): what others said is perceived as
-    /// it comes (`perceive`), and so is a message modified or taken back since (issue 234); a
-    /// reclassification is recorded as it is (issue 239), in the transcript where it holds the
-    /// message on its active path, and so is who joined or left (issue 408); what a delegate gives
-    /// it to read is what it was given (`AgentChannelState::given`, issue 557). A modification or
+    /// person, set aside (`AgentActor::settle_set_aside`, issues 482, 602): what others said is
+    /// perceived as it comes (`perceive`), and so is a message modified or taken back since (issue
+    /// 234); a reclassification is recorded as it is (issue 239), in the transcript where it holds
+    /// the message on a branch, and so is who joined or left (issue 408); what a delegate gives it
+    /// to read is what it was given (`AgentChannelState::given`, issue 557). A modification or
     /// revocation the transcript did not take is handed over (`AgentBody::hand_over`, issue 236),
-    /// as the agent hears it. Returns any other event, for the caller to handle.
+    /// as the agent hears it. What it appends goes on the branch of the thread the envelope happens
+    /// in (issue 602); its own join or leave of a thread changes the threads it follows (`follow`),
+    /// each noted on the thread's branch first - its join on the branch it begins. Returns any
+    /// other event, for the caller to handle.
     pub(super) async fn take_in_said(
         &self,
         state: &mut AgentChannelState,
         event: Envelope,
     ) -> Option<Envelope> {
+        let own_change = self.own_change(&event);
+        if let Some(joined @ OwnChange::Joined(_)) = own_change {
+            self.follow(state, joined);
+        }
+        let thread = event.context.thread_id;
         match event.event {
             ActorEvent::CompleteMessageGenerated(message) => {
                 trace!("Heard {:?}", message.content);
-                self.perceive(state, vec![message]).await;
+                self.perceive(state, thread, vec![message]).await;
             }
             ActorEvent::MessageModified(modified) => {
                 if let Some(change) = self.take_in_modified(state, modified).await {
@@ -242,7 +349,7 @@ impl AgentBody {
                 }
             }
             ActorEvent::MessageRevoked { message, at } => {
-                if !state.transcript.revoke(message, at) {
+                if !state.record_change(TranscriptEntry::Revoked { message, at }) {
                     (self.hand_over)(
                         &*self.runtime,
                         state,
@@ -252,33 +359,42 @@ impl AgentBody {
                 }
             }
             ActorEvent::MessageReclassified { message, classification } => {
-                state.transcript.reclassify(message, classification);
+                state.record_change(TranscriptEntry::Reclassified { message, classification });
             }
             // Given to read by a delegate (issue 557), as a skill loaded for it is given: its giver
             // is the message's sender, and the request to respond follows it.
             ActorEvent::GivenToRead { message, .. } => {
-                state.given(message, None);
+                state.given(thread, message, None);
             }
-            // Who joined or left (issue 408): noted where it came, asking
-            // nothing of the agent.
+            // Who joined or left (issue 408): noted on the agent's branch, asking nothing of it.
             ActorEvent::ParticipantJoined { .. } | ActorEvent::ParticipantLeft { .. } => {
                 if let Some(entry) = event.announced() {
-                    state.note_announced(entry);
+                    state.note_announced(thread, entry);
+                }
+                if let Some(left @ OwnChange::Left(_)) = own_change {
+                    self.follow(state, left);
                 }
             }
             _ => return Some(event),
         }
         None
     }
+
+    /// Whether `envelope` happens on another branch than the one of `thread`: of another thread
+    /// (`Envelope::thread`), not of the whole channel, which reaches every branch.
+    fn is_elsewhere(&self, envelope: &Envelope, thread: ThreadId) -> bool {
+        envelope.thread().is_some() && envelope.context.thread_id != thread
+    }
 }
 
 /// What `take_in` found in what it took in: the last request to respond,
 /// the requests to answer again in order, and the command that ended the
-/// batch, if one did.
+/// batch, if one did - or what settles a turn set aside (issue 602), alone.
 pub(super) struct TakenIn {
     pub(super) request: Option<Envelope>,
     pub(super) retries: Vec<Envelope>,
     pub(super) command: Option<Envelope>,
+    pub(super) settled: Option<Envelope>,
 }
 
 impl TakenIn {
@@ -288,7 +404,8 @@ impl TakenIn {
     pub(super) fn then(self, next: TakenIn) -> TakenIn {
         let mut retries = self.retries;
         retries.extend(next.retries);
-        TakenIn { request: answered(self.request, next.request), retries, command: next.command }
+        let request = answered(self.request, next.request);
+        TakenIn { request, retries, command: next.command, settled: next.settled }
     }
 }
 
@@ -318,6 +435,7 @@ mod tests {
     use caelumora_domain::actor::{ActorId, EventContext, RequestReason};
     use caelumora_domain::agent::{HearsDuringTurn, OthersWords};
     use caelumora_domain::chain::Position;
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::component::ComponentFailPolicy;
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::message::{MessageId, MessageRole};
@@ -363,21 +481,22 @@ mod tests {
         let body = AgentBody::detached(Vec::new());
 
         let mut state = AgentChannelState::default();
-        body.perceive(&mut state, vec![first.clone()]).await;
+        body.perceive(&mut state, ThreadId::default(), vec![first.clone()]).await;
         assert_eq!(
-            ids(state.transcript.messages()),
+            ids(state.transcript.messages(ThreadId::default())),
             vec![first.id],
             "never sent anything: what others said"
         );
-        state.transcript.start_anew();
-        body.perceive(&mut state, vec![empty.clone(), step.clone(), second.clone()]).await;
+        state.transcript.start_anew(ThreadId::default());
+        let heard = vec![empty.clone(), step.clone(), second.clone()];
+        body.perceive(&mut state, ThreadId::default(), heard).await;
         assert_eq!(
-            ids(state.transcript.messages()),
+            ids(state.transcript.messages(ThreadId::default())),
             vec![second.id],
             "after what was sent, with text"
         );
-        state.transcript.start_anew();
-        assert!(state.transcript.messages().is_empty(), "nothing new");
+        state.transcript.start_anew(ThreadId::default());
+        assert!(state.transcript.messages(ThreadId::default()).is_empty(), "nothing new");
     }
 
     #[tokio::test]
@@ -402,7 +521,7 @@ mod tests {
 
         let request = body.take_in(&mut state, heard("one"), &mut rx).await.request;
         assert_eq!(
-            texts(&state.transcript.messages()),
+            texts(&state.transcript.messages(ThreadId::default())),
             ["one", "two", "three"],
             "all of it, in order, also what came after the last request"
         );
@@ -415,7 +534,10 @@ mod tests {
 
         let request = body.take_in(&mut state, heard("four"), &mut rx).await.request;
         assert!(request.is_none(), "heard, but nobody asked");
-        assert_eq!(texts(&state.transcript.messages()), ["one", "two", "three", "four"]);
+        assert_eq!(
+            texts(&state.transcript.messages(ThreadId::default())),
+            ["one", "two", "three", "four"]
+        );
     }
 
     /// Issue 439: of the requests a turn takes in, it answers the last - in
@@ -458,21 +580,198 @@ mod tests {
             request: Some(asked(RequestReason::Nudged)),
             retries: Vec::new(),
             command: None,
+            settled: None,
         }
         .then(only_chosen);
         assert_eq!(reason(&then), Some(RequestReason::Nudged), "across a command, too");
     }
 
-    /// A turn begun for `initiator` in a channel classified as the default,
-    /// in `state`.
-    fn under_way_for(state: &mut AgentChannelState, initiator: ActorId) {
+    /// Issue 602: what reaches the agent from a thread it does not follow - late, or by name, read
+    /// again from the history as it was before the channel admitted a request only of one taking
+    /// part - it does not take in: nothing of it on any branch, no request of it answered.
+    #[tokio::test]
+    async fn what_reaches_it_from_a_thread_it_does_not_follow_is_dropped() {
+        let body = AgentBody::detached(Vec::new());
+        // The thread the detached runtime's agent takes part in.
+        let (taking_part, elsewhere) = (ThreadId::default(), ThreadId::new());
+        let in_thread = |thread_id, event| {
+            Envelope::new(EventContext { thread_id, ..EventContext::default() }, event)
+        };
+        let aside = Message { sender_id: ActorId::User(UserId::new()), ..said("aside") };
+        let from_elsewhere = in_thread(elsewhere, ActorEvent::CompleteMessageGenerated(aside));
+
+        let (tx, rx) = mpsc::channel(8);
+        let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
+        let asked = |thread| {
+            in_thread(thread, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned })
+        };
+        for event in [asked(taking_part), asked(elsewhere)] {
+            tx.try_send(event).expect("room");
+        }
+        let mut state = AgentChannelState::default();
+        let taken = body.take_in(&mut state, from_elsewhere, &mut rx).await;
+        assert!(state.transcript.messages(taking_part).is_empty(), "nothing of it on its branch");
+        assert!(state.transcript.digest(elsewhere).is_none(), "nor on one of its own");
+        assert!(state.thread(elsewhere).is_none(), "nor a part");
+        let answered = taken.request.map(|request| request.context.thread_id);
+        assert_eq!(answered, Some(taking_part), "the request of its own thread alone");
+        assert!(left_in(&mut rx).await.is_empty(), "nothing waits");
+    }
+
+    /// Issue 602: the agent follows a thread from its own join of it, as it takes the join in,
+    /// and up to its own leave - what reached it of the thread before it left goes on that
+    /// thread's branch, not on another, though taken in after the channel announced the leave -,
+    /// and then holds nothing of the thread.
+    #[tokio::test]
+    async fn it_follows_a_thread_from_its_join_up_to_its_leave_in_the_order_they_reach_it() {
+        let body = AgentBody::detached(Vec::new());
+        let (joined, there) = (ThreadId::default(), ThreadId::new());
+        let in_thread = |thread_id, event| {
+            Envelope::new(EventContext { thread_id, ..EventContext::default() }, event)
+        };
+        let heard = |text: &str| {
+            let message = Message { sender_id: ActorId::User(UserId::new()), ..said(text) };
+            in_thread(there, ActorEvent::CompleteMessageGenerated(message))
+        };
+        let name = "helper".to_string();
+        let its_join = ActorEvent::ParticipantJoined { participant: body.id(), name: name.clone() };
+        let until = Position::START;
+        let its_leave = ActorEvent::ParticipantLeft { participant: body.id(), name, until };
+        let (tx, rx) = mpsc::channel(8);
+        let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
+        tx.try_send(heard("in there")).expect("room");
+
+        let mut state = AgentChannelState::default();
+        body.take_in(&mut state, in_thread(there, its_join), &mut rx).await;
+        assert_eq!(texts(&state.transcript.messages(there)), ["in there"], "on its branch there");
+        assert!(state.transcript.messages(joined).is_empty(), "nothing on the other");
+
+        tx.try_send(in_thread(there, its_leave)).expect("room");
+        body.take_in(&mut state, heard("before it left"), &mut rx).await;
+        assert!(state.transcript.messages(joined).is_empty(), "nothing of the thread it left");
+        assert!(!state.threads_held().contains(&there), "and nothing held there any more");
+        assert!(body.is_unfollowed(&heard("later")), "no longer followed");
+    }
+
+    /// Issue 602: a request to respond on another branch than the one to be answered ends the
+    /// batch and waits, unheard, with what follows it, for a turn of its own: the oldest request is
+    /// answered first, and nothing of the other branch has to be stored meanwhile.
+    #[tokio::test]
+    async fn a_request_of_another_branch_ends_the_batch_and_waits() {
+        let (joined, there) = (ThreadId::default(), ThreadId::new());
+        let body = AgentBody::detached(Vec::new()).taking_part_also_in(there);
+        let in_thread = |thread_id, event| {
+            Envelope::new(EventContext { thread_id, ..EventContext::default() }, event)
+        };
+        let asked = |thread| {
+            in_thread(thread, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned })
+        };
+        let heard = |thread, text: &str| {
+            let message = Message { sender_id: ActorId::User(UserId::new()), ..said(text) };
+            in_thread(thread, ActorEvent::CompleteMessageGenerated(message))
+        };
+        let (tx, rx) = mpsc::channel(8);
+        let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
+        for event in [heard(joined, "here"), asked(there), heard(joined, "after")] {
+            tx.try_send(event).expect("room");
+        }
+
+        let mut state = AgentChannelState::default();
+        let taken = body.take_in(&mut state, asked(joined), &mut rx).await;
+        let answered = taken.request.map(|request| request.context.thread_id);
+        assert_eq!(answered, Some(joined), "the oldest request");
+        assert_eq!(texts(&state.transcript.messages(joined)), ["here"], "up to the other's");
+        assert!(state.transcript.digest(there).is_none(), "nothing heard on the other branch");
+        let waiting: Vec<_> = left_in(&mut rx).await.into_iter().map(|(kind, _)| kind).collect();
+        assert_eq!(
+            waiting,
+            ["ResponseRequested", "CompleteMessageGenerated"],
+            "the other's request waits, with what follows it"
+        );
+    }
+
+    /// What happens on another branch than the turn's is passed over, during the turn and as it
+    /// ends (issue 602), for a turn there: a turn begun on the branch of another thread takes in
+    /// none of what happens in the agent's own, and drops no request of it, which a turn there
+    /// takes and drops.
+    #[tokio::test]
+    async fn a_turn_takes_in_nothing_of_another_branch() {
+        let alice = ActorId::User(UserId::new());
+        let hers = EventContext { initiator_id: alice, ..EventContext::default() };
+        let aside = Message { sender_id: alice, ..said("aside") };
+        let asked = ActorEvent::ResponseRequested { reason: RequestReason::Mentioned };
+        for (thread, takes) in [(ThreadId::default(), true), (ThreadId::new(), false)] {
+            let (tx, rx) = mpsc::channel(8);
+            let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
+            for event in [ActorEvent::CompleteMessageGenerated(aside.clone()), asked.clone()] {
+                tx.try_send(Envelope::new(hers.clone(), event)).expect("room");
+            }
+            let body = AgentBody::detached(Vec::new())
+                .hearing(HearsDuringTurn { from: HearsFrom::Users, ..Default::default() });
+            let mut state = AgentChannelState::default();
+            let work =
+                Work::new(hers.clone(), None, Classification::CHANNEL_DEFAULT, Default::default());
+            body.begin_turn(&mut state, thread, work);
+            assert_eq!(body.take_in_during_turn(&mut state, &mut rx).await, takes, "{takes}");
+            assert_eq!(left_in(&mut rx).await.len(), if takes { 0 } else { 2 }, "{takes}");
+
+            let (tx, rx) = mpsc::channel(8);
+            let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
+            tx.try_send(Envelope::new(hers.clone(), asked.clone())).expect("room");
+            body.drop_answered(&mut state, thread, alice, &mut rx).await;
+            assert_eq!(left_in(&mut rx).await.len(), if takes { 0 } else { 1 }, "{takes}");
+        }
+    }
+
+    /// Issue 602: the agent's own leave of a thread keeps its place among what reaches it - during
+    /// a turn in another thread it waits after what came before it of the thread, which then goes
+    /// on that thread's branch, not the turn's -, and taken in with a request of the thread, it
+    /// drops the request: let go from the thread, the agent no longer answers there.
+    #[tokio::test]
+    async fn its_leave_of_a_thread_keeps_its_place_and_drops_what_it_was_asked_there() {
+        let alice = ActorId::User(UserId::new());
+        let body = AgentBody::detached(Vec::new())
+            .hearing(HearsDuringTurn { from: HearsFrom::Users, ..Default::default() });
+        let (joined, there) = (ThreadId::default(), ThreadId::new());
+        let in_there = |event| {
+            let context =
+                EventContext { thread_id: there, initiator_id: alice, ..Default::default() };
+            Envelope::new(context, event)
+        };
+        let name = "helper".to_string();
+        let its_join =
+            || ActorEvent::ParticipantJoined { participant: body.id(), name: name.clone() };
+        let until = Position::START;
+        let its_leave =
+            || ActorEvent::ParticipantLeft { participant: body.id(), name: name.clone(), until };
+        let aside = Message { sender_id: alice, ..said("before it left") };
+        let mut state = AgentChannelState::default();
+        body.take_in_said(&mut state, in_there(its_join())).await;
+        under_way_for(&body, &mut state, alice);
+        let (tx, rx) = mpsc::channel(8);
+        let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
+        tx.try_send(in_there(ActorEvent::CompleteMessageGenerated(aside))).expect("room");
+        tx.try_send(in_there(its_leave())).expect("room");
+
+        assert!(!body.take_in_during_turn(&mut state, &mut rx).await, "nothing for the turn");
+        let first = rx.try_recv().await.expect("what waited");
+        body.take_in(&mut state, first, &mut rx).await;
+        assert!(texts(&state.transcript.messages(joined)).is_empty(), "not on the turn's branch");
+        assert!(!state.threads_held().contains(&there), "the thread left after it");
+
+        body.take_in_said(&mut state, in_there(its_join())).await;
+        tx.try_send(in_there(its_leave())).expect("room");
+        let asked = in_there(ActorEvent::ResponseRequested { reason: RequestReason::Mentioned });
+        let taken = body.take_in(&mut state, asked, &mut rx).await;
+        assert!(taken.request.is_none(), "let go from the thread, it answers nothing there");
+    }
+
+    /// A turn of `body` begun for `initiator` in a channel classified as the default, in `state`,
+    /// in `ThreadId::default()`, as its actor begins one.
+    fn under_way_for(body: &AgentBody, state: &mut AgentChannelState, initiator: ActorId) {
         let context = EventContext { initiator_id: initiator, ..EventContext::default() };
-        state.begin_turn(Work::new(
-            context,
-            None,
-            Classification::CHANNEL_DEFAULT,
-            Default::default(),
-        ));
+        let work = Work::new(context, None, Classification::CHANNEL_DEFAULT, Default::default());
+        body.begin_turn(state, ThreadId::default(), work);
     }
 
     /// A request to respond that is the very next event as a turn ends, in its authority, is
@@ -497,7 +796,8 @@ mod tests {
                 tx.try_send(event).expect("room");
             }
             let body = AgentBody::detached(Vec::new());
-            body.drop_answered(&mut AgentChannelState::default(), alice, &mut rx).await;
+            let state = &mut AgentChannelState::default();
+            body.drop_answered(state, ThreadId::default(), alice, &mut rx).await;
             let mut left = Vec::new();
             while let Some(event) = rx.try_recv().await {
                 left.push(event.event.kind());
@@ -526,9 +826,9 @@ mod tests {
         let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
         let alice = ActorId::User(UserId::new());
         let mut state = AgentChannelState::default();
-        under_way_for(&mut state, alice);
         let body = AgentBody::detached(Vec::new())
             .hearing(HearsDuringTurn { from: HearsFrom::Users, ..Default::default() });
+        under_way_for(&body, &mut state, alice);
         let in_her_authority = |event: ActorEvent| {
             Envelope::new(EventContext { initiator_id: alice, ..EventContext::default() }, event)
         };
@@ -555,14 +855,14 @@ mod tests {
 
         assert!(body.take_in_during_turn(&mut state, &mut rx).await, "it took something in");
         assert_eq!(
-            texts(&state.transcript.messages()),
+            texts(&state.transcript.messages(ThreadId::default())),
             ["one", "two"],
             "what was said before the command"
         );
-        let turn = state.turn.as_ref().expect("still under way");
+        let turn = state.turn(ThreadId::default()).expect("still under way");
         assert_eq!(
             turn.work.context.transcript,
-            state.transcript.digest(),
+            state.transcript.digest(ThreadId::default()),
             "the turn's next call is given it"
         );
         let mut left = Vec::new();
@@ -629,16 +929,16 @@ mod tests {
         let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
         let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
         let mut state = AgentChannelState::default();
-        under_way_for(&mut state, alice);
         for event in bob_then_alice_then_bob(alice, bob) {
             tx.try_send(event).expect("room");
         }
         let body = AgentBody::detached(Vec::new())
             .hearing(HearsDuringTurn { from: HearsFrom::Users, others: OthersWords::WhenAsked });
+        under_way_for(&body, &mut state, alice);
 
         assert!(body.take_in_during_turn(&mut state, &mut rx).await, "it took something in");
         assert_eq!(
-            texts(&state.transcript.messages()),
+            texts(&state.transcript.messages(ThreadId::default())),
             ["his first", "hers"],
             "what was said before her request, in order"
         );
@@ -671,13 +971,13 @@ mod tests {
             let (tx, rx) = mpsc::channel(8);
             let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
             let mut state = AgentChannelState::default();
-            under_way_for(&mut state, alice);
             let count = said.len();
             for event in said {
                 tx.try_send(event).expect("room");
             }
             let body = AgentBody::detached(Vec::new())
                 .hearing(HearsDuringTurn { from: HearsFrom::Users, others });
+            under_way_for(&body, &mut state, alice);
             assert!(
                 !body.take_in_during_turn(&mut state, &mut rx).await,
                 "{others:?}: nothing taken in"
@@ -694,7 +994,6 @@ mod tests {
         let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
         let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
         let mut state = AgentChannelState::default();
-        under_way_for(&mut state, alice);
         let mut said = bob_then_alice_then_bob(alice, bob);
         let command = ActorEvent::CommandRequested {
             command: "mark".to_string(),
@@ -710,6 +1009,7 @@ mod tests {
         }
         let body = AgentBody::detached(Vec::new())
             .hearing(HearsDuringTurn { from: HearsFrom::Users, others: OthersWords::WhenAsked });
+        under_way_for(&body, &mut state, alice);
         assert!(!body.take_in_during_turn(&mut state, &mut rx).await, "nothing taken in");
         assert_eq!(left_in(&mut rx).await.len(), 7, "all of it waits");
     }
@@ -750,7 +1050,7 @@ mod tests {
 
         let first = body.take_in(&mut state, heard("one"), &mut rx).await;
         assert_eq!(
-            texts(&state.transcript.messages()),
+            texts(&state.transcript.messages(ThreadId::default())),
             ["one", "two"],
             "what was said before the command"
         );
@@ -767,7 +1067,7 @@ mod tests {
         let next = rx.try_recv().await.expect("what follows the command stays queued");
         let rest = body.take_in(&mut state, next, &mut rx).await;
         assert_eq!(
-            texts(&state.transcript.messages()),
+            texts(&state.transcript.messages(ThreadId::default())),
             ["one", "two", "three"],
             "in the order it was said"
         );
@@ -778,6 +1078,23 @@ mod tests {
         );
     }
 
+    // Writes down what it is handed, where it is handed it.
+    fn noted<'a>(
+        _: &'a dyn ActorRuntime,
+        state: &'a mut AgentChannelState,
+        change: TranscriptEntry,
+    ) -> BoxFuture<'a, ()> {
+        let text = match change {
+            TranscriptEntry::Modified { message } => {
+                format!("modified: {}", message.content.unwrap_or_default())
+            }
+            TranscriptEntry::Revoked { .. } => "taken back".to_string(),
+            _ => "something else".to_string(),
+        };
+        state.transcript.push(ThreadId::default(), Message { id: MessageId::new(), ..said(&text) });
+        Box::pin(ready(()))
+    }
+
     #[tokio::test]
     async fn a_change_is_recorded_where_the_transcript_holds_the_message_and_handed_over_where_it_does_not(
     ) {
@@ -786,9 +1103,9 @@ mod tests {
         let mut state = AgentChannelState::default();
         let given = Message { id: MessageId::new(), ..said("given") };
         let kept = Message { id: MessageId::new(), ..said("kept") };
-        state.perceive(vec![given.clone()]);
-        state.transcript.start_anew();
-        state.perceive(vec![kept.clone()]);
+        state.perceive(ThreadId::default(), vec![given.clone()]);
+        state.transcript.start_anew(ThreadId::default());
+        state.perceive(ThreadId::default(), vec![kept.clone()]);
         let modified = |message: &Message, text: &str| {
             envelope(ActorEvent::MessageModified(Message {
                 content: Some(text.to_string()),
@@ -801,23 +1118,6 @@ mod tests {
                 ..said(text)
             }))
         };
-        // Writes down what it is handed, where it is handed it.
-        fn noted<'a>(
-            _: &'a dyn ActorRuntime,
-            state: &'a mut AgentChannelState,
-            change: TranscriptEntry,
-        ) -> BoxFuture<'a, ()> {
-            let text = match change {
-                TranscriptEntry::Modified { message } => {
-                    format!("modified: {}", message.content.unwrap_or_default())
-                }
-                TranscriptEntry::Revoked { .. } => "taken back".to_string(),
-                _ => "something else".to_string(),
-            };
-            state.transcript.push(Message { id: MessageId::new(), ..said(&text) });
-            Box::pin(ready(()))
-        }
-
         let noting = AgentBody::detached(Vec::new()).handing_over(noted);
         tx.try_send(modified(&given, "given, corrected")).expect("room");
         tx.try_send(heard("and then")).expect("room");
@@ -830,8 +1130,8 @@ mod tests {
         .expect("room");
         noting.take_in(&mut state, modified(&kept, "kept, corrected"), &mut rx).await;
 
-        assert_eq!(texts(&state.transcript.messages()), ["kept, corrected", "modified: given, corrected", "and then", "taken back", "taken back"],
-            "on the active path the transcript takes it; off it, it is handed over where it came - also what the agent never held: whether that is anything to tell is the actor's to see");
+        assert_eq!(texts(&state.transcript.messages(ThreadId::default())), ["kept, corrected", "modified: given, corrected", "and then", "taken back", "taken back"],
+            "on a branch the transcript takes it; off it, it is handed over where it came - also what the agent never held: whether that is anything to tell is the actor's to see");
 
         // A modification of which nothing passes the processors takes the
         // message back in the transcript; the channel's history keeps what
@@ -846,18 +1146,26 @@ mod tests {
             .take_in(&mut state, modified(&kept, "kept, spam"), &mut rx)
             .await;
         assert_eq!(
-            texts(&state.transcript.messages()),
+            texts(&state.transcript.messages(ThreadId::default())),
             ["modified: given, corrected", "and then", "taken back", "taken back"],
             "no longer given, and nothing handed over"
         );
+    }
 
-        // A reclassification is recorded where the transcript holds the
-        // message, and handed over nowhere: a remote agent knows no labels.
+    /// A reclassification is recorded where the transcript holds the message, and handed over
+    /// nowhere: a remote agent knows no labels.
+    #[tokio::test]
+    async fn a_reclassification_is_recorded_where_the_transcript_holds_the_message_and_handed_over_nowhere(
+    ) {
+        let (_tx, rx) = mpsc::channel(8);
+        let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
+        let mut state = AgentChannelState::default();
+        let noting = AgentBody::detached(Vec::new()).handing_over(noted);
         let earlier = Message { id: MessageId::new(), ..said("earlier") };
-        state.perceive(vec![earlier.clone()]);
-        state.transcript.start_anew();
+        state.perceive(ThreadId::default(), vec![earlier.clone()]);
+        state.transcript.start_anew(ThreadId::default());
         let public = Classification::PUBLIC;
-        let before = state.transcript.all_entries().len();
+        let before = state.transcript.end();
         noting
             .take_in(
                 &mut state,
@@ -869,12 +1177,12 @@ mod tests {
             )
             .await;
         assert_eq!(
-            state.transcript.all_entries().len(),
+            state.transcript.end(),
             before,
             "off the transcript's path: nothing recorded, nothing handed over"
         );
         let mut on_path = AgentChannelState::default();
-        on_path.perceive(vec![earlier.clone()]);
+        on_path.perceive(ThreadId::default(), vec![earlier.clone()]);
         noting
             .take_in(
                 &mut on_path,
@@ -886,7 +1194,11 @@ mod tests {
             )
             .await;
         assert_eq!(
-            on_path.transcript.messages().first().map(|m| m.classification.clone()),
+            on_path
+                .transcript
+                .messages(ThreadId::default())
+                .first()
+                .map(|m| m.classification.clone()),
             Some(public),
             "on it, recorded"
         );

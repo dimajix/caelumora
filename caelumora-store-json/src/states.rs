@@ -17,7 +17,7 @@ use caelumora_domain::agent::{AgentChannelState, AgentId};
 use caelumora_domain::channel::{ChannelId, ChannelState};
 use caelumora_domain::store::{Journaled, StoreError, StoreResult};
 use caelumora_domain::user::{UserChannelState, UserId};
-use caelumora_store::transcript::load_named_by_turn;
+use caelumora_store::transcript::load_named_by_turns;
 use caelumora_store::StateStore;
 use serde::Serialize;
 use std::collections::HashSet;
@@ -243,9 +243,8 @@ impl StateStore for JsonStates {
         let path = self.agent_channel_state_path(agent_id, channel_id).await?;
         debug!("Reading agent channel state from {}", path.display());
         let mut state: AgentChannelState = load_state(&path).await?.unwrap_or_default();
-        state.transcript =
-            self.load_transcript(agent_id, channel_id, state.transcript_from).await?;
-        load_named_by_turn(self, agent_id, channel_id, &mut state).await?;
+        state.transcript = self.load_transcript(agent_id, channel_id).await?;
+        load_named_by_turns(self, agent_id, channel_id, &mut state).await?;
         Ok(state)
     }
 
@@ -372,6 +371,7 @@ mod tests {
     use caelumora_domain::actor::testing::context_in;
     use caelumora_domain::actor::ActorState;
     use caelumora_domain::chain::Position;
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::history::Reader;
     use caelumora_domain::message::testing::{id, make_message};
@@ -444,6 +444,7 @@ mod tests {
         suite::work_under_way_is_indexed(&states).await;
         suite::history_store_behaves(&states, &states).await;
         suite::transcript_store_behaves(&states, &states).await;
+        suite::transcripts_keep_a_branch_per_thread(&states).await;
         suite::given_store_behaves(&states, &states).await;
         assert!(!dir.path().join("runtime").exists(), "nothing of the store's own places");
     }
@@ -455,11 +456,9 @@ mod tests {
         // Read from the files: a store opened anew over them, as after a
         // restart, finds what was under way.
         let (agent, channel) = (AgentId::new(), ChannelId::new());
-        let mut planning = AgentChannelState {
-            processing_state: ActorState::Planning,
-            turn: Some(TurnState::default()),
-            ..AgentChannelState::default()
-        };
+        let mut planning = AgentChannelState::default();
+        let turn = TurnState { step: ActorState::Planning, ..TurnState::default() };
+        planning.thread_mut(ThreadId::default()).turn = Some(turn);
         states(dir.path()).put_agent_channel_state(agent, channel, &mut planning).await.unwrap();
         assert_eq!(states(dir.path()).channels_with_work_under_way().await.unwrap(), [channel]);
     }
@@ -486,7 +485,7 @@ mod tests {
     /// document, which grows with them.
     fn said(state: &mut AgentChannelState, from: u128, to: u128) {
         for n in from..to {
-            state.transcript.push(make_message(id(n)));
+            state.transcript.push(ThreadId::default(), make_message(id(n)));
             state.last_message = Some(id(n));
             state.heard.took(Position::new(n as u64));
             let note = NoteChange::Add {
@@ -522,7 +521,7 @@ mod tests {
 
         said(&mut state, 3, 5);
         opened.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
-        state.processing_state = ActorState::WaitingForUser;
+        state.asleep = true;
         opened.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
         assert_eq!(journal_lines(&opened, agent, channel).await, Some(2), "one line per put");
         assert_eq!(
@@ -536,7 +535,7 @@ mod tests {
         // Read from the files, by a store opened anew, as after a restart.
         let loaded = states(dir.path()).get_agent_channel_state(agent, channel).await.unwrap();
         assert!(same(&loaded, &state), "{loaded:?}");
-        assert_eq!(loaded.transcript.messages().len(), 4);
+        assert_eq!(loaded.transcript.messages(ThreadId::default()).len(), 4);
         assert_eq!(
             (loaded.last_message, loaded.heard.next()),
             (Some(id(4)), Position::new(5)),
@@ -558,7 +557,6 @@ mod tests {
         // Small puts go to the journal until it is as large as the snapshot.
         let mut puts = 0;
         while journal_lines(&states, agent, channel).await.is_some() || puts == 0 {
-            state.processing_state = ActorState::Idle;
             states.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
             puts += 1;
             assert!(puts < 1000, "the journal is never folded");
@@ -620,10 +618,13 @@ mod tests {
         let mut state = AgentChannelState::default();
         said(&mut state, 1, 2);
         states.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
-        said(&mut state, 2, 4);
+        said(&mut state, 2, 3);
+        states.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
+        said(&mut state, 3, 4);
         states.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
         let journal = journal_file(&states, agent, channel).await;
         let lines = std_fs::read_to_string(&journal).unwrap();
+        assert!(lines.lines().count() > 1, "a line older than the snapshot's last: {lines}");
 
         // As if the crash came after the snapshot and before the journal was emptied.
         let folding = floored(dir.path(), 0);

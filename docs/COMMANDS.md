@@ -170,6 +170,12 @@ the workspace, in the issuer's name (`WorkspaceController::shell_in`): reading t
 channel, the workspace usable there, `WriteWorkspace`; and its call what every message asks as the
 channel admits it.
 
+A command is issued in a thread of its channel (`CommandContext::thread`, issue 602), the one its
+issuer names, the line where none is named: what it sends happens there. A `/participant nudge` asks
+in it, of someone who takes part there; a `/workspace run` says its call there; a command of an
+agent is asked of an agent that takes part there, and rejected at the channel's door otherwise; a
+channel-wide answer is announced there.
+
 ### Private or channel-wide answers
 
 A command answers the issuer alone (`/help`, `/participant list`, `/participant nudge`,

@@ -133,12 +133,20 @@ impl Compactor {
             situation.token_positions()?.ok_or(CompactionError::TranscriptUnreadable)?;
         let state = situation.agent_channel_state();
         let size = state
-            .used
+            .thread(situation.branch_thread_id())
+            .and_then(|part| part.used)
             .and_then(|usage| usage.context_size)
             .or(positions.last().copied())
             .unwrap_or(0);
         let keep = share_of(self.keep, size);
-        Ok(Cut::of(&state.transcript, &positions, keep, turn.turn_id()).map(|cut| (cut, size)))
+        let cut = Cut::of(
+            &state.transcript,
+            situation.branch_thread_id(),
+            &positions,
+            keep,
+            turn.turn_id(),
+        );
+        Ok(cut.map(|cut| (cut, size)))
     }
 
     /// What `wanted` - known in the part replaced and not in the part kept, each with the message
@@ -225,6 +233,7 @@ mod tests {
     use caelumora_agents::testing::{agent_runtime, workspace_turn};
     use caelumora_domain::actor::EventContext;
     use caelumora_domain::agent::AgentChannelState;
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::confidentiality::{Classification, Confidentiality};
     use caelumora_domain::context::{
         KnowledgeSource, ModelProfile, Placement, PromptPart, SenderFormat,
@@ -314,9 +323,14 @@ mod tests {
         Compactor::new(Arc::<Scripted>::clone(strategy), restorers, 0.1, 0.5)
     }
 
-    /// The texts of the transcript's active branch, as they stand.
-    fn texts(state: &AgentChannelState) -> Vec<String> {
-        state.transcript.messages().into_iter().map(|m| m.content.unwrap_or_default()).collect()
+    /// The texts of the branch of `thread` in the transcript, as they stand.
+    fn texts(state: &AgentChannelState, thread: ThreadId) -> Vec<String> {
+        state
+            .transcript
+            .messages(thread)
+            .into_iter()
+            .map(|m| m.content.unwrap_or_default())
+            .collect()
     }
 
     /// The world's agent heard `u1`, was given `gifts` - each a message with the knowledge it is -
@@ -326,23 +340,48 @@ mod tests {
         state: &mut AgentChannelState,
         gifts: Vec<(Message, KnowledgeRef)>,
     ) {
-        state.perceive(vec![heard("u1")]);
+        state.perceive(ThreadId::line(world.session.channels()[0].id()), vec![heard("u1")]);
         let mut turn = workspace_turn(world, state);
         for (message, known) in gifts {
             turn.give(message, Some(known));
         }
         drop(turn);
-        let given = state.turn.take().unwrap().work.turn_id;
-        state.finish_turn(given, Vec::new(), Vec::new());
+        let given = state
+            .thread_mut(ThreadId::line(world.session.channels()[0].id()))
+            .turn
+            .take()
+            .unwrap()
+            .work
+            .turn_id;
+        state.finish_turn(
+            ThreadId::line(world.session.channels()[0].id()),
+            given,
+            Vec::new(),
+            Vec::new(),
+        );
         drop(workspace_turn(world, state));
-        state.said(Message {
-            sender_id: ActorId::Agent(world.agent),
-            role: MessageRole::Assistant,
-            ..heard(A1)
-        });
-        let answered = state.turn.take().unwrap().work.turn_id;
-        state.finish_turn(answered, Vec::new(), Vec::new());
-        state.perceive(vec![heard("u2")]);
+        state.said(
+            ThreadId::line(world.session.channels()[0].id()),
+            Message {
+                sender_id: ActorId::Agent(world.agent),
+                role: MessageRole::Assistant,
+                ..heard(A1)
+            },
+        );
+        let answered = state
+            .thread_mut(ThreadId::line(world.session.channels()[0].id()))
+            .turn
+            .take()
+            .unwrap()
+            .work
+            .turn_id;
+        state.finish_turn(
+            ThreadId::line(world.session.channels()[0].id()),
+            answered,
+            Vec::new(),
+            Vec::new(),
+        );
+        state.perceive(ThreadId::line(world.session.channels()[0].id()), vec![heard("u2")]);
     }
 
     /// The world's agent heard `u1`, was given `release-notes` by alice - as a participant gives a
@@ -442,7 +481,11 @@ mod tests {
             (vec!["workspace a.txt".to_string(), "workspace b.txt".to_string()], 1),
             "each by its place; the one gone lost"
         );
-        let given: Vec<_> = state.transcript.messages()[1..3].iter().map(|m| m.sender_id).collect();
+        let given: Vec<_> =
+            state.transcript.messages(ThreadId::line(world.session.channels()[0].id()))[1..3]
+                .iter()
+                .map(|m| m.sender_id)
+                .collect();
         assert_eq!(given, [alice, agent], "as whoever first gave it");
     }
 
@@ -465,13 +508,14 @@ mod tests {
             read("a.txt", "[File: a.txt]\nagain"),
         ];
         an_agent_given(&world, &mut state, gifts);
-        state.used = Some(TokenUsage {
-            calls: 1,
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            context_size: Some(100),
-            context_tokens: 0,
-        });
+        state.thread_mut(ThreadId::line(world.session.channels()[0].id())).used =
+            Some(TokenUsage {
+                calls: 1,
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                context_size: Some(100),
+                context_tokens: 0,
+            });
         let strategy = Arc::new(Scripted::default());
         // 15 tokens to give again: three files of 4 each, not `big.txt`.
         let files: Vec<Arc<dyn KnowledgeRestorer>> = vec![Arc::new(Files)];
@@ -498,7 +542,8 @@ mod tests {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let skill = an_agent_with_a_skill_given(&world, &mut state).await;
-        let before = state.transcript.digest().unwrap();
+        let before =
+            state.transcript.digest(ThreadId::line(world.session.channels()[0].id())).unwrap();
         let strategy = Arc::new(Scripted::default());
         let compactor = compactor(&strategy, vec![Arc::new(Restorer(Some(skill)))]);
 
@@ -527,11 +572,14 @@ mod tests {
         );
         assert_eq!(given, ["workspace release-notes"], "told what is given again");
 
-        assert_eq!(texts(&state), [SUMMARY, GIVEN, "u2"]);
+        assert_eq!(
+            texts(&state, ThreadId::line(world.session.channels()[0].id())),
+            [SUMMARY, GIVEN, "u2"]
+        );
         assert!(
             state
                 .transcript
-                .entries()
+                .entries(ThreadId::line(world.session.channels()[0].id()))
                 .nth(1)
                 .and_then(|n| n.entry.knowledge())
                 .and_then(|source| source.about::<Workspace>())
@@ -539,8 +587,10 @@ mod tests {
             "the skill as given"
         );
         assert!(state.transcript.prefix(&before).is_some(), "what it saw before stays");
-        let replacement = state.transcript.messages();
-        let under_way = state.turn.as_ref().map(|t| t.work.turn_id);
+        let replacement =
+            state.transcript.messages(ThreadId::line(world.session.channels()[0].id()));
+        let under_way =
+            state.turn(ThreadId::line(world.session.channels()[0].id())).map(|t| t.work.turn_id);
         assert_eq!(
             replacement[0].turn_id, None,
             "a summary of what precedes the turn alone is no turn's (issue 284)"
@@ -560,14 +610,23 @@ mod tests {
                 && replacement[1].sender_name == "alice",
             "as alice's, who gave it (issue 539)"
         );
-        let knowledge = &state.turn.as_ref().unwrap().work.context.frame.knowledge;
+        let knowledge = &state
+            .turn(ThreadId::line(world.session.channels()[0].id()))
+            .unwrap()
+            .work
+            .context
+            .frame
+            .knowledge;
         assert!(
             knowledge
                 .iter()
                 .any(|k| k.source.about::<Workspace>().is_some_and(|(s, _)| s == skill)),
             "the turn has read it"
         );
-        let usage = state.used.expect("the replacement's call");
+        let usage = state
+            .thread(ThreadId::line(world.session.channels()[0].id()))
+            .and_then(|part| part.used)
+            .expect("the replacement's call");
         assert_eq!(
             (usage.prompt_tokens, usage.completion_tokens),
             (40, 8),
@@ -586,7 +645,7 @@ mod tests {
             content: Some(text.to_string()),
             ..Message::new(Classification::PUBLIC)
         };
-        state.perceive(vec![heard("u1")]);
+        state.perceive(ThreadId::line(world.session.channels()[0].id()), vec![heard("u1")]);
         let mut turn = workspace_turn(&world, &mut state);
         turn.set_context(
             vec![PromptPart {
@@ -597,14 +656,28 @@ mod tests {
             Vec::new(),
         );
         drop(turn);
-        state.said(Message {
-            sender_id: ActorId::Agent(world.agent),
-            role: MessageRole::Assistant,
-            ..heard("a1")
-        });
-        let answered = state.turn.take().unwrap().work.turn_id;
-        state.finish_turn(answered, Vec::new(), Vec::new());
-        state.perceive(vec![heard("u2")]);
+        state.said(
+            ThreadId::line(world.session.channels()[0].id()),
+            Message {
+                sender_id: ActorId::Agent(world.agent),
+                role: MessageRole::Assistant,
+                ..heard("a1")
+            },
+        );
+        let answered = state
+            .thread_mut(ThreadId::line(world.session.channels()[0].id()))
+            .turn
+            .take()
+            .unwrap()
+            .work
+            .turn_id;
+        state.finish_turn(
+            ThreadId::line(world.session.channels()[0].id()),
+            answered,
+            Vec::new(),
+            Vec::new(),
+        );
+        state.perceive(ThreadId::line(world.session.channels()[0].id()), vec![heard("u2")]);
         let strategy = Arc::new(Scripted::default());
         let compactor = compactor(&strategy, Vec::new());
 
@@ -621,7 +694,7 @@ mod tests {
         let asked: Vec<_> = part.iter().filter_map(|m| m.content.clone()).collect();
         assert_eq!(asked, ["u1", "a1"], "the strategy is not asked about the part");
         assert_eq!(
-            texts(&state),
+            texts(&state, ThreadId::line(world.session.channels()[0].id())),
             [SUMMARY, RULES, "u2"],
             "the part after the summary, as it stood"
         );
@@ -655,7 +728,10 @@ mod tests {
         );
         let (_, given) = strategy.asked.lock().unwrap().pop().expect("its strategy was asked");
         assert!(given.is_empty(), "nothing is given again");
-        assert_eq!(texts(&state), [SUMMARY, "u2"]);
+        assert_eq!(
+            texts(&state, ThreadId::line(world.session.channels()[0].id())),
+            [SUMMARY, "u2"]
+        );
     }
 
     /// What a restorer gives that was not asked of it - another entity than any given - is not
@@ -678,7 +754,10 @@ mod tests {
             Some((Vec::new(), 1)),
             "the one wanted lost, the other not given"
         );
-        assert_eq!(texts(&state), [SUMMARY, "u2"]);
+        assert_eq!(
+            texts(&state, ThreadId::line(world.session.channels()[0].id())),
+            [SUMMARY, "u2"]
+        );
     }
 
     /// Issue 413: what the agent no longer needs, as its strategy answers - a skill of a task
@@ -708,7 +787,11 @@ mod tests {
         );
         let (_, given) = strategy.asked.lock().unwrap().pop().expect("its strategy was asked");
         assert_eq!(given, ["workspace release-notes"], "asked about what can be given again");
-        assert_eq!(texts(&state), [SUMMARY, "u2"], "the summary alone");
+        assert_eq!(
+            texts(&state, ThreadId::line(world.session.channels()[0].id())),
+            [SUMMARY, "u2"],
+            "the summary alone"
+        );
     }
 
     #[tokio::test]
@@ -717,8 +800,8 @@ mod tests {
         let mut state = AgentChannelState::default();
         let u1 =
             Message { content: Some("u1".to_string()), ..Message::new(Classification::PUBLIC) };
-        state.perceive(vec![u1]);
-        let before = state.transcript.digest();
+        state.perceive(ThreadId::line(world.session.channels()[0].id()), vec![u1]);
+        let before = state.transcript.digest(ThreadId::line(world.session.channels()[0].id()));
         let strategy = Arc::new(Scripted::default());
         let compactor = Compactor::new(Arc::<Scripted>::clone(&strategy), Vec::new(), 0.25, 0.25);
 
@@ -728,7 +811,10 @@ mod tests {
 
         assert_eq!(compaction, None);
         assert_eq!(strategy.times_asked(), 0, "its strategy was not asked");
-        assert_eq!(state.transcript.digest(), before);
+        assert_eq!(
+            state.transcript.digest(ThreadId::line(world.session.channels()[0].id())),
+            before
+        );
     }
 
     #[tokio::test]
@@ -736,7 +822,7 @@ mod tests {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let skill = an_agent_with_a_skill_given(&world, &mut state).await;
-        let before = state.transcript.digest();
+        let before = state.transcript.digest(ThreadId::line(world.session.channels()[0].id()));
         let strategy = Arc::new(Scripted::failing(|| CompactionError::NoSummary));
         let compactor = compactor(&strategy, vec![Arc::new(Restorer(Some(skill)))]);
 
@@ -745,7 +831,11 @@ mod tests {
         drop(turn);
 
         assert!(matches!(failed, Err(CompactionError::NoSummary)), "{failed:?}");
-        assert_eq!(state.transcript.digest(), before, "nothing was changed");
+        assert_eq!(
+            state.transcript.digest(ThreadId::line(world.session.channels()[0].id())),
+            before,
+            "nothing was changed"
+        );
     }
 
     #[tokio::test]
@@ -754,7 +844,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         let u1 =
             Message { content: Some("u1".to_string()), ..Message::new(Classification::PUBLIC) };
-        state.perceive(vec![u1]);
+        state.perceive(ThreadId::line(world.session.channels()[0].id()), vec![u1]);
         let compactor = compactor(&Arc::new(Scripted::default()), Vec::new());
         let mut turn = workspace_turn(&world, &mut state);
         two_calls(&mut turn, world.agent);
@@ -768,7 +858,8 @@ mod tests {
             Some((3, 2)),
             "the turn's input and first call replaced, its newest call kept with its result"
         );
-        let replacement = &state.transcript.messages()[0];
+        let replacement =
+            &state.transcript.messages(ThreadId::line(world.session.channels()[0].id()))[0];
         assert_eq!(
             replacement.turn_id,
             Some(under_way),
@@ -791,7 +882,7 @@ mod tests {
             ..Message::new(Classification::PUBLIC)
         };
         let written = u1.timestamp;
-        state.perceive(vec![u1]);
+        state.perceive(ThreadId::line(world.session.channels()[0].id()), vec![u1]);
         let marking = ModelProfile {
             sender_format: SenderFormat::Prefix,
             message_times: true,
@@ -800,6 +891,7 @@ mod tests {
         let berlin = TimeZone::new("Europe/Berlin").unwrap();
         let channel = &world.session.channels()[0];
         state.begin_turn(
+            ThreadId::line(channel.id()),
             Work::new(
                 EventContext::new(world.session.id(), channel.id(), ActorId::None, String::new()),
                 None,
@@ -811,7 +903,8 @@ mod tests {
         let strategy = Arc::new(Scripted::default());
         let compactor = compactor(&strategy, Vec::new());
         let runtime = agent_runtime(participant_runtime_in(channel, ActorId::Agent(world.agent)));
-        let mut turn = Turn::of(&mut state, runtime).expect("a turn was begun");
+        let line = ThreadId::line(channel.id());
+        let mut turn = Turn::of(&mut state, line, runtime).expect("a turn was begun");
         two_calls(&mut turn, world.agent);
         compactor.compact(&mut turn).await.expect("compacted");
         drop(turn);
@@ -833,7 +926,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         let u1 =
             Message { content: Some("u1".to_string()), ..Message::new(Classification::PUBLIC) };
-        state.perceive(vec![u1]);
+        state.perceive(ThreadId::line(world.session.channels()[0].id()), vec![u1]);
         let skill = WorkspaceId::new();
         let compactor =
             compactor(&Arc::new(Scripted::default()), vec![Arc::new(Restorer(Some(skill)))]);
@@ -865,9 +958,14 @@ mod tests {
             Some((4, 2, vec!["workspace release-notes".to_string()])),
             "its text was replaced: given again"
         );
-        assert_eq!(texts(&state)[1], GIVEN, "after the replacement");
         assert_eq!(
-            state.transcript.messages()[1].sender_id,
+            texts(&state, ThreadId::line(world.session.channels()[0].id()))[1],
+            GIVEN,
+            "after the replacement"
+        );
+        assert_eq!(
+            state.transcript.messages(ThreadId::line(world.session.channels()[0].id()))[1]
+                .sender_id,
             ActorId::Agent(world.agent),
             "as the agent's, which loaded it"
         );
@@ -881,7 +979,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         let u1 =
             Message { content: Some("u1".to_string()), ..Message::new(Classification::PUBLIC) };
-        state.perceive(vec![u1]);
+        state.perceive(ThreadId::line(world.session.channels()[0].id()), vec![u1]);
         let strategy = Arc::new(Scripted::default());
         let compactor = compactor(&strategy, vec![Arc::new(Restorer(None))]);
         let mut turn = workspace_turn(&world, &mut state);

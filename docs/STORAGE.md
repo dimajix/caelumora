@@ -152,10 +152,10 @@ over one pool.
     writes it without what is kept apart. A put writes it whole, in one transaction with what is
     kept apart - the chain, the items derived from it, what was given -, and marks the state stored
     once the transaction is committed; so a crash leaves nothing to repair.
-*   **A chain a row per node** (`chains`), every branch, by its position: `history_entries` and
-    `transcript_entries`, a node changed in its place written over, the heads in `histories` and
-    `transcripts`. A chain is read backwards in batches where the domain's rules follow it back - a
-    path to a digest, the answer of a turn.
+*   **A chain a row per node** (`chains`), every branch of a transcript, by its position:
+    `history_entries` and `transcript_entries`, each node written once, the heads in `histories`
+    and `transcripts`. A chain is read backwards in batches where the domain's rules follow it
+    back - a path to a digest, the answer of a turn.
 
 Its tests run against a database: `test/docker-compose.yml` starts one, and the variable
 `CAELUMORA_TEST_POSTGRES_URL` names it, read as a secret; each test keeps its tables in a schema of
@@ -492,15 +492,18 @@ it is. So does one that was deleted, whose id stays taken: every seeder creates 
 The `StateStore` (in `caelumora-store`) stores the runtime state of channels and agents:
 
 *   **`ChannelState`**: the channel's history (see [Histories](#histories)), and the threads open
-    in it, from which it builds them again as it starts, each with what was delegated into it and
-    is not done (`threads`, `Delegation`, issue 557).
-*   **`AgentChannelState`**: an agent in one channel, of either kind - processing state,
-    transcript, notes, prompt texts and tool sets, and the turn under way (see
-    [AGENT-TURN.md](AGENT-TURN.md)); its transcript, its prompt texts and its tool sets kept apart
-    (see [Transcripts](#transcripts), [Prompt texts and tool sets](#prompt-texts-and-tool-sets)). It
-    keeps no history of its own: what it was offered and said is its channel's history, as it saw
-    it (issue 417) - and where it stands in it (`heard`, issue 223), written as it takes in and so
-    stored with what it took in: what its inbox opens at when it runs again.
+    in it, from which it builds them again as it starts, each with how it was opened - where, by
+    whom, its circle (issue 602) - and what was delegated into it and is not done (`threads`,
+    `Opening`, `Delegation`, issue 557).
+*   **`AgentChannelState`**: an agent in one channel, of either kind - transcript, notes, prompt
+    texts and tool sets, whether it sleeps, and its part of each thread: the turn under way at its
+    step and the tokens its calls used (`AgentThreadState`, issue 602, see
+    [AGENT-TURN.md](AGENT-TURN.md));
+    its transcript, its prompt texts and its tool sets kept apart (see [Transcripts](#transcripts),
+    [Prompt texts and tool sets](#prompt-texts-and-tool-sets)). It keeps no history of its own:
+    what it was offered and said is its channel's history, as it saw it (issue 417) - and where it
+    stands in it (`heard`, issue 223), written as it takes in and so stored with what it took in:
+    what its inbox opens at when it runs again.
     An external agent keeps instead what it keeps of the remote side: the remote conversation and
     the tasks not yet ended.
 *   **`UserChannelState`**: a user in one channel - up to where they read it (see
@@ -518,16 +521,18 @@ against an update of the entity.
     [AGENT-TURN.md](AGENT-TURN.md#the-transcript-as-a-chain)). Each node carries its position, and
     a node is merged only at the position it has, or at the one after the last if it is new. A
     position is a type of its own, `chain::Position` - its place in the order entries were added,
-    across every branch, written as its number -, and so is everything that addresses entries by
-    one: a page and its cursor, a delivery, a mark of what was read, a participant's range, where a
-    window begins.
-*   A small part - the processing state, the turn under way, the tokens the agent's calls used, an
-    external agent's open tasks and the classifications it was given, where an agent stands in its
-    channel's history and the last message it took in - is recorded whole: it is changed in place
-    and bounded by one turn, one exchange, or the labels in use. What would be summed over a whole
-    chain is kept as such a part instead, so that a chain is never read whole for it. Every part a
-    state stores is among its changes: one left out is stored only with the next snapshot, and a
-    state loaded again stands where that left it (issue 440).
+    across every branch of a transcript, written as its number -, and so is everything that
+    addresses entries by one: a page and its cursor, a delivery, a mark of what was read, a
+    participant's range, where a window begins.
+*   A small part - an agent's part of each thread, with its turn under way at its step and the
+    tokens its calls used there, whether it sleeps, an external agent's open tasks and the
+    classifications it was given, where an agent stands in its channel's history and the last
+    message it took in - is
+    recorded whole: it is changed in place and bounded by a turn per thread, one exchange, or the
+    labels in use. What would be summed over a whole chain is kept as such a part instead, so that
+    a chain is never read whole for it. Every part a state stores is among its changes: one left
+    out is stored only with the next snapshot, and a state loaded again stands where that left it
+    (issue 440).
 
 Replaying is idempotent, and nothing replayed is a change to store again. Every reference between
 parts is a digest or an id, resolved when read and never while replaying, so the order across parts
@@ -566,9 +571,10 @@ participant (issue 417), and is kept apart from the channel state's document (is
     each at the position of the entry that added it (`StandingItems`). So is who took part
     when and where (`Attendance`): each participant's ranges of positions, from the `from` of the
     `HistoryShared` before its `ParticipantJoined`, or else from its join, up to the `until` of its
-    `ParticipantLeft` - where the channel stopped delivering to it -, each in the thread the context
-    of its join names (`Attended`, issue 557); a join while its range is open continues it, so that
-    at most one is open. Both are derived entry by entry
+    `ParticipantLeft` in that thread - where the channel stopped delivering to it -, each in the
+    thread the context of its join names (`Attended`, issue 557); a join in a thread while its range
+    there is open continues it, so that at most one is open in a thread, and several in several
+    threads (issue 602). Both are derived entry by entry
     as the chain grows and rebuilt from it at any time (`HistoryStore::rebuild`); the store suite
     checks that the items equal the chain folded, and what each reader is given.
 *   **The read side is the `HistoryStore`**, handed out by the `Persistence` beside the
@@ -590,7 +596,7 @@ participant (issue 417), and is kept apart from the channel state's document (is
     reader sees.
     The filter is data too (issue 421): a `Filter` of the entity stores' queries over the fields of
     an item as it is kept (`HistoryField`) - a message said, its sender, role and words, what it
-    carries, whom it mentions, its level and compartments -, made by the reader's needs
+    carries, whom it addresses, its level and compartments -, made by the reader's needs
     (`Filter::said_by`, `heard`, `containing`, `with_attachments`, `readable` for what a reader from
     another channel may read) and judged on the item before its form is chosen, so that a database
     adds it to the same `WHERE`. In which form is `Recorded::as_seen_by`: as it was recorded for its
@@ -630,33 +636,38 @@ participant (issue 417), and is kept apart from the channel state's document (is
 
 ### Transcripts
 
-An agent's transcript in a channel (`Transcript`, a chain of `TranscriptEntry`) grows with every
-compaction and, for an external agent, with every call, each of which begins a branch of its own;
-the model is given only the active one. It is kept apart from the agent's state document as the
-history is (issue 380), with what differs:
+An agent's transcript in a channel (`Transcript`, a tree of `TranscriptEntry` with a head per
+thread) grows with every compaction and, for an external agent, with every call, each of which
+begins a branch of its own; the model is given in a thread only the branch its head ends. It is
+kept apart from the agent's state document as the history is (issue 380), with what differs:
 
-*   **The same chain, nothing derived.** The put of the agent's state writes the entries added since
-    it was last stored, after the history and before the document; the store keeps every branch.
+*   **The same tree, nothing derived.** The put of the agent's state writes the entries added since
+    it was last stored - also those no head reaches any more - and the head of every thread, by
+    its position (issue 602), after the history and before the document; the store keeps every
+    branch.
     What stands of a branch is read from it as it is loaded (`as_they_stand`).
 *   **The read side is the `TranscriptStore`**, handed out by the `Persistence`: the path to a
     digest, on whichever branch - what the context of an older message names -, a message as it
     stands where it was given, and which of some messages the transcript holds. The views read
     there, and an external agent's actor when it tells its remote agent of a change.
-*   **The holder keeps the active branch**, from its root on (`transcript_from`), and lets go of
-    what lies before after every put (`keep_window`, see
-    [AGENT-TURN.md](AGENT-TURN.md#what-is-held-in-memory)).
-*   **A digest may be there twice.** The holder dedupes an entry by its digest only within its
-    window, so a root given again after the transcript began anew is a second entry where it would
-    have been one. Both name the same content after the same predecessors; the store makes no
+*   **The holder keeps what its heads reach**, the branch of every thread from its root on, and
+    lets go of what no head reaches after every put (`keep_window`, see
+    [AGENT-TURN.md](AGENT-TURN.md#what-is-held-in-memory)). A transcript is loaded by its heads:
+    the branch of every thread is followed back from its head to its root.
+*   **A digest may be there twice.** The holder dedupes an entry by its digest only among what it
+    holds, so a root given again after a branch began anew is a second entry where it would have
+    been one. Both name the same content after the same predecessors; the store makes no
     digest unique, and a path is followed back from the newest entry with the digest.
 *   **One way of keeping a chain.** Both stores keep a history's and a transcript's chain alike, by
     position: the `MemoryStore` as nodes by position (`KeptChain`), `JsonStates` in segments
-    and a head (`chains`), the transcript in `<agent>.transcript/` beside the agent's snapshot,
+    and a head (`chains`) - of a transcript the heads of its threads -, the transcript in
+    `<agent>.transcript/` beside the agent's snapshot,
     without anything laid over it. A path is followed back segment by segment, a message looked for
     in every segment: slow where a database has indexes. In Postgres a transcript is the table
     `transcript_entries(agent_id, channel_id, seq, message_id, node)`, with an index on the message
-    an entry holds or changes, and its head in `transcripts`, written in the transaction of the
-    agent's state.
+    an entry holds or changes, and the heads of its threads in `transcripts`, written in the
+    transaction of the agent's state. A chain's head is kept as JSON (`head jsonb`), of whatever
+    kind its chain has.
 
 ### Prompt texts and tool sets
 
@@ -678,12 +689,12 @@ document as the transcript is (issue 383):
     written as the same: a digest there already is not written again. A text nothing names any
     more, that of a turn cut off before it said anything, stays.
 *   **Read by digest, through the `TranscriptStore`**: the texts of some digests, the sets of an
-    offer, a frame, a message's context with its frame (`context`), and the texts and sets of a
-    `ContextRef` (`named_by`) - what the context of an older message is resolved with.
-*   **The holder keeps what its turn under way names**, and lets go of the rest after every put
-    (`keep_window`); between turns it holds none, and a state loaded holds those its turn names, so
-    that a turn cut off by a crash is resumed with them. A frame it lets go of at once: the turn
-    under way holds its own whole, in its context.
+    offer, a frame, a message's context with its frame (`context`), and the texts and sets some
+    `ContextRef`s name (`named_by`) - what the context of an older message is resolved with.
+*   **The holder keeps what its turns under way name**, and lets go of the rest after every put
+    (`keep_window`); between turns it holds none, and a state loaded holds those its turns name
+    (`load_named_by_turns`), so that a turn cut off by a crash is resumed with them. A frame it lets
+    go of at once: the turn under way holds its own whole, in its context.
 *   **`JsonStates`** keeps them in `<agent>.given/` beside the agent's snapshot, one file per
     digest (`prompt-<digest>.json`, `tools-<digest>.json`, `frame-<digest>.json`), and looks for
     the file before it writes one. In Postgres each is a table keyed by agent, channel and digest,

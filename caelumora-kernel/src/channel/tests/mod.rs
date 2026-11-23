@@ -1,6 +1,7 @@
 //! The tests of `ChannelLoop` itself, and the fixtures of every test of a running channel.
 
 mod commands;
+mod threads;
 
 pub(super) use crate::channel::testing::*;
 
@@ -194,6 +195,11 @@ pub(super) async fn channel_moderated_by(
     channel_built(store, participants, Arc::new(AllowAllPolicy::new()), register, components).await
 }
 
+/// The threads an actor taken in by hand (`ChannelLoop::adopt`) takes part in: `thread` alone.
+pub(super) fn taking_part_in(thread: ThreadId) -> Arc<ArcSwap<BTreeSet<ThreadId>>> {
+    Arc::new(ArcSwap::from_pointee(BTreeSet::from([thread])))
+}
+
 /// An agent asleep (`StandIn`), that tells whether it was woken or
 /// cancelled.
 pub(super) fn sleeper() -> Arc<StandIn> {
@@ -217,7 +223,7 @@ pub(super) async fn channel_with_sleepers(
             .adopt(
                 Arc::<StandIn>::clone(sleeper),
                 ResolvedParticipant::approver(channel.session_id, channel.id),
-                ThreadId::line(channel.id),
+                taking_part_in(ThreadId::line(channel.id)),
                 None,
                 None,
             )

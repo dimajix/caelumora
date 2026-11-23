@@ -283,7 +283,7 @@ impl Followed {
             ActorEvent::ApprovalAnswered { .. } => envelope.context.sender_id == self.me(),
             ActorEvent::QuestionRequested(request) => request.questions.is_asked(self.me()),
             ActorEvent::CompleteMessageGenerated(message) => {
-                message.mentions.contains(&self.me())
+                message.addressees.contains(&self.me())
                     || (message.sender_id == self.me() && message.is_a_persons_call())
             }
             _ => false,
@@ -853,7 +853,7 @@ fn said_printed(
 /// it says neither.
 fn said(message: &Message, directory: &MentionDirectory) -> Option<Said> {
     let words = message.content.as_deref().filter(|content| !content.is_empty()).map(|content| {
-        let mentions = directory.mentioned_spans(content, &message.mentions);
+        let mentions = directory.mentioned_spans(content, &message.addressees);
         Words { text: content.to_string(), mentions }
     });
     let attachments = message.attachments.clone();
@@ -1076,7 +1076,7 @@ mod tests {
         let mut followed =
             Followed::new(Arc::clone(&channel), views).await.expect("the owner takes part");
         let agent = ActorId::Agent(an_agent_in(&kernel, &session_loop, &ctx, channel.id()).await);
-        let mentioning = Message { mentions: vec![agent], ..message(agent, "@helper is here") };
+        let mentioning = Message { addressees: vec![agent], ..message(agent, "@helper is here") };
         let mut mentions = |event: ActorEvent| {
             let printed = followed.take_in(&from(&channel, agent, event));
             let [Printed::Said { said: Said { words: Some(words), .. }, .. }] = printed.as_slice()
@@ -1177,7 +1177,7 @@ mod tests {
         let said = ActorEvent::CompleteMessageGenerated(message(agent, "aside"));
         assert!(!followed.concerns_user(&in_other(said.clone())));
         assert!(followed.take_in(&in_other(said)).is_empty(), "said in another thread");
-        let mentioning = Message { mentions: vec![me], ..message(agent, "@owner, look") };
+        let mentioning = Message { addressees: vec![me], ..message(agent, "@owner, look") };
         let mentioning = ActorEvent::CompleteMessageGenerated(mentioning);
         assert!(followed.concerns_user(&in_other(mentioning.clone())), "it mentions them");
         assert_eq!(lines(&followed.take_in(&in_other(mentioning))), ["other: @owner, look"]);
@@ -1328,7 +1328,7 @@ mod tests {
         let mine = make_question_request(channel.session_id(), channel.id(), agent_id, me);
         let theirs = make_question_request(channel.session_id(), channel.id(), agent_id, other);
         let ids = [request.id.0, mine.id.0, theirs.id.0].map(|id| id.to_string());
-        let mentioning = Message { mentions: vec![me], ..message(other, "@owner look") };
+        let mentioning = Message { addressees: vec![me], ..message(other, "@owner look") };
         let asked = [
             ActorEvent::ApprovalRequested(request),
             ActorEvent::QuestionRequested(mine),
@@ -1604,7 +1604,7 @@ mod tests {
         let mut followed =
             Followed::new(Arc::clone(&channel), views.clone()).await.expect("the owner takes part");
         let actor = followed.actor().expect("the owner's actor runs");
-        actor.send_message(Some("hello".to_string()), None, Vec::new()).await.expect("said");
+        actor.send_message(None, Some("hello".to_string()), None, Vec::new()).await.expect("said");
         let begun = async {
             loop {
                 if let Ok(Shown::Envelope(envelope)) = followed.next().await {
@@ -1774,7 +1774,7 @@ mod tests {
 
         let ActorId::User(user) = other else { unreachable!("a user") };
         let theirs = channel.user_actor(user).expect("they take part");
-        theirs.send_message(Some("hello".to_string()), None, Vec::new()).await.expect("said");
+        theirs.send_message(None, Some("hello".to_string()), None, Vec::new()).await.expect("said");
         let recorded = async {
             loop {
                 let talking_in = lines(&followed.talking_in().await);

@@ -309,6 +309,16 @@ pub enum ActorEvent {
     ResponderUndecided {
         message: MessageId,
     },
+    /// `message` mentioned `mentioned` by name, whom its thread did not draw in (issue 602): they
+    /// take no part there once the channel drew in whom it does. Sent by the moderator in the name
+    /// of `ActorId::System`, to whoever said it.
+    ///
+    /// Recorded by the channel to whom it was told (`HistoryEntry::NotDrawnIn`); an agent takes no
+    /// note of it.
+    NotDrawnIn {
+        message: MessageId,
+        mentioned: Vec<ActorId>,
+    },
     /// The message `0.id` reads as `0` from now on (issue 234): sent by its
     /// author alone, with the id, sender and role of the message it
     /// modifies and the time it was modified as its `timestamp`. The channel
@@ -551,6 +561,7 @@ impl ActorEvent {
             | ActorEvent::RetryRefused { .. }
             | ActorEvent::ChainCutOff { .. }
             | ActorEvent::ResponderUndecided { .. }
+            | ActorEvent::NotDrawnIn { .. }
             | ActorEvent::EventRejected { .. }
             | ActorEvent::EventRefused { .. }
             | ActorEvent::MessageGiven { .. }
@@ -610,6 +621,7 @@ impl ActorEvent {
             | ActorEvent::RetryRefused { .. }
             | ActorEvent::ChainCutOff { .. }
             | ActorEvent::ResponderUndecided { .. }
+            | ActorEvent::NotDrawnIn { .. }
             | ActorEvent::EventRejected { .. }
             | ActorEvent::EventRefused { .. }
             | ActorEvent::ApprovalAnswered { .. }
@@ -718,6 +730,7 @@ impl ActorEvent {
             ActorEvent::ThreadClosed { .. } => "ThreadClosed",
             ActorEvent::ChainCutOff { .. } => "ChainCutOff",
             ActorEvent::ResponderUndecided { .. } => "ResponderUndecided",
+            ActorEvent::NotDrawnIn { .. } => "NotDrawnIn",
             ActorEvent::MessageModified(_) => "MessageModified",
             ActorEvent::MessageRevoked { .. } => "MessageRevoked",
             ActorEvent::MessageReclassified { .. } => "MessageReclassified",
@@ -759,6 +772,10 @@ pub enum Rejection {
     /// Sent into a thread that was closed (issue 557): nothing more is said in it.
     #[error("the thread it is sent into is closed")]
     ThreadClosed,
+    /// Said in a thread whose circle is closed by one outside it (issue 602): nobody but those it
+    /// was opened with says anything there.
+    #[error("only those it was opened with speak in the thread it is sent into")]
+    ClosedCircle,
     /// It does not fit the channel as it is: sent in another's name, about
     /// someone who takes no part, in a thread the channel does not have
     /// (issue 557), or asking what cannot be asked.

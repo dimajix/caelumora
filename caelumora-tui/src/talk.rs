@@ -716,7 +716,7 @@ impl Talk {
             UserInput::Command(line) if run.strip_from(line).is_some() => {
                 Ok(vec![self.run_shell_command(&run, line).await])
             }
-            UserInput::Command(line) => Ok(match actor.execute_command(line).await {
+            UserInput::Command(line) => Ok(match actor.execute_command(None, line).await {
                 // Also for an answer to the whole channel: its announcement is not routed back to
                 // its sender.
                 Ok(reply) => told(reply.output, help),
@@ -726,7 +726,8 @@ impl Talk {
                 Err(e) => vec![error_printed(&e)],
             }),
             UserInput::Message(text) => {
-                let span_id = actor.send_message(Some(text.clone()), None, Vec::new()).await?;
+                let span_id =
+                    actor.send_message(None, Some(text.clone()), None, Vec::new()).await?;
                 tracing::debug!(span_id = %span_id, "Message sent");
                 Ok(Vec::new())
             }
@@ -756,8 +757,9 @@ impl Talk {
             return failed(e.to_string());
         }
         let line = line.to_string();
-        let task =
-            AbortOnDropHandle::new(tokio::spawn(async move { actor.execute_command(&line).await }));
+        let task = AbortOnDropHandle::new(tokio::spawn(async move {
+            actor.execute_command(None, &line).await
+        }));
         self.shell_command = Some(ShellCommand { channel_id, channel, task });
         Printed::Notice("The command runs: Ctrl-C ends it".to_string())
     }

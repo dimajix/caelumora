@@ -34,9 +34,10 @@ pub enum AfterStep {
     /// A message it was given to read, with the knowledge it is, if it is
     /// knowledge (`AgentChannelState::given`, issue 389).
     Given { message: Message, knowledge: Option<KnowledgeRef> },
-    /// Who joined or left, as the transcript notes it
-    /// (`AgentChannelState::note_announced`, issues 408, 482).
-    Announced { entry: TranscriptEntry },
+    /// Who joined or left, as the transcript notes it (`AgentChannelState::note_announced`, issues
+    /// 408, 482), or a change of a message of the whole channel
+    /// (`AgentChannelState::record_change`, issue 602).
+    Noted { entry: TranscriptEntry },
 }
 
 /// Why a turn was given up.
@@ -126,6 +127,10 @@ pub struct TurnState {
     /// were before work was one type.
     #[serde(flatten)]
     pub work: Work,
+    /// The step the turn stands at (issues 75, 85, 602): where its agent resumes it, written in by
+    /// its actor whenever it stores - a turn cut off in the middle stands at the step that was to
+    /// come next.
+    pub step: ActorState,
     /// What the turn staged for system services - the agent's memory -, committed by the kernel
     /// when the turn completes (issue 518).
     #[serde(default, skip_serializing_if = "StagedChanges::is_empty")]

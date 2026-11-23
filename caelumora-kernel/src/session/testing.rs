@@ -13,9 +13,11 @@ pub use crate::testing::participant_runtime_in;
 
 use crate::actor::user::ChannelWatch;
 use crate::actor::Shown;
-use crate::channel::ChannelLoop;
+use crate::channel::{ChannelLoop, ThreadSpec};
 use crate::kernel::{ChannelRuntime, Kernel, ParticipantRuntime};
-use crate::procedure::participant::{take_in, Entry, LetGo, TakeIn};
+use crate::procedure::participant::{
+    take_in, Entry, LetGo, LetGoFromThread, TakeIn, TakeIntoThread,
+};
 use crate::procedure::session::{
     establish, persist as persist_new, record_creation, resume_interrupted, shut_down, Create,
     Delete, Move, Open, Purge, Restore, Stop,
@@ -29,9 +31,7 @@ use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::actor::{ActorEvent, Rejection};
 use caelumora_domain::channel::testing::main_channel;
-use caelumora_domain::channel::{
-    Channel, ChannelId, HistoryAccess, Participant, ThreadId, ThreadOrigin,
-};
+use caelumora_domain::channel::{Channel, ChannelId, HistoryAccess, Participant, ThreadId};
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::project::ProjectId;
 use caelumora_domain::query::{FieldPath, Filter};
@@ -690,8 +690,7 @@ impl SessionLoop {
         self.procedures().run(restoring).await.map_err(SessionError::untyped)
     }
 
-    /// Opens a thread of `channel` at `origin` on behalf of `context`, with `founders`, as
-    /// `thread::Open` does.
+    /// Opens a thread of `channel` as `spec` says on behalf of `context`, as `thread::Open` does.
     ///
     /// # Errors
     /// As `thread::Open`.
@@ -699,10 +698,73 @@ impl SessionLoop {
         &self,
         context: &SecurityContext,
         channel: ChannelId,
-        origin: ThreadOrigin,
-        founders: Vec<ActorId>,
+        spec: ThreadSpec,
     ) -> Result<ThreadId> {
-        let opening = thread::Open::new(context, self.id(), channel, origin, founders);
+        let opening = thread::Open::new(context, self.id(), channel, spec);
         self.procedures().run(opening).await.map_err(SessionError::untyped)
+    }
+
+    /// Takes `participant` into `thread` of `channel` on behalf of `context`, who may change the
+    /// channel, as `TakeIntoThread::added` does.
+    ///
+    /// # Errors
+    /// As `TakeIntoThread`.
+    pub async fn take_into_thread(
+        &self,
+        context: &SecurityContext,
+        channel: ChannelId,
+        thread: ThreadId,
+        participant: ActorId,
+    ) -> Result<()> {
+        let taking_in = TakeIntoThread::added(context, self.id(), channel, thread, participant);
+        self.procedures().run(taking_in).await.map_err(SessionError::untyped)
+    }
+
+    /// Lets `participant` go from `thread` of `channel` on behalf of `context`, who may change the
+    /// channel, as `LetGoFromThread::removed` does.
+    ///
+    /// # Errors
+    /// As `LetGoFromThread`.
+    pub async fn let_go_from_thread(
+        &self,
+        context: &SecurityContext,
+        channel: ChannelId,
+        thread: ThreadId,
+        participant: ActorId,
+    ) -> Result<()> {
+        let letting_go = LetGoFromThread::removed(context, self.id(), channel, thread, participant);
+        self.procedures().run(letting_go).await.map_err(SessionError::untyped)
+    }
+
+    /// Takes `participant` - whom `context` acts for, or their own agent - into `thread` of
+    /// `channel` by their own act, as `TakeIntoThread::joining` does.
+    ///
+    /// # Errors
+    /// As `TakeIntoThread`.
+    pub async fn join_thread(
+        &self,
+        context: &SecurityContext,
+        channel: ChannelId,
+        thread: ThreadId,
+        participant: ActorId,
+    ) -> Result<()> {
+        let joining = TakeIntoThread::joining(context, self.id(), channel, thread, participant);
+        self.procedures().run(joining).await.map_err(SessionError::untyped)
+    }
+
+    /// Takes `participant` - whom `context` acts for, or their own agent - out of `thread` of
+    /// `channel` by their own act, as `LetGoFromThread::leaving` does.
+    ///
+    /// # Errors
+    /// As `LetGoFromThread`.
+    pub async fn leave_thread(
+        &self,
+        context: &SecurityContext,
+        channel: ChannelId,
+        thread: ThreadId,
+        participant: ActorId,
+    ) -> Result<()> {
+        let leaving = LetGoFromThread::leaving(context, self.id(), channel, thread, participant);
+        self.procedures().run(leaving).await.map_err(SessionError::untyped)
     }
 }

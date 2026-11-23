@@ -1,24 +1,29 @@
-//! How a store keeps a chain a state holds (issues 379, 380): its nodes by
-//! position, as the puts of its holder appended them, and its head - not as
-//! a `Chain`, which makes a digest unique. A holder that keeps only a window
-//! of its chain dedupes only within it, so that a transcript may add an
-//! entry a second time whose first lies before its window; the same digest
-//! names the same content after the same predecessors, and the store keeps
-//! both.
+//! How a store keeps a chain a state holds (issues 379, 380) - a history's
+//! `Chain` or a `Transcript` -: its nodes by position, as the puts of its
+//! holder appended them, and its head - not as a `Transcript`, which makes a
+//! digest unique. A transcript dedupes only
+//! within what it holds, so that it may add an entry a second time whose
+//! first it no longer holds; the same digest names the same content after
+//! the same predecessors, and the store keeps both.
 
 use caelumora_domain::chain::{Chain, Node, Position, Stored};
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::digest::Digest;
+use caelumora_domain::transcript::{Transcript, TranscriptEntry};
+use std::collections::BTreeMap;
 
-/// Whether the nodes of `entries` - what a chain added, or changed in its
-/// place, since it was stored - fit what a store keeps of it up to the
-/// position `end`: each is there already, or comes right after the last.
-/// Returns the position after the last when they are taken in.
+/// The nodes of `entries` - what a chain added since it was stored - that a
+/// store keeping it up to the position `end` takes in: those from `end` on,
+/// each right after the last. A node before `end` is there already - stored
+/// by a put its holder did not learn had succeeded - and stays as it is,
+/// since a node never changes once stored (issue 394).
 ///
 /// # Errors
 /// If a node lies past the one after the last.
-pub fn fits<E>(end: Position, entries: &[Node<E>]) -> Result<Position, String> {
+pub fn new_nodes<E>(end: Position, entries: Vec<Node<E>>) -> Result<Vec<Node<E>>, String> {
+    let added: Vec<Node<E>> = entries.into_iter().filter(|node| node.seq >= end).collect();
     let mut next = end;
-    for node in entries.iter().filter(|node| node.seq >= end) {
+    for node in &added {
         if node.seq != next {
             return Err(format!(
                 "an entry at position {} after the one after the last, {}",
@@ -27,22 +32,7 @@ pub fn fits<E>(end: Position, entries: &[Node<E>]) -> Result<Position, String> {
         }
         next = next.next();
     }
-    Ok(next)
-}
-
-/// Puts `node`, which fits (`fits`), into `nodes` - the nodes a store keeps
-/// from the position `from` on -: in its place, the branch last taken from
-/// it, if it is there; after the last otherwise.
-pub fn place<E>(nodes: &mut Vec<Node<E>>, from: Position, node: Node<E>) {
-    match node
-        .seq
-        .since(from)
-        .and_then(|at| usize::try_from(at).ok())
-        .filter(|&at| at < nodes.len())
-    {
-        Some(at) => nodes[at] = node,
-        None => nodes.push(node),
-    }
+    Ok(added)
 }
 
 /// Follows the path to an entry back through `older` - nodes of a chain,
@@ -85,32 +75,70 @@ pub fn followed<E>(
     Ok(Some(path))
 }
 
-/// A chain as the `MemoryStore` keeps it: every node, by position, and the
-/// head.
-#[derive(Debug)]
-pub(crate) struct KeptChain<E> {
-    nodes: Vec<Node<E>>,
-    head: Option<Digest>,
+/// The path from the root up to the node at the position `at` of the nodes
+/// a store keeps, read back through `older` - the nodes before it, newest
+/// first, as `follow_back` takes them -: what a branch of a transcript is
+/// loaded from, its head kept by its position.
+///
+/// # Errors
+/// If the path does not lead back to a root.
+fn path_back<'a, E: Clone + 'a>(
+    head: &Node<E>,
+    older: impl IntoIterator<Item = &'a Node<E>>,
+) -> Result<Vec<Node<E>>, String> {
+    let mut want = head.parent;
+    let mut path = vec![head.clone()];
+    follow_back(&mut want, &mut path, older);
+    Ok(followed(want, path)?.unwrap_or_default())
 }
 
-impl<E> Default for KeptChain<E> {
+/// The transcript the heads `heads` name of `nodes` - every node a store
+/// keeps of it, in the order of their positions -: the branch of every
+/// thread, read back from its head (`path_back`).
+///
+/// # Errors
+/// If a head lies past the nodes, or a branch is no path from a root.
+fn transcript_of_nodes(
+    nodes: &[Node<TranscriptEntry>],
+    heads: &BTreeMap<ThreadId, Position>,
+) -> Result<Transcript, String> {
+    let end = Position::START.after(nodes.len() as u64);
+    let mut branches = BTreeMap::new();
+    for (&thread, &at) in heads {
+        let index = usize::try_from(at.get()).ok().filter(|&index| index < nodes.len());
+        let Some(index) = index else {
+            return Err(format!("the head of thread {thread} lies past the end, {end}"));
+        };
+        branches.insert(thread, path_back(&nodes[index], nodes[..index].iter().rev())?);
+    }
+    Transcript::loaded(end, branches)
+}
+
+/// A chain as the `MemoryStore` keeps it: every node, by position, and its
+/// head of the kind `H` its chain has - the one digest of a `Chain`, the
+/// heads of the threads of a `Transcript`.
+#[derive(Debug)]
+pub(crate) struct KeptChain<E, H = Option<Digest>> {
+    nodes: Vec<Node<E>>,
+    head: H,
+}
+
+impl<E, H: Default> Default for KeptChain<E, H> {
     fn default() -> Self {
-        Self { nodes: Vec::new(), head: None }
+        Self { nodes: Vec::new(), head: H::default() }
     }
 }
 
-impl<E: Clone> KeptChain<E> {
-    /// Takes in `changes`, what the holder's chain added or changed in its
-    /// place since it was stored, whole or not at all.
+impl<E: Clone, H> KeptChain<E, H> {
+    /// Takes in `entries`, what the holder's chain added since it was
+    /// stored, and its `head`, whole or not at all.
     ///
     /// # Errors
-    /// If they do not fit (`fits`).
-    pub(crate) fn append(&mut self, changes: Stored<E>) -> Result<(), String> {
-        fits(self.end(), &changes.entries)?;
-        for node in changes.entries {
-            place(&mut self.nodes, Position::START, node);
-        }
-        self.head = changes.head;
+    /// If they do not fit (`new_nodes`).
+    pub(crate) fn append(&mut self, entries: Vec<Node<E>>, head: H) -> Result<(), String> {
+        let added = new_nodes(self.end(), entries)?;
+        self.nodes.extend(added);
+        self.head = head;
         Ok(())
     }
 
@@ -119,9 +147,9 @@ impl<E: Clone> KeptChain<E> {
         Position::START.after(self.nodes.len() as u64)
     }
 
-    /// The digest of the chain's active path.
-    pub(crate) fn head(&self) -> Option<Digest> {
-        self.head
+    /// Its head.
+    pub(crate) fn head(&self) -> &H {
+        &self.head
     }
 
     /// The nodes from the position `seq` on, in the order they were added.
@@ -143,13 +171,26 @@ impl<E: Clone> KeptChain<E> {
         follow_back(&mut want, &mut path, self.nodes.iter().rev());
         followed(want, path)
     }
+}
 
+impl<E: Clone> KeptChain<E> {
     /// The chain from the position `from` on, as its holder keeps it.
     ///
     /// # Errors
     /// If what is kept from there is no chain.
     pub(crate) fn suffix(&self, from: Position) -> Result<Chain<E>, String> {
         Chain::suffix(from, Stored { entries: self.from(from).to_vec(), head: self.head })
+    }
+}
+
+impl KeptChain<TranscriptEntry, BTreeMap<ThreadId, Position>> {
+    /// The transcript it keeps, as its holder keeps it: the branch of every
+    /// thread, from its root up to its head.
+    ///
+    /// # Errors
+    /// If what is kept is no transcript.
+    pub(crate) fn transcript(&self) -> Result<Transcript, String> {
+        transcript_of_nodes(&self.nodes, &self.head)
     }
 }
 
@@ -165,28 +206,24 @@ mod tests {
     #[test]
     fn a_chain_is_kept_by_position_and_a_digest_may_be_there_twice() {
         let mut kept = KeptChain::default();
-        kept.append(Stored {
-            entries: vec![node(0, "a"), node(1, "b")],
-            head: Some(digest::prompt("b")),
-        })
-        .unwrap();
-        kept.append(Stored {
-            entries: vec![node(1, "b"), node(2, "a")],
-            head: Some(digest::prompt("a")),
-        })
-        .expect("in its place, and a digest again");
+        kept.append(vec![node(0, "a"), node(1, "b")], Some(digest::prompt("b"))).unwrap();
+        kept.append(vec![node(1, "b"), node(2, "a")], Some(digest::prompt("a")))
+            .expect("one there already, and a digest again");
+        kept.append(vec![node(2, "x")], Some(digest::prompt("a"))).expect("there already");
+        assert_eq!(
+            kept.from(Position::new(2)).iter().map(|n| n.entry.as_str()).collect::<Vec<_>>(),
+            ["a"],
+            "a node stored stays as it is"
+        );
         assert_eq!(kept.end().get(), 3);
         assert_eq!(
             kept.from(Position::new(1)).iter().map(|n| n.entry.as_str()).collect::<Vec<_>>(),
             ["b", "a"]
         );
-        assert!(
-            kept.append(Stored { entries: vec![node(4, "c")], head: None }).is_err(),
-            "past the one after the last"
-        );
+        assert!(kept.append(vec![node(4, "c")], None).is_err(), "past the one after the last");
         assert_eq!(
             (kept.end().get(), kept.head()),
-            (3, Some(digest::prompt("a"))),
+            (3, &Some(digest::prompt("a"))),
             "and nothing taken in"
         );
     }
@@ -199,7 +236,7 @@ mod tests {
         let mut kept = KeptChain::default();
         // a - b, then anew: a again, and c after it.
         let entries = vec![node(0, "a"), child(1, "b", "a"), node(2, "a"), child(3, "c", "a")];
-        kept.append(Stored { entries, head: Some(digest::prompt("c")) }).unwrap();
+        kept.append(entries, Some(digest::prompt("c"))).unwrap();
         let seqs = |path: Option<Vec<Node<String>>>| {
             path.map(|path| path.iter().map(|n| n.seq.get()).collect::<Vec<_>>())
         };
@@ -214,8 +251,8 @@ mod tests {
             "through the a before it"
         );
         assert_eq!(seqs(kept.path(digest::prompt("x")).unwrap()), None);
-        let mut broken = KeptChain::default();
-        broken.append(Stored { entries: vec![child(0, "b", "a")], head: None }).unwrap();
+        let mut broken: KeptChain<String> = KeptChain::default();
+        broken.append(vec![child(0, "b", "a")], None).unwrap();
         assert!(broken.path(digest::prompt("b")).is_err(), "what it follows is not there");
     }
 }

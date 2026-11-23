@@ -10,17 +10,18 @@
 
 use crate::channel::thread::Thread;
 use crate::channel::ResolvedParticipant;
-use crate::channel::{ChannelLoop, Ending};
+use crate::channel::{ChannelLoop, Ending, ThreadSpec};
 use crate::controller::SessionController;
 use crate::kernel::{ChannelRuntime, Kernel, ParticipantRuntime};
 use crate::procedure::channel::Reclassify;
-use crate::procedure::participant::{let_go_from_channel, Exit, LetGo, TakeIn};
+use crate::procedure::participant::{let_go_from_channel, Exit, LetGo, TakeIn, TakeIntoThread};
 use crate::procedure::thread;
 use crate::procedure::{Compensation, Deferred, Key, Locks, Procedure, ProcedureExecutor};
 use crate::session::SessionError;
 use crate::testing::shown;
 use crate::view::AgentContextView;
 use anyhow::{Error, Result};
+use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use caelumora_api::actor::Actor;
 use caelumora_api::command::CommandError;
@@ -33,7 +34,7 @@ use caelumora_domain::channel::testing::{founded, make_channel};
 #[cfg(test)]
 use caelumora_domain::channel::ChannelId;
 use caelumora_domain::channel::{
-    Channel, Delegation, HistoryAccess, InternalActor, Opening, Participant, ThreadId,
+    Channel, Circle, Delegation, HistoryAccess, InternalActor, Opening, Participant, ThreadId,
     ThreadOrigin, ThreadState,
 };
 use caelumora_domain::confidentiality::Classification;
@@ -55,7 +56,7 @@ use caelumora_store::testing::record_users;
 use caelumora_store::testing::stored_agent;
 use caelumora_store::{EntityStores, Persistence};
 use futures::future::BoxFuture;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::convert::Infallible;
 use std::future::Future;
 use std::mem;
@@ -200,7 +201,7 @@ pub async fn start(
     channel
         .user_actor(alice)
         .unwrap()
-        .send_message(Some("hello".to_string()), None, Vec::new())
+        .send_message(None, Some("hello".to_string()), None, Vec::new())
         .await
         .unwrap();
     let helper = channel.actor(ActorId::Agent(agent)).unwrap();
@@ -263,7 +264,7 @@ impl ChannelLoop {
     ) -> ThreadId {
         let thread = ThreadId::new();
         let origin = ThreadOrigin { thread: ThreadId::line(self.id), message: MessageId::new() };
-        let opening = Opening { origin, by: ActorId::System };
+        let opening = Opening { origin, by: ActorId::System, circle: Circle::Closed };
         let held =
             ThreadState { opening: Some(opening), closed: false, delegation: Some(delegation) };
         self.state.lock().await.threads.insert(thread, held);
@@ -277,7 +278,8 @@ impl ChannelLoop {
         let delegate = ActorId::Delegate(thread);
         let resolved = ResolvedParticipant::delegate(thread, self.session_id, self.id);
         let forger = Forger::sending(delegate, envelopes(thread));
-        self.adopt(forger, resolved, thread, None, None).await;
+        let threads = Arc::new(ArcSwap::from_pointee(BTreeSet::from([thread])));
+        self.adopt(forger, resolved, threads, None, None).await;
         thread
     }
 
@@ -341,7 +343,7 @@ impl ChannelLoop {
     pub async fn say_as(&self, user: UserId, text: &str, attachments: Vec<ContentId>) -> MessageId {
         let actor = self.user_actor(user).expect("the user takes part");
         let mut watch = actor.watch();
-        actor.send_message(Some(text.to_string()), None, attachments).await.expect("sent");
+        actor.send_message(None, Some(text.to_string()), None, attachments).await.expect("sent");
         let ActorEvent::CompleteMessageGenerated(said) =
             shown(&mut watch, "CompleteMessageGenerated").await
         else {
@@ -457,10 +459,16 @@ impl ChannelLoop {
         Arc::clone(self.runtime.session_controller())
     }
 
-    /// The turn under way of the participant `actor`
+    /// The turn under way of the participant `actor` in the channel's line
     /// (`ChannelLoop::turn_under_way`).
     pub fn turn_of(&self, actor: ActorId) -> Option<TurnId> {
-        self.turn_under_way(actor)
+        self.turn_in(actor, ThreadId::line(self.id))
+    }
+
+    /// The turn under way of the participant `actor` in `thread`, running or set aside (issue
+    /// 602, `ChannelLoop::turn_under_way`).
+    pub fn turn_in(&self, actor: ActorId, thread: ThreadId) -> Option<TurnId> {
+        self.turn_under_way(actor, thread)
     }
 
     /// Stops every actor, as stopping the channel with its session does
@@ -512,7 +520,7 @@ impl ChannelLoop {
     pub(crate) fn new_participant_runtime(&self, actor: ActorId) -> ParticipantRuntime {
         match self.actors.load().get(&actor) {
             Some(taking_part) => {
-                self.runtime.participant_runtime(&taking_part.participant, taking_part.thread)
+                self.runtime.participant_runtime(&taking_part.participant, &taking_part.threads)
             }
             None => self.runtime.new_participant_runtime(actor),
         }
@@ -612,9 +620,9 @@ impl ChannelLoop {
         session.procedures().run(adding).await.map(drop).map_err(SessionError::untyped)
     }
 
-    /// Opens a thread of the channel at `origin` on behalf of `context`, with `founders`, by the
-    /// procedure that does it (`thread::Open`), as an entry point does; in a channel of no session
-    /// without founders.
+    /// Opens a thread of the channel as `spec` says on behalf of `context`, by the procedure that
+    /// does it (`thread::Open`), as an entry point does; in a channel of no session without
+    /// founders.
     ///
     /// # Errors
     /// As `thread::Open`; if a channel of no session is to take founders in, else as
@@ -622,20 +630,44 @@ impl ChannelLoop {
     pub async fn open_thread_by_procedure(
         self: &Arc<Self>,
         context: &SecurityContext,
-        origin: ThreadOrigin,
-        founders: &[ActorId],
+        spec: ThreadSpec,
     ) -> Result<ThreadId> {
-        let founders = founders.to_vec();
         if let Some(session) = self.session_loop() {
-            let opening = thread::Open::new(context, session.id(), self.id, origin, founders);
+            let opening = thread::Open::new(context, session.id(), self.id, spec);
             return session.procedures().run(opening).await.map_err(SessionError::untyped);
         }
         // A channel of no session takes nobody in: its threads are opened without founders.
-        anyhow::ensure!(founders.is_empty(), "a channel of no session takes no founders in");
+        anyhow::ensure!(spec.founders.is_empty(), "a channel of no session takes no founders in");
         let (channel, context) = (Arc::clone(self), context.clone());
         let opened = ThreadId::new();
-        self.holding(async move { channel.open_thread(&context, opened, origin).await }).await?;
+        let opening = async move { channel.open_thread(&context, opened, &spec).await };
+        self.holding(opening).await?;
         Ok(opened)
+    }
+
+    /// Takes `participant` into `thread` on behalf of `context` by the procedure that does it
+    /// (`TakeIntoThread::added`), as an entry point does; in a channel of no session by the
+    /// channel's building block under a hold of the channel.
+    ///
+    /// # Errors
+    /// As `TakeIntoThread`, else as `ChannelLoop::take_into_thread`.
+    pub async fn take_into_thread_by_procedure(
+        self: &Arc<Self>,
+        context: &SecurityContext,
+        thread: ThreadId,
+        participant: ActorId,
+    ) -> Result<()> {
+        if let Some(session) = self.session_loop() {
+            let taking_in =
+                TakeIntoThread::added(context, session.id(), self.id, thread, participant);
+            return session.procedures().run(taking_in).await.map_err(SessionError::untyped);
+        }
+        let (channel, context) = (Arc::clone(self), context.clone());
+        self.holding(async move {
+            channel.take_into_thread(participant, thread, &context).await?.carried_out().await;
+            Ok(())
+        })
+        .await
     }
 
     /// Closes `thread` on behalf of `context` by the procedure that does it (`thread::Close`), as

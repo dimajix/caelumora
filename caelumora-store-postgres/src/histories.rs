@@ -31,7 +31,7 @@ use caelumora_store::history::{
 use serde_json::Value;
 use sqlx::postgres::PgConnection;
 use sqlx::types::Json;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::ops::Range;
 
 /// The chains of the histories, by channel.
@@ -71,7 +71,7 @@ pub(crate) async fn append(
 ) -> StoreResult<()> {
     let Some(changes) = history.changes() else { return Ok(()) };
     let (key, name) = key(channel);
-    let added = HISTORIES.append(conn, &key, &name, changes).await?;
+    let added = HISTORIES.append(conn, &key, &name, changes.entries, changes.head).await?;
     if added.is_empty() {
         return Ok(());
     }
@@ -251,7 +251,7 @@ impl HistoryStore for PostgresStore {
         channel: ChannelId,
         reader: &Reader,
         id: MessageId,
-    ) -> StoreResult<Option<(Position, HistoryEntry)>> {
+    ) -> StoreResult<Option<(Position, Recorded)>> {
         let mut conn = self.connection.acquire().await?;
         let (key, name) = key(channel);
         let found: Option<ItemRow> = sqlx::query_as(
@@ -264,7 +264,8 @@ impl HistoryStore for PostgresStore {
         .map_err(failed(&name))?;
         let Some(found) = found else { return Ok(None) };
         let attended = read_attendance(&mut conn, &key, &name).await?.of_reader(reader);
-        seen(reader, &attended, None, &item(found))
+        let (at, found) = item(found);
+        Ok(found.as_seen_by(at, reader, &attended).map(|seen| (at, seen)))
     }
 
     async fn entries(
@@ -322,7 +323,10 @@ impl HistoryStore for PostgresStore {
         Ok(read_attendance(&mut conn, &key, &name).await?.of_participant(actor))
     }
 
-    async fn attending(&self, channel: ChannelId) -> StoreResult<HashMap<ActorId, ThreadId>> {
+    async fn attending(
+        &self,
+        channel: ChannelId,
+    ) -> StoreResult<HashMap<ActorId, BTreeSet<ThreadId>>> {
         let mut conn = self.connection.acquire().await?;
         let (key, name) = key(channel);
         Ok(read_attendance(&mut conn, &key, &name).await?.attending())

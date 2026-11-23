@@ -47,8 +47,9 @@ impl AgentBody {
         let (agent_id, name) = (self.agent_id(), self.scoped_name());
         let (answering, work) = self.work_for(request);
         let kept = CommandRequest { command: command.clone(), args: args.clone(), issuer };
-        let turn_id = state.begin_command_turn(work.given_as(self.profile), kept);
-        let Some(mut turn) = self.turn(state) else {
+        let thread = request.context.thread_id;
+        let turn_id = state.begin_command_turn(thread, work.given_as(self.profile), kept);
+        let Some(mut turn) = self.turn(state, thread) else {
             warn!("Agent {} lost the turn it began for /{}", agent_id, command);
             return;
         };
@@ -96,7 +97,7 @@ impl AgentBody {
                 drop(turn);
                 // Never begun, as far as anything shows: nothing was said or
                 // applied, so the turn leaves no end behind.
-                state.turn = None;
+                state.thread_mut(thread).turn = None;
                 match &e {
                     CommandError::Failed { .. } => warn!(
                         "Agent {} {} could not carry out /{} for {}: {}",

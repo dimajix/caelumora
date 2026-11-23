@@ -153,13 +153,13 @@ impl Envelope {
     /// (`Filter::shown_in_line`).
     pub fn is_shown_in_line(&self, viewer: ActorId) -> bool {
         let line = ThreadId::line(self.context.channel_id);
-        let mentions_viewer = matches!(
+        let addresses_viewer = matches!(
             &self.event,
             ActorEvent::CompleteMessageGenerated(message)
-                if message.is_heard() && message.mentions.contains(&viewer)
+                if message.is_heard() && message.addressees.contains(&viewer)
         );
         self.event.is_waited_for()
-            || mentions_viewer
+            || addresses_viewer
             || self.thread().is_none_or(|thread| thread == line)
     }
 
@@ -255,6 +255,9 @@ impl Envelope {
             }
             ActorEvent::ResponderUndecided { message } => {
                 HistoryEntry::ResponderUndecided { message: *message, at }
+            }
+            ActorEvent::NotDrawnIn { message, mentioned } => {
+                HistoryEntry::NotDrawnIn { message: *message, mentioned: mentioned.clone(), at }
             }
             ActorEvent::EventRejected { rejected, message, reason } => {
                 HistoryEntry::EventRejected {
@@ -647,6 +650,12 @@ impl Envelope {
             ActorEvent::ResponderUndecided { message } => {
                 format!("ResponderUndecided(sender_id={}, message={})", ctx.sender_id, message)
             }
+            ActorEvent::NotDrawnIn { message, mentioned } => format!(
+                "NotDrawnIn(sender_id={}, message={}, mentioned={})",
+                ctx.sender_id,
+                message,
+                mentioned.len()
+            ),
             ActorEvent::MessageModified(m) => {
                 format!(
                     "MessageModified(sender_id={}, sender_name={}, mid={})",
@@ -717,7 +726,7 @@ mod tests {
     use crate::turn::GivenUpReason;
     use crate::user::UserId;
     use crate::work::TurnId;
-    use std::collections::HashSet;
+    use std::collections::{BTreeSet, HashSet};
 
     /// Issue 557: an event made for a channel happens in its line, and what follows it in the
     /// thread it happened in.
@@ -770,11 +779,11 @@ mod tests {
         let said = || ActorEvent::CompleteMessageGenerated(make_message(MessageId::new()));
         assert!(shown(&in_line, said()));
         assert!(!shown(&in_other, said()), "said in another thread");
-        let mentioning = Message { mentions: vec![viewer], ..make_message(MessageId::new()) };
+        let mentioning = Message { addressees: vec![viewer], ..make_message(MessageId::new()) };
         let mentioning = ActorEvent::CompleteMessageGenerated(mentioning);
         assert!(shown(&in_other, mentioning), "mentioning the viewer");
         let step =
-            Message { internal: true, mentions: vec![viewer], ..make_message(MessageId::new()) };
+            Message { internal: true, addressees: vec![viewer], ..make_message(MessageId::new()) };
         let step = ActorEvent::IntermediateMessageGenerated(step);
         assert!(!shown(&in_other, step), "a step of a plan is not heard");
         let origin = ThreadOrigin { thread: ThreadId::line(channel), message: MessageId::new() };
@@ -849,12 +858,13 @@ mod tests {
             let envelope =
                 Envelope::new(EventContext { sender_id: sender, ..EventContext::default() }, event);
             let recipients = envelope.recipients();
+            let taking_part = BTreeSet::from([envelope.context.thread_id]);
             self.agents
                 .iter()
                 .chain(&self.users)
                 .chain([&self.approver])
                 .copied()
-                .filter(|id| recipients.goes_to(*id, envelope.context.thread_id, envelope.thread()))
+                .filter(|id| recipients.goes_to(*id, &taking_part, envelope.thread()))
                 .collect()
         }
 
@@ -1247,6 +1257,7 @@ mod tests {
                 not_asked: Vec::new(),
             },
             ActorEvent::ResponderUndecided { message: MessageId::new() },
+            ActorEvent::NotDrawnIn { message: MessageId::new(), mentioned: Vec::new() },
             ActorEvent::EventRejected {
                 rejected: "CompleteMessageGenerated".to_string(),
                 message: None,

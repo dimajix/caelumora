@@ -88,6 +88,7 @@ mod tests {
     use crate::testing;
     use crate::testing::detached_actor_runtime;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::value::time_zone::TimeZone;
     use caelumora_domain::work::Work;
     use chrono::TimeZone as _;
@@ -102,7 +103,12 @@ mod tests {
         work.context.frame.time_zone = zone;
         let state = AgentChannelState::default();
         provider
-            .get_prompt(&Situation::new(&work, &state, &*detached_actor_runtime(AgentId::new())))
+            .get_prompt(&Situation::new(
+                &work,
+                ThreadId::default(),
+                &state,
+                &*detached_actor_runtime(AgentId::new()),
+            ))
             .await
             .unwrap()
     }

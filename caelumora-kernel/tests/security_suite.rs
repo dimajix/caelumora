@@ -18,7 +18,7 @@ use caelumora_domain::actor::{ActorEvent, ActorId, Rejection};
 use caelumora_domain::agent::{Agent, AgentId, Personality};
 use caelumora_domain::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
 use caelumora_domain::channel::{
-    Channel, ChannelId, HistoryAccess, Participant, ThreadId, ThreadOrigin, LEFT,
+    Channel, ChannelId, Circle, HistoryAccess, Participant, ThreadId, ThreadOrigin, LEFT,
 };
 use caelumora_domain::command::CommandVisibility;
 use caelumora_domain::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
@@ -48,7 +48,7 @@ use caelumora_domain::workspace::{CommandState, CommandStatus, Workspace, Worksp
 use caelumora_kernel::actor::user::UserActor;
 use caelumora_kernel::agent::{AgentError, AgentSpec};
 use caelumora_kernel::channel::testing::as_command_error;
-use caelumora_kernel::channel::{ChannelError, ChannelLoop};
+use caelumora_kernel::channel::{ChannelError, ChannelLoop, ThreadSpec};
 use caelumora_kernel::command::SHELL_KIND;
 use caelumora_kernel::component::BUNDLE_REF_KIND;
 use caelumora_kernel::event::{EventSubscription, SubscriptionTopic};
@@ -333,7 +333,7 @@ async fn a_participant_takes_part_but_changes_nothing() {
     );
     main.user_actor(world.bob)
         .expect("he takes part")
-        .send_message(Some("hello".to_string()), None, Vec::new())
+        .send_message(None, Some("hello".to_string()), None, Vec::new())
         .await
         .expect("and writes into it");
     main.cancel(&bob, None).await.expect("and may cancel what runs in it");
@@ -750,7 +750,7 @@ async fn a_participant_follows_a_channel_through_their_own_actor_whether_it_runs
     let mut his = watch.expect("his actor's");
     main.user_actor(world.alice)
         .unwrap()
-        .send_message(Some("hello bob".to_string()), None, Vec::new())
+        .send_message(None, Some("hello bob".to_string()), None, Vec::new())
         .await
         .unwrap();
     let ActorEvent::CompleteMessageGenerated(said) =
@@ -832,6 +832,142 @@ async fn taking_someone_in_is_for_whoever_may_change_the_session_and_the_channel
     world.manager.stop(&alice, session.id()).await.unwrap();
 }
 
+/// Issue 602: whoever may change a channel takes a participant into a further thread of it and
+/// lets them go from one (`UpdateChannel`); a participant joins a thread by their own act where
+/// they may read the channel (`GetChannel` in their own context) and leaves one where they may
+/// leave the channel (`LeaveChannel`), never for another; and a founder who takes part in the
+/// channel already is the opener's own, asked before the thread is there.
+#[tokio::test]
+async fn a_participant_is_taken_into_a_thread_and_let_go_from_it_as_the_channel_lets_them() {
+    use caelumora_domain::history::HistoryEntry;
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
+    let (hers, his) = (ActorId::User(world.alice), ActorId::User(world.bob));
+    let (id, line) = (main.id(), ThreadId::line(main.id()));
+    let at_the_line = ThreadOrigin { thread: line, message: MessageId::new() };
+    let thread =
+        session.open_thread(&alice, id, ThreadSpec::new(at_the_line)).await.expect("opened");
+
+    // The session opened and the channel reached, as every procedure of a thread does (issue
+    // 593); then what the way in or out asks.
+    let asking = |who: &str, last: &[&str]| -> Vec<String> {
+        let reached = ["GetSession(alice's) yes", "GetChannel(alice's) yes", "Cleared(..) yes"];
+        let reached = reached.map(|check| format!("{who}: {}", check.replace("..", who)));
+        reached.into_iter().chain(last.iter().map(|check| check.to_string())).collect()
+    };
+    let (refused, asked) = world.asked(session.take_into_thread(&bob, id, thread, hers)).await;
+    assert!(denied(&refused.expect_err("bob may not change the channel")));
+    assert_eq!(asked, asking("bob", &["bob: UpdateChannel(alice's) no"]), "{asked:#?}");
+    let (taken, asked) = world.asked(session.take_into_thread(&alice, id, thread, his)).await;
+    taken.expect("alice may change it");
+    assert_eq!(asked, asking("alice", &["alice: UpdateChannel(alice's) yes"]), "{asked:#?}");
+
+    let (left, asked) = world.asked(session.let_go_from_thread(&bob, id, thread, his)).await;
+    assert!(denied(&left.expect_err("bob may not change the channel")));
+    assert_eq!(asked, asking("bob", &["bob: UpdateChannel(alice's) no"]), "{asked:#?}");
+    let (left, asked) = world.asked(session.leave_thread(&bob, id, thread, his)).await;
+    left.expect("bob leaves it by his own act");
+    assert_eq!(asked, asking("bob", &["bob: LeaveChannel(alice's) yes"]), "{asked:#?}");
+
+    let (refused, asked) = world.asked(session.join_thread(&bob, id, thread, hers)).await;
+    assert!(denied(&refused.expect_err("alice is not bob's own")));
+    assert_eq!(asked, asking("bob", &[]), "refused without asking: {asked:#?}");
+    let (joined, asked) = world.asked(session.join_thread(&bob, id, thread, his)).await;
+    joined.expect("bob joins it by his own act");
+    // Reading the channel, asked in his own context.
+    assert_eq!(asked, asking("bob", &["bob: GetChannel(alice's) yes"]), "{asked:#?}");
+    let (removed, asked) = world.asked(session.let_go_from_thread(&alice, id, thread, his)).await;
+    removed.expect("alice may change the channel");
+    assert_eq!(asked, asking("alice", &["alice: UpdateChannel(alice's) yes"]), "{asked:#?}");
+
+    let refused = session
+        .open_thread(&bob, id, ThreadSpec { founders: vec![hers], ..ThreadSpec::new(at_the_line) })
+        .await;
+    assert!(denied(&refused.expect_err("alice is not bob's own")));
+    let opened = |e: &HistoryEntry| matches!(e, HistoryEntry::ThreadOpened { .. });
+    let threads_opened = main.history_entries().await.iter().filter(|e| opened(e)).count();
+    assert_eq!(threads_opened, 1, "asked before the thread is there");
+    world.manager.stop(&alice, session.id()).await.unwrap();
+}
+
+/// Issue 602: a thread whose circle is open draws in whoever writes in it and whom they mention,
+/// and, as it is opened, the author of the message it hangs at - asking nothing of its own, not
+/// even of one who may not change the channel, since whom it draws in takes part in the channel
+/// already; a thread whose circle is closed draws nobody in and lets in nothing one outside says.
+#[tokio::test]
+async fn a_thread_draws_in_whom_its_messages_concern_and_asks_nothing_of_its_own() {
+    use caelumora_domain::chain::Position;
+    use caelumora_domain::history::HistoryEntry;
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let alice = World::as_user(world.alice);
+    let (hers, his) = (ActorId::User(world.alice), ActorId::User(world.bob));
+    let (id, line) = (main.id(), ThreadId::line(main.id()));
+    let at_the_line = ThreadOrigin { thread: line, message: MessageId::new() };
+    let aside =
+        session.open_thread(&alice, id, ThreadSpec::new(at_the_line)).await.expect("opened");
+    let closed = session
+        .open_thread(
+            &alice,
+            id,
+            ThreadSpec { circle: Circle::Closed, ..ThreadSpec::new(at_the_line) },
+        )
+        .await
+        .expect("opened");
+    let bobs = main.user_actor(world.bob).expect("bob's actor");
+    let taking_part = |who: ActorId, thread: ThreadId| {
+        let main = Arc::clone(&main);
+        async move {
+            let attended = main.attendance(who).await;
+            attended.iter().any(|at| at.thread == thread && at.range.end == Position::MAX)
+        }
+    };
+    let until_in = |who: ActorId, thread: ThreadId| async move {
+        time::timeout(Duration::from_secs(5), async {
+            while !taking_part(who, thread).await {
+                time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("drawn in");
+    };
+
+    // Bob may not change the channel, and takes nobody in by hand; writing, he draws in.
+    let word = Some("@alice, look".to_string());
+    let writing = async {
+        bobs.send_message(Some(aside), word, None, Vec::new()).await.expect("sent");
+        until_in(his, aside).await;
+        until_in(hers, aside).await;
+    };
+    let ((), asked) = world.asked(writing).await;
+    assert!(!asked.iter().any(|check| check.contains("UpdateChannel")), "{asked:#?}");
+
+    let word = Some("@alice, here".to_string());
+    bobs.send_message(Some(closed), word, None, Vec::new()).await.expect("sent");
+    time::sleep(Duration::from_millis(50)).await;
+    assert!(!taking_part(his, closed).await && !taking_part(hers, closed).await, "nobody");
+    let said = |entry: &HistoryEntry| entry.said().and_then(|m| m.content.clone());
+    let said: Vec<String> = main.history_entries().await.iter().filter_map(said).collect();
+    assert!(!said.contains(&"@alice, here".to_string()), "not let in: {said:?}");
+
+    // Opening a thread at his message draws him in, asking what opening asks alone.
+    let his_message = main
+        .history_entries()
+        .await
+        .iter()
+        .find_map(|entry| entry.said().filter(|m| m.sender_id == his).map(|m| m.id));
+    let at_his = ThreadOrigin { thread: line, message: his_message.expect("his message") };
+    let (opened, asked) =
+        world.asked(session.open_thread(&alice, id, ThreadSpec::new(at_his))).await;
+    let opened = opened.expect("opened");
+    assert!(taking_part(his, opened).await, "its message's author");
+    assert!(!asked.iter().any(|check| check.contains("UpdateChannel")), "{asked:#?}");
+    world.manager.stop(&alice, session.id()).await.unwrap();
+}
+
 /// Issue 557: whoever reads a channel opens a thread in it (`OpenThread`), founded with their own
 /// agents - taken into the session and the channel without the right to change either, so that a
 /// participant who does not own the session can start a sub-agent - and never with another's. A
@@ -849,16 +985,26 @@ async fn a_thread_is_opened_by_a_reader_with_their_own_and_closed_by_its_opener_
     let line = ThreadOrigin { thread: ThreadId::line(main.id()), message: MessageId::new() };
 
     let carol_id = ActorId::User(world.carol);
-    let (refused, asked) =
-        world.asked(session.open_thread(&bob, main.id(), line, vec![carol_id])).await;
+    let (refused, asked) = world
+        .asked(session.open_thread(
+            &bob,
+            main.id(),
+            ThreadSpec { founders: vec![carol_id], ..ThreadSpec::new(line) },
+        ))
+        .await;
     assert!(denied(&refused.expect_err("carol is not bob's own")));
     assert!(asked.contains(&"bob: OpenThread(alice's) yes".to_string()), "{asked:?}");
     assert!(!session.session().takes_part(carol_id), "nothing was stored");
     let opened = |e: &HistoryEntry| matches!(e, HistoryEntry::ThreadOpened { .. });
     assert!(!main.history_entries().await.iter().any(opened), "asked before the thread is there");
 
-    let (opened, asked) =
-        world.asked(session.open_thread(&bob, main.id(), line, vec![bobs_helper])).await;
+    let (opened, asked) = world
+        .asked(session.open_thread(
+            &bob,
+            main.id(),
+            ThreadSpec { founders: vec![bobs_helper], ..ThreadSpec::new(line) },
+        ))
+        .await;
     let bobs = opened.expect("bob reads the channel and founds it with his own");
     assert_eq!(
         asked,
@@ -912,7 +1058,8 @@ async fn a_thread_is_opened_by_a_reader_with_their_own_and_closed_by_its_opener_
         ]),
         "whoever opened it is asked nothing beyond reaching it"
     );
-    let hers = session.open_thread(&alice, main.id(), line, vec![]).await.expect("alice's own");
+    let hers =
+        session.open_thread(&alice, main.id(), ThreadSpec::new(line)).await.expect("alice's own");
     let (refused, asked) = world.asked(main.close_thread_by_procedure(&bob, hers)).await;
     assert!(denied(&refused.expect_err("neither his nor his channel to change")));
     assert_eq!(
@@ -927,7 +1074,8 @@ async fn a_thread_is_opened_by_a_reader_with_their_own_and_closed_by_its_opener_
     );
 
     let carol = World::as_user(world.carol);
-    let (refused, asked) = world.asked(session.open_thread(&carol, main.id(), line, vec![])).await;
+    let (refused, asked) =
+        world.asked(session.open_thread(&carol, main.id(), ThreadSpec::new(line))).await;
     let refused = refused.expect_err("carol does not read it");
     assert!(
         matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::NotFound(_))),
@@ -949,7 +1097,18 @@ async fn a_brief_is_delegated_by_a_reader_of_the_channel_in_their_own_name() {
     let main = Arc::clone(&session.channels()[0]);
     let bob = World::as_user(world.bob);
     let line = ThreadOrigin { thread: ThreadId::line(main.id()), message: MessageId::new() };
-    let thread = session.open_thread(&bob, main.id(), line, vec![bobs_helper]).await.unwrap();
+    let thread = session
+        .open_thread(
+            &bob,
+            main.id(),
+            ThreadSpec {
+                circle: Circle::Closed,
+                founders: vec![bobs_helper],
+                ..ThreadSpec::new(line)
+            },
+        )
+        .await
+        .unwrap();
 
     let carol = World::as_user(world.carol);
     let (refused, asked) =
@@ -976,7 +1135,14 @@ async fn a_thread_is_cancelled_and_woken_as_its_channel_is() {
     let main = Arc::clone(&session.channels()[0]);
     let bob = World::as_user(world.bob);
     let line = ThreadOrigin { thread: ThreadId::line(main.id()), message: MessageId::new() };
-    let thread = session.open_thread(&bob, main.id(), line, vec![bobs_helper]).await.unwrap();
+    let thread = session
+        .open_thread(
+            &bob,
+            main.id(),
+            ThreadSpec { founders: vec![bobs_helper], ..ThreadSpec::new(line) },
+        )
+        .await
+        .unwrap();
 
     let carol = World::as_user(world.carol);
     let (refused, asked) = world.asked(main.cancel(&carol, Some(thread))).await;
@@ -1262,6 +1428,7 @@ async fn a_message_is_let_in_by_the_channel_and_its_sender_told_if_not() {
         .asked(async {
             alice
                 .send_message(
+                    None,
                     Some("secret".to_string()),
                     Some(Classification::general(Confidentiality::Confidential)),
                     Vec::new(),
@@ -1280,7 +1447,7 @@ async fn a_message_is_let_in_by_the_channel_and_its_sender_told_if_not() {
     assert!(message.is_some(), "naming the message");
     assert_eq!(asked, checks(&["alice: Publish no"]), "asked by the channel alone");
 
-    alice.send_message(Some("hello".to_string()), None, Vec::new()).await.expect("sent");
+    alice.send_message(None, Some("hello".to_string()), None, Vec::new()).await.expect("sent");
     let ActorEvent::CompleteMessageGenerated(said) =
         shown(&mut his, "CompleteMessageGenerated").await
     else {
@@ -1311,7 +1478,7 @@ async fn a_message_is_modified_and_taken_back_by_its_author_alone() {
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
     let mut watch = bob.watch();
-    alice.send_message(Some("helo".to_string()), None, Vec::new()).await.expect("sent");
+    alice.send_message(None, Some("helo".to_string()), None, Vec::new()).await.expect("sent");
     let ActorEvent::CompleteMessageGenerated(said) =
         shown(&mut watch, "CompleteMessageGenerated").await
     else {
@@ -1376,14 +1543,14 @@ async fn a_message_is_reclassified_by_its_author_or_the_channels_owner() {
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
     let (mut hers, mut his) = (alice.watch(), bob.watch());
-    alice.send_message(Some("from alice".to_string()), None, Vec::new()).await.expect("sent");
+    alice.send_message(None, Some("from alice".to_string()), None, Vec::new()).await.expect("sent");
     let ActorEvent::CompleteMessageGenerated(said) =
         shown(&mut his, "CompleteMessageGenerated").await
     else {
         unreachable!()
     };
     let alices = said.id;
-    bob.send_message(Some("from bob".to_string()), None, Vec::new()).await.expect("sent");
+    bob.send_message(None, Some("from bob".to_string()), None, Vec::new()).await.expect("sent");
     // Her actor shows her what she says, too; his message is what the
     // channel routes to her.
     let bobs = loop {
@@ -1490,7 +1657,7 @@ async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
     assert!(channel_of(world.carol).await.is_err(), "a stranger reaches no channel to upload into");
 
     let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
-    let (refused, asked) = world.asked(bob.send_message(None, None, vec![uploaded.id])).await;
+    let (refused, asked) = world.asked(bob.send_message(None, None, None, vec![uploaded.id])).await;
     assert!(
         matches!(
             refused.expect_err("not his").downcast::<AttachmentError>(),
@@ -1503,7 +1670,7 @@ async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
     let (said, asked) = world
         .asked(async {
             alice
-                .send_message(Some("my notes".to_string()), None, vec![uploaded.id])
+                .send_message(None, Some("my notes".to_string()), None, vec![uploaded.id])
                 .await
                 .expect("sent");
             shown(&mut watch, "CompleteMessageGenerated").await
@@ -4344,7 +4511,7 @@ async fn a_person_runs_a_command_in_the_workspace_if_they_may_change_its_files_t
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let bob = main.user_actor(world.bob).unwrap();
 
-    let (refused, asked) = world.asked(bob.execute_command("workspace run touch his")).await;
+    let (refused, asked) = world.asked(bob.execute_command(None, "workspace run touch his")).await;
     let refused = refused.expect_err("not by who only reads its files");
     assert!(
         matches!(as_command_error(&refused), CommandError::Forbidden { .. }),
@@ -4369,7 +4536,7 @@ async fn a_person_runs_a_command_in_the_workspace_if_they_may_change_its_files_t
     let mut admitted = main.observe();
     let (ran, asked) = world
         .asked(async {
-            let ran = bob.execute_command("workspace run touch his").await;
+            let ran = bob.execute_command(None, "workspace run touch his").await;
             // Until the channel let his call in.
             while !matches!(
                 admitted.recv().await.unwrap().event,
@@ -4974,7 +5141,7 @@ async fn a_command_of_the_session_is_seen_and_run_by_whoever_reads_the_channel()
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let bob = main.user_actor(world.bob).unwrap();
 
-    let (reply, asked) = world.asked(bob.execute_command("help")).await;
+    let (reply, asked) = world.asked(bob.execute_command(None, "help")).await;
     let text = reply.expect("his to run").output.expect("answered to him");
     assert!(text.contains("/agent wakeup") && text.contains("/participant nudge"), "{text}");
     let about: Vec<&str> =
@@ -5034,11 +5201,11 @@ async fn adding_by_command_asks_what_taking_in_asks() {
         other => panic!("refused as invalid, not {other:?}"),
     };
 
-    let error = alice.execute_command("add dave").await.expect_err("two equally near");
+    let error = alice.execute_command(None, "add dave").await.expect_err("two equally near");
     let reason = refused(&error);
     assert!(reason.contains("the user dave and the agent dave"), "{reason}");
 
-    let (error, asked) = world.asked(bob.execute_command("add carol")).await;
+    let (error, asked) = world.asked(bob.execute_command(None, "add carol")).await;
     let error = error.expect_err("not his to change");
     assert!(matches!(as_command_error(&error), CommandError::Forbidden { .. }), "{error}");
     assert_eq!(
@@ -5061,7 +5228,7 @@ async fn adding_by_command_asks_what_taking_in_asks() {
         ]),
         "{asked:#?}"
     );
-    let (reply, asked) = world.asked(alice.execute_command("participant add Carol")).await;
+    let (reply, asked) = world.asked(alice.execute_command(None, "participant add Carol")).await;
     let reply = reply.expect("hers to change");
     assert_eq!(
         asked,
@@ -5099,10 +5266,10 @@ async fn adding_by_command_asks_what_taking_in_asks() {
     let in_main = || world.participants(world.alice, session.id(), main.id());
     assert!(in_main().await.contains(&ActorId::User(world.carol)), "in the channel");
     assert!(session.session().takes_part(ActorId::User(world.carol)), "and in the session");
-    let reply = alice.execute_command("add carol").await.expect("nothing to do");
+    let reply = alice.execute_command(None, "add carol").await.expect("nothing to do");
     assert_eq!(reply.output.as_deref(), Some("carol takes part already."));
-    let nobody = refused(&bob.execute_command("add zed").await.expect_err("nobody"));
-    let hidden = refused(&bob.execute_command("add hers").await.expect_err("not his"));
+    let nobody = refused(&bob.execute_command(None, "add zed").await.expect_err("nobody"));
+    let hidden = refused(&bob.execute_command(None, "add hers").await.expect_err("not his"));
     assert_eq!(
         (nobody.replace("zed", "_"), hidden.replace("hers", "_")),
         (String::from("nobody '_' to add"), String::from("nobody '_' to add")),
@@ -5123,7 +5290,7 @@ async fn listing_and_removing_by_command_ask_what_reading_and_removing_ask() {
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
 
-    let (reply, asked) = world.asked(bob.execute_command("participant list")).await;
+    let (reply, asked) = world.asked(bob.execute_command(None, "participant list")).await;
     let listed = reply.expect("his to read").output.expect("answered to him");
     assert_eq!(
         asked,
@@ -5139,7 +5306,7 @@ async fn listing_and_removing_by_command_ask_what_reading_and_removing_ask() {
     );
     assert!(listed.contains("- alice (@alice), user\n- bob (@bob), user"), "{listed}");
 
-    let (error, asked) = world.asked(bob.execute_command("participant remove alice")).await;
+    let (error, asked) = world.asked(bob.execute_command(None, "participant remove alice")).await;
     let error = error.expect_err("not his to change");
     assert!(matches!(as_command_error(&error), CommandError::Forbidden { .. }), "{error}");
     assert_eq!(
@@ -5163,7 +5330,7 @@ async fn listing_and_removing_by_command_ask_what_reading_and_removing_ask() {
         "{asked:#?}"
     );
 
-    let (reply, asked) = world.asked(alice.execute_command("participant remove bob")).await;
+    let (reply, asked) = world.asked(alice.execute_command(None, "participant remove bob")).await;
     let reply = reply.expect("hers to change");
     assert_eq!(
         asked,
@@ -5190,7 +5357,8 @@ async fn listing_and_removing_by_command_ask_what_reading_and_removing_ask() {
     assert!(session.session().takes_part(ActorId::User(world.bob)), "still in the session");
 
     // Herself as anyone: she may change the channel, and is answered though her actor leaves.
-    let reply = alice.execute_command("participant remove alice").await.expect("hers to change");
+    let reply =
+        alice.execute_command(None, "participant remove alice").await.expect("hers to change");
     assert_eq!(reply.output.as_deref(), Some("Removed alice."));
     assert!(main.user_actor(world.alice).is_none(), "out of the channel");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
@@ -5267,12 +5435,12 @@ async fn leaving_asks_leave_channel_in_the_context_of_who_leaves() {
     );
 
     let leaving = main.user_actor(world.bob).unwrap();
-    let error = leaving.execute_command("channel leave aide").await.expect_err("not his");
+    let error = leaving.execute_command(None, "channel leave aide").await.expect_err("not his");
     assert!(matches!(as_command_error(&error), CommandError::InvalidArguments { .. }), "{error}");
-    let reply = leaving.execute_command("channel leave runner").await.expect("his agent");
+    let reply = leaving.execute_command(None, "channel leave runner").await.expect("his agent");
     assert_eq!(reply.output.as_deref(), Some("runner left main."));
     assert!(!main.participant_ids().contains(&ActorId::Agent(runner)), "out of the channel");
-    let (reply, asked) = world.asked(leaving.execute_command("channel leave")).await;
+    let (reply, asked) = world.asked(leaving.execute_command(None, "channel leave")).await;
     let reply = reply.expect("his own act");
     assert_eq!(
         asked,
@@ -5468,7 +5636,7 @@ async fn listing_and_deleting_agents_by_command_ask_what_reading_and_deleting_as
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
 
-    let (reply, asked) = world.asked(bob.execute_command("agent list")).await;
+    let (reply, asked) = world.asked(bob.execute_command(None, "agent list")).await;
     let listed = reply.expect("his to run").output.expect("answered to him");
     assert_eq!(listed, "This session has no agents.", "hers is not his to read");
     assert_eq!(
@@ -5481,7 +5649,7 @@ async fn listing_and_deleting_agents_by_command_ask_what_reading_and_deleting_as
         ]),
         "{asked:#?}"
     );
-    let (error, asked) = world.asked(bob.execute_command("agent delete scout")).await;
+    let (error, asked) = world.asked(bob.execute_command(None, "agent delete scout")).await;
     let error = error.expect_err("none he may read");
     assert!(
         matches!(
@@ -5501,7 +5669,7 @@ async fn listing_and_deleting_agents_by_command_ask_what_reading_and_deleting_as
         "{asked:#?}"
     );
 
-    let (reply, asked) = world.asked(alice.execute_command("agent list")).await;
+    let (reply, asked) = world.asked(alice.execute_command(None, "agent list")).await;
     let listed = reply.expect("hers to read").output.expect("answered to her");
     assert!(listed.contains("- scout (@scout), of plain, not taking part"), "{listed}");
     assert_eq!(
@@ -5515,7 +5683,7 @@ async fn listing_and_deleting_agents_by_command_ask_what_reading_and_deleting_as
         ]),
         "{asked:#?}"
     );
-    let (reply, asked) = world.asked(alice.execute_command("agent delete @scout")).await;
+    let (reply, asked) = world.asked(alice.execute_command(None, "agent delete @scout")).await;
     let reply = reply.expect("hers to delete");
     assert_eq!(
         asked,
@@ -5535,7 +5703,7 @@ async fn listing_and_deleting_agents_by_command_ask_what_reading_and_deleting_as
         "{asked:#?}"
     );
     assert_eq!(reply.output.as_deref(), Some("Deleted scout; it can be restored."));
-    let listed = alice.execute_command("agent list").await.unwrap().output.unwrap();
+    let listed = alice.execute_command(None, "agent list").await.unwrap().output.unwrap();
     assert_eq!(listed, "This session has no agents.");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
@@ -5557,7 +5725,7 @@ async fn agent_usage_asks_what_reading_the_channel_asks() {
     let bob = main.user_actor(world.bob).unwrap();
 
     for line in ["agent usage", "agent usage helper"] {
-        let (reply, asked) = world.asked(bob.execute_command(line)).await;
+        let (reply, asked) = world.asked(bob.execute_command(None, line)).await;
         let told = reply.expect("his to read").output.expect("answered to him");
         assert!(told.contains("helper (@helper): no calls counted"), "/{line}: {told}");
         assert_eq!(
@@ -5595,7 +5763,7 @@ async fn channel_notes_asks_what_reading_the_channel_asks() {
     let bob = main.user_actor(world.bob).unwrap();
 
     for line in ["channel notes", "channel notes main"] {
-        let (reply, asked) = world.asked(bob.execute_command(line)).await;
+        let (reply, asked) = world.asked(bob.execute_command(None, line)).await;
         let told = reply.expect("his to read").output.expect("answered to him");
         assert!(told.contains("helper:\n- #1 noted for all"), "/{line}: {told}");
         assert_eq!(
@@ -5623,7 +5791,7 @@ async fn channel_notes_asks_what_reading_the_channel_asks() {
 /// that two refusals for different names can be compared.
 #[expect(clippy::expect_used, reason = "test code: a helper of the tests below")]
 async fn unusable(actor: &UserActor, command: &str, name: &str) -> String {
-    let error = actor.execute_command(&format!("{command} {name}")).await;
+    let error = actor.execute_command(None, &format!("{command} {name}")).await;
     match as_command_error(&error.expect_err("unusable")) {
         CommandError::InvalidArguments { reason, .. } => reason.replace(name, "_"),
         other => panic!("refused as invalid, not {other:?}"),
@@ -5651,7 +5819,7 @@ async fn listing_and_describing_channels_ask_what_reading_them_asks() {
     let (world, session, main) = with_a_private_channel().await;
     let bob = main.user_actor(world.bob).unwrap();
 
-    let (reply, asked) = world.asked(bob.execute_command("channel list")).await;
+    let (reply, asked) = world.asked(bob.execute_command(None, "channel list")).await;
     let listed = reply.expect("his to read").output.expect("answered to him");
     assert!(listed.contains("- main (here), taking part"), "{listed}");
     assert!(!listed.contains("private"), "one he may not read is not listed: {listed}");
@@ -5668,7 +5836,7 @@ async fn listing_and_describing_channels_ask_what_reading_them_asks() {
         ]),
         "{asked:#?}"
     );
-    let (reply, asked) = world.asked(bob.execute_command("channel describe main")).await;
+    let (reply, asked) = world.asked(bob.execute_command(None, "channel describe main")).await;
     let described = reply.expect("his to read").output.expect("answered to him");
     assert!(described.starts_with("Channel main\n\nSummary: nothing said"), "{described}");
     assert_eq!(
@@ -5699,7 +5867,7 @@ async fn changing_a_channel_by_command_asks_what_changing_it_asks() {
     let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
 
     for line in ["channel rename Lobby", "channel summary For all", "channel briefing Be kind"] {
-        let (error, asked) = world.asked(bob.execute_command(line)).await;
+        let (error, asked) = world.asked(bob.execute_command(None, line)).await;
         let error = error.expect_err("not his to change");
         assert!(
             matches!(as_command_error(&error), CommandError::Forbidden { .. }),
@@ -5718,7 +5886,7 @@ async fn changing_a_channel_by_command_asks_what_changing_it_asks() {
         );
     }
 
-    let (reply, asked) = world.asked(alice.execute_command("channel rename Lobby")).await;
+    let (reply, asked) = world.asked(alice.execute_command(None, "channel rename Lobby")).await;
     assert_eq!(
         reply.expect("hers to change").output.as_deref(),
         Some("This channel is called Lobby now.")
@@ -5734,21 +5902,22 @@ async fn changing_a_channel_by_command_asks_what_changing_it_asks() {
         ]),
         "{asked:#?}"
     );
-    alice.execute_command("channel summary For all of us").await.expect("hers to change");
-    alice.execute_command("channel briefing Be kind").await.expect("hers to change");
-    let described = alice.execute_command("channel describe").await.unwrap().output.unwrap();
+    alice.execute_command(None, "channel summary For all of us").await.expect("hers to change");
+    alice.execute_command(None, "channel briefing Be kind").await.expect("hers to change");
+    let described = alice.execute_command(None, "channel describe").await.unwrap().output.unwrap();
     assert!(
         described.starts_with("Channel Lobby\n\nSummary: For all of us\nBriefing: Be kind"),
         "each keeps the other: {described}"
     );
-    alice.execute_command("channel summary").await.expect("hers to remove");
-    let described = alice.execute_command("channel describe Lobby").await.unwrap().output.unwrap();
+    alice.execute_command(None, "channel summary").await.expect("hers to remove");
+    let described =
+        alice.execute_command(None, "channel describe Lobby").await.unwrap().output.unwrap();
     assert!(
         described.starts_with("Channel Lobby\n\nSummary: nothing said\nBriefing: Be kind"),
         "removed, the briefing kept: {described}"
     );
     let described =
-        alice.execute_command("channel describe private").await.unwrap().output.unwrap();
+        alice.execute_command(None, "channel describe private").await.unwrap().output.unwrap();
     assert!(described.starts_with("Channel private"), "another of hers, named: {described}");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
@@ -5760,7 +5929,7 @@ async fn making_a_channel_by_command_asks_what_making_one_asks() {
     let (world, session, main) = with_a_private_channel().await;
     let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
 
-    let (error, asked) = world.asked(bob.execute_command("channel create side")).await;
+    let (error, asked) = world.asked(bob.execute_command(None, "channel create side")).await;
     let error = error.expect_err("not his session to change");
     assert!(matches!(as_command_error(&error), CommandError::Forbidden { .. }), "{error}");
     assert_eq!(
@@ -5775,7 +5944,7 @@ async fn making_a_channel_by_command_asks_what_making_one_asks() {
         "{asked:#?}"
     );
 
-    let (reply, asked) = world.asked(alice.execute_command("channel create side")).await;
+    let (reply, asked) = world.asked(alice.execute_command(None, "channel create side")).await;
     assert_eq!(
         reply.expect("hers to make").output.as_deref(),
         Some("Created the channel side; you take part in it.")
@@ -5799,7 +5968,8 @@ async fn making_a_channel_by_command_asks_what_making_one_asks() {
     let side = session.channel_named("side").expect("made and running");
     let in_side: Vec<ActorId> = side.participants().iter().map(|p| p.id).collect();
     assert_eq!(in_side, [ActorId::User(world.alice)], "she alone");
-    let error = alice.execute_command("channel create side").await.expect_err("the name is taken");
+    let error =
+        alice.execute_command(None, "channel create side").await.expect_err("the name is taken");
     assert!(matches!(as_command_error(&error), CommandError::InvalidArguments { .. }), "{error}");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
@@ -5818,7 +5988,7 @@ async fn deleting_a_channel_by_command_asks_what_deleting_one_asks() {
         unusable(&bob, "channel delete", "nowhere").await,
         "one he may not read, as one that does not exist"
     );
-    let (error, asked) = world.asked(bob.execute_command("channel delete main")).await;
+    let (error, asked) = world.asked(bob.execute_command(None, "channel delete main")).await;
     let error = error.expect_err("not his to delete");
     assert!(matches!(as_command_error(&error), CommandError::Forbidden { .. }), "{error}");
     assert_eq!(
@@ -5839,7 +6009,7 @@ async fn deleting_a_channel_by_command_asks_what_deleting_one_asks() {
         "{asked:#?}"
     );
 
-    let (reply, asked) = world.asked(alice.execute_command("channel delete private")).await;
+    let (reply, asked) = world.asked(alice.execute_command(None, "channel delete private")).await;
     assert_eq!(
         reply.expect("hers to delete").output.as_deref(),
         Some("Deleted private; it can be restored.")
@@ -5866,7 +6036,7 @@ async fn deleting_a_channel_by_command_asks_what_deleting_one_asks() {
         ]),
         "{asked:#?}"
     );
-    let reply = alice.execute_command("channel delete main").await.expect("hers to delete");
+    let reply = alice.execute_command(None, "channel delete main").await.expect("hers to delete");
     assert_eq!(reply.output.as_deref(), Some("Deleted main; it can be restored."));
     assert!(session.channels().is_empty(), "both are gone");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
@@ -5925,7 +6095,7 @@ async fn joining_a_channel_by_command_asks_what_joining_one_asks() {
         unusable(&bob, "channel join", "nowhere").await,
         "one he may not join, as one that does not exist"
     );
-    let (reply, asked) = world.asked(bob.execute_command("channel join open")).await;
+    let (reply, asked) = world.asked(bob.execute_command(None, "channel join open")).await;
     assert_eq!(reply.expect("his to join").output.as_deref(), Some("Joined open."));
     assert_eq!(
         asked,
@@ -5945,7 +6115,7 @@ async fn joining_a_channel_by_command_asks_what_joining_one_asks() {
     );
     let open = session.channel_named("open").expect("running");
     assert!(open.participants().iter().any(|p| p.id == ActorId::User(world.bob)), "he is in it");
-    let reply = bob.execute_command("channel join main").await.expect("he is in it");
+    let reply = bob.execute_command(None, "channel join main").await.expect("he is in it");
     assert_eq!(reply.output.as_deref(), Some("You take part in main already."));
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
@@ -5962,7 +6132,7 @@ async fn an_invitation_to_a_channel_is_used_up_as_it_is_taken() {
     let open = session.channel_named("open").expect("running");
     assert!(open.security_attributes().acl.contains(&invitation), "invited");
 
-    bob.execute_command("channel join open").await.expect("his to join");
+    bob.execute_command(None, "channel join open").await.expect("his to join");
     assert!(!open.security_attributes().acl.contains(&invitation), "his invitation is used up");
     open.remove_participant(&World::as_user(world.alice), bob_id).await.expect("hers to remove");
 
@@ -6067,7 +6237,7 @@ async fn making_an_agent_by_command_asks_what_making_one_asks() {
         other => panic!("refused as invalid, not {other:?}"),
     };
 
-    let (error, asked) = world.asked(bob.execute_command("agent create plain")).await;
+    let (error, asked) = world.asked(bob.execute_command(None, "agent create plain")).await;
     assert_eq!(
         asked,
         checks(&[
@@ -6078,10 +6248,11 @@ async fn making_an_agent_by_command_asks_what_making_one_asks() {
         "none of hers is listed to him: {asked:#?}"
     );
     let hidden = refused(&error.expect_err("not his"));
-    let nobody = refused(&bob.execute_command("agent create zed").await.expect_err("nobody"));
+    let nobody = refused(&bob.execute_command(None, "agent create zed").await.expect_err("nobody"));
     assert_eq!(hidden.replace("plain", "_"), nobody.replace("zed", "_"), "alike");
     assert!(hidden.contains("no personality named \"plain\""), "{hidden}");
-    let (reply, asked) = world.asked(alice.execute_command("agent create plain as Scout")).await;
+    let (reply, asked) =
+        world.asked(alice.execute_command(None, "agent create plain as Scout")).await;
     assert_eq!(
         asked,
         checks(&[
@@ -6114,7 +6285,7 @@ async fn making_an_agent_by_command_asks_what_making_one_asks() {
         .find(|agent| agent.name.name == "scout")
         .expect("made");
     assert_eq!(scout.name.scope, Scope::SessionScope { session_id: session.id() });
-    alice.execute_command("add scout").await.expect("brought in");
+    alice.execute_command(None, "add scout").await.expect("brought in");
     let in_main = world.participants(world.alice, session.id(), main.id()).await;
     assert!(in_main.contains(&ActorId::Agent(scout.id)), "in the channel");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();

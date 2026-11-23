@@ -31,6 +31,7 @@ use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::PromptAt;
 use caelumora_domain::define_id;
 use caelumora_domain::digest;
+use caelumora_domain::digest::Digest;
 use caelumora_domain::external_agent::ConversationId;
 use caelumora_domain::group::{Group, GroupId};
 use caelumora_domain::history::testing::items_of;
@@ -66,7 +67,7 @@ use caelumora_domain::workspace::{Workspace, WorkspaceId};
 use caelumora_security::{AccessPolicy, ActionType, OwnershipPolicy, SecurityContext, Verb};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::ops::Not;
 use std::sync::Arc;
 
@@ -991,7 +992,7 @@ pub async fn state_store_behaves(store: &dyn StateStore) {
         .get_agent_channel_state(agent, channel)
         .await
         .expect("a missing agent channel state is no error")
-        .turn
+        .thread(ThreadId::default())
         .is_none());
     let missing = store.get_channel_state(channel).await;
     assert!(
@@ -999,8 +1000,8 @@ pub async fn state_store_behaves(store: &dyn StateStore) {
         "a missing channel state is NotFound, got {missing:?}"
     );
 
-    let mut in_turn =
-        AgentChannelState { turn: Some(TurnState::default()), ..AgentChannelState::default() };
+    let mut in_turn = AgentChannelState::default();
+    in_turn.thread_mut(ThreadId::default()).turn = Some(TurnState::default());
     store
         .put_agent_channel_state(agent, channel, &mut in_turn)
         .await
@@ -1018,7 +1019,7 @@ pub async fn state_store_behaves(store: &dyn StateStore) {
             .get_agent_channel_state(agent, channel)
             .await
             .expect("get agent channel state")
-            .turn
+            .turn(ThreadId::default())
             .is_some(),
         "the stored state comes back"
     );
@@ -1030,7 +1031,7 @@ pub async fn state_store_behaves(store: &dyn StateStore) {
         content: Some("hello".to_string()),
         ..Message::new(Classification::CHANNEL_DEFAULT)
     };
-    talking.transcript.extend(vec![hello]);
+    talking.transcript.extend(ThreadId::default(), vec![hello]);
     store
         .put_agent_channel_state(remote_agent, channel, &mut talking)
         .await
@@ -1046,19 +1047,27 @@ pub async fn state_store_behaves(store: &dyn StateStore) {
         serde_json::to_value(stored.changes()).expect("json"),
         "what was put is marked stored: nothing pending beyond what a loaded state has"
     );
-    assert_eq!(stored.transcript.digest(), talking.transcript.digest(), "with its transcript");
+    assert_eq!(
+        stored.transcript.digest(ThreadId::default()),
+        talking.transcript.digest(ThreadId::default()),
+        "with its transcript"
+    );
     // Stored in a second put, as what changed since the first (issue 376).
-    talking.transcript.extend(vec![Message {
-        content: Some("and more".to_string()),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
-    }]);
+    talking.transcript.extend(
+        ThreadId::default(),
+        vec![Message {
+            content: Some("and more".to_string()),
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        }],
+    );
     store
         .put_agent_channel_state(remote_agent, channel, &mut talking)
         .await
         .expect("put agent channel state");
     let stored = store.get_agent_channel_state(remote_agent, channel).await.expect("get");
     let positions = |state: &AgentChannelState| {
-        state.transcript.all_entries().map(|node| (node.seq, node.digest)).collect::<Vec<_>>()
+        let branch = state.transcript.entries(ThreadId::default());
+        branch.map(|node| (node.seq, node.digest)).collect::<Vec<_>>()
     };
     assert_eq!(positions(&stored), positions(&talking), "every entry where it was added");
     assert_eq!(stored.transcript.end().get(), 2);
@@ -1135,15 +1144,30 @@ pub async fn state_store_behaves(store: &dyn StateStore) {
         "other channels keep theirs"
     );
     assert!(
-        store.get_agent_channel_state(agent, channel).await.expect("get").turn.is_none(),
+        store
+            .get_agent_channel_state(agent, channel)
+            .await
+            .expect("get")
+            .thread(ThreadId::default())
+            .is_none(),
         "the agents' states in the channel are gone"
     );
     assert!(
-        store.get_agent_channel_state(other_agent, channel).await.expect("get").turn.is_none(),
+        store
+            .get_agent_channel_state(other_agent, channel)
+            .await
+            .expect("get")
+            .thread(ThreadId::default())
+            .is_none(),
         "the agents' states in the channel are gone"
     );
     assert!(
-        store.get_agent_channel_state(agent, other_channel).await.expect("get").turn.is_some(),
+        store
+            .get_agent_channel_state(agent, other_channel)
+            .await
+            .expect("get")
+            .thread(ThreadId::default())
+            .is_some(),
         "other channels keep theirs"
     );
 
@@ -1153,11 +1177,21 @@ pub async fn state_store_behaves(store: &dyn StateStore) {
         .expect("put agent channel state");
     store.delete_agent_channel_states(agent).await.expect("delete agent states");
     assert!(
-        store.get_agent_channel_state(agent, channel).await.expect("get").turn.is_none(),
+        store
+            .get_agent_channel_state(agent, channel)
+            .await
+            .expect("get")
+            .thread(ThreadId::default())
+            .is_none(),
         "the agent's states in every channel are gone"
     );
     assert!(
-        store.get_agent_channel_state(agent, other_channel).await.expect("get").turn.is_none(),
+        store
+            .get_agent_channel_state(agent, other_channel)
+            .await
+            .expect("get")
+            .thread(ThreadId::default())
+            .is_none(),
         "the agent's states in every channel are gone"
     );
     assert!(
@@ -1202,10 +1236,11 @@ pub async fn work_under_way_is_indexed(store: &dyn StateStore) {
     };
     assert!(listed().await.is_empty(), "nothing stored, nothing under way");
 
-    let in_turn = |processing_state: ActorState| AgentChannelState {
-        processing_state,
-        turn: Some(TurnState::default()),
-        ..AgentChannelState::default()
+    let in_turn = |step: ActorState| {
+        let mut state = AgentChannelState::default();
+        state.thread_mut(ThreadId::default()).turn =
+            Some(TurnState { step, ..TurnState::default() });
+        state
     };
     let mut planning = in_turn(ActorState::Planning);
     store.put_agent_channel_state(agent, channel, &mut planning).await.expect("put");
@@ -1356,15 +1391,16 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
     assert_eq!(from_middle, expected[250..].to_vec(), "none before where a view begins");
     let (at, first) = histories.said(key, &Reader::Channel, id(1)).await.unwrap().expect("said");
     assert_eq!(
-        (at, first.said().and_then(|m| m.content.as_deref())),
+        (at, first.entry.said().and_then(|m| m.content.as_deref())),
         (Position::START, Some("changed")),
         "as it stands, where it was said"
     );
+    assert_eq!(first.thread(), Some(context.thread_id), "with the thread it was said in");
     assert!(histories
         .said(key, &Reader::Channel, id(300))
         .await
         .unwrap()
-        .is_some_and(|(_, item)| item.said().is_some_and(|m| m.revoked.is_some())));
+        .is_some_and(|(_, item)| item.entry.said().is_some_and(|m| m.revoked.is_some())));
     assert_eq!(
         histories.page(key, &Reader::Channel, Position::START, None, 1, None).await.unwrap().digest,
         state.history.digest(),
@@ -1510,8 +1546,8 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
         &context,
     ));
     states.put_channel_state(channel, &mut more).await.expect("put");
-    let calls = |said: Option<(Position, HistoryEntry)>| {
-        said.and_then(|(_, item)| item.said().map(|m| m.tool_calls.len()))
+    let calls = |said: Option<(Position, Recorded)>| {
+        said.and_then(|(_, item)| item.entry.said().map(|m| m.tool_calls.len()))
     };
     assert_eq!(
         calls(histories.said(key, &Reader::Participant(speaker), id(602)).await.unwrap()),
@@ -1547,7 +1583,11 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
     );
     assert!(histories.attendance(key, stranger).await.unwrap().is_empty());
     let attending = histories.attending(key).await.unwrap();
-    assert_eq!(attending.get(&other), Some(&context.thread_id), "taking part now, and where");
+    assert_eq!(
+        attending.get(&other),
+        Some(&BTreeSet::from([context.thread_id])),
+        "taking part now, and where"
+    );
     assert!(!attending.contains_key(&stranger), "never was one");
     let last = |page: HistoryPage| {
         page.entries().filter_map(HistoryEntry::said).map(|m| m.id).collect::<Vec<_>>()
@@ -1724,8 +1764,8 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
 /// A transcript kept apart from its state (issue 380): written by the put,
 /// loaded from where the state holds it, every branch read by the
 /// `TranscriptStore` - a path to a digest, a message as it stands on its
-/// branch, which messages it holds -, a digest there twice, and gone with
-/// the state.
+/// branch, which messages it holds -, nodes sent again taken in once, a
+/// digest there twice, and gone with the state.
 pub async fn transcript_store_behaves(states: &dyn StateStore, transcripts: &dyn TranscriptStore) {
     use caelumora_domain::message::testing::{id, make_message};
     let (channel, agent) = (ChannelId::new(), AgentId::new());
@@ -1740,15 +1780,24 @@ pub async fn transcript_store_behaves(states: &dyn StateStore, transcripts: &dyn
 
     let mut state = AgentChannelState::default();
     for n in 1..=300 {
-        state.transcript.push(make_message(id(n)));
+        state.transcript.push(ThreadId::default(), make_message(id(n)));
     }
-    assert!(state
-        .transcript
-        .modify(Message { content: Some("changed".to_string()), ..make_message(id(1)) }));
-    let first = state.transcript.start_anew().expect("a branch");
-    state.transcript.push(make_message(id(301)));
+    let changed = Message { content: Some("changed".to_string()), ..make_message(id(1)) };
+    assert!(state.record_change(TranscriptEntry::Modified { message: changed }));
+    let first = state.transcript.start_anew(ThreadId::default()).expect("a branch");
+    state.transcript.push(ThreadId::default(), make_message(id(301)));
+    let mut sent_again = state.clone();
     states.put_agent_channel_state(agent, channel, &mut state).await.expect("put");
     assert!(state.transcript.changes().is_none(), "the transcript is marked stored");
+    // A holder that did not learn its put had succeeded sends the same nodes
+    // again: they are there already, and stay as they are (issue 394).
+    states.put_agent_channel_state(agent, channel, &mut sent_again).await.expect("sent again");
+    let kept = states.get_agent_channel_state(agent, channel).await.expect("get");
+    assert_eq!(
+        (kept.transcript.end(), kept.transcript.digest(ThreadId::default())),
+        (state.transcript.end(), state.transcript.digest(ThreadId::default())),
+        "nothing taken in twice"
+    );
 
     let expected =
         seqs(state.transcript.prefix(&first).map(|path| path.into_iter().cloned().collect()));
@@ -1758,9 +1807,14 @@ pub async fn transcript_store_behaves(states: &dyn StateStore, transcripts: &dyn
         "the path to a digest on an older branch"
     );
     assert_eq!(
-        seqs(transcripts.path(agent, channel, state.transcript.digest().unwrap()).await.unwrap()),
+        seqs(
+            transcripts
+                .path(agent, channel, state.transcript.digest(ThreadId::default()).unwrap())
+                .await
+                .unwrap()
+        ),
         Some(vec![301]),
-        "on the active one"
+        "on the branch of the thread"
     );
     assert_eq!(
         transcripts.message(agent, channel, id(1)).await.unwrap().and_then(|m| m.content),
@@ -1773,32 +1827,28 @@ pub async fn transcript_store_behaves(states: &dyn StateStore, transcripts: &dyn
 
     let loaded = states.get_agent_channel_state(agent, channel).await.expect("get");
     assert_eq!(
-        (loaded.transcript.digest(), loaded.transcript.end().get(), loaded.transcript.base().get()),
-        (state.transcript.digest(), state.transcript.end().get(), 0),
+        (loaded.transcript.digest(ThreadId::default()), loaded.transcript.end().get()),
+        (state.transcript.digest(ThreadId::default()), state.transcript.end().get()),
         "the transcript comes back whole"
     );
 
-    // Held from a position on, a root given again is added a second time.
+    // What no head reaches is not loaded: a root given again is added a second time.
     let end = state.transcript.end();
-    state.transcript.start_anew();
-    state.transcript_from = end;
-    states
-        .put_agent_channel_state(agent, channel, &mut state)
-        .await
-        .expect("put where the window begins");
+    state.transcript.start_anew(ThreadId::default());
+    states.put_agent_channel_state(agent, channel, &mut state).await.expect("put begun anew");
     let mut window = states.get_agent_channel_state(agent, channel).await.expect("get");
     assert_eq!(
-        (window.transcript.base(), window.transcript.is_empty()),
-        (end, true),
-        "from where the state holds it"
+        (window.transcript.end(), window.transcript.digest(ThreadId::default())),
+        (end, None),
+        "nothing its heads reach, and where the next entry goes"
     );
     let root = state
         .transcript
         .prefix(&first)
         .and_then(|path| path.first().map(|node| node.digest))
         .expect("a root");
-    window.transcript.push(make_message(id(1)));
-    assert_eq!(window.transcript.digest(), Some(root), "the same digest");
+    window.transcript.push(ThreadId::default(), make_message(id(1)));
+    assert_eq!(window.transcript.digest(ThreadId::default()), Some(root), "the same digest");
     states
         .put_agent_channel_state(agent, channel, &mut window)
         .await
@@ -1809,8 +1859,56 @@ pub async fn transcript_store_behaves(states: &dyn StateStore, transcripts: &dyn
         "the newest"
     );
 
+    transcripts_go_with_their_states(states, transcripts, agent, channel, root).await;
+}
+
+/// A transcript with a branch for every thread (issue 602): the head of each written with the
+/// put and its branch loaded back from it, read back however far the others went on, and what no
+/// head reaches loaded with none.
+pub async fn transcripts_keep_a_branch_per_thread(states: &dyn StateStore) {
+    use caelumora_domain::message::testing::{id, make_message};
+    let (channel, agent) = (ChannelId::new(), AgentId::new());
+    let (line, side) = (ThreadId::line(channel), ThreadId::new());
+    let mut state = AgentChannelState::default();
+    state.transcript.push(line, make_message(id(1)));
+    state.transcript.push(side, make_message(id(1)));
+    state.transcript.push(side, make_message(id(2)));
+    for n in 3..=600 {
+        state.transcript.push(line, make_message(id(n)));
+    }
+    let left = state.transcript.start_anew(side).expect("what it held");
+    state.transcript.push(side, make_message(id(601)));
+    states.put_agent_channel_state(agent, channel, &mut state).await.expect("put");
+
+    let loaded = states.get_agent_channel_state(agent, channel).await.expect("get");
+    let ids = |state: &AgentChannelState, thread| {
+        state.transcript.messages(thread).iter().map(|m| m.id).collect::<Vec<_>>()
+    };
+    assert_eq!(ids(&loaded, line), ids(&state, line), "the branch of the line, whole");
+    assert_eq!(ids(&loaded, side), [id(601)], "the other's from its root on");
+    assert_eq!(loaded.transcript.end(), state.transcript.end(), "and where the next goes");
+    assert!(loaded.transcript.prefix(&left).is_none(), "what no head reaches is not loaded");
+
+    let mut going_on = loaded;
+    going_on.transcript.push(side, make_message(id(602)));
+    states.put_agent_channel_state(agent, channel, &mut going_on).await.expect("put");
+    let again = states.get_agent_channel_state(agent, channel).await.expect("get");
+    assert_eq!(ids(&again, side), [id(601), id(602)], "a head moved on is written with the put");
+    assert_eq!(ids(&again, line), ids(&state, line), "the other's stays where it was");
+}
+
+/// The transcript of `agent` in `channel`, which holds the entry `root`: gone with the channel's
+/// state, and with the agent's states.
+async fn transcripts_go_with_their_states(
+    states: &dyn StateStore,
+    transcripts: &dyn TranscriptStore,
+    agent: AgentId,
+    channel: ChannelId,
+    root: Digest,
+) {
+    use caelumora_domain::message::testing::{id, make_message};
     let mut other = AgentChannelState::default();
-    other.transcript.push(make_message(id(1)));
+    other.transcript.push(ThreadId::default(), make_message(id(1)));
     states.put_agent_channel_state(agent, ChannelId::new(), &mut other).await.expect("put");
     states.delete_channel_state(channel).await.expect("delete");
     assert!(
@@ -1822,7 +1920,7 @@ pub async fn transcript_store_behaves(states: &dyn StateStore, transcripts: &dyn
         .await
         .expect("put");
     let mut again = AgentChannelState::default();
-    again.transcript.push(make_message(id(2)));
+    again.transcript.push(ThreadId::default(), make_message(id(2)));
     states.put_agent_channel_state(agent, channel, &mut again).await.expect("put");
     states.delete_agent_channel_states(agent).await.expect("delete");
     assert!(
@@ -1835,8 +1933,8 @@ pub async fn transcript_store_behaves(states: &dyn StateStore, transcripts: &dyn
 /// 383), and the frames of its contexts (issue 426): written by the put of
 /// its state, apart from its document, each once by its digest - written
 /// again as the same -, read by digest; a state loaded holds the texts and
-/// sets its turn under way names, none between turns, and no frame; gone
-/// with the state.
+/// sets its turns under way name, in every thread, none between turns, and
+/// no frame; gone with the state.
 #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
 pub async fn given_store_behaves(states: &dyn StateStore, transcripts: &dyn TranscriptStore) {
     let (channel, agent) = (ChannelId::new(), AgentId::new());
@@ -1848,18 +1946,44 @@ pub async fn given_store_behaves(states: &dyn StateStore, transcripts: &dyn Tran
     states.put_agent_channel_state(agent, channel, &mut state).await.expect("put");
     assert!(state.prompts.changes().is_empty(), "the texts are marked stored");
 
-    state.begin_turn(Work::new(
-        EventContext::default(),
-        None,
-        Classification::CHANNEL_DEFAULT,
-        Default::default(),
-    ));
-    state.offer_tools(sets.clone());
+    state.begin_turn(
+        ThreadId::default(),
+        Work::new(
+            EventContext::default(),
+            None,
+            Classification::CHANNEL_DEFAULT,
+            Default::default(),
+        ),
+    );
+    state.offer_tools(ThreadId::default(), sets.clone());
     let system =
         state.keep_prompt(MessageRole::System, "system".to_string(), PromptAt::Start, None);
-    state.turn.as_mut().expect("a turn").work.context.frame.prompts.push(system.clone());
-    let context = state.turn.as_ref().expect("a turn").work.context.clone();
+    state
+        .thread_mut(ThreadId::default())
+        .turn
+        .as_mut()
+        .expect("a turn")
+        .work
+        .context
+        .frame
+        .prompts
+        .push(system.clone());
+    let context = state.turn(ThreadId::default()).expect("a turn").work.context.clone();
     let frame = state.keep_frame(&context.frame);
+    // A turn in another thread, offered tools of its own (issue 602).
+    let elsewhere = ThreadId::new();
+    let other_sets = vec![ToolSet::new("search", "searches", Vec::new())];
+    let other_offer = digest::tool_sets(&other_sets);
+    state.begin_turn(
+        elsewhere,
+        Work::new(
+            EventContext::default(),
+            None,
+            Classification::CHANNEL_DEFAULT,
+            Default::default(),
+        ),
+    );
+    state.offer_tools(elsewhere, other_sets.clone());
     states.put_agent_channel_state(agent, channel, &mut state).await.expect("put");
     assert!(state.offered_tools.changes().is_empty(), "the tool sets are marked stored");
     assert!(state.frames.changes().is_empty(), "the frames too");
@@ -1905,6 +2029,11 @@ pub async fn given_store_behaves(states: &dyn StateStore, transcripts: &dyn Tran
     );
     assert!(loaded.prompts.get(&before.text).is_none(), "and nothing else");
     assert_eq!(loaded.offered_tools.get(&offer), Some(&sets));
+    assert_eq!(
+        loaded.offered_tools.get(&other_offer),
+        Some(&other_sets),
+        "and what the turn of another thread names"
+    );
     assert!(
         loaded.prompts.changes().is_empty() && loaded.offered_tools.changes().is_empty(),
         "nothing to write again"

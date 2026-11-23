@@ -33,6 +33,8 @@ use std::sync::Arc;
 pub struct Situation<'a> {
     agent_id: AgentId,
     work: &'a Work,
+    /// The thread whose branch of the agent's transcript the work reads and extends (issue 602).
+    branch_thread_id: ThreadId,
     agent_channel_state: &'a AgentChannelState,
     /// The runtime of the agent's actor: what it asks of its channel and
     /// what it navigates.
@@ -40,14 +42,16 @@ pub struct Situation<'a> {
 }
 
 impl<'a> Situation<'a> {
-    /// `work` of the agent of `runtime`, with its state in the channel, read
-    /// through the actor's `runtime`.
+    /// `work` of the agent of `runtime` on the branch of `branch_thread_id`, with its state in the
+    /// channel, read through the actor's `runtime`.
     pub(crate) fn new(
         work: &'a Work,
+        branch_thread_id: ThreadId,
         agent_channel_state: &'a AgentChannelState,
         runtime: &'a dyn ActorRuntime,
     ) -> Self {
-        Self { agent_id: runtime.agent().id, work, agent_channel_state, runtime }
+        let agent_id = runtime.agent().id;
+        Self { agent_id, work, branch_thread_id, agent_channel_state, runtime }
     }
 
     /// The agent whose work this is.
@@ -69,6 +73,12 @@ impl<'a> Situation<'a> {
     /// happened, and what the work says is said (`Answering::continuing`).
     pub fn thread_id(&self) -> ThreadId {
         self.work.event_context.thread_id
+    }
+
+    /// The thread whose branch of the agent's transcript the work reads and extends (issue 602):
+    /// the thread of the envelope it answers.
+    pub fn branch_thread_id(&self) -> ThreadId {
+        self.branch_thread_id
     }
 
     /// Why the work was asked for (issue 439): the reason of the request
@@ -151,11 +161,9 @@ impl<'a> Situation<'a> {
     /// # Errors
     /// `PromptError` if a text it is given cannot be had.
     pub fn token_positions(&self) -> Result<Option<(Vec<u64>, bool)>, PromptError> {
-        ContextResolver::of(self.agent_channel_state, self.runtime.prompts()).token_positions(
-            &self.work.context,
-            self.work.turn_id,
-            ActorId::Agent(self.agent_id),
-        )
+        let thread = self.branch_thread_id();
+        ContextResolver::of(self.agent_channel_state, thread, self.runtime.prompts())
+            .token_positions(&self.work.context, self.work.turn_id, ActorId::Agent(self.agent_id))
     }
 
     /// How the agent's model is given its context (issue 135): what a

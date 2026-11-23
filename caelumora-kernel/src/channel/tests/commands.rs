@@ -36,7 +36,7 @@ async fn help_answers_the_issuer_alone_and_lists_what_they_may_see() {
         async move { channel.run().await }
     });
 
-    let reply = actor.execute_command("help").await.expect("/help runs");
+    let reply = actor.execute_command(None, "help").await.expect("/help runs");
     assert_eq!(reply.visibility, CommandVisibility::Private, "/help answers the issuer alone");
     let text = reply.output.expect("/help answers here");
     assert!(text.contains("/help"), "{text}");
@@ -49,18 +49,18 @@ async fn help_answers_the_issuer_alone_and_lists_what_they_may_see() {
     assert_eq!(names, [&agent[..], &["help"], &participant].concat());
 
     for hidden in ["agent wakeup", "wakeup", "help agent wakeup", "help wakeup"] {
-        let error = actor.execute_command(hidden).await.expect_err("hidden");
+        let error = actor.execute_command(None, hidden).await.expect_err("hidden");
         assert!(
             matches!(as_command_error(&error), CommandError::Unknown(_)),
             "a hidden command looks unknown, by its name and its short form: /{hidden}: {error}"
         );
     }
     // A group is listed by `/help` as far as it may be seen (issue 560).
-    let reply = actor.execute_command("help agent").await.expect("/help agent runs");
+    let reply = actor.execute_command(None, "help agent").await.expect("/help agent runs");
     let text = reply.output.expect("/help answers here");
     assert!(text.contains("Commands of `/agent`") && text.contains("/agent create"), "{text}");
     assert!(!text.contains("wakeup") && !text.contains("/help"), "{text}");
-    let error = actor.execute_command("help nonsense").await.expect_err("no such group");
+    let error = actor.execute_command(None, "help nonsense").await.expect_err("no such group");
     assert!(matches!(as_command_error(&error), CommandError::Unknown(_)), "{error}");
 
     // A group of which nothing may be seen is unknown as well.
@@ -68,11 +68,11 @@ async fn help_answers_the_issuer_alone_and_lists_what_they_may_see() {
         |action| !matches!(action, ActionType::ShowCommand { command, .. } if command.name.as_str().starts_with("agent ")),
     );
     let hidden = channel_with(&[&alice], Arc::new(hide_agents)).await;
-    let error = hidden.user_actor(alice.id).unwrap().execute_command("help agent").await;
+    let error = hidden.user_actor(alice.id).unwrap().execute_command(None, "help agent").await;
     let error = error.expect_err("a hidden group");
     assert!(matches!(as_command_error(&error), CommandError::Unknown(_)), "{error}");
     // Given arguments it takes none of, a hidden command is unknown still (issue 574).
-    let error = hidden.user_actor(alice.id).unwrap().execute_command("agent list all").await;
+    let error = hidden.user_actor(alice.id).unwrap().execute_command(None, "agent list all").await;
     let error = error.expect_err("hidden");
     assert!(matches!(as_command_error(&error), CommandError::Unknown(_)), "{error}");
 
@@ -90,10 +90,10 @@ async fn a_command_is_issued_and_described_by_its_name_or_its_short_form() {
     let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
     let actor = channel.user_actor(alice.id).unwrap();
 
-    let reply = actor.execute_command("agent   wakeup").await.expect("by its name");
+    let reply = actor.execute_command(None, "agent   wakeup").await.expect("by its name");
     let answer = (reply.command.as_str(), reply.output.as_deref());
     assert_eq!(answer, ("agent wakeup", Some("No agent was asleep.")));
-    let error = actor.execute_command("participant nudge").await.expect_err("nobody named");
+    let error = actor.execute_command(None, "participant nudge").await.expect_err("nobody named");
     assert!(
         matches!(
             as_command_error(&error),
@@ -105,7 +105,7 @@ async fn a_command_is_issued_and_described_by_its_name_or_its_short_form() {
 
     let help = |line: &'static str| {
         let actor = Arc::clone(&actor);
-        async move { actor.execute_command(line).await.expect("/help runs").output.unwrap() }
+        async move { actor.execute_command(None, line).await.expect("/help runs").output.unwrap() }
     };
     let all = help("help").await;
     assert!(all.contains("- `/agent wakeup [agent]` (also `/wakeup`) — Wakes"), "{all}");
@@ -132,7 +132,7 @@ async fn wakeup_is_announced_to_the_channel_in_the_issuers_name() {
     });
 
     // By its short form (issue 560): what is announced is its name.
-    let reply = actor.execute_command("wakeup").await.expect("/wakeup runs");
+    let reply = actor.execute_command(None, "wakeup").await.expect("/wakeup runs");
     assert_eq!(reply.command, "agent wakeup");
     let shown = time::timeout(Duration::from_secs(2), following.recv())
         .await
@@ -171,7 +171,7 @@ async fn wakeup_reports_refusals_and_unknown_agents() {
     let refuse_waking = Policy(|action| !matches!(action, ActionType::WakeChannel(_)));
     let channel = channel_with(&[&alice], Arc::new(refuse_waking)).await;
     let actor = channel.user_actor(alice.id).unwrap();
-    let error = actor.execute_command("wakeup").await.expect_err("waking is refused");
+    let error = actor.execute_command(None, "wakeup").await.expect_err("waking is refused");
     assert!(matches!(as_command_error(&error), CommandError::Forbidden { .. }), "{error}");
     assert!(is_forbidden(&error), "{error}");
 
@@ -180,7 +180,7 @@ async fn wakeup_reports_refusals_and_unknown_agents() {
     );
     let channel = channel_with(&[&alice], Arc::new(refuse_running)).await;
     let actor = channel.user_actor(alice.id).unwrap();
-    let error = actor.execute_command("wakeup").await.expect_err("running it is refused");
+    let error = actor.execute_command(None, "wakeup").await.expect_err("running it is refused");
     assert!(
         matches!(as_command_error(&error), CommandError::Forbidden { .. }),
         "visible but not runnable: {error}"
@@ -188,11 +188,11 @@ async fn wakeup_reports_refusals_and_unknown_agents() {
 
     let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
     let actor = channel.user_actor(alice.id).unwrap();
-    let error = actor.execute_command("wakeup @nobody").await.expect_err("no such agent");
+    let error = actor.execute_command(None, "wakeup @nobody").await.expect_err("no such agent");
     assert!(matches!(as_command_error(&error), CommandError::InvalidArguments { .. }), "{error}");
-    let error = actor.execute_command("").await.expect_err("empty");
+    let error = actor.execute_command(None, "").await.expect_err("empty");
     assert!(matches!(as_command_error(&error), CommandError::Empty), "{error}");
-    let error = actor.execute_command("nonsense").await.expect_err("unknown");
+    let error = actor.execute_command(None, "nonsense").await.expect_err("unknown");
     assert!(matches!(as_command_error(&error), CommandError::Unknown(_)), "{error}");
 }
 
@@ -201,13 +201,15 @@ async fn wakeup_wakes_the_agent_named_and_refuses_an_ambiguous_name() {
     let (channel, alice, sleepers) = channel_with_sleepers(&["Sassy", "Dr. Who", "Dr-Who"]).await;
     let actor = channel.user_actor(alice).unwrap();
 
-    let reply = actor.execute_command("wakeup @Sassy").await.expect("found regardless of case");
+    let reply =
+        actor.execute_command(None, "wakeup @Sassy").await.expect("found regardless of case");
     assert_eq!(reply.output.as_deref(), Some("Woke Sassy."));
     assert!(sleepers[0].woken() && !sleepers[1].woken(), "it alone");
-    let reply = actor.execute_command("wakeup Dr. Who").await.expect("by its name, spaces and all");
+    let reply =
+        actor.execute_command(None, "wakeup Dr. Who").await.expect("by its name, spaces and all");
     assert_eq!(reply.output.as_deref(), Some("Woke Dr. Who."));
 
-    let error = actor.execute_command("wakeup @dr-who").await.expect_err("ambiguous");
+    let error = actor.execute_command(None, "wakeup @dr-who").await.expect_err("ambiguous");
     assert!(
         matches!(as_command_error(&error), CommandError::InvalidArguments { reason, .. } if reason.contains("Dr-Who and Dr. Who")),
         "{error}"
@@ -215,12 +217,22 @@ async fn wakeup_wakes_the_agent_named_and_refuses_an_ambiguous_name() {
     assert!(!sleepers[2].woken(), "nobody is picked");
 }
 
-/// Runs `/participant nudge` with `args` in `channel` as alice.
+/// Runs `/participant nudge` with `args` in `channel`'s line as alice.
 async fn nudge(channel: &ChannelLoop, alice: UserId, args: &str) -> CommandResult<CommandOutput> {
+    nudge_in(channel, ThreadId::line(channel.id()), alice, args).await
+}
+
+/// Runs `/participant nudge` with `args` in `thread` of `channel` as alice.
+async fn nudge_in(
+    channel: &ChannelLoop,
+    thread: ThreadId,
+    alice: UserId,
+    args: &str,
+) -> CommandResult<CommandOutput> {
     use crate::command::participant;
     let executor = CommandExecutor::empty(Arc::new(AllowAllPolicy::new()));
     let issuer = channel.user_actor(alice).expect("alice takes part");
-    let context = CommandContext { issuer: &issuer, channel, executor: &executor };
+    let context = CommandContext { issuer: &issuer, channel, executor: &executor, thread };
     let commands = participant::commands();
     let nudge = commands
         .iter()
@@ -289,6 +301,117 @@ async fn a_nudged_agent_responds_in_the_name_of_who_nudged_it_and_the_history_ke
     running.abort();
 }
 
+/// Issue 602: what a user says, nudges or issues happens in the thread they name: a message is
+/// said there, and a nudge reaches whom it asks where it names - routed by that thread's moderator,
+/// which asks whom it names there - and is rejected where they take no part.
+#[tokio::test]
+async fn a_user_says_and_nudges_in_the_thread_they_name() {
+    use caelumora_domain::channel::ThreadOrigin;
+    let Stuck { channel, context, agent, helper, mut events, running } =
+        start(scripted_channel(Script::Answers("Here.".to_string())).await).await;
+    let (alice, helper_id) = (alice_of(&context), ActorId::Agent(agent));
+    answered(&mut events, agent).await;
+    settled(&helper, ActorState::Idle).await;
+    let origin = ThreadOrigin { thread: ThreadId::line(channel.id()), message: MessageId::new() };
+    let thread =
+        channel.open_thread_by_procedure(&context, ThreadSpec::new(origin)).await.expect("opened");
+    let elsewhere =
+        channel.open_thread_by_procedure(&context, ThreadSpec::new(origin)).await.expect("opened");
+    channel.take_into_thread_by_procedure(&context, thread, helper_id).await.expect("taken in");
+    let actor = channel.user_actor(alice).unwrap();
+
+    actor.send_message(Some(thread), Some("aside".to_string()), None, Vec::new()).await.unwrap();
+    let said = time::timeout(Duration::from_secs(5), async {
+        loop {
+            let envelope = events.recv().await.expect("open");
+            if matches!(&envelope.event, ActorEvent::CompleteMessageGenerated(m) if m.content.as_deref() == Some("aside")) {
+                break envelope;
+            }
+        }
+    })
+    .await
+    .expect("said");
+    assert_eq!(said.context.thread_id, thread, "said in the thread she names");
+    let ActorEvent::CompleteMessageGenerated(message) = &said.event else { unreachable!() };
+    let said_in = channel.said_in(message.id).await.map(|(_, thread)| thread);
+    assert_eq!(said_in, Some(thread), "where it is asked for again");
+
+    actor.request_response(helper_id, Some(thread)).await.expect("on its way");
+    let asked_there = |e: &Envelope| {
+        matches!(e.event, ActorEvent::ResponseRequested { .. }) && e.context.thread_id == thread
+    };
+    time::timeout(Duration::from_secs(5), async {
+        while !scripted(&helper).heard().iter().any(asked_there) {
+            time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the helper is asked in the thread it takes part in");
+
+    let mut hers = actor.watch();
+    actor.request_response(helper_id, Some(elsewhere)).await.expect("on its way");
+    let ActorEvent::EventRejected { rejected, reason, .. } =
+        shown(&mut hers, "EventRejected").await
+    else {
+        unreachable!()
+    };
+    assert_eq!((rejected.as_str(), reason), ("NudgeRequested", Rejection::Invalid), "not there");
+
+    // A `/nudge` asks in the thread it is issued in, of whom takes part there.
+    let output = nudge_in(&channel, thread, alice, "@helper").await.expect("asked");
+    assert_eq!(output.text, "Asked helper to respond.");
+    let error = nudge_in(&channel, elsewhere, alice, "@helper").await.expect_err("not there");
+    assert!(matches!(error, CommandError::InvalidArguments { .. }), "{error}");
+    running.abort();
+}
+
+/// Issue 602: a nudge ends the quiet of the thread it names alone, not of every thread of whom it
+/// asks; and a request to answer a turn again is made in the thread the turn runs in.
+#[tokio::test]
+async fn a_nudge_ends_the_quiet_of_its_thread_and_a_turn_is_asked_again_where_it_runs() {
+    use caelumora_domain::channel::ThreadOrigin;
+    let Stuck { channel, context, agent, running, .. } = stuck_in_a_turn().await;
+    let (alice, helper_id) = (alice_of(&context), ActorId::Agent(agent));
+    let line = ThreadId::line(channel.id());
+    let origin = ThreadOrigin { thread: line, message: MessageId::new() };
+    let thread =
+        channel.open_thread_by_procedure(&context, ThreadSpec::new(origin)).await.expect("opened");
+    channel.take_into_thread_by_procedure(&context, thread, helper_id).await.expect("taken in");
+    channel.cancel_actors(None);
+    let quiet = |thread| channel.thread(thread).is_some_and(|held| held.is_quiet());
+    assert!(quiet(line) && quiet(thread), "both quiet after the cancel");
+
+    let actor = channel.user_actor(alice).unwrap();
+    actor.request_response(helper_id, Some(thread)).await.expect("on its way");
+    time::timeout(Duration::from_secs(5), async {
+        while quiet(thread) {
+            time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the thread named is quiet no longer");
+    assert!(quiet(line), "the line stays quiet");
+    running.abort();
+
+    let Stuck { channel, context, agent, mut events, running, .. } = stuck_in_a_turn().await;
+    let (alice, helper_id) = (alice_of(&context), ActorId::Agent(agent));
+    let turn = channel.turn_of(helper_id).expect("a turn under way");
+    let line = ThreadId::line(channel.id());
+    channel.user_actor(alice).unwrap().request_retry_of_turn(helper_id, turn).await.unwrap();
+    let asked = time::timeout(Duration::from_secs(5), async {
+        loop {
+            let envelope = events.recv().await.expect("open");
+            if matches!(envelope.event, ActorEvent::RetryRequested { .. }) {
+                break envelope;
+            }
+        }
+    })
+    .await
+    .expect("asked again");
+    assert_eq!(asked.context.thread_id, line, "where its turn runs");
+    running.abort();
+}
+
 #[tokio::test]
 async fn a_nudge_wakes_the_agent_it_names_and_ends_a_quiet_channel() {
     let Stuck { channel, context, agent, helper, mut events, running } =
@@ -352,14 +475,14 @@ async fn only_someone_else_in_the_channel_is_nudged() {
         assert!(matches!(error, CommandError::InvalidArguments { .. }), "{args:?}: {error}");
     }
     let actor = channel.user_actor(alice).unwrap();
-    let error = actor.request_response(ActorId::User(alice)).await.expect_err("herself");
+    let error = actor.request_response(ActorId::User(alice), None).await.expect_err("herself");
     assert!(
         matches!(error.downcast_ref::<ChannelError>(), Some(ChannelError::NudgesItself { .. })),
         "{error}"
     );
     // Whether whom it asks takes part is the channel's to decide, as it admits the request.
     let mut hers = actor.watch();
-    actor.request_response(ActorId::Agent(AgentId::new())).await.expect("on its way");
+    actor.request_response(ActorId::Agent(AgentId::new()), None).await.expect("on its way");
     let ActorEvent::EventRejected { rejected, reason, .. } =
         shown(&mut hers, "EventRejected").await
     else {
@@ -408,7 +531,7 @@ async fn participant_add_and_agent_create_refuse_what_they_cannot_use() {
         ("agent create", named_too_long.as_str()),
     ] {
         let error =
-            actor.execute_command(&format!("{command} {args}")).await.expect_err("unusable");
+            actor.execute_command(None, &format!("{command} {args}")).await.expect_err("unusable");
         assert!(
             matches!(as_command_error(&error), CommandError::InvalidArguments { .. }),
             "/{command} {args}: {error}"
@@ -455,7 +578,7 @@ async fn the_commands_of_the_groups_refuse_what_they_cannot_use() {
         &summary_too_long,
         &briefing_too_long,
     ] {
-        let error = actor.execute_command(line).await.expect_err("unusable");
+        let error = actor.execute_command(None, line).await.expect_err("unusable");
         assert!(
             matches!(as_command_error(&error), CommandError::InvalidArguments { .. }),
             "/{line}: {error}"
@@ -480,7 +603,7 @@ async fn agent_create_names_the_agent_after_the_personality_or_after_the_last_as
         let alice = Arc::clone(&alice);
         async move {
             let line = format!("agent create {args}");
-            alice.execute_command(&line).await.unwrap().output.unwrap()
+            alice.execute_command(None, &line).await.unwrap().output.unwrap()
         }
     };
     let plain = made("plain").await;
@@ -507,7 +630,7 @@ async fn agent_create_makes_the_agent_of_a_personality_of_the_channel_in_the_cha
     world.kernel.entity_stores().personalities.create(&World::system(), &mut own).await.unwrap();
 
     let alice = main.user_actor(world.alice).unwrap();
-    alice.execute_command("agent create plain as Scout").await.expect("made");
+    alice.execute_command(None, "agent create plain as Scout").await.expect("made");
     let stores = world.kernel.entity_stores();
     let agents = stores.agents.list(&World::system(), &Query::all()).await.unwrap().items;
     let scout = agents.into_iter().find(|agent| agent.name.name == "scout").unwrap();
@@ -533,7 +656,7 @@ async fn agent_usage_tells_the_context_and_the_calls_of_each_agent_and_their_tot
     let main = Arc::clone(&session.channels()[0]);
     let states = world.kernel.state_store();
     let mut state = states.get_agent_channel_state(helper, main.id()).await.unwrap();
-    state.used = Some(TokenUsage {
+    state.thread_mut(ThreadId::line(main.id())).used = Some(TokenUsage {
         calls: 3,
         prompt_tokens: 9000,
         completion_tokens: 600,
@@ -543,7 +666,7 @@ async fn agent_usage_tells_the_context_and_the_calls_of_each_agent_and_their_tot
     states.put_agent_channel_state(helper, main.id(), &mut state).await.unwrap();
     // One whose model does not say how large its context is.
     let mut state = states.get_agent_channel_state(runner, main.id()).await.unwrap();
-    state.used = Some(TokenUsage {
+    state.thread_mut(ThreadId::line(main.id())).used = Some(TokenUsage {
         calls: 1,
         prompt_tokens: 500,
         completion_tokens: 20,
@@ -553,7 +676,7 @@ async fn agent_usage_tells_the_context_and_the_calls_of_each_agent_and_their_tot
     states.put_agent_channel_state(runner, main.id(), &mut state).await.unwrap();
     let alice = main.user_actor(world.alice).unwrap();
 
-    let reply = alice.execute_command("agent usage").await.expect("hers to read");
+    let reply = alice.execute_command(None, "agent usage").await.expect("hers to read");
     assert_eq!(reply.visibility, CommandVisibility::Private, "answered to her alone");
     assert_eq!(
         reply.output.as_deref(),
@@ -567,13 +690,13 @@ async fn agent_usage_tells_the_context_and_the_calls_of_each_agent_and_their_tot
              \nIn all: 4 calls used 9500 input and 620 output tokens."
         )
     );
-    let one = alice.execute_command("agent usage @scout").await.unwrap().output.unwrap();
+    let one = alice.execute_command(None, "agent usage @scout").await.unwrap().output.unwrap();
     assert_eq!(one, "scout (@scout): no calls counted", "the one named alone, without a total");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 
     let without = world.shared_session(&[], &[]).await;
     let alice = without.channels()[0].user_actor(world.alice).unwrap();
-    let none = alice.execute_command("agent usage").await.unwrap().output.unwrap();
+    let none = alice.execute_command(None, "agent usage").await.unwrap().output.unwrap();
     assert_eq!(none, "No agent takes part in this channel.", "nothing to add up");
     world.manager.stop(&World::as_user(world.alice), without.id()).await.unwrap();
 }
@@ -596,7 +719,7 @@ async fn channel_notes_shows_what_the_agents_noted_by_their_authors() {
     world.note(runner, main.id(), &["Deploys on Fridays are off."]).await;
     let alice = main.user_actor(world.alice).unwrap();
 
-    let reply = alice.execute_command("channel notes").await.expect("hers to read");
+    let reply = alice.execute_command(None, "channel notes").await.expect("hers to read");
     assert_eq!(reply.visibility, CommandVisibility::Private, "answered to her alone");
     let board = "Noted in main:\n\n\
                  helper:\n\
@@ -605,17 +728,17 @@ async fn channel_notes_shows_what_the_agents_noted_by_their_authors() {
                  runner:\n\
                  - #1 Deploys on Fridays are off.";
     assert_eq!(reply.output.as_deref(), Some(board), "scout, who noted nothing, left out");
-    let named = alice.execute_command("channel notes main").await.unwrap().output.unwrap();
+    let named = alice.execute_command(None, "channel notes main").await.unwrap().output.unwrap();
     assert_eq!(named, board, "the channel named, the same");
     let side = ChannelSpec { components: quiet(), ..ChannelSpec::new("side") };
     session.create_channel(&World::as_user(world.alice), side).await.expect("hers to make");
-    let other = alice.execute_command("channel notes side").await.unwrap().output.unwrap();
+    let other = alice.execute_command(None, "channel notes side").await.unwrap().output.unwrap();
     assert_eq!(other, "Nothing is noted in side.", "another channel named, not this one");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 
     let without = world.shared_session(&[], &[]).await;
     let alice = without.channels()[0].user_actor(world.alice).unwrap();
-    let none = alice.execute_command("channel notes").await.unwrap().output.unwrap();
+    let none = alice.execute_command(None, "channel notes").await.unwrap().output.unwrap();
     assert_eq!(none, "Nothing is noted in main.");
     world.manager.stop(&World::as_user(world.alice), without.id()).await.unwrap();
 }

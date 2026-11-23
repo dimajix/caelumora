@@ -1310,6 +1310,7 @@ mod tests {
     use caelumora_domain::agent::{AgentChannelState, AgentId};
     use caelumora_domain::approval::ApprovalStrategy;
     use caelumora_domain::channel::testing::main_channel;
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::channel::{
         self, moderation_components, Channel, ChannelId, InternalActor, Participant,
     };
@@ -2655,12 +2656,10 @@ mod tests {
         for agent in [&mut sessions, &mut users] {
             agents.create(&system, agent).await.unwrap();
             let mut state = AgentChannelState::default();
-            state.begin_turn(Work::new(
-                Default::default(),
-                None,
-                Default::default(),
-                Default::default(),
-            ));
+            state.begin_turn(
+                ThreadId::default(),
+                Work::new(Default::default(), None, Default::default(), Default::default()),
+            );
             states.put_agent_channel_state(agent.id, elsewhere, &mut state).await.unwrap();
         }
 
@@ -2687,7 +2686,10 @@ mod tests {
         assert!(manager.purge(&ctx, id).await.unwrap());
         let working = |agent: AgentId| {
             let states = Arc::clone(&states);
-            async move { states.get_agent_channel_state(agent, elsewhere).await.unwrap().turn.is_some() }
+            async move {
+                let state = states.get_agent_channel_state(agent, elsewhere).await.unwrap();
+                state.turn(ThreadId::default()).is_some()
+            }
         };
         assert!(!working(sessions.id).await, "its state is purged with it");
         assert!(working(users.id).await, "the user's agent keeps its own");
@@ -2782,7 +2784,7 @@ mod tests {
         channel
             .user_actor(alice.id)
             .unwrap()
-            .send_message(Some("hello".to_string()), None, Vec::new())
+            .send_message(None, Some("hello".to_string()), None, Vec::new())
             .await
             .unwrap();
         time::timeout(Duration::from_secs(5), async {
@@ -2888,10 +2890,11 @@ mod tests {
         }
         let [interrupted, waiting, idle, deleted] =
             sessions.map(|session| (session.id, session.channels[0]));
-        let in_turn = |processing_state| AgentChannelState {
-            processing_state,
-            turn: Some(TurnState::default()),
-            ..AgentChannelState::default()
+        let in_turn = |step| {
+            let mut state = AgentChannelState::default();
+            let turn = TurnState { step, ..TurnState::default() };
+            state.thread_mut(ThreadId::default()).turn = Some(turn);
+            state
         };
         let states = kernel.state_store();
         for agent in [AgentId::new(), AgentId::new()] {

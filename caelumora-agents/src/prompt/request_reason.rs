@@ -89,6 +89,7 @@ mod tests {
     use crate::testing;
     use crate::testing::detached_actor_runtime;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::tool::testing::make_tool_description;
     use caelumora_domain::tool::ToolSet;
     use caelumora_domain::work::Work;
@@ -97,21 +98,30 @@ mod tests {
     /// tools named `tools`.
     async fn told(asked: Option<RequestReason>, tools: &[&str]) -> String {
         let mut state = AgentChannelState::default();
-        state.begin_turn(Work::new(
-            Default::default(),
-            asked,
-            Classification::CHANNEL_DEFAULT,
-            Default::default(),
-        ));
+        state.begin_turn(
+            ThreadId::default(),
+            Work::new(
+                Default::default(),
+                asked,
+                Classification::CHANNEL_DEFAULT,
+                Default::default(),
+            ),
+        );
         let tools = tools.iter().map(|name| make_tool_description(name)).collect();
-        state.offer_tools(vec![ToolSet::new("stop", "", tools)]);
-        let work: Work = state.turn.as_ref().map(|turn| turn.work.clone()).expect("begun");
+        state.offer_tools(ThreadId::default(), vec![ToolSet::new("stop", "", tools)]);
+        let work: Work =
+            state.turn(ThreadId::default()).map(|turn| turn.work.clone()).expect("begun");
         let provider = RequestReasonComponent {
             position: PromptPosition::BeforeTurnInput,
             prompts: testing::prompts(),
         };
         let prompt = provider
-            .get_prompt(&Situation::new(&work, &state, &*detached_actor_runtime(AgentId::new())))
+            .get_prompt(&Situation::new(
+                &work,
+                ThreadId::default(),
+                &state,
+                &*detached_actor_runtime(AgentId::new()),
+            ))
             .await
             .unwrap();
         assert_eq!(prompt.classification, Some(Classification::PUBLIC));

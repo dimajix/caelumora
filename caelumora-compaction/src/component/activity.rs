@@ -2,7 +2,7 @@
 //! own once its context fills `threshold` of its model's context size.
 //!
 //! How full the context is, is measured by the calls made on it and estimated beyond them
-//! (`Situation::token_positions`); only once a call made on the active branch measured it, not
+//! (`Situation::token_positions`); only once a call made on the branch measured it, not
 //! right after a compaction, whose branch no call measured yet. A model that reports no context
 //! size gives nothing to measure against: its agent does not compact on its own, which the
 //! component says once.
@@ -28,7 +28,8 @@ impl ActivityProvider for CompactionComponent {
         // A text that cannot be had fails the next call of the model, not this.
         let Ok(Some((positions, true))) = situation.token_positions() else { return false };
         let tokens = positions.last().copied().unwrap_or(0);
-        let size = situation.agent_channel_state().used.and_then(|usage| usage.context_size);
+        let part = situation.agent_channel_state().thread(situation.branch_thread_id());
+        let size = part.and_then(|part| part.used).and_then(|usage| usage.context_size);
         let Some(size) = size.filter(|size| *size > 0) else {
             if !self.told_no_size.swap(true, Ordering::Relaxed) {
                 info!("Agent {}: its model reports no context size; it does not compact its context on its own", situation.agent_id());
@@ -59,6 +60,7 @@ mod tests {
     use caelumora_agents::testing::workspace_turn;
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::AgentChannelState;
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::message::{Message, MessageId, MessageRole};
     use caelumora_kernel::workspace::testing::session_with_workspace;
@@ -68,7 +70,7 @@ mod tests {
     async fn carry_out(strategy: Scripted, before: Before) -> Result<String, ActivityError> {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
-        state.perceive(vec![heard("u1")]);
+        state.perceive(ThreadId::line(world.session.channels()[0].id()), vec![heard("u1")]);
         let component = component(&Arc::new(strategy));
         let mut turn = workspace_turn(&world, &mut state);
         before(&mut turn, world.agent);
@@ -100,7 +102,7 @@ mod tests {
         let world = session_with_workspace().await;
         let component = component(&Arc::new(Scripted::default()));
         let mut state = AgentChannelState::default();
-        state.perceive(vec![heard("hello")]);
+        state.perceive(ThreadId::line(world.session.channels()[0].id()), vec![heard("hello")]);
         let mut turn = workspace_turn(&world, &mut state);
         assert!(!component.is_due(&turn.situation()), "nothing measured");
 

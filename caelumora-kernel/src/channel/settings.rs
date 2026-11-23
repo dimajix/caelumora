@@ -148,12 +148,12 @@ mod tests {
         let hr = session.create_channel(&alice_ctx, spec).await.unwrap();
         hr.user_actor(bob.id)
             .unwrap()
-            .send_message(Some("from bob".to_string()), None, Vec::new())
+            .send_message(None, Some("from bob".to_string()), None, Vec::new())
             .await
             .unwrap();
         hr.user_actor(alice.id)
             .unwrap()
-            .send_message(Some("from alice".to_string()), None, Vec::new())
+            .send_message(None, Some("from alice".to_string()), None, Vec::new())
             .await
             .unwrap();
         let history = history_of(&hr, 2).await;

@@ -34,7 +34,8 @@ pub enum HistoryField {
     ToolCalls,
     /// What a call says it does (`ToolCall::description`), inside `Filter::Any` over `ToolCalls`.
     CallDescription,
-    Mentions,
+    /// Whom the message addresses (`Message::addressees`), by name or as one of everyone.
+    Addressees,
     Level,
     Compartments,
     /// An element of a collection itself, inside `Filter::Any`.
@@ -70,7 +71,7 @@ impl Field for HistoryField {
             HistoryField::Attachments => &["entry", "said", "message", "attachments"],
             HistoryField::ToolCalls => &["entry", "said", "message", "tool_calls"],
             HistoryField::CallDescription => &["description"],
-            HistoryField::Mentions => &["entry", "said", "message", "mentions"],
+            HistoryField::Addressees => &["entry", "said", "message", "addressees"],
             HistoryField::Level => &["entry", "said", "message", "classification", "level"],
             HistoryField::Compartments => {
                 &["entry", "said", "message", "classification", "compartments"]
@@ -162,16 +163,16 @@ impl Filter<HistoryField> {
 
     /// What the view of a channel's line `line` shows `viewer` of its history (issue 557): what
     /// happens in the line and in the whole channel, and of another thread a message heard that
-    /// mentions the viewer - as `Envelope::is_shown_in_line` shows it live; approvals and
+    /// addresses the viewer - as `Envelope::is_shown_in_line` shows it live; approvals and
     /// questions, which a page never holds, aside.
     pub fn shown_in_line(line: ThreadId, viewer: ActorId) -> Self {
-        let mentioning_viewer = Filter::all_of([Filter::heard(), Filter::mentioning(viewer)]);
-        Filter::any_of([Filter::in_thread(line), mentioning_viewer])
+        let addressing_viewer = Filter::all_of([Filter::heard(), Filter::addressing(viewer)]);
+        Filter::any_of([Filter::in_thread(line), addressing_viewer])
     }
 
-    /// A message mentioning `actor`.
-    pub fn mentioning(actor: ActorId) -> Self {
-        Filter::any(HistoryField::Mentions, Filter::eq(HistoryField::Element, actor))
+    /// A message addressing `actor` (`Message::addressees`): by name, or as one of everyone.
+    pub fn addressing(actor: ActorId) -> Self {
+        Filter::any(HistoryField::Addressees, Filter::eq(HistoryField::Element, actor))
     }
 
     /// What `reading` lets a reader read of a channel, with the configured

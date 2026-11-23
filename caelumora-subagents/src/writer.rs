@@ -13,13 +13,13 @@ use async_trait::async_trait;
 use caelumora_api::reader::ViewError;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::{AgentId, PersonalityId, PersonalityKind};
-use caelumora_domain::channel::{ChannelId, ThreadId, ThreadOrigin};
+use caelumora_domain::channel::{ChannelId, Circle, ThreadId, ThreadOrigin};
 use caelumora_domain::scope::Scope;
 use caelumora_domain::session::SessionId;
 use caelumora_domain::store::StoreError;
 use caelumora_domain::value::name::Name;
 use caelumora_kernel::agent::{AgentError, AgentManager, AgentSpec};
-use caelumora_kernel::channel::ChannelLoop;
+use caelumora_kernel::channel::{ChannelLoop, ThreadSpec};
 use caelumora_kernel::error::{refusal, user_message};
 use caelumora_kernel::kernel::Kernel;
 use caelumora_kernel::procedure::participant::{self, lock_letting_go, Exit};
@@ -254,9 +254,13 @@ impl Procedure for Starting {
         }
         let context = work.context().clone();
         // Its founder's taking in and the opening, each taken back by `log` (`thread::open`).
-        let founders = vec![founder];
-        let opening =
-            thread::open(log, kernel, &session, &context, channel, thread, origin, founders);
+        // A closed circle: nobody but the sub-agent takes part in it (issue 602).
+        let spec = ThreadSpec {
+            circle: Circle::Closed,
+            founders: vec![founder],
+            ..ThreadSpec::new(origin)
+        };
+        let opening = thread::open(log, kernel, &session, &context, channel, thread, &spec);
         opening.await.map_err(told)?;
         channel_loop.delegate(&context, thread, founder, brief).await.map_err(told)?;
         info!("Sub-agent {} started in thread {} by {}", agent, thread, context.caller_id);

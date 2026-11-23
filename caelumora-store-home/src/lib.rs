@@ -315,6 +315,7 @@ mod tests {
         suite::work_under_way_is_indexed(states.as_ref()).await;
         suite::history_store_behaves(states.as_ref(), histories.as_ref()).await;
         suite::transcript_store_behaves(states.as_ref(), transcripts.as_ref()).await;
+        suite::transcripts_keep_a_branch_per_thread(states.as_ref()).await;
         suite::given_store_behaves(states.as_ref(), transcripts.as_ref()).await;
     }
 

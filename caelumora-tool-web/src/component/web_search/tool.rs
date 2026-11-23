@@ -158,6 +158,7 @@ mod tests {
     use axum::{Json, Router};
     use caelumora_agents::testing::detached_actor_runtime;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::remote::RemoteEndpoint;
     use caelumora_domain::secret::SecretResult;
     use caelumora_domain::work::Work;
@@ -304,13 +305,13 @@ mod tests {
         let (endpoint, asked) = tavily().await;
         let component = component(endpoint);
         let mut state = AgentChannelState::default();
-        state.begin_turn(Work::new(
-            Default::default(),
-            None,
-            Default::default(),
-            Default::default(),
-        ));
-        let mut turn = Turn::of(&mut state, detached_actor_runtime(AgentId::new())).unwrap();
+        state.begin_turn(
+            ThreadId::default(),
+            Work::new(Default::default(), None, Default::default(), Default::default()),
+        );
+        let mut turn =
+            Turn::of(&mut state, ThreadId::default(), detached_actor_runtime(AgentId::new()))
+                .unwrap();
         for params in [
             json!({ "query": "tokio", "max_results": 0 }),
             json!({ "query": "tokio", "max_results": MAX_RESULTS + 1 }),

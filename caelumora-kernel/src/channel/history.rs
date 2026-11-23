@@ -4,6 +4,7 @@
 //! reconciles as it is built.
 
 use super::{ActorChange, ChannelLoop};
+use arc_swap::ArcSwap;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::chain::Position;
 use caelumora_domain::channel::{ChannelId, HistoryAccess, HistoryStart, ThreadId};
@@ -14,7 +15,8 @@ use caelumora_domain::store::StoreResult;
 use caelumora_security::SecurityContext;
 use caelumora_store::history::HistoryStore;
 use chrono::{DateTime, Utc};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
+use std::sync::Arc;
 use tracing::{info, warn};
 
 /// How many items a page holds that is read to find something in a history
@@ -64,7 +66,23 @@ impl ChannelLoop {
     /// is not found.
     pub(crate) async fn message(&self, id: MessageId) -> Option<Message> {
         match self.history_store.said(self.id, &Reader::Channel, id).await {
-            Ok(said) => said.and_then(|(_, item)| item.said().cloned()),
+            Ok(said) => said.and_then(|(_, item)| item.entry.said().cloned()),
+            Err(e) => {
+                warn!("Cannot read message {} of channel {}: {}", id, self.id, e);
+                None
+            }
+        }
+    }
+
+    /// The message `id` as it stands, and the thread it was said in (issue 602), or `None` if it
+    /// was never said here - read from the store as `message` reads it, a store that cannot be
+    /// read logged and the message not found: whom a request to answer it again goes to, and
+    /// where.
+    pub(crate) async fn said_in(&self, id: MessageId) -> Option<(Message, ThreadId)> {
+        match self.history_store.said(self.id, &Reader::Channel, id).await {
+            Ok(said) => {
+                said.and_then(|(_, item)| Some((item.entry.said()?.clone(), item.thread()?)))
+            }
             Err(e) => {
                 warn!("Cannot read message {} of channel {}: {}", id, self.id, e);
                 None
@@ -94,29 +112,31 @@ impl ChannelLoop {
     }
 
     /// Where `participant`, a participant before - an agent restored, which rested in the channel
-    /// (issue 314) -, takes part again: the position from which on it is given the history, where
-    /// its last range of attendance began, as when it joined (issue 417), and the thread of that
-    /// range (issue 557); all of the history, in the line, if it never took part.
+    /// (issue 314) -, takes part again: in the threads of its last ranges of attendance - those
+    /// that ended where its last one ended, as its leave ended them in every thread at once (issues
+    /// 557, 602) -, given the history from where the oldest of them began, as when it joined (issue
+    /// 417); all of the history, in the line, if it never took part.
     ///
     /// # Errors
     /// If the store cannot be read.
     pub(crate) async fn rejoining(
         &self,
         participant: ActorId,
-    ) -> StoreResult<(Position, ThreadId)> {
-        Ok(self
-            .history_store
-            .attendance(self.id, participant)
-            .await?
-            .last()
-            .map_or((Position::START, ThreadId::line(self.id)), |at| (at.range.start, at.thread)))
+    ) -> StoreResult<(Position, BTreeSet<ThreadId>)> {
+        let attended = self.history_store.attendance(self.id, participant).await?;
+        let Some(last) = attended.iter().map(|at| at.range.end).max() else {
+            return Ok((Position::START, BTreeSet::from([ThreadId::line(self.id)])));
+        };
+        let ended_last: Vec<_> = attended.iter().filter(|at| at.range.end == last).collect();
+        let from = ended_last.iter().map(|at| at.range.start).min().unwrap_or(Position::START);
+        Ok((from, ended_last.iter().map(|at| at.thread).collect()))
     }
 
-    /// Who takes part in the channel's history now, and in which thread: whoever has a range of
+    /// Who takes part in the channel's history now, and in which threads: whoever has a range of
     /// attendance still open (`HistoryStore::attending`) - what the channel builds its threads and
     /// starts its actors by, and reconciles, as it is built; nobody if it cannot be read, which is
     /// logged.
-    pub(super) async fn attending(&self) -> HashMap<ActorId, ThreadId> {
+    pub(super) async fn attending(&self) -> HashMap<ActorId, BTreeSet<ThreadId>> {
         self.history_store.attending(self.id).await.unwrap_or_else(|e| {
             warn!("Cannot read who takes part in channel {}: {}", self.id, e);
             HashMap::new()
@@ -126,19 +146,21 @@ impl ChannelLoop {
     /// Brings the channel's history in line with its document as it is built (reconciling, issue
     /// 590): whoever the document keeps as a former participant with a range of attendance still
     /// open in its history - let go while the channel did not run, in its stored document - is
-    /// handed to `run` as leaving (`ActorChange::Leave`), in the kernel's name, in the thread of
-    /// that range, ahead of every actor it starts: `run` announces it before anything else, as
+    /// handed to `run` as leaving (`ActorChange::Leave`), in the kernel's name, in the threads of
+    /// those ranges, ahead of every actor it starts: `run` announces it before anything else, as
     /// though it had happened while the channel ran. Who let them go and when, the document keeps
     /// (`FormerParticipant::left`). Where the history was recorded on after they were let go - an
     /// actor removed whose task had not ended as its session stopped - their attendance ends only
     /// here.
-    pub(super) async fn reconcile(&self, attending: &HashMap<ActorId, ThreadId>) {
+    pub(super) async fn reconcile(&self, attending: &HashMap<ActorId, BTreeSet<ThreadId>>) {
         for former in &self.channel().former {
             let participant = former.participant.actor_id();
-            let Some(&thread) = attending.get(&participant) else { continue };
+            let Some(threads) = attending.get(&participant) else { continue };
             let name = self.name_of(participant).await;
             info!("{} left channel {} while it did not run: recorded now", participant, self.id);
-            let leave = ActorChange::Leave(participant, name, SecurityContext::system(), thread);
+            let system = SecurityContext::system();
+            let threads = Arc::new(ArcSwap::from_pointee(threads.clone()));
+            let leave = ActorChange::Leave(participant, name, system, threads);
             let _ = self.request(leave);
         }
     }

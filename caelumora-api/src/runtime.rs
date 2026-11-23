@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::{Agent, AgentChannelState, Personality};
 use caelumora_domain::approval::ApprovalRuleId;
-use caelumora_domain::channel::{ChannelId, ThreadId};
+use caelumora_domain::channel::{ChannelId, ThreadId, ThreadOrigin};
 use caelumora_domain::component::ComponentConfig;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::content::{ContentId, ContentRef};
@@ -27,6 +27,7 @@ use caelumora_domain::tool::{ToolCall, ToolContent};
 use caelumora_domain::turn::StagedChanges;
 use caelumora_domain::type_map::{ErasedArc, TypeKey};
 use caelumora_domain::value::time_zone::TimeZone;
+use std::collections::BTreeSet;
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -57,9 +58,13 @@ pub trait ActorRuntime: Send + Sync + Debug {
     /// The channel the agent takes part in.
     fn channel_id(&self) -> ChannelId;
 
-    /// The thread of its channel the agent takes part in (issue 557): where what it says of itself
-    /// happens.
-    fn thread_id(&self) -> ThreadId;
+    /// The threads of its channel the agent takes part in (issues 557, 602): what of the channel it
+    /// is delivered, and whose branches of its transcript it keeps.
+    fn threads(&self) -> BTreeSet<ThreadId>;
+
+    /// Where the thread `thread` of its channel hangs (issue 602): the message of another thread
+    /// it was opened at; `None` for its line, or a thread its channel does not hold open.
+    fn origin_of(&self, thread: ThreadId) -> Option<ThreadOrigin>;
 
     /// The agent as it is now, as its session holds it (issue 120).
     fn agent(&self) -> Arc<Agent>;

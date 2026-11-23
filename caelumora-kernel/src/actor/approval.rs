@@ -12,7 +12,7 @@ use caelumora_domain::agent::AgentId;
 use caelumora_domain::approval::{
     ApprovalDecision, ApprovalId, ApprovalStatus, ApprovalStrategy, ApprovalVerdict, Approver,
 };
-use caelumora_domain::channel::{self, Channel, Participant};
+use caelumora_domain::channel::{self, Channel, Participant, ThreadId};
 use caelumora_domain::event::GlobalEvent;
 use caelumora_domain::security::SecurityAttributes;
 use caelumora_domain::value::name::Name;
@@ -91,6 +91,13 @@ impl ApproverActor {
             pending: Mutex::new(HashMap::new()),
             ended: CancellationToken::new(),
         }
+    }
+
+    /// The thread the approval `id` was asked in (issue 602), while it holds it open: where a user
+    /// answers it.
+    pub(crate) async fn thread_of(&self, id: ApprovalId) -> Option<ThreadId> {
+        let pending = self.pending.lock().await;
+        pending.get(&id).map(|pending| pending.request.context.thread_id)
     }
 
     /// The context it answers `request`, an agent's request for approval,
@@ -743,6 +750,27 @@ mod tests {
 
     /// An answer to a request the approver does not hold - never asked, or over - is refused, and
     /// its sender told (issue 567): the approver holds what an answer can be to.
+    /// Issue 602: an approval is put to the users in the thread it was asked in, and the channel
+    /// tells that thread while the approver holds it, where a user answers it; not once decided.
+    #[tokio::test]
+    async fn an_approval_is_answered_in_the_thread_it_was_asked_in() {
+        let mut approving = approving(ApprovalStrategy::Any, 1, shared).await;
+        let request = approving.request();
+        let thread = ThreadId::new();
+        let mut asked = approving
+            .from(ActorId::Agent(approving.agent), ActorEvent::ApprovalRequested(request.clone()));
+        asked.context.thread_id = thread;
+        approving.input.send(asked).await.unwrap();
+        let put = approving.next().await;
+        assert_eq!(put.context.thread_id, thread, "put to the users where it was asked");
+        assert_eq!(approving.channel.approval_thread(request.id).await, Some(thread));
+
+        approving.answer(0, &request, true).await;
+        let decided = approving.next().await;
+        assert_eq!(decided.context.thread_id, thread, "decided there");
+        assert_eq!(approving.channel.approval_thread(request.id).await, None, "held no longer");
+    }
+
     #[tokio::test]
     async fn an_answer_to_a_request_not_held_is_refused() {
         let mut approving = approving(ApprovalStrategy::Any, 1, |users| {

@@ -7,7 +7,9 @@
 //! history is next loaded or appended to. Slow where it has to be - finding a message scans the
 //! items backwards, a fitting rewrites every segment -, which a database's indexes are for.
 
-use super::chains::{self, read_chain, read_head, segment_before, segment_of, SEGMENT};
+use super::chains::{
+    self, read_chain, read_end, read_head, segment_before, segment_of, ChainHead, SEGMENT,
+};
 use super::states::JsonStates;
 use super::{delete_if_exists, read_json_opt, write_json_atomic};
 use async_trait::async_trait;
@@ -24,7 +26,7 @@ use caelumora_store::history::{
     answer_of, page_of, seen, seen_nodes, Attendance, HistoryStore, StandingItems,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use tracing::warn;
@@ -146,7 +148,7 @@ async fn derive_items(
 /// crash between the chain and the items is repaired here. Returns where
 /// the chain ends.
 async fn derive_missing(dir: &Path, channel: ChannelId) -> StoreResult<Position> {
-    let end = read_head(dir).await?.end;
+    let end = read_end(dir).await?;
     let items_end = read_items_end(dir).await?;
     if items_end < end {
         warn!("The items of the history of channel {} were derived up to position {} of {}; deriving the rest", channel, items_end, end);
@@ -179,7 +181,8 @@ impl JsonStates {
         let Some(changes) = history.changes() else { return Ok(()) };
         let dir = self.history_dir(channel).await?;
         let items_end = derive_missing(&dir, channel).await?;
-        let (head, added) = chains::append(&dir, history_of(channel), changes).await?;
+        let (head, added) =
+            chains::append(&dir, history_of(channel), changes.entries, changes.head).await?;
         derive_items(&dir, items_end, head.end, &added).await?;
         history.mark_stored();
         Ok(())
@@ -210,7 +213,7 @@ impl HistoryStore for JsonStates {
         filter: Option<&Filter<HistoryField>>,
     ) -> StoreResult<HistoryPage> {
         let dir = self.history_dir(channel).await?;
-        let head = read_head(&dir).await?;
+        let head: ChainHead = read_head(&dir).await?;
         let items_end = read_items_end(&dir).await?;
         let before = before.map_or(items_end, |before| before.min(items_end));
         if before == Position::START {
@@ -240,13 +243,13 @@ impl HistoryStore for JsonStates {
         channel: ChannelId,
         reader: &Reader,
         id: MessageId,
-    ) -> StoreResult<Option<(Position, HistoryEntry)>> {
+    ) -> StoreResult<Option<(Position, Recorded)>> {
         let dir = self.history_dir(channel).await?;
         let mut segment = read_items_end(&dir).await?.previous().map(segment_of);
         while let Some(from) = segment {
-            if let Some(found) = read_items(&dir, from).await?.said(id) {
+            if let Some((at, item)) = read_items(&dir, from).await?.said(id) {
                 let attended = read_attendance(&dir).await?.of_reader(reader);
-                return seen(reader, &attended, None, found);
+                return Ok(item.as_seen_by(*at, reader, &attended).map(|seen| (*at, seen)));
             }
             segment = segment_before(from);
         }
@@ -260,9 +263,8 @@ impl HistoryStore for JsonStates {
         range: Range<Position>,
     ) -> StoreResult<Vec<Node<Recorded>>> {
         let dir = self.history_dir(channel).await?;
-        let head = read_head(&dir).await?;
-        let chain: Vec<Node<Recorded>> =
-            read_chain(&dir, range.start, head.end.min(range.end)).await?;
+        let end = read_end(&dir).await?;
+        let chain: Vec<Node<Recorded>> = read_chain(&dir, range.start, end.min(range.end)).await?;
         let attended = read_attendance(&dir).await?.of_reader(reader);
         Ok(seen_nodes(reader, &attended, &chain))
     }
@@ -305,7 +307,10 @@ impl HistoryStore for JsonStates {
         Ok(read_attendance(&dir).await?.of_participant(actor))
     }
 
-    async fn attending(&self, channel: ChannelId) -> StoreResult<HashMap<ActorId, ThreadId>> {
+    async fn attending(
+        &self,
+        channel: ChannelId,
+    ) -> StoreResult<HashMap<ActorId, BTreeSet<ThreadId>>> {
         let dir = self.history_dir(channel).await?;
         derive_missing(&dir, channel).await?;
         Ok(read_attendance(&dir).await?.attending())
@@ -313,7 +318,7 @@ impl HistoryStore for JsonStates {
 
     async fn rebuild(&self, channel: ChannelId) -> StoreResult<()> {
         let dir = self.history_dir(channel).await?;
-        let end = read_head(&dir).await?.end;
+        let end = read_end(&dir).await?;
         let mut segment = Position::START;
         while segment < end.max(read_items_end(&dir).await?) {
             delete_if_exists(&items_path(&dir, segment)).await?;

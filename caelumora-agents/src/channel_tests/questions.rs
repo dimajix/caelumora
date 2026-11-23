@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::tool::ask_user::ASK_USER_KIND;
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::component::ComponentConfig;
 use caelumora_domain::question::{QuestionError, QuestionRequest};
 use caelumora_domain::tool::testing::make_tool_call;
@@ -63,6 +64,7 @@ async fn a_call_waits_for_the_answers_and_the_turn_goes_on_with_them() {
     let (call, done, components) = a_call_asking(false);
     let Stuck { channel, context, agent, helper, mut events, running } =
         with_an_agent(Arc::new(Scripted(Mutex::new([call, done].into()))), components).await;
+    let line = ThreadId::line(channel.id());
     let asked = questions_requested(&mut events).await;
     settled(&helper, ActorState::WaitingForUser).await;
     let alice = alice_of(&context);
@@ -96,7 +98,7 @@ async fn a_call_waits_for_the_answers_and_the_turn_goes_on_with_them() {
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     let result = stored
         .transcript
-        .messages()
+        .messages(line)
         .into_iter()
         .flat_map(|m| m.tool_results)
         .next()
@@ -136,13 +138,14 @@ async fn a_message_instead_of_the_answers_declines_them_and_is_heard_after_the_t
     let (call, done, components) = a_call_asking(false);
     let Stuck { channel, context, agent, helper, mut events, running } =
         with_an_agent(Arc::new(Scripted(Mutex::new([call, done].into()))), components).await;
+    let line = ThreadId::line(channel.id());
     questions_requested(&mut events).await;
     settled(&helper, ActorState::WaitingForUser).await;
 
     channel
         .user_actor(alice_of(&context))
         .unwrap()
-        .send_message(Some("rather not".to_string()), None, Vec::new())
+        .send_message(None, Some("rather not".to_string()), None, Vec::new())
         .await
         .unwrap();
     let said: Vec<_> =
@@ -151,7 +154,7 @@ async fn a_message_instead_of_the_answers_declines_them_and_is_heard_after_the_t
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     let result = stored
         .transcript
-        .messages()
+        .messages(line)
         .into_iter()
         .flat_map(|m| m.tool_results)
         .next()
@@ -163,7 +166,7 @@ async fn a_message_instead_of_the_answers_declines_them_and_is_heard_after_the_t
             .await
             .unwrap()
             .transcript
-            .messages()
+            .messages(line)
             .iter()
             .any(|m| m.content.as_deref() == Some("rather not"))
         {
@@ -229,6 +232,7 @@ async fn ask_user_asks_whom_it_names_and_gives_the_model_the_answers() {
     let model = Scripted(Mutex::new([ask("1", "@carol"), ask("2", "@alice"), done].into()));
     let Stuck { channel, context, agent, helper, mut events, running } =
         with_an_agent(Arc::new(model), components).await;
+    let line = ThreadId::line(channel.id());
 
     // Nobody called carol takes part: the first call is answered at
     // once, and the model asks alice.
@@ -247,7 +251,7 @@ async fn ask_user_asks_whom_it_names_and_gives_the_model_the_answers() {
 
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     let results: Vec<_> =
-        stored.transcript.messages().into_iter().flat_map(|m| m.tool_results).collect();
+        stored.transcript.messages(line).into_iter().flat_map(|m| m.tool_results).collect();
     let [unknown, answer] = results.as_slice() else { panic!("two calls: {results:?}") };
     assert_eq!(unknown.status, ToolResultStatus::InvalidArguments);
     assert!(
@@ -268,6 +272,7 @@ async fn questions_nobody_asked_is_left_to_answer_go_unanswered_and_the_turn_goe
     let (call, done, components) = a_call_asking(false);
     let Stuck { channel, context, agent, helper, mut events, running } =
         with_an_agent(Arc::new(Scripted(Mutex::new([call, done].into()))), components).await;
+    let line = ThreadId::line(channel.id());
     let asked = questions_requested(&mut events).await;
     settled(&helper, ActorState::WaitingForUser).await;
     let alice = ActorId::User(alice_of(&context));
@@ -282,7 +287,7 @@ async fn questions_nobody_asked_is_left_to_answer_go_unanswered_and_the_turn_goe
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     let result = stored
         .transcript
-        .messages()
+        .messages(line)
         .into_iter()
         .flat_map(|m| m.tool_results)
         .next()
@@ -290,7 +295,7 @@ async fn questions_nobody_asked_is_left_to_answer_go_unanswered_and_the_turn_goe
     assert_eq!(result.status, ToolResultStatus::NotExecuted);
     assert!(result.answers.is_none(), "unanswered, not declined by anyone");
     // Noted where it may stand: after the results, never between the call and them (issue 389).
-    let entries: Vec<_> = stored.transcript.entries().map(|node| node.entry.clone()).collect();
+    let entries: Vec<_> = stored.transcript.entries(line).map(|node| node.entry.clone()).collect();
     let results = entries
         .iter()
         .position(|e| matches!(e, TranscriptEntry::Message(m) if !m.tool_results.is_empty()))

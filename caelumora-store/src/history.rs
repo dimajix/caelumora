@@ -22,7 +22,7 @@ use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::query::{meeting, Filter};
 use caelumora_domain::store::StoreResult;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt::Debug;
 use std::ops::Range;
 
@@ -53,16 +53,16 @@ pub trait HistoryStore: Debug + Send + Sync {
         filter: Option<&Filter<HistoryField>>,
     ) -> StoreResult<HistoryPage>;
 
-    /// The item that said the message `id` - `HistoryEntry::Said`, its
-    /// message as it stands, with what it was produced from - and its
-    /// position, as `reader` may see it; `None` if it was never said in the
-    /// history, or not to them.
+    /// The item that said the message `id` - `HistoryEntry::Said`, its message as it stands, with
+    /// what it was produced from - and its position, as `reader` may see it, with what else was
+    /// recorded of it: its context names the thread it was said in (issue 602). `None` if it was
+    /// never said in the history, or not to them.
     async fn said(
         &self,
         channel: ChannelId,
         reader: &Reader,
         id: MessageId,
-    ) -> StoreResult<Option<(Position, HistoryEntry)>>;
+    ) -> StoreResult<Option<(Position, Recorded)>>;
 
     /// The entries of the chain at the positions `range` holds that `reader`
     /// may see, as they may see them, in the order they were added: what was
@@ -95,21 +95,25 @@ pub trait HistoryStore: Debug + Send + Sync {
     /// none if it never was one, the last open - to `Position::MAX` - while it is.
     async fn attendance(&self, channel: ChannelId, actor: ActorId) -> StoreResult<Vec<Attended>>;
 
-    /// Who takes part in the channel's history now, and where: each actor whose range of
-    /// attendance is still open, with the thread of that range (issue 590).
-    async fn attending(&self, channel: ChannelId) -> StoreResult<HashMap<ActorId, ThreadId>>;
+    /// Who takes part in the channel's history now, and where: each actor with a range of
+    /// attendance still open, with the threads of those ranges (issues 590, 602).
+    async fn attending(
+        &self,
+        channel: ChannelId,
+    ) -> StoreResult<HashMap<ActorId, BTreeSet<ThreadId>>>;
 
     /// Derives the items and the attendance anew from the chain: what
     /// repairs them, and what shows that they are derived.
     async fn rebuild(&self, channel: ChannelId) -> StoreResult<()>;
 }
 
-/// Who took part in a channel when and where (issues 417, 557): each participant's ranges of
-/// positions in which it was given what went to every participant, oldest first, each from the
-/// `from` of the `HistoryShared` before its `ParticipantJoined`, or else from its join, up to the
-/// `until` of its `ParticipantLeft`, in the thread the context of its join names (`Attended`). At
-/// most one range of a participant is open: a join recorded while it is - an actor started again
-/// without a leave recorded before, issue 568 - continues it.
+/// Who took part in a channel when and where (issues 417, 557, 602): each participant's ranges of
+/// positions in which it was given what went to every participant, oldest first, each in the thread
+/// the context of its `ParticipantJoined` names, from the `from` of the `HistoryShared` before that
+/// join, or else from the join, up to the `until` of its `ParticipantLeft` in that thread
+/// (`Attended`). At most one range of a participant is open in a thread, and several in several
+/// threads: a join recorded in a thread while it is - an actor started again without a leave
+/// recorded before, issue 568 - continues it.
 /// Derived from the chain beside the items, by `take`, and rebuilt with them; kept whole beside the
 /// chain - also by a database (issue 04), which would otherwise rebuild in SQL what a share before
 /// a join gives.
@@ -134,9 +138,9 @@ impl Attendance {
     }
 
     /// Takes `node`, the next of the chain, in - once: a node before the end of what was taken in
-    /// is not taken in again. A share is kept for the join that follows it, a join opens a range -
-    /// or, while one of its participant is open, moves its start back to where the join's share
-    /// begins, if that lies before -, a leave closes the open one.
+    /// is not taken in again. A share is kept for the join that follows it, a join opens a range in
+    /// its thread - or, while one of its participant is open there, moves its start back to where
+    /// the join's share begins, if that lies before -, a leave closes the one open in its thread.
     pub fn take(&mut self, node: &Node<Recorded>) {
         if node.seq < self.end {
             return;
@@ -153,17 +157,17 @@ impl Attendance {
                     .iter()
                     .position(|(of, _)| of == participant)
                     .map_or(node.seq, |at| self.shared.remove(at).1);
-                match self.open_range(*participant) {
+                let thread = node.entry.context.thread_id;
+                match self.open_range(*participant, thread) {
                     Some(open) => open.start = open.start.min(from),
                     None => {
-                        let thread = node.entry.context.thread_id;
                         let range = from..Position::MAX;
                         self.attended.push((*participant, Attended { thread, range }));
                     }
                 }
             }
             HistoryEntry::ParticipantLeft { participant, until, .. } => {
-                if let Some(open) = self.open_range(*participant) {
+                if let Some(open) = self.open_range(*participant, node.entry.context.thread_id) {
                     open.end = (*until).max(open.start);
                 }
             }
@@ -171,12 +175,18 @@ impl Attendance {
         }
     }
 
-    /// The open range of `participant`, if it takes part.
-    fn open_range(&mut self, participant: ActorId) -> Option<&mut Range<Position>> {
+    /// The open range of `participant` in `thread`, if it takes part there.
+    fn open_range(
+        &mut self,
+        participant: ActorId,
+        thread: ThreadId,
+    ) -> Option<&mut Range<Position>> {
         self.attended
             .iter_mut()
             .rev()
-            .find(|(of, at)| *of == participant && at.range.end == Position::MAX)
+            .find(|(of, at)| {
+                *of == participant && at.thread == thread && at.range.end == Position::MAX
+            })
             .map(|(_, at)| &mut at.range)
     }
 
@@ -189,13 +199,13 @@ impl Attendance {
             .collect()
     }
 
-    /// Who takes part now, each with the thread of its open range (`HistoryStore::attending`).
-    pub fn attending(&self) -> HashMap<ActorId, ThreadId> {
-        self.attended
-            .iter()
-            .filter(|(_, at)| at.range.end == Position::MAX)
-            .map(|(actor, at)| (*actor, at.thread))
-            .collect()
+    /// Who takes part now, each with the threads of its open ranges (`HistoryStore::attending`).
+    pub fn attending(&self) -> HashMap<ActorId, BTreeSet<ThreadId>> {
+        let mut attending: HashMap<ActorId, BTreeSet<ThreadId>> = HashMap::new();
+        for (actor, at) in self.attended.iter().filter(|(_, at)| at.range.end == Position::MAX) {
+            attending.entry(*actor).or_default().insert(at.thread);
+        }
+        attending
     }
 
     /// Where `reader` took part, which it reads by (`Recorded::seen_by`): a participant's own;
@@ -332,7 +342,7 @@ pub fn seen(
             return Ok(None);
         }
     }
-    Ok(item.as_seen_by(*seq, reader, attended).map(|entry| (*seq, entry)))
+    Ok(item.as_seen_by(*seq, reader, attended).map(|seen| (*seq, seen.entry)))
 }
 
 /// The entries of `nodes` that `reader`, with `attended` as where it took part, may see, as they
@@ -346,15 +356,8 @@ pub fn seen_nodes<'a>(
     nodes
         .into_iter()
         .filter_map(|node| {
-            let Recorded { sender, recipients, context, timestamp, .. } = &node.entry;
-            let entry = node.entry.as_seen_by(node.seq, reader, attended)?;
-            Some(node.with_entry(Recorded {
-                entry,
-                sender: *sender,
-                recipients: recipients.clone(),
-                context: context.clone(),
-                timestamp: *timestamp,
-            }))
+            let seen = node.entry.as_seen_by(node.seq, reader, attended)?;
+            Some(node.with_entry(seen))
         })
         .collect()
 }
@@ -383,7 +386,7 @@ pub fn answer_of<'a>(
         .filter_map(|node| {
             node.entry
                 .as_seen_by(node.seq, reader, attended)
-                .and_then(|entry| entry.said().cloned())
+                .and_then(|seen| seen.entry.said().cloned())
         })
         .collect();
     answer.reverse();
@@ -458,7 +461,7 @@ mod tests {
         let recorded = Recorded::of(&Envelope::new(context, joined), alice, Audience::Everybody);
         assert!(history.enter(recorded.expect("a join is recorded")));
         assert_eq!(
-            Attendance::of(history.all_entries()).of_participant(alice),
+            Attendance::of(history.entries()).of_participant(alice),
             [Attended { thread, range: Position::START..Position::MAX }],
             "in its join's thread, from its join on"
         );
@@ -485,8 +488,9 @@ mod tests {
         let thread = ThreadId::new();
         let elsewhere = EventContext { thread_id: thread, ..context };
         assert!(history.enter(Recorded::new(joined(bob), bob, Audience::Everybody, &elsewhere)));
-        let attending = Attendance::of(history.all_entries()).attending();
-        assert_eq!(attending, HashMap::from([(bob, thread)]), "bob, in the thread he joined");
+        let attending = Attendance::of(history.entries()).attending();
+        let only_bob = HashMap::from([(bob, BTreeSet::from([thread]))]);
+        assert_eq!(attending, only_bob, "bob, in the thread he joined");
     }
 
     /// That `participant` joined, by their own act.
@@ -530,7 +534,7 @@ mod tests {
         assert!(history.reclassify(&context, id(3), Classification::CHANNEL_DEFAULT));
 
         let mut items = StandingItems::default();
-        for node in history.all_entries() {
+        for node in history.entries() {
             items.take(node);
         }
         let derived: Vec<String> = items
@@ -549,7 +553,7 @@ mod tests {
         );
         assert!(items.said(id(9)).is_none());
 
-        let again = StandingItems::of(history.all_entries());
+        let again = StandingItems::of(history.entries());
         assert_eq!(
             serde_json::to_value(&again).unwrap(),
             serde_json::to_value(&items).unwrap(),
@@ -562,7 +566,7 @@ mod tests {
             Some(3),
             "the index is made anew when it is read"
         );
-        let node = history.at(Position::new(0)).unwrap().clone();
+        let node = history.from(Position::new(0)).next().unwrap().clone();
         items.push(&node);
         assert_eq!(items.newest_before(Position::MAX).count(), 3, "an item is added once");
     }
@@ -666,7 +670,7 @@ mod tests {
         let by_alice = Message {
             sender_id: alice,
             content: Some("Zoë likes tea".to_string()),
-            mentions: vec![bob],
+            addressees: vec![bob],
             ..make_message(id(1))
         };
         let other = HistoryEntry::ResponseRequested {
@@ -692,8 +696,8 @@ mod tests {
             "words, as names are compared"
         );
         assert!(
-            keeps(&Filter::mentioning(bob), said(by_alice.clone()))
-                && !keeps(&Filter::mentioning(alice), said(by_alice.clone()))
+            keeps(&Filter::addressing(bob), said(by_alice.clone()))
+                && !keeps(&Filter::addressing(alice), said(by_alice.clone()))
         );
 
         for message in [
@@ -1001,7 +1005,7 @@ mod tests {
         ] {
             assert!(history.enter(Recorded::new(entry, sender, audience, &context)));
         }
-        let attendance = Attendance::of(history.all_entries());
+        let attendance = Attendance::of(history.entries());
         let starts_and_ends = |participant| {
             attendance
                 .of_participant(participant)
@@ -1019,7 +1023,7 @@ mod tests {
             let reading = Reader::Participant(reader);
             let attended = attendance.of_reader(&reading);
             history
-                .all_entries()
+                .entries()
                 .filter(|node| node.entry.seen_by(node.seq, &reading, &attended))
                 .map(|node| node.seq.get())
                 .collect()
@@ -1035,7 +1039,7 @@ mod tests {
             "what was shared with him, and since - the last his own"
         );
         assert_eq!(
-            Attendance::of(history.all_entries().chain(history.all_entries())).of_participant(bob),
+            Attendance::of(history.entries().chain(history.entries())).of_participant(bob),
             attendance.of_participant(bob),
             "an entry taken in twice changes nothing"
         );
@@ -1085,11 +1089,50 @@ mod tests {
         ] {
             assert!(history.enter(Recorded::new(entry, sender, Audience::Everybody, &context)));
         }
-        let ranges: Vec<_> = Attendance::of(history.all_entries())
+        let ranges: Vec<_> = Attendance::of(history.entries())
             .of_participant(alice)
             .into_iter()
             .map(|at| (at.range.start.get(), at.range.end.get()))
             .collect();
         assert_eq!(ranges, [(1, 8)], "one range, from what was shared to where she left");
+    }
+
+    /// Issue 602: a participant takes part in two threads at once, with a range in each, and a
+    /// leave in one thread closes the range there alone.
+    #[test]
+    fn a_participant_takes_part_in_threads_each_with_a_range_of_its_own() {
+        let context = context_in(ChannelId::new());
+        let line = context.thread_id;
+        let thread = ThreadId::new();
+        let there = EventContext { thread_id: thread, ..context.clone() };
+        let alice = ActorId::User(UserId::new());
+        let left = HistoryEntry::ParticipantLeft {
+            participant: alice,
+            name: String::new(),
+            by: alice,
+            by_name: String::new(),
+            until: Position::new(3),
+            at: Utc::now(),
+        };
+        let mut history = History::default();
+        for (entry, context) in [
+            (joined(alice), &context), // 0: in the line
+            (joined(alice), &there),   // 1: in the thread as well
+            (joined(alice), &there),   // 2: again there, which goes on
+            (left, &there),            // 3: out of the thread alone
+        ] {
+            assert!(history.enter(Recorded::new(entry, alice, Audience::Everybody, context)));
+        }
+        let attendance = Attendance::of(history.entries());
+        assert_eq!(
+            attendance.of_participant(alice),
+            [
+                Attended { thread: line, range: Position::START..Position::MAX },
+                Attended { thread, range: Position::new(1)..Position::new(3) },
+            ],
+            "a range in each thread, the thread's closed by its leave"
+        );
+        let attending = HashMap::from([(alice, BTreeSet::from([line]))]);
+        assert_eq!(attendance.attending(), attending, "in the line still");
     }
 }

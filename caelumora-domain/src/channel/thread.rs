@@ -25,11 +25,26 @@ pub struct ThreadOrigin {
     pub message: MessageId,
 }
 
-/// How a thread was opened: where it hangs, and who opened it.
+/// How a thread was opened: where it hangs, who opened it, and whether who takes part in it may
+/// grow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Opening {
     pub origin: ThreadOrigin,
     pub by: ActorId,
+    pub circle: Circle,
+}
+
+/// Whether who takes part in a thread may grow (issues 557, 602), fixed as it is opened: the one
+/// thing that tells an open thread from a closed one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Circle {
+    /// Whoever says something in it, and whom something said in it mentions, take part in it from
+    /// then on; so does the author of the message it hangs at, from its opening on.
+    Open,
+    /// Those it was opened with take part in it, and nobody else: nobody outside says anything in
+    /// it, and nobody is taken into it - a thread delegated into, a sub-agent's (issue 558).
+    Closed,
 }
 
 /// A thread of a channel, as the channel keeps it (`ChannelState::threads`): what it builds the

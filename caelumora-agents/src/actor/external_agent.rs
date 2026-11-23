@@ -44,6 +44,7 @@ use caelumora_api::transport::{EventReceiver, EventSender};
 use caelumora_domain::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_domain::agent::AgentChannelState;
 use caelumora_domain::agent::RetryRefused;
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::command::CommandDescription;
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::Classification;
@@ -131,6 +132,13 @@ impl ExternalAgentActor {
         TypeKey::of::<dyn CommandProvider<dyn AgentCommand>>(),
     ];
 
+    /// The one thread it takes part in (`one_thread`), whose branch of its transcript all its work
+    /// reads and extends (issue 602): its remote agent keeps one conversation, so an external agent
+    /// keeps to one thread.
+    fn thread(&self) -> ThreadId {
+        one_thread(&*self.body.runtime)
+    }
+
     /// The actor of the external agent of `actor_runtime` (issue 516), built from its
     /// personality, in its channel.
     ///
@@ -149,8 +157,9 @@ impl ExternalAgentActor {
             )],
         };
         // It resumes no answer: the remote agent's tasks are followed again
-        // (`follow_open_tasks`), and it starts idle.
-        let resume = |state: &mut AgentChannelState| state.processing_state = ActorState::Idle;
+        // (`follow_open_tasks`), and it starts idle - it keeps no turn of its own in its state, and
+        // never sleeps (issue 602).
+        let resume = |_: &mut AgentChannelState| {};
         let (body, components) =
             AgentBody::build(Self::COMPONENT_FACETS, &defaults, actor_runtime, resume).await?;
         let remote = components.one::<dyn ExternalAgent>().await?;
@@ -195,7 +204,7 @@ impl ExternalAgentActor {
         work: &mut Work,
     ) -> Result<Vec<(String, PromptPart)>> {
         let (parts, knowledge) =
-            self.body.current_context(&self.body.situation(work, state)).await?;
+            self.body.current_context(&self.body.situation(work, self.thread(), state)).await?;
         work.take_in_context(&parts, knowledge);
         let mut pending = self.pending_prompts();
         // A part whose component gives none now is not given: what it said no longer holds.
@@ -275,12 +284,12 @@ impl ExternalAgentActor {
         let (answering, work) = self.body.work_for(request);
         let mut work = work.given_as(self.body.profile);
         // A turn of its own, whose token `cancel`, `stop` and `leave` reach.
-        self.body.control.begin_turn(work.turn_id);
+        self.body.control.begin_turn(self.thread(), work.turn_id);
         let token = self.body.control.token();
         self.go_to(ActorState::Planning, output).await;
         let ending = self.exchange(state, &answering, &mut work, &token, output).await;
         if matches!(ending, Ok(Ending::Answered(_))) {
-            self.body.drop_answered(state, request.context.initiator_id, rx).await;
+            self.body.drop_answered(state, self.thread(), request.context.initiator_id, rx).await;
         }
         self.body.store(state).await;
         let events = match ending {
@@ -364,12 +373,10 @@ impl ExternalAgentActor {
         // All it was ever given: in the calls before, and what it is given
         // now - every message, and every change of one, as it may have used
         // either version (issue 236).
-        state.classifications_given().iter().for_each(|c| work.see(c));
-        let given = ContextResolver::of(state, self.body.runtime.prompts()).given_messages(
-            &work.context.frame.profile,
-            self.id(),
-            work.context.frame.time_zone,
-        )?;
+        let thread = self.thread();
+        state.classifications_given(thread).iter().for_each(|c| work.see(c));
+        let given = ContextResolver::of(state, thread, self.body.runtime.prompts())
+            .given_messages(&work.context.frame.profile, self.id(), work.context.frame.time_zone)?;
         // A task that asked back before the channel was lowered is not
         // taken up: it is cancelled, and the request begins a new one.
         if let Some(asking) = state.remote.asking().cloned() {
@@ -423,7 +430,7 @@ impl ExternalAgentActor {
             state.remote.give(key, digest::prompt(&part.text));
         }
         self.pending_prompts().clear();
-        work.context.transcript = state.transcript.start_anew();
+        work.context.transcript = state.transcript.start_anew(self.thread());
         // The task that asked back is taken up by this call, whether or not
         // the remote agent tells it as begun again (issue 213).
         if let Some(asked) = &answers {
@@ -652,7 +659,7 @@ impl ExternalAgentActor {
         let channel = self.body.runtime.channel_classification();
         let (answering, label) = match &work {
             Some(work) => (Answering::continuing(work), work.label()),
-            None => (self.body.own(), self.remote.classification().unwrap_or(channel)),
+            None => (self.body.own(self.thread()), self.remote.classification().unwrap_or(channel)),
         };
         let events = match outcome {
             // A task nobody asked for is work of its own.
@@ -895,20 +902,27 @@ impl Answer {
     }
 }
 
+/// The one thread an external agent takes part in (issue 602): it keeps to one, as its remote
+/// agent keeps one conversation (`Actor::takes_part_in_several_threads`); its channel's line if,
+/// gone, it takes part in none.
+fn one_thread(runtime: &dyn ActorRuntime) -> ThreadId {
+    runtime.threads().first().copied().unwrap_or_else(|| ThreadId::line(runtime.channel_id()))
+}
+
 /// Tells the remote agent of `change`, a modification or revocation the
 /// transcript of `state` did not take (issue 236, handed over by `take_in`
 /// where it came): of a message it was given - one the transcript holds on
-/// a branch off its active path, in the conversation the remote agent
+/// a branch no head reaches, in the conversation the remote agent
 /// keeps - by a notice (`notice`) appended to the transcript, to be given
 /// with the next call as any message is; or, if a notice of the message
 /// was not given yet, by modifying that one, so that it is told once, of
 /// the message as it stands then. Nothing for a message never given or
 /// taken back where it was given, or while the remote agent keeps no
-/// conversation: then it is given everything anew.
+/// conversation: then it is given everything anew. In its one thread (`one_thread`, issue 602).
 ///
 /// What the remote agent was given of the message is read from the store
-/// (`ActorRuntime::transcript_message`, issue 380): it lies on a branch
-/// before the active one, which the actor does not hold, and every branch
+/// (`ActorRuntime::transcript_message`, issue 380): it lies on a branch no
+/// head reaches any more, which the actor does not hold, and every branch
 /// given is stored before the next change is taken in. A store that cannot
 /// be read is logged, and nothing is told.
 fn tell<'a>(
@@ -921,15 +935,20 @@ fn tell<'a>(
             return;
         };
         match runtime.transcript_message(id).await {
-            Ok(was) => give_notice(state, change, was),
+            Ok(was) => give_notice(state, one_thread(runtime), change, was),
             Err(e) => warn!("External agent cannot read message {} as it was given, to tell of its change: {:#}", id, e),
         }
     })
 }
 
-/// Tells the remote agent of `state` of `change` (`tell`), which it was
-/// given the message of as `was` - `None`: never.
-fn give_notice(state: &mut AgentChannelState, change: TranscriptEntry, was: Option<Message>) {
+/// Tells the remote agent of `state` in `thread` of `change` (`tell`), which
+/// it was given the message of as `was` - `None`: never.
+fn give_notice(
+    state: &mut AgentChannelState,
+    thread: ThreadId,
+    change: TranscriptEntry,
+    was: Option<Message>,
+) {
     if state.remote.conversation.is_none() {
         return;
     }
@@ -942,13 +961,13 @@ fn give_notice(state: &mut AgentChannelState, change: TranscriptEntry, was: Opti
     };
     let Some(was) = was.filter(|was| was.revoked.is_none()) else { return };
     let mut told = notice(&was, now.as_ref(), at);
-    match state.transcript.messages().into_iter().find(|m| m.notice_of == Some(id)) {
+    match state.transcript.messages(thread).into_iter().find(|m| m.notice_of == Some(id)) {
         Some(pending) => {
             told.id = pending.id;
             state.modify(told);
         }
         None => {
-            state.transcript.push(told);
+            state.transcript.push(thread, told);
         }
     }
 }
@@ -1118,10 +1137,15 @@ impl Actor for ExternalAgentActor {
         self.body.control.state()
     }
 
-    fn cancel(&self) {
+    fn cancel(&self, thread: Option<ThreadId>) {
         info!("Cancelling external agent {} {}", self.id(), self.name());
         // Only an answer under way: between answers there is nothing to end.
-        self.body.control.cancel();
+        self.body.control.cancel(thread);
+    }
+
+    // It keeps one remote state in its channel (issue 602).
+    fn takes_part_in_several_threads(&self) -> bool {
+        false
     }
 
     fn stop(&self) {
@@ -1174,7 +1198,7 @@ mod tests {
             Some(id) => store.message(agent, channel, id).await.expect("read"),
             None => None,
         };
-        give_notice(state, change, was);
+        give_notice(state, ThreadId::default(), change, was);
     }
 
     #[tokio::test]
@@ -1189,19 +1213,19 @@ mod tests {
         let told = |state: &AgentChannelState| {
             state
                 .transcript
-                .messages()
+                .messages(ThreadId::default())
                 .into_iter()
                 .map(|m| (m.notice_of, m.content.unwrap_or_default()))
                 .collect::<Vec<_>>()
         };
         let store = MemoryStore::new();
         let mut state = AgentChannelState::default();
-        state.transcript.extend(vec![first.clone(), second.clone()]);
-        state.transcript.start_anew();
+        state.transcript.extend(ThreadId::default(), vec![first.clone(), second.clone()]);
+        state.transcript.start_anew(ThreadId::default());
 
         tell_from(&store, &mut state, modified("first, corrected")).await;
         assert!(
-            state.transcript.messages().is_empty(),
+            state.transcript.messages(ThreadId::default()).is_empty(),
             "no conversation that holds it: nothing to tell"
         );
 
@@ -1229,7 +1253,7 @@ mod tests {
             ],
             "each once, where it was first told, as it stands; nothing of what it never held"
         );
-        let notice = &state.transcript.messages()[0];
+        let notice = &state.transcript.messages(ThreadId::default())[0];
         assert_ne!(notice.id, first.id, "an id of its own");
         assert_eq!(
             (notice.sender_id, notice.role, notice.sender_name.as_str()),
@@ -1237,7 +1261,7 @@ mod tests {
             "in the name of the message's sender"
         );
 
-        state.transcript.start_anew();
+        state.transcript.start_anew(ThreadId::default());
         tell_from(&store, &mut state, modified("once more")).await;
         assert_eq!(
             told(&state),
@@ -1250,11 +1274,14 @@ mod tests {
 
         let mut revoked = AgentChannelState::default();
         revoked.remote.conversation = Some(ConversationId("c-1".to_string()));
-        revoked.transcript.push(first.clone());
-        revoked.transcript.revoke(first.id, at);
-        revoked.transcript.start_anew();
+        revoked.transcript.push(ThreadId::default(), first.clone());
+        revoked.record_change(TranscriptEntry::Revoked { message: first.id, at });
+        revoked.transcript.start_anew(ThreadId::default());
         tell_from(&MemoryStore::new(), &mut revoked, modified("again")).await;
-        assert!(revoked.transcript.messages().is_empty(), "taken back where it was given");
+        assert!(
+            revoked.transcript.messages(ThreadId::default()).is_empty(),
+            "taken back where it was given"
+        );
     }
 
     #[test]

@@ -1,11 +1,13 @@
-//! An agent's transcript (issue 50): the chain of messages its context is
-//! built from, their modifications and revocations (issue 234) and how each
-//! of its turns ended (issues 145, 258), where a compaction's part of a
-//! branch ends (issue 387) and who joined or left its channel (issue 408), as
+//! An agent's transcript (issue 50): the tree of messages its context is
+//! built from, a branch for every thread (issue 602), their modifications
+//! and revocations (issue 234) and how each of its turns ended (issues 145,
+//! 258), where a compaction's part of a branch ends (issue 387) and who
+//! joined or left its channel (issue 408), as
 //! what happened (issue 197).
 
 use crate::actor::ActorId;
-use crate::chain::{Chain, Node};
+use crate::chain::{Node, Position};
+use crate::channel::{ThreadId, ThreadOrigin};
 use crate::confidentiality::Classification;
 use crate::context::KnowledgeSource;
 use crate::digest;
@@ -16,7 +18,7 @@ use crate::turn::GivenUpReason;
 use crate::work::TurnId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// What happened in a `Transcript`; its node carries the digest of the
 /// transcript up to and including it (issue 06).
@@ -90,20 +92,50 @@ pub enum GivenSource {
     Part(String),
 }
 
-/// An agent's transcript (issue 50): the sequence of messages its context is
-/// built from - its own messages in full, with tool calls and internal
-/// steps, and what others said as it received them - and how each of its
-/// turns ended - the turn under way's messages too, as they are said (issue
-/// 260). The context of a model call adds the prompt parts to it; the
-/// history is the channel's public record,
-/// which the transcript is not.
+/// An agent's transcript (issue 50): what its model is given of its
+/// channel - its own messages in full, with tool calls and internal steps,
+/// and what others said as it received them - and how each of its turns
+/// ended - the turn under way's messages too, as they are said (issue 260).
+/// The context of a model call adds the prompt parts to it; the history is
+/// the channel's public record, which the transcript is not.
 ///
-/// A chain: every entry's digest covers it and the digest before it, so
-/// one digest names the whole transcript up to that point by content (see
-/// `crate::chain`). Nothing is ever removed from it - also not from a branch
-/// no longer active (issue 08) - so every digest it had names a prefix of
-/// one of its branches, which can be recovered (`prefix`).
-pub type Transcript = Chain<TranscriptEntry>;
+/// A tree of entries with a head for every thread the agent takes part in
+/// (issues 557, 602): the branch of a thread is the path from its root up to
+/// its head, what the agent's model is given in that thread. Every entry's
+/// digest covers it and the digest before it, so one digest names a branch
+/// up to that point by content (see `crate::chain`). Nothing is ever
+/// removed from it - also not what no head reaches any more, a branch a
+/// compaction left -, so every digest it had names a path, which a store
+/// holds (`prefix`). Every entry has its position, given by the transcript
+/// alone, the order entries were added in across every branch.
+///
+/// In memory it holds what its heads reach, and what it added since it was
+/// last stored (`keep_window`, issue 380); its store holds all of it.
+#[derive(Debug, Clone, Default)]
+pub struct Transcript {
+    /// Every entry it holds, by its position.
+    nodes: BTreeMap<Position, Node<TranscriptEntry>>,
+    /// Where each entry it holds is, by its digest.
+    index: HashMap<Digest, Position>,
+    /// The branch of every thread with an entry: the positions from its
+    /// root up to its head.
+    branches: BTreeMap<ThreadId, Vec<Position>>,
+    /// The position the next entry is given.
+    end: Position,
+    /// The entries added since it was last stored, in the order added.
+    pending: Vec<Position>,
+    /// The heads as they were last stored.
+    stored_heads: BTreeMap<ThreadId, Position>,
+}
+
+/// A transcript as it is stored, and what it tells a store since it was
+/// last stored: the entries added, on whichever branch, and the head of
+/// every thread with an entry, by its position.
+#[derive(Debug, Clone)]
+pub struct StoredTranscript {
+    pub entries: Vec<Node<TranscriptEntry>>,
+    pub heads: BTreeMap<ThreadId, Position>,
+}
 
 /// The entries of `path` - a path of a transcript from its root, as
 /// `entries` or `prefix` give it - each with the message it holds as it
@@ -114,9 +146,7 @@ pub type Transcript = Chain<TranscriptEntry>;
 /// message taken back
 /// holds none any more; its entry stays, and a prompt part placed after it
 /// stays where it was. The one rule every reader of a transcript's messages
-/// reads them by (issue 234); what has to consider every entry ever added -
-/// the tokens used, whether a message reached the transcript at all - reads
-/// `all_entries` instead.
+/// reads them by (issue 234).
 pub fn as_they_stand<'a, P>(
     path: P,
 ) -> impl Iterator<Item = (&'a Node<TranscriptEntry>, Option<Message>)>
@@ -221,8 +251,8 @@ where
 /// nothing else cloned. `None` if they do not hold it. On every branch,
 /// what a receiver given a branch holding it knows of it (issue 236), read
 /// by a store, which holds every branch (`TranscriptStore::message`, issue
-/// 380); on the active path, what a change of it is checked against
-/// (`Transcript::standing`).
+/// 380); on a branch, what a change of it is checked against
+/// (`Transcript::modify`).
 pub fn known<'a>(
     mut nodes: impl Iterator<Item = &'a Node<TranscriptEntry>>,
     id: MessageId,
@@ -235,39 +265,151 @@ pub fn known<'a>(
     Some(message)
 }
 
-impl Chain<TranscriptEntry> {
-    /// The messages of the active path as they stand: what the model is
-    /// given.
-    pub fn messages(&self) -> Vec<Message> {
-        as_they_stand(self.entries()).filter_map(|(_, message)| message).collect()
+impl Transcript {
+    /// The digest of the branch of `thread`, `None` while it is empty.
+    pub fn digest(&self, thread: ThreadId) -> Option<Digest> {
+        self.last(thread).map(|node| node.digest)
     }
 
-    /// Starts the active path anew, and returns the digest of what it held
-    /// (issue 205): for a receiver that keeps what it was given - a remote
-    /// agent - once the active path was given to it. What was given stays
-    /// as a branch from the root, which the digest names, and what comes
-    /// after is what the receiver is given next.
-    pub fn start_anew(&mut self) -> Option<Digest> {
-        let given = self.digest();
-        self.move_head(None);
+    /// The entries of the branch of `thread`, from its root up to its head.
+    pub fn entries(
+        &self,
+        thread: ThreadId,
+    ) -> impl DoubleEndedIterator<Item = &Node<TranscriptEntry>> + ExactSizeIterator + Clone {
+        self.branch(thread).iter().map(|at| &self.nodes[at])
+    }
+
+    /// The last entry of the branch of `thread`, its head.
+    pub fn last(&self, thread: ThreadId) -> Option<&Node<TranscriptEntry>> {
+        self.branch(thread).last().map(|at| &self.nodes[at])
+    }
+
+    /// The messages of the branch of `thread` as they stand: what the model
+    /// is given in that thread.
+    pub fn messages(&self, thread: ThreadId) -> Vec<Message> {
+        as_they_stand(self.entries(thread)).filter_map(|(_, message)| message).collect()
+    }
+
+    /// The entries of the branch of `thread` a compaction carries over
+    /// rather than replacing them (issue 537): the parts of prompt
+    /// components that stand on it, as the model is given them
+    /// (`parts_as_given`). Copied after the replacement (`compact`), they
+    /// stay as they are, and so count as kept wherever the branch is cut.
+    pub fn carried_parts(&self, thread: ThreadId) -> HashSet<Digest> {
+        parts_as_given(self.entries(thread)).into_iter().map(|(node, _)| node.digest).collect()
+    }
+
+    /// The entries of the path `digest` names: from the root up to and
+    /// including the entry with that digest, on whichever branch it is, or
+    /// `None` if it does not hold the whole path - as for an entry no head
+    /// reaches any more, once it let go of it.
+    pub fn prefix(&self, digest: &Digest) -> Option<Vec<&Node<TranscriptEntry>>> {
+        let mut path = vec![&self.nodes[self.index.get(digest)?]];
+        while let Some(parent) = path.last().and_then(|node| node.parent) {
+            path.push(&self.nodes[self.index.get(&parent)?]);
+        }
+        path.reverse();
+        Some(path)
+    }
+
+    /// Appends `msg` to the branch of `thread`, and returns the digest of
+    /// the branch before it.
+    pub fn push(&mut self, thread: ThreadId, msg: Message) -> Option<Digest> {
+        self.record(thread, TranscriptEntry::Message(msg))
+    }
+
+    /// Appends `msgs` to the branch of `thread`, one after the other.
+    pub fn extend(&mut self, thread: ThreadId, msgs: Vec<Message>) {
+        for msg in msgs {
+            self.push(thread, msg);
+        }
+    }
+
+    /// Appends `msg` to the branch of `thread`, given to read - as `source`,
+    /// if it is knowledge or a part (issues 16, 389, 537) -, and returns the
+    /// digest of the branch before it.
+    pub fn give(
+        &mut self,
+        thread: ThreadId,
+        msg: Message,
+        source: Option<GivenSource>,
+    ) -> Option<Digest> {
+        self.record(thread, TranscriptEntry::Given { message: msg, source })
+    }
+
+    /// Records `entry` on the branch of `thread`, what happened that is no
+    /// change of a message (`TranscriptEntry::changed`): a message said or
+    /// given - as `push` and `give` record one -, how a turn ended (issue
+    /// 258), after its messages, where a compaction's part of a branch ends
+    /// (issue 387), after what it wrote; a copy of any of them on a branch
+    /// of its own (issue 16). A change is recorded by its own method -
+    /// `modify`, `revoke`, `reclassify` -, which says whether it applies.
+    /// Returns the digest of the branch before it.
+    pub fn record(&mut self, thread: ThreadId, entry: TranscriptEntry) -> Option<Digest> {
+        debug_assert!(entry.changed().is_none(), "a change is recorded by its own method");
+        self.append(thread, entry)
+    }
+
+    /// Appends `entry`, whatever it is, with its digest, to the branch of
+    /// `thread`, and returns the digest of the branch before it. An entry
+    /// with the digest of one it holds is that entry - the same predecessor
+    /// and the same content - and is not added twice: the head moves to it.
+    fn append(&mut self, thread: ThreadId, entry: TranscriptEntry) -> Option<Digest> {
+        let previous = self.digest(thread);
+        let digest = digest::transcript_chain(previous.as_ref(), &entry);
+        let at = match self.index.get(&digest) {
+            Some(&at) => at,
+            None => {
+                let at = self.end;
+                self.nodes.insert(at, Node::new(at, digest, previous, entry));
+                self.index.insert(digest, at);
+                self.pending.push(at);
+                self.end = at.next();
+                at
+            }
+        };
+        self.branches.entry(thread).or_default().push(at);
+        previous
+    }
+
+    /// The threads it holds a branch of.
+    pub fn threads(&self) -> impl Iterator<Item = ThreadId> + '_ {
+        self.branches.keys().copied()
+    }
+
+    /// Begins the branch of `thread` as the branch of the thread it hangs at stood at its message,
+    /// `origin` (issue 602): forked, up to and including the last entry of that message, for a
+    /// thread the agent is taken into - however far that branch went on since. A branch that does
+    /// not hold the message is forked whole: the agent has not taken it in yet, and so nothing
+    /// after it either - or never heard it, or a compaction replaced it, where what came after it
+    /// is forked with it. Nothing if that thread has no branch: the branch of `thread` begins at
+    /// the root with its first entry.
+    pub fn fork(&mut self, thread: ThreadId, origin: ThreadOrigin) {
+        let Some(branch) = self.branches.get(&origin.thread) else { return };
+        let holds =
+            |at: &Position| self.nodes[at].entry.message().map(|m| m.id) == Some(origin.message);
+        let end = branch.iter().rposition(holds).map_or(branch.len(), |at| at + 1);
+        let forked = branch[..end].to_vec();
+        self.branches.insert(thread, forked);
+    }
+
+    /// Begins the branch of `thread` anew, and returns the digest of what it
+    /// held: for a receiver that keeps what it was given - a remote agent -
+    /// once the branch was given to it (issue 205), and for a thread the
+    /// agent no longer takes part in (issue 602). What it held stays, which
+    /// the digest names, and what comes after is a branch of its own.
+    pub fn start_anew(&mut self, thread: ThreadId) -> Option<Digest> {
+        let given = self.digest(thread);
+        self.branches.remove(&thread);
         given
     }
 
-    /// The entries of the active path a compaction carries over rather than
-    /// replacing them (issue 537): the parts of prompt components that stand
-    /// on it, as the model is given them (`parts_as_given`). Copied after
-    /// the replacement (`compact`), they stay as they are, and so count as
-    /// kept wherever the path is cut.
-    pub fn carried_parts(&self) -> HashSet<Digest> {
-        parts_as_given(self.entries()).into_iter().map(|(node, _)| node.digest).collect()
-    }
-
-    /// Begins the active path anew as a compaction does (issue 16): a branch
-    /// of its own from the root. On it come `replacement` - what stands for
+    /// Begins the branch of `thread` anew as a compaction does (issue 16): a
+    /// branch of its own from the root. On it come `replacement` - what stands for
     /// the older entries -, given to read, each as its source if it is
     /// knowledge (issue 389); then the parts of prompt components that stand
     /// before the entries kept (`carried_parts`, issue 537); then the entries
-    /// of the active path from `keep_from` on - `None`: none - as they stand;
+    /// of the branch from `keep_from` on - `None`: none - as they stand;
     /// and last where the compaction's part of the branch ends
     /// (`TranscriptEntry::Compacted`, issue 387).
     ///
@@ -278,18 +420,19 @@ impl Chain<TranscriptEntry> {
     /// (`TranscriptEntry::copy_standing`); every copy gets a digest of its
     /// own, since what comes before it is another.
     ///
-    /// Returns where each entry of the old path stands on the new branch: a
+    /// Returns where each entry of the old branch stands on the new one: a
     /// part kept at its copy, another entry replaced at the end of the
     /// replacement - `None` without one -, one kept at its copy, or at the
     /// copy before it if it has none - a change of a message, which is in its
-    /// copy. `None`, and nothing changes, if the active path is empty, if
+    /// copy. `None`, and nothing changes, if the branch is empty, if
     /// `keep_from` is not on it, or if the new branch would be empty.
     pub fn compact(
         &mut self,
+        thread: ThreadId,
         replacement: Vec<(Message, Option<GivenSource>)>,
         keep_from: Option<Digest>,
     ) -> Option<HashMap<Digest, Option<Digest>>> {
-        let path: Vec<_> = self.entries().collect();
+        let path: Vec<_> = self.entries(thread).collect();
         if path.is_empty() {
             return None;
         }
@@ -304,119 +447,165 @@ impl Chain<TranscriptEntry> {
                 .map(|(node, standing)| (node.digest, node.entry.copy_standing(standing)))
                 .collect();
         let kept = copies.split_off(start);
-        let carried = self.carried_parts();
+        let carried = self.carried_parts(thread);
         let (parts, replaced): (Vec<_>, Vec<_>) =
             copies.into_iter().partition(|(old, _)| carried.contains(old));
         if replacement.is_empty() && parts.is_empty() && kept.iter().all(|(_, copy)| copy.is_none())
         {
             return None;
         }
-        self.start_anew();
+        self.start_anew(thread);
         for (message, source) in replacement {
-            self.give(message, source);
+            self.give(thread, message, source);
         }
-        let replacement_end = self.digest();
+        let replacement_end = self.digest(thread);
         let mut moved: HashMap<Digest, Option<Digest>> =
             replaced.into_iter().map(|(old, _)| (old, replacement_end)).collect();
         for (old, copy) in parts.into_iter().chain(kept) {
             if let Some(copy) = copy {
-                self.record(copy);
+                self.record(thread, copy);
             }
-            moved.insert(old, self.digest());
+            moved.insert(old, self.digest(thread));
         }
-        self.record(TranscriptEntry::Compacted { at: Utc::now() });
+        self.record(thread, TranscriptEntry::Compacted { at: Utc::now() });
         Some(moved)
     }
 
-    /// Appends `msgs`.
-    pub fn extend(&mut self, msgs: Vec<Message>) {
-        for m in msgs {
-            self.push(m);
+    /// The threads whose branch takes `change` - a modification, a taking back or a
+    /// reclassification of a message (`TranscriptEntry::changed`): it holds the message as it
+    /// stands and, for a modification, it can be modified so (`Message::modify`). None for an
+    /// entry that changes no message.
+    pub fn holding(&self, change: &TranscriptEntry) -> Vec<ThreadId> {
+        match change {
+            TranscriptEntry::Modified { message: modified } => {
+                self.threads_where(modified.id, |mut message| message.modify(modified))
+            }
+            TranscriptEntry::Revoked { message, .. }
+            | TranscriptEntry::Reclassified { message, .. } => {
+                self.threads_where(*message, |_| true)
+            }
+            _ => Vec::new(),
         }
     }
 
-    /// Appends `msg` and returns the digest of the transcript before it.
-    pub fn push(&mut self, msg: Message) -> Option<Digest> {
-        self.record(TranscriptEntry::Message(msg))
+    /// Records `change` - a modification, a taking back or a reclassification of a message that
+    /// the branch of `thread` takes (`holding`) - on that branch alone (issue 602): what a change
+    /// of the whole channel is recorded on once the branch's turn has its step's results.
+    pub fn record_change(&mut self, thread: ThreadId, change: TranscriptEntry) {
+        debug_assert!(change.changed().is_some(), "a change of a message");
+        self.append(thread, change);
     }
 
-    /// Appends `msg`, given to read - as `source`, if it is knowledge or a
-    /// part (issues 16, 389, 537) -, and returns the digest of the transcript
-    /// before it.
-    pub fn give(&mut self, msg: Message, source: Option<GivenSource>) -> Option<Digest> {
-        self.record(TranscriptEntry::Given { message: msg, source })
-    }
-
-    /// Records `entry`, what happened that is no change of a message
-    /// (`TranscriptEntry::changed`): a message said or given - as `push`
-    /// and `give` record one -, how a turn ended (issue 258), after its
-    /// messages, where a compaction's part of a branch ends (issue 387),
-    /// after what it wrote; a copy of any of them on a branch of its own
-    /// (issue 16). A change is recorded by its own method - `modify`,
-    /// `revoke`, `reclassify` -, which says whether it applies. Returns the
-    /// digest of the transcript before it.
-    pub fn record(&mut self, entry: TranscriptEntry) -> Option<Digest> {
-        debug_assert!(entry.changed().is_none(), "a change is recorded by its own method");
-        self.append(entry)
-    }
-
-    /// Appends `entry`, whatever it is, with its digest, and returns the
-    /// digest of the transcript before it.
-    fn append(&mut self, entry: TranscriptEntry) -> Option<Digest> {
-        self.push_with(entry, digest::transcript_chain)
-    }
-
-    /// Records that the message `modified.id` of the active path is given
-    /// as `modified` from now on (issue 234). `false`, and nothing is
-    /// recorded, if the message is not on the active path as it stands -
-    /// never given to the model, on a branch no longer active, or taken
-    /// back - or cannot be modified so (`Message::modify`). Taken in between
-    /// turns - a change waits for a turn's end even where what is said is
-    /// heard during it (issue 431) -: a turn under way produces its next
-    /// message from the transcript as its context names it.
-    pub fn modify(&mut self, modified: Message) -> bool {
-        if !self.takes(&modified) {
-            return false;
-        }
-        self.append(TranscriptEntry::Modified { message: modified });
-        true
-    }
-
-    /// Whether `modify` takes `modified`: a change of a message of the
-    /// active path as it stands that it can be modified to.
+    /// Whether `modify` takes `modified`: a change of a message a branch
+    /// holds as it stands that it can be modified to.
     pub fn takes(&self, modified: &Message) -> bool {
-        self.standing(modified.id).is_some_and(|mut message| message.modify(modified))
+        !self.threads_where(modified.id, |mut message| message.modify(modified)).is_empty()
     }
 
-    /// Records that the message `id` of the active path was taken back at
-    /// `at` (issue 234), so that the model is no longer given it. `false`,
-    /// and nothing is recorded, if it is not on the active path as it
-    /// stands, as for `modify`.
-    pub fn revoke(&mut self, id: MessageId, at: DateTime<Utc>) -> bool {
-        if self.standing(id).is_none() {
-            return false;
+    /// The threads whose branch holds the message `id` as it stands - not
+    /// taken back - and for whom `fits` holds of it.
+    fn threads_where(&self, id: MessageId, fits: impl Fn(Message) -> bool) -> Vec<ThreadId> {
+        self.branches
+            .keys()
+            .copied()
+            .filter(|&thread| {
+                known(self.entries(thread), id)
+                    .filter(|message| message.revoked.is_none())
+                    .is_some_and(&fits)
+            })
+            .collect()
+    }
+
+    /// The position the next entry is given, on whichever branch.
+    pub fn end(&self) -> Position {
+        self.end
+    }
+
+    /// The entries added since it was last stored (`mark_stored`) - those
+    /// no head reaches any more among them: every position given reaches
+    /// the store - and the head of every thread; `None` if nothing changed.
+    pub fn changes(&self) -> Option<StoredTranscript> {
+        let heads = self.heads();
+        if self.pending.is_empty() && heads == self.stored_heads {
+            return None;
         }
-        self.append(TranscriptEntry::Revoked { message: id, at });
-        true
+        let entries = self.pending.iter().map(|at| self.nodes[at].clone()).collect();
+        Some(StoredTranscript { entries, heads })
     }
 
-    /// Records that the message `id` of the active path is classified
-    /// `classification` from now on (issue 239): what a turn begun
-    /// afterwards has seen of it (issue 168). `false`, and nothing is
-    /// recorded, if it is not on the active path as it stands, as for
-    /// `modify`.
-    pub fn reclassify(&mut self, id: MessageId, classification: Classification) -> bool {
-        if self.standing(id).is_none() {
-            return false;
+    /// Forgets the changes: they are stored.
+    pub fn mark_stored(&mut self) {
+        self.pending.clear();
+        self.stored_heads = self.heads();
+    }
+
+    /// Lets go of the entries no head reaches, of those stored alone (issue
+    /// 380): what lies on a branch a compaction left, or before an external
+    /// agent's call, is read from the store.
+    pub fn keep_window(&mut self) {
+        let kept: HashSet<Position> =
+            self.branches.values().flatten().chain(&self.pending).copied().collect();
+        self.nodes.retain(|at, _| kept.contains(at));
+        self.index.retain(|_, at| kept.contains(at));
+    }
+
+    /// The transcript as a store loaded it: the branch of every thread, from
+    /// its root up to its head, and `end`, the position after the last entry
+    /// stored; with nothing to store.
+    ///
+    /// # Errors
+    /// If a branch is no path from a root, an entry lies at or past `end`,
+    /// or two entries lie at one position.
+    pub fn loaded(
+        end: Position,
+        branches: BTreeMap<ThreadId, Vec<Node<TranscriptEntry>>>,
+    ) -> Result<Self, String> {
+        let mut transcript = Self { end, ..Self::default() };
+        for (thread, path) in branches {
+            let mut previous = None;
+            let mut positions = Vec::with_capacity(path.len());
+            for node in path {
+                if node.parent != previous {
+                    return Err(format!(
+                        "the branch of thread {thread} does not go on at entry {}",
+                        node.digest
+                    ));
+                }
+                if node.seq >= end {
+                    return Err(format!("entry {} lies past the end, {end}", node.digest));
+                }
+                previous = Some(node.digest);
+                positions.push(node.seq);
+                match transcript.nodes.get(&node.seq) {
+                    Some(held) if held.digest != node.digest => {
+                        return Err(format!("two entries at position {}", node.seq));
+                    }
+                    Some(_) => {}
+                    None => {
+                        transcript.index.entry(node.digest).or_insert(node.seq);
+                        transcript.nodes.insert(node.seq, node);
+                    }
+                }
+            }
+            if !positions.is_empty() {
+                transcript.branches.insert(thread, positions);
+            }
         }
-        self.append(TranscriptEntry::Reclassified { message: id, classification });
-        true
+        transcript.stored_heads = transcript.heads();
+        Ok(transcript)
     }
 
-    /// The message `id` of the active path as it stands, `None` if it is
-    /// not on it or was taken back.
-    fn standing(&self, id: MessageId) -> Option<Message> {
-        known(self.entries(), id).filter(|message| message.revoked.is_none())
+    /// The head of every thread with an entry, by its position.
+    fn heads(&self) -> BTreeMap<ThreadId, Position> {
+        self.branches
+            .iter()
+            .filter_map(|(&thread, branch)| branch.last().map(|&at| (thread, at)))
+            .collect()
+    }
+
+    /// The positions of the branch of `thread`, empty if it has none.
+    fn branch(&self, thread: ThreadId) -> &[Position] {
+        self.branches.get(&thread).map_or(&[], Vec::as_slice)
     }
 }
 
@@ -614,8 +803,34 @@ mod tests {
     use crate::message::testing::{id, make_message};
     use crate::workspace::{Workspace, WorkspaceId};
     use chrono::Duration;
-    use serde_json::Value;
     use std::slice;
+
+    /// Records `change` on every branch that takes it, as a change of the whole channel is; whether
+    /// any did.
+    fn change(transcript: &mut Transcript, change: TranscriptEntry) -> bool {
+        let holding = transcript.holding(&change);
+        for &thread in &holding {
+            transcript.record_change(thread, change.clone());
+        }
+        !holding.is_empty()
+    }
+
+    /// `transcript` as a store gives it back (`Transcript::loaded`): the branch of every thread
+    /// it has a head for, read from its root, with nothing to store.
+    fn reloaded(transcript: &Transcript) -> Transcript {
+        let heads = transcript.changes().expect("not stored").heads;
+        let branches = heads
+            .into_keys()
+            .map(|thread| (thread, transcript.entries(thread).cloned().collect()))
+            .collect();
+        Transcript::loaded(transcript.end(), branches).expect("a transcript")
+    }
+
+    /// Every entry `transcript` added and did not store yet: all it holds, of a transcript never
+    /// stored.
+    fn unstored(transcript: &Transcript) -> Vec<Node<TranscriptEntry>> {
+        transcript.changes().map(|changes| changes.entries).unwrap_or_default()
+    }
 
     #[test]
     fn a_transcript_started_anew_holds_what_comes_after_and_keeps_what_it_held_as_a_branch() {
@@ -623,12 +838,12 @@ mod tests {
         let ids = |entries: Vec<&Node<TranscriptEntry>>| {
             entries.into_iter().filter_map(|e| e.entry.message()).map(|m| m.id).collect::<Vec<_>>()
         };
-        assert_eq!(transcript.start_anew(), None, "it held nothing");
-        transcript.extend(vec![make_message(id(1)), make_message(id(2))]);
-        let first = transcript.start_anew().expect("what it held");
-        assert!(transcript.messages().is_empty(), "nothing new yet");
-        transcript.extend(vec![make_message(id(3))]);
-        let second = transcript.start_anew().expect("what it held since");
+        assert_eq!(transcript.start_anew(ThreadId::default()), None, "it held nothing");
+        transcript.extend(ThreadId::default(), vec![make_message(id(1)), make_message(id(2))]);
+        let first = transcript.start_anew(ThreadId::default()).expect("what it held");
+        assert!(transcript.messages(ThreadId::default()).is_empty(), "nothing new yet");
+        transcript.extend(ThreadId::default(), vec![make_message(id(3))]);
+        let second = transcript.start_anew(ThreadId::default()).expect("what it held since");
         assert_eq!(ids(transcript.prefix(&first).unwrap()), vec![id(1), id(2)]);
         assert_eq!(
             ids(transcript.prefix(&second).unwrap()),
@@ -636,10 +851,153 @@ mod tests {
             "only what came after the first"
         );
         assert_eq!(
-            ids(transcript.all_entries().collect()),
+            ids(unstored(&transcript).iter().collect()),
             vec![id(1), id(2), id(3)],
             "all it ever held, in order"
         );
+    }
+
+    /// Issue 602: a branch for every thread, each with a head of its own; an entry with the
+    /// digest of one held is that entry, whichever branch added it; what a thread said is on its
+    /// branch alone.
+    #[test]
+    fn every_thread_has_a_branch_of_its_own_and_the_same_entry_is_held_once() {
+        let (line, side) = (ThreadId::new(), ThreadId::new());
+        let mut transcript = Transcript::default();
+        transcript.push(line, make_message(id(1)));
+        transcript.push(side, make_message(id(1)));
+        assert_eq!(transcript.digest(line), transcript.digest(side), "the same entry");
+        transcript.push(line, make_message(id(2)));
+        transcript.push(side, make_message(id(3)));
+
+        let ids = |thread| transcript.messages(thread).iter().map(|m| m.id).collect::<Vec<_>>();
+        assert_eq!((ids(line), ids(side)), (vec![id(1), id(2)], vec![id(1), id(3)]));
+        assert_eq!(transcript.end().get(), 3, "the first entry held once, positions given once");
+        let changes = transcript.changes().expect("not stored");
+        assert_eq!(
+            changes.heads,
+            BTreeMap::from([(line, Position::new(1)), (side, Position::new(2))]),
+            "the head of each thread, by its position"
+        );
+        let loaded = reloaded(&transcript);
+        assert_eq!(
+            (loaded.digest(line), loaded.digest(side)),
+            (transcript.digest(line), transcript.digest(side)),
+            "and so it is loaded"
+        );
+    }
+
+    /// Issue 602: a branch forked from another begins as that one stood at the message its thread
+    /// hangs at, however far it went on since, goes on its own way from there, and is stored and
+    /// loaded with a head of its own; at a message the other does not hold, it is forked whole;
+    /// forked from a thread without a branch, it begins at the root.
+    #[test]
+    fn a_branch_forked_begins_as_the_other_stood_at_its_message_and_goes_on_its_own_way() {
+        let (line, side) = (ThreadId::new(), ThreadId::new());
+        let (later, fresh) = (ThreadId::new(), ThreadId::new());
+        let mut transcript = Transcript::default();
+        let messages = [1, 2, 3].map(|n| make_message(id(n)));
+        transcript.extend(line, messages.to_vec());
+        transcript.fork(side, ThreadOrigin { thread: line, message: id(2) });
+        transcript.push(side, make_message(id(4)));
+        transcript.push(line, make_message(id(5)));
+        let ids = |transcript: &Transcript, thread| {
+            transcript.messages(thread).iter().map(|m| m.id).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            ids(&transcript, side),
+            [id(1), id(2), id(4)],
+            "up to its message, then its own"
+        );
+        assert_eq!(ids(&transcript, line), [id(1), id(2), id(3), id(5)], "nothing of the side");
+        let loaded = reloaded(&transcript);
+        assert_eq!(ids(&loaded, side), ids(&transcript, side), "loaded from its own head");
+
+        transcript.fork(later, ThreadOrigin { thread: line, message: id(9) });
+        assert_eq!(transcript.digest(later), transcript.digest(line), "not taken in yet: whole");
+        transcript.fork(fresh, ThreadOrigin { thread: ThreadId::new(), message: id(1) });
+        assert_eq!(transcript.digest(fresh), None, "nothing to fork from: no branch yet");
+    }
+
+    /// Issue 602: a change of a message is recorded on every branch that holds it, and on no
+    /// other.
+    #[test]
+    fn a_change_is_recorded_on_every_branch_that_holds_the_message() {
+        let (line, side, other) = (ThreadId::new(), ThreadId::new(), ThreadId::new());
+        let mut transcript = Transcript::default();
+        transcript.push(line, make_message(id(1)));
+        transcript.push(side, make_message(id(1)));
+        transcript.push(other, make_message(id(2)));
+        let corrected = Message { content: Some("corrected".to_string()), ..make_message(id(1)) };
+
+        assert!(change(&mut transcript, TranscriptEntry::Modified { message: corrected }));
+        let content = |thread| transcript.messages(thread)[0].content.clone().unwrap_or_default();
+        assert_eq!(
+            (content(line), content(side)),
+            ("corrected".to_string(), "corrected".to_string())
+        );
+        assert_eq!(content(other), "hello", "a branch without it is left as it is");
+        assert!(change(
+            &mut transcript,
+            TranscriptEntry::Revoked { message: id(2), at: Utc::now() }
+        ));
+        assert!(
+            transcript.messages(other).is_empty()
+                && !change(
+                    &mut transcript,
+                    TranscriptEntry::Revoked { message: id(2), at: Utc::now() }
+                )
+        );
+    }
+
+    /// Issues 380, 602: what no head reaches stays until it is stored - every position given
+    /// reaches the store -, and goes then; what a head reaches stays.
+    #[test]
+    fn what_no_head_reaches_is_let_go_once_it_is_stored() {
+        let (line, side) = (ThreadId::new(), ThreadId::new());
+        let mut transcript = Transcript::default();
+        transcript.push(line, make_message(id(1)));
+        transcript.push(side, make_message(id(2)));
+        let left = transcript.start_anew(line).expect("what it held");
+        transcript.push(line, make_message(id(3)));
+
+        let changes = transcript.changes().expect("not stored");
+        assert_eq!(changes.entries.len(), 3, "also what no head reaches");
+        transcript.keep_window();
+        assert!(transcript.prefix(&left).is_some(), "nothing goes before it is stored");
+        transcript.mark_stored();
+        transcript.keep_window();
+        assert!(transcript.prefix(&left).is_none(), "what no head reaches is the store's");
+        assert_eq!(
+            (transcript.messages(line).len(), transcript.messages(side).len()),
+            (1, 1),
+            "what a head reaches stays"
+        );
+        assert!(transcript.changes().is_none(), "nothing to store");
+    }
+
+    /// What a store gives back is a branch from a root for every thread, within its end.
+    #[test]
+    fn a_transcript_is_loaded_only_from_branches_that_go_from_a_root() {
+        let line = ThreadId::new();
+        let mut transcript = Transcript::default();
+        transcript.extend(line, vec![make_message(id(1)), make_message(id(2))]);
+        let nodes = unstored(&transcript);
+        let loaded = |path: Vec<Node<TranscriptEntry>>, end: u64| {
+            Transcript::loaded(Position::new(end), BTreeMap::from([(line, path)]))
+        };
+        assert!(loaded(nodes.clone(), 2).is_ok());
+        assert!(loaded(vec![nodes[1].clone()], 2).is_err(), "not from a root");
+        assert!(loaded(nodes.clone(), 1).is_err(), "past the end");
+        let moved = Node { seq: Position::new(0), ..nodes[1].clone() };
+        let two = Transcript::loaded(
+            Position::new(2),
+            BTreeMap::from([
+                (line, nodes.clone()),
+                (ThreadId::new(), vec![nodes[0].clone(), moved]),
+            ]),
+        );
+        assert!(two.is_err(), "two entries at one position");
     }
 
     #[test]
@@ -647,14 +1005,25 @@ mod tests {
         let source =
             KnowledgeSource::entity::<Workspace>(WorkspaceId::new(), Some(digest::prompt("steps")));
         let (mut given, mut said) = (Transcript::default(), Transcript::default());
-        given.push(make_message(id(1)));
-        said.push(make_message(id(1)));
-        given.give(make_message(id(2)), Some(GivenSource::Knowledge(source.clone())));
-        said.push(make_message(id(2)));
-        assert_eq!(given.digest(), said.digest(), "the model is given the same");
-        assert_eq!(given.messages().iter().map(|m| m.id).collect::<Vec<_>>(), [id(1), id(2)]);
-        assert_eq!(known(given.all_entries(), id(2)).map(|m| m.id), Some(id(2)));
-        let entry = &given.last().unwrap().entry;
+        given.push(ThreadId::default(), make_message(id(1)));
+        said.push(ThreadId::default(), make_message(id(1)));
+        given.give(
+            ThreadId::default(),
+            make_message(id(2)),
+            Some(GivenSource::Knowledge(source.clone())),
+        );
+        said.push(ThreadId::default(), make_message(id(2)));
+        assert_eq!(
+            given.digest(ThreadId::default()),
+            said.digest(ThreadId::default()),
+            "the model is given the same"
+        );
+        assert_eq!(
+            given.messages(ThreadId::default()).iter().map(|m| m.id).collect::<Vec<_>>(),
+            [id(1), id(2)]
+        );
+        assert_eq!(known(given.entries(ThreadId::default()), id(2)).map(|m| m.id), Some(id(2)));
+        let entry = &given.last(ThreadId::default()).unwrap().entry;
         assert!(
             matches!(entry, TranscriptEntry::Given { source: Some(GivenSource::Knowledge(s)), .. } if *s == source),
             "and keeps what it is"
@@ -666,8 +1035,8 @@ mod tests {
     fn message_context_empty_state() {
         let context = Transcript::default();
 
-        assert_eq!(context.digest(), None);
-        assert!(context.messages().is_empty());
+        assert_eq!(context.digest(ThreadId::default()), None);
+        assert!(context.messages(ThreadId::default()).is_empty());
     }
 
     #[test]
@@ -675,19 +1044,22 @@ mod tests {
         let (m1, m2, m3) = (make_message(id(1)), make_message(id(2)), make_message(id(3)));
 
         let mut context = Transcript::default();
-        let before: Vec<_> = [&m1, &m2, &m3].into_iter().map(|m| context.push(m.clone())).collect();
+        let before: Vec<_> = [&m1, &m2, &m3]
+            .into_iter()
+            .map(|m| context.push(ThreadId::default(), m.clone()))
+            .collect();
 
         let d1 = message_chain(None, &m1);
         let d2 = message_chain(Some(&d1), &m2);
         let d3 = message_chain(Some(&d2), &m3);
-        assert_eq!(context.digest(), Some(d3));
+        assert_eq!(context.digest(ThreadId::default()), Some(d3));
         assert_eq!(
             before,
             vec![None, Some(d1), Some(d2)],
             "each message with the context it came after"
         );
         assert_eq!(
-            context.messages().iter().map(|m| m.id).collect::<Vec<_>>(),
+            context.messages(ThreadId::default()).iter().map(|m| m.id).collect::<Vec<_>>(),
             vec![m1.id, m2.id, m3.id]
         );
     }
@@ -697,22 +1069,25 @@ mod tests {
         let messages = vec![make_message(id(11)), make_message(id(12)), make_message(id(13))];
 
         let mut extend_context = Transcript::default();
-        extend_context.extend(messages.clone());
+        extend_context.extend(ThreadId::default(), messages.clone());
 
         let mut push_context = Transcript::default();
         for message in messages {
-            push_context.push(message);
+            push_context.push(ThreadId::default(), message);
         }
 
-        assert_eq!(extend_context.digest(), push_context.digest());
+        assert_eq!(
+            extend_context.digest(ThreadId::default()),
+            push_context.digest(ThreadId::default())
+        );
     }
 
     #[test]
     fn a_digest_names_the_prefix_it_was_taken_at() {
         let mut context = Transcript::default();
-        context.extend(vec![make_message(id(1)), make_message(id(2))]);
-        let at_two = context.digest().unwrap();
-        context.push(make_message(id(3)));
+        context.extend(ThreadId::default(), vec![make_message(id(1)), make_message(id(2))]);
+        let at_two = context.digest(ThreadId::default()).unwrap();
+        context.push(ThreadId::default(), make_message(id(3)));
 
         let prefix = context.prefix(&at_two).expect("an earlier digest names a prefix");
         assert_eq!(
@@ -725,18 +1100,17 @@ mod tests {
     #[test]
     fn digests_are_kept_as_recorded() {
         let mut context = Transcript::default();
-        context.extend(vec![make_message(id(1)), make_message(id(2))]);
+        context.extend(ThreadId::default(), vec![make_message(id(1)), make_message(id(2))]);
 
         // What was recorded stands, even if today's scheme would compute
         // something else - as it will for anything recorded under an
         // earlier version of it.
         let recorded = digest::prompt("recorded under another scheme");
-        let mut stored = serde_json::to_value(&context).unwrap();
-        stored["entries"][1]["digest"] = Value::String(recorded.to_string());
-        stored["entries"][0]["active_child"] = Value::String(recorded.to_string());
-        stored["head"] = Value::String(recorded.to_string());
-        let loaded: Transcript = serde_json::from_value(stored).unwrap();
-        assert_eq!(loaded.digest(), Some(recorded));
+        let mut stored = unstored(&context);
+        stored[1].digest = recorded;
+        let branches = BTreeMap::from([(ThreadId::default(), stored)]);
+        let loaded = Transcript::loaded(context.end(), branches).expect("a transcript");
+        assert_eq!(loaded.digest(ThreadId::default()), Some(recorded));
         assert!(loaded.prefix(&recorded).is_some(), "and references to it resolve");
     }
 
@@ -755,44 +1129,46 @@ mod tests {
     fn with_a_turn_given_up() -> (Transcript, TurnId) {
         let turn = TurnId::new();
         let mut transcript = Transcript::default();
-        transcript.push(make_message(id(1)));
-        transcript.extend(vec![of_turn(turn, 2), of_turn(turn, 3)]);
-        transcript.record(given_up(
-            turn,
-            GivenUpReason::Failed { message: "boom".to_string() },
-            Utc::now(),
-        ));
-        transcript.push(make_message(id(4)));
+        transcript.push(ThreadId::default(), make_message(id(1)));
+        transcript.extend(ThreadId::default(), vec![of_turn(turn, 2), of_turn(turn, 3)]);
+        transcript.record(
+            ThreadId::default(),
+            given_up(turn, GivenUpReason::Failed { message: "boom".to_string() }, Utc::now()),
+        );
+        transcript.push(ThreadId::default(), make_message(id(4)));
         (transcript, turn)
     }
 
     /// How the turn `turn` ended, as the entries of `transcript` on its
-    /// active path say.
+    /// branch say.
     fn end_of(transcript: &Transcript, turn: TurnId) -> Option<TranscriptEntry> {
-        transcript.entries().map(|n| n.entry.clone()).find(|e| e.ended_turn() == Some(turn))
+        transcript
+            .entries(ThreadId::default())
+            .map(|n| n.entry.clone())
+            .find(|e| e.ended_turn() == Some(turn))
     }
 
     #[test]
     fn a_turn_given_up_keeps_what_it_said_and_is_recorded_after_it() {
         let (transcript, turn) = with_a_turn_given_up();
-        let loaded: Transcript =
-            serde_json::from_value(serde_json::to_value(&transcript).unwrap()).unwrap();
+        let loaded = reloaded(&transcript);
         assert!(matches!(
             end_of(&loaded, turn),
             Some(TranscriptEntry::TurnGivenUp { reason: GivenUpReason::Failed { .. }, .. })
         ));
         assert_eq!(
-            loaded.messages().iter().map(|m| m.id).collect::<Vec<_>>(),
+            loaded.messages(ThreadId::default()).iter().map(|m| m.id).collect::<Vec<_>>(),
             [id(1), id(2), id(3), id(4)],
             "what it said is not unsaid"
         );
-        let entries: Vec<_> = loaded.entries().map(|n| n.entry.ended_turn().is_some()).collect();
+        let entries: Vec<_> =
+            loaded.entries(ThreadId::default()).map(|n| n.entry.ended_turn().is_some()).collect();
         assert_eq!(
             entries,
             [false, false, false, true, false],
-            "its end on the active path, after its messages"
+            "its end on the branch, after its messages"
         );
-        assert_eq!(loaded.all_entries().count(), 5, "and nothing branches");
+        assert_eq!(unstored(&transcript).len(), 5, "and nothing branches");
     }
 
     #[test]
@@ -800,32 +1176,32 @@ mod tests {
         let (transcript, turn) = with_a_turn_given_up();
         let ended = |end: TranscriptEntry| {
             let mut other = Transcript::default();
-            other.push(make_message(id(1)));
-            other.extend(vec![of_turn(turn, 2), of_turn(turn, 3)]);
-            other.record(end);
-            other.push(make_message(id(4)));
-            other.digest()
+            other.push(ThreadId::default(), make_message(id(1)));
+            other.extend(ThreadId::default(), vec![of_turn(turn, 2), of_turn(turn, 3)]);
+            other.record(ThreadId::default(), end);
+            other.push(ThreadId::default(), make_message(id(4)));
+            other.digest(ThreadId::default())
         };
         let boom = GivenUpReason::Failed { message: "boom".to_string() };
         let earlier = Utc::now() - Duration::hours(1);
         assert_eq!(
             ended(given_up(turn, boom.clone(), earlier)),
-            transcript.digest(),
+            transcript.digest(ThreadId::default()),
             "the same end at another time"
         );
         assert_ne!(
             ended(given_up(turn, GivenUpReason::Left, earlier)),
-            transcript.digest(),
+            transcript.digest(ThreadId::default()),
             "another reason"
         );
         assert_ne!(
             ended(given_up(TurnId::new(), boom, earlier)),
-            transcript.digest(),
+            transcript.digest(ThreadId::default()),
             "another turn"
         );
         assert_ne!(
             ended(TranscriptEntry::TurnFinished { turn_id: turn, at: earlier }),
-            transcript.digest(),
+            transcript.digest(ThreadId::default()),
             "taken over"
         );
     }
@@ -833,20 +1209,25 @@ mod tests {
     #[test]
     fn a_turn_given_up_reaches_the_stored_transcript_as_changes() {
         let mut transcript = Transcript::default();
-        transcript.push(make_message(id(1)));
-        let mut stored: Transcript =
-            serde_json::from_value(serde_json::to_value(&transcript).unwrap()).unwrap();
+        transcript.push(ThreadId::default(), make_message(id(1)));
         transcript.mark_stored();
 
         let turn = TurnId::new();
-        transcript.extend(vec![of_turn(turn, 2), of_turn(turn, 3)]);
-        transcript.record(given_up(turn, GivenUpReason::Left, Utc::now()));
-        transcript.push(make_message(id(4)));
+        transcript.extend(ThreadId::default(), vec![of_turn(turn, 2), of_turn(turn, 3)]);
+        transcript.record(ThreadId::default(), given_up(turn, GivenUpReason::Left, Utc::now()));
+        transcript.push(ThreadId::default(), make_message(id(4)));
 
-        stored.apply(transcript.changes().expect("changed")).unwrap();
-        assert_eq!(stored.digest(), transcript.digest());
+        let changes = transcript.changes().expect("changed");
         assert_eq!(
-            stored.messages().iter().map(|m| m.id).collect::<Vec<_>>(),
+            changes.entries.iter().map(|n| n.seq.get()).collect::<Vec<_>>(),
+            [1, 2, 3, 4],
+            "what was added since"
+        );
+        assert_eq!(changes.heads, BTreeMap::from([(ThreadId::default(), Position::new(4))]));
+        let stored = reloaded(&transcript);
+        assert_eq!(stored.digest(ThreadId::default()), transcript.digest(ThreadId::default()));
+        assert_eq!(
+            stored.messages(ThreadId::default()).iter().map(|m| m.id).collect::<Vec<_>>(),
             [id(1), id(2), id(3), id(4)]
         );
         assert!(
@@ -862,29 +1243,39 @@ mod tests {
             messages.into_iter().map(|m| m.content.unwrap_or_default()).collect::<Vec<_>>()
         };
         let mut transcript = Transcript::default();
-        transcript.extend(vec![
-            make_message(id(1)),
-            Message { content: Some("second".to_string()), ..make_message(id(2)) },
-        ]);
-        let before = transcript.digest().unwrap();
+        transcript.extend(
+            ThreadId::default(),
+            vec![
+                make_message(id(1)),
+                Message { content: Some("second".to_string()), ..make_message(id(2)) },
+            ],
+        );
+        let before = transcript.digest(ThreadId::default()).unwrap();
 
-        assert!(transcript.modify(Message {
+        let corrected = Message {
             content: Some("corrected".to_string()),
             timestamp: at,
             ..make_message(id(1))
-        }));
-        assert!(transcript.revoke(id(2), at));
-        assert!(!transcript.revoke(id(2), at), "taken back already");
+        };
+        assert!(change(&mut transcript, TranscriptEntry::Modified { message: corrected }));
+        assert!(change(&mut transcript, TranscriptEntry::Revoked { message: id(2), at }));
         assert!(
-            !transcript
-                .modify(Message { content: Some("too late".to_string()), ..make_message(id(2)) }),
+            !change(&mut transcript, TranscriptEntry::Revoked { message: id(2), at }),
             "taken back already"
         );
-        assert!(!transcript.revoke(id(9), at), "never given");
-        transcript.push(make_message(id(3)));
+        let too_late = Message { content: Some("too late".to_string()), ..make_message(id(2)) };
+        assert!(
+            !change(&mut transcript, TranscriptEntry::Modified { message: too_late }),
+            "taken back already"
+        );
+        assert!(
+            !change(&mut transcript, TranscriptEntry::Revoked { message: id(9), at }),
+            "never given"
+        );
+        transcript.push(ThreadId::default(), make_message(id(3)));
 
         assert_eq!(
-            texts(transcript.messages()),
+            texts(transcript.messages(ThreadId::default())),
             ["corrected", "hello"],
             "as it stands, without what was taken back"
         );
@@ -895,18 +1286,18 @@ mod tests {
             ["hello", "second"],
             "a digest taken before names what was given then"
         );
-        let entries =
-            as_they_stand(transcript.entries()).map(|(_, m)| m.map(|m| m.id)).collect::<Vec<_>>();
+        let entries = as_they_stand(transcript.entries(ThreadId::default()))
+            .map(|(_, m)| m.map(|m| m.id))
+            .collect::<Vec<_>>();
         assert_eq!(
             entries,
             [Some(id(1)), None, None, None, Some(id(3))],
             "every entry stays, in its place"
         );
 
-        let loaded: Transcript =
-            serde_json::from_value(serde_json::to_value(&transcript).unwrap()).unwrap();
-        assert_eq!(texts(loaded.messages()), ["corrected", "hello"]);
-        assert_eq!(loaded.digest(), transcript.digest());
+        let loaded = reloaded(&transcript);
+        assert_eq!(texts(loaded.messages(ThreadId::default())), ["corrected", "hello"]);
+        assert_eq!(loaded.digest(ThreadId::default()), transcript.digest(ThreadId::default()));
     }
 
     #[test]
@@ -916,21 +1307,38 @@ mod tests {
             messages.into_iter().map(|m| m.classification).collect::<Vec<_>>()
         };
         let mut transcript = Transcript::default();
-        transcript.extend(vec![make_message(id(1)), make_message(id(2))]);
-        let mut stored: Transcript =
-            serde_json::from_value(serde_json::to_value(&transcript).unwrap()).unwrap();
+        transcript.extend(ThreadId::default(), vec![make_message(id(1)), make_message(id(2))]);
         transcript.mark_stored();
-        let before = transcript.digest().unwrap();
+        let before = transcript.digest(ThreadId::default()).unwrap();
 
-        assert!(transcript.reclassify(id(1), public.clone()));
-        assert_ne!(transcript.digest(), Some(before), "recorded: the digest covers it");
-        transcript.revoke(id(2), Utc::now());
-        assert!(!transcript.reclassify(id(2), public.clone()), "taken back");
-        assert!(!transcript.reclassify(id(9), public.clone()), "never given");
+        assert!(change(
+            &mut transcript,
+            TranscriptEntry::Reclassified { message: id(1), classification: public.clone() }
+        ));
+        assert_ne!(
+            transcript.digest(ThreadId::default()),
+            Some(before),
+            "recorded: the digest covers it"
+        );
+        change(&mut transcript, TranscriptEntry::Revoked { message: id(2), at: Utc::now() });
+        assert!(
+            !change(
+                &mut transcript,
+                TranscriptEntry::Reclassified { message: id(2), classification: public.clone() }
+            ),
+            "taken back"
+        );
+        assert!(
+            !change(
+                &mut transcript,
+                TranscriptEntry::Reclassified { message: id(9), classification: public.clone() }
+            ),
+            "never given"
+        );
 
         let internal = make_message(id(1)).classification;
         assert_eq!(
-            classifications(transcript.messages()),
+            classifications(transcript.messages(ThreadId::default())),
             slice::from_ref(&public),
             "as it stands"
         );
@@ -942,40 +1350,46 @@ mod tests {
             "a digest taken before names what was given then"
         );
 
-        stored.apply(transcript.changes().expect("changed")).unwrap();
-        assert_eq!(stored.digest(), transcript.digest());
-        assert_eq!(classifications(stored.messages()), [public]);
+        let changes = transcript.changes().expect("changed");
+        assert!(
+            changes.entries.iter().any(|n| matches!(n.entry, TranscriptEntry::Reclassified { .. })),
+            "the reclassification is what changed"
+        );
+        let stored = reloaded(&transcript);
+        assert_eq!(stored.digest(ThreadId::default()), transcript.digest(ThreadId::default()));
+        assert_eq!(classifications(stored.messages(ThreadId::default())), [public]);
     }
 
     #[test]
     fn a_message_is_found_on_whichever_branch_holds_it_as_it_stands_there() {
         let at = Utc::now();
         let mut transcript = Transcript::default();
-        transcript.extend(vec![make_message(id(1)), make_message(id(2))]);
-        assert!(transcript.modify(Message {
+        transcript.extend(ThreadId::default(), vec![make_message(id(1)), make_message(id(2))]);
+        let corrected = Message {
             content: Some("corrected".to_string()),
             timestamp: at,
             ..make_message(id(1))
-        }));
-        transcript.revoke(id(2), at);
-        transcript.start_anew();
-        transcript.push(make_message(id(3)));
+        };
+        assert!(change(&mut transcript, TranscriptEntry::Modified { message: corrected }));
+        change(&mut transcript, TranscriptEntry::Revoked { message: id(2), at });
+        transcript.start_anew(ThreadId::default());
+        transcript.push(ThreadId::default(), make_message(id(3)));
 
         assert_eq!(
-            known(transcript.all_entries(), id(1)).and_then(|m| m.content).as_deref(),
+            known(unstored(&transcript).iter(), id(1)).and_then(|m| m.content).as_deref(),
             Some("corrected"),
-            "off the active path, with its change"
+            "on no branch, with its change"
         );
         assert!(
-            known(transcript.all_entries(), id(2)).is_some_and(|m| m.revoked.is_some()),
+            known(unstored(&transcript).iter(), id(2)).is_some_and(|m| m.revoked.is_some()),
             "taken back"
         );
         assert_eq!(
-            known(transcript.all_entries(), id(3)).map(|m| m.id),
+            known(unstored(&transcript).iter(), id(3)).map(|m| m.id),
             Some(id(3)),
-            "on the active path"
+            "on the branch"
         );
-        assert!(known(transcript.all_entries(), id(9)).is_none(), "never held");
+        assert!(known(unstored(&transcript).iter(), id(9)).is_none(), "never held");
     }
 
     #[test]
@@ -998,14 +1412,17 @@ mod tests {
     }
 
     #[test]
-    fn a_change_applies_only_on_the_active_path() {
+    fn a_change_applies_only_on_a_branch_that_holds_the_message() {
         let mut transcript = Transcript::default();
-        transcript.push(make_message(id(1)));
-        let fork = transcript.digest();
-        transcript.push(make_message(id(2)));
-        transcript.move_head(fork.as_ref());
-        assert!(!transcript.revoke(id(2), Utc::now()), "not given to the model any more");
-        assert_eq!(transcript.all_entries().len(), 2, "nothing recorded");
+        transcript.push(ThreadId::default(), make_message(id(1)));
+        transcript.push(ThreadId::default(), make_message(id(2)));
+        transcript.start_anew(ThreadId::default());
+        transcript.push(ThreadId::default(), make_message(id(1)));
+        assert!(
+            !change(&mut transcript, TranscriptEntry::Revoked { message: id(2), at: Utc::now() }),
+            "not given to the model any more"
+        );
+        assert_eq!(unstored(&transcript).len(), 2, "nothing recorded, the first entry the same");
     }
 
     /// Issues 16, 387, 389: a compaction writes a branch of its own - the
@@ -1015,35 +1432,46 @@ mod tests {
     fn a_compaction_begins_a_branch_of_its_own_and_says_where_the_old_entries_stand_on_it() {
         let mut transcript = Transcript::default();
         assert_eq!(
-            transcript.compact(vec![(make_message(id(9)), None)], None),
+            transcript.compact(ThreadId::default(), vec![(make_message(id(9)), None)], None),
             None,
             "not an empty transcript"
         );
         let turn = TurnId::new();
-        transcript.push(make_message(id(1)));
-        transcript.push(make_message(id(2)));
-        transcript.record(TranscriptEntry::TurnFinished { turn_id: turn, at: Utc::now() });
-        transcript.extend(vec![make_message(id(3)), make_message(id(4))]);
-        transcript.modify(Message { content: Some("changed".to_string()), ..make_message(id(3)) });
-        transcript.revoke(id(4), Utc::now());
-        transcript.record(TranscriptEntry::Compacted { at: Utc::now() });
-        let old: Vec<Digest> = transcript.entries().map(|n| n.digest).collect();
-        let head = transcript.digest();
+        transcript.push(ThreadId::default(), make_message(id(1)));
+        transcript.push(ThreadId::default(), make_message(id(2)));
+        transcript.record(
+            ThreadId::default(),
+            TranscriptEntry::TurnFinished { turn_id: turn, at: Utc::now() },
+        );
+        transcript.extend(ThreadId::default(), vec![make_message(id(3)), make_message(id(4))]);
+        let changed = Message { content: Some("changed".to_string()), ..make_message(id(3)) };
+        change(&mut transcript, TranscriptEntry::Modified { message: changed });
+        change(&mut transcript, TranscriptEntry::Revoked { message: id(4), at: Utc::now() });
+        transcript.record(ThreadId::default(), TranscriptEntry::Compacted { at: Utc::now() });
+        let old: Vec<Digest> = transcript.entries(ThreadId::default()).map(|n| n.digest).collect();
+        let head = transcript.digest(ThreadId::default());
 
-        assert_eq!(transcript.compact(Vec::new(), None), None, "not to nothing");
         assert_eq!(
-            transcript.compact(Vec::new(), old.last().copied()),
+            transcript.compact(ThreadId::default(), Vec::new(), None),
+            None,
+            "not to nothing"
+        );
+        assert_eq!(
+            transcript.compact(ThreadId::default(), Vec::new(), old.last().copied()),
             None,
             "nor to an earlier compaction's end alone"
         );
         assert_eq!(
-            transcript
-                .compact(vec![(make_message(id(9)), None)], Some(digest::prompt("elsewhere"))),
+            transcript.compact(
+                ThreadId::default(),
+                vec![(make_message(id(9)), None)],
+                Some(digest::prompt("elsewhere"))
+            ),
             None,
-            "not from what is not on the active path"
+            "not from what is not on the branch"
         );
         assert_eq!(
-            (transcript.digest(), transcript.all_entries().len()),
+            (transcript.digest(ThreadId::default()), unstored(&transcript).len()),
             (head, old.len()),
             "nothing changed"
         );
@@ -1052,6 +1480,7 @@ mod tests {
             KnowledgeSource::entity::<Workspace>(WorkspaceId::new(), Some(digest::prompt("steps")));
         let moved = transcript
             .compact(
+                ThreadId::default(),
                 vec![
                     (make_message(id(10)), None),
                     (make_message(id(11)), Some(GivenSource::Knowledge(source.clone()))),
@@ -1060,7 +1489,7 @@ mod tests {
             )
             .expect("compacted");
 
-        let new: Vec<_> = transcript.entries().collect();
+        let new: Vec<_> = transcript.entries(ThreadId::default()).collect();
         let entries: Vec<(&str, Option<MessageId>)> = new
             .iter()
             .map(|n| match &n.entry {
@@ -1108,22 +1537,26 @@ mod tests {
     fn a_compaction_keeps_the_parts_that_stand_in_what_it_replaces() {
         let part = |component: &str| Some(GivenSource::Part(component.to_string()));
         let mut transcript = Transcript::default();
-        transcript.give(make_message(id(1)), part("roster"));
-        transcript.give(make_message(id(2)), part("language"));
+        transcript.give(ThreadId::default(), make_message(id(1)), part("roster"));
+        transcript.give(ThreadId::default(), make_message(id(2)), part("language"));
         let lowered = TurnId::new();
-        transcript.give(of_turn(lowered, 5), part("briefing"));
+        transcript.give(ThreadId::default(), of_turn(lowered, 5), part("briefing"));
         let channel = Classification::PUBLIC;
-        transcript.record(given_up(lowered, GivenUpReason::Lowered { channel }, Utc::now()));
-        transcript.push(make_message(id(3)));
-        transcript.push(make_message(id(4)));
-        transcript.revoke(id(2), Utc::now());
-        let roster = transcript.entries().next().unwrap().digest;
-        let keep_from = transcript.entries().nth(5).map(|node| node.digest);
+        transcript.record(
+            ThreadId::default(),
+            given_up(lowered, GivenUpReason::Lowered { channel }, Utc::now()),
+        );
+        transcript.push(ThreadId::default(), make_message(id(3)));
+        transcript.push(ThreadId::default(), make_message(id(4)));
+        change(&mut transcript, TranscriptEntry::Revoked { message: id(2), at: Utc::now() });
+        let roster = transcript.entries(ThreadId::default()).next().unwrap().digest;
+        let keep_from = transcript.entries(ThreadId::default()).nth(5).map(|node| node.digest);
 
-        let moved =
-            transcript.compact(vec![(make_message(id(10)), None)], keep_from).expect("compacted");
+        let moved = transcript
+            .compact(ThreadId::default(), vec![(make_message(id(10)), None)], keep_from)
+            .expect("compacted");
 
-        let ids: Vec<_> = transcript.messages().iter().map(|m| m.id).collect();
+        let ids: Vec<_> = transcript.messages(ThreadId::default()).iter().map(|m| m.id).collect();
         assert_eq!(
             ids,
             [id(10), id(1), id(4)],
@@ -1131,12 +1564,12 @@ mod tests {
              one of a turn given up as lowered, which the model is given nothing of"
         );
         assert!(
-            matches!(&transcript.entries().nth(1).unwrap().entry, TranscriptEntry::Given { source, .. } if *source == part("roster")),
+            matches!(&transcript.entries(ThreadId::default()).nth(1).unwrap().entry, TranscriptEntry::Given { source, .. } if *source == part("roster")),
             "still the part of its component"
         );
         assert_eq!(
             moved.get(&roster).copied().flatten(),
-            Some(transcript.entries().nth(1).unwrap().digest),
+            Some(transcript.entries(ThreadId::default()).nth(1).unwrap().digest),
             "a part replaced stands at its copy"
         );
     }

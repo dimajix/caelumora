@@ -1159,11 +1159,14 @@ mod tests {
         let mut state = AgentChannelState::default();
         // One call: the question was given, the transcript started anew,
         // and the answer came of it.
-        state.transcript.extend(vec![question.clone()]);
-        let given = ContextRef { transcript: state.transcript.start_anew(), ..Default::default() };
+        state.transcript.extend(ThreadId::default(), vec![question.clone()]);
+        let given = ContextRef {
+            transcript: state.transcript.start_anew(ThreadId::default()),
+            ..Default::default()
+        };
         let frame = state.keep_frame(&given.frame);
         let later = said("later");
-        state.transcript.extend(vec![later.clone()]);
+        state.transcript.extend(ThreadId::default(), vec![later.clone()]);
         kernel
             .state_store()
             .put_agent_channel_state(remote.id, channel.id, &mut state)
@@ -1189,7 +1192,7 @@ mod tests {
             messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>()
         };
         assert_eq!(
-            texts(seen.transcript().messages()),
+            texts(seen.transcript().messages(ThreadId::default())),
             ["later"],
             "what it is given next, not what it was given or answered"
         );
@@ -1652,8 +1655,10 @@ mod tests {
         let hers = said(&alice, "hi");
         let step = Message { internal: true, ..said(&bob, "a step") };
         let notice = Message { role: MessageRole::System, ..said(&bob, "a notice") };
-        let asking =
-            Message { mentions: vec![ActorId::User(alice.id)], ..said(&bob, "@alice, a question") };
+        let asking = Message {
+            addressees: vec![ActorId::User(alice.id)],
+            ..said(&bob, "@alice, a question")
+        };
         // Alice and dave from the start, bob joined after dave's hello (issue 417).
         let context =
             EventContext::new(channel.session_id, channel.id, ActorId::None, String::new());
@@ -1681,7 +1686,8 @@ mod tests {
         }
         // Said in another thread (issue 557): left out of the line's view but where it mentions the
         // viewer, and counted there alone.
-        let aside = Message { mentions: vec![ActorId::User(bob.id)], ..said(&dave, "@bob, aside") };
+        let aside =
+            Message { addressees: vec![ActorId::User(bob.id)], ..said(&dave, "@bob, aside") };
         let elsewhere = EventContext { thread_id: ThreadId::new(), ..context };
         state.history.push(&elsewhere, aside.clone());
         manager.kernel().state_store().put_channel_state(channel.id, &mut state).await.unwrap();
@@ -1871,7 +1877,7 @@ mod tests {
             NoteOrigin::default(),
             MessageId::default(),
         );
-        agent_state.transcript.push(first.clone());
+        agent_state.transcript.push(ThreadId::default(), first.clone());
         kernel
             .state_store()
             .put_agent_channel_state(helper.id, channel.id, &mut agent_state)
@@ -1943,7 +1949,7 @@ mod tests {
         let agent = for_alice.participant(ActorId::Agent(helper.id)).await.unwrap();
         let seen = agent.context().await.expect("alice made the agent");
         assert_eq!(seen.private_notes().0[0].text, "mine");
-        assert_eq!(seen.transcript().messages().len(), 1);
+        assert_eq!(seen.transcript().messages(ThreadId::default()).len(), 1);
         assert!(
             matches!(seen.context_of(first.id).await, Err(AgentContextError::NotRecorded { .. })),
             "the agent did not produce it"
@@ -2230,7 +2236,7 @@ mod tests {
         // The agent's turn waits for one call, the other was approved.
         let calls = vec![make_tool_call("delete")];
         let mut state = waiting_for_approval(session.id, channel.id, helper.id, calls);
-        let turn = state.turn.as_mut().expect("a turn");
+        let turn = state.thread_mut(ThreadId::line(channel.id)).turn.as_mut().expect("a turn");
         let waiting = turn.tool_calls.first().and_then(ToolCallState::approval_id);
         turn.tool_calls.push(ToolCallState::approved(make_tool_call("echo")));
         kernel
@@ -2280,11 +2286,9 @@ mod tests {
             ..Message::new(Classification::CHANNEL_DEFAULT)
         };
         let calls = vec![make_tool_call("delete")];
-        let mut state = AgentChannelState {
-            used: TokenUsage::counted(None, &answer),
-            ..waiting_for_approval(session.id, channel.id, helper.id, calls)
-        };
-        state.transcript.push(answer);
+        let mut state = waiting_for_approval(session.id, channel.id, helper.id, calls);
+        state.thread_mut(ThreadId::line(channel.id)).used = TokenUsage::counted(None, &answer);
+        state.transcript.push(ThreadId::default(), answer);
         state.notes.push(
             Change::Add {
                 id: NoteId(1),
@@ -3042,9 +3046,10 @@ mod tests {
 
         let writer = hr.user_actor(alice.id).expect("the creator takes part");
         let mut events = writer.watch();
-        writer.send_message(Some("for HR".to_string()), None, Vec::new()).await.unwrap();
+        writer.send_message(None, Some("for HR".to_string()), None, Vec::new()).await.unwrap();
         writer
             .send_message(
+                None,
                 Some("for finance too".to_string()),
                 Some(classified(Confidentiality::Internal, &["hr", "finance"])),
                 Vec::new(),
@@ -3053,6 +3058,7 @@ mod tests {
             .unwrap();
         writer
             .send_message(
+                None,
                 Some("too secret".to_string()),
                 Some(classified(Confidentiality::Confidential, &["hr"])),
                 Vec::new(),
@@ -3169,7 +3175,7 @@ mod tests {
         channel
             .user_actor(alice.id)
             .unwrap()
-            .send_message(Some("hello".to_string()), None, Vec::new())
+            .send_message(None, Some("hello".to_string()), None, Vec::new())
             .await
             .unwrap();
         let ActorEvent::ResponseStarted { turn_id } = started.await else { unreachable!() };

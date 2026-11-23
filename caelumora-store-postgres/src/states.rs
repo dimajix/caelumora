@@ -13,7 +13,7 @@ use caelumora_domain::agent::{AgentChannelState, AgentId};
 use caelumora_domain::channel::{ChannelId, ChannelState};
 use caelumora_domain::store::{Journaled, StoreError, StoreResult};
 use caelumora_domain::user::{UserChannelState, UserId};
-use caelumora_store::transcript::load_named_by_turn;
+use caelumora_store::transcript::load_named_by_turns;
 use caelumora_store::StateStore;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -132,10 +132,9 @@ impl StateStore for PostgresStore {
         )
         .await?;
         let mut state = read.unwrap_or_default();
-        state.transcript =
-            transcripts::load(&mut conn, agent_id, channel_id, state.transcript_from).await?;
+        state.transcript = transcripts::load(&mut conn, agent_id, channel_id).await?;
         drop(conn);
-        load_named_by_turn(self, agent_id, channel_id, &mut state).await?;
+        load_named_by_turns(self, agent_id, channel_id, &mut state).await?;
         Ok(state)
     }
 

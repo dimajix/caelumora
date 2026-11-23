@@ -8,7 +8,8 @@
 //! and addresses the same participant. The group handles `@all` and
 //! `@channel` address every participant at once (issue 401). Mentions are
 //! resolved to `ActorId`s once, when a message enters the channel, and stored
-//! with the message in `Message::mentions`; downstream, the text is parsed
+//! with the message - whom it mentions by name in `Message::mentions`, whom it
+//! addresses in `Message::addressees` (issue 602); downstream, the text is parsed
 //! again only to find which of its handles to highlight
 //! (`MentionDirectory::mentioned_spans`), never to decide whom it addresses.
 
@@ -193,28 +194,34 @@ impl MentionDirectory {
         result
     }
 
-    /// Resolves the mentions in `text` to the actors they address,
-    /// deduplicated and in order of first mention. Unknown handles are
-    /// ignored — they stay plain text.
-    pub fn resolve(&self, text: &str) -> Vec<ActorId> {
-        let mut result: Vec<ActorId> = Vec::new();
+    /// Resolves the mentions in `text` to the actors they address, each list deduplicated and in
+    /// order of first mention: those mentioned by name, and everyone addressed - those and
+    /// everyone a group handle addresses (issue 602, `Message::mentions`, `Message::addressees`).
+    /// Unknown handles are ignored — they stay plain text.
+    pub fn resolve(&self, text: &str) -> (Vec<ActorId>, Vec<ActorId>) {
+        let mut named: Vec<ActorId> = Vec::new();
+        let mut addressed: Vec<ActorId> = Vec::new();
         for handle in parse_mentions(text) {
+            let group = is_group_handle(&handle);
             for id in self.lookup(&handle) {
-                if !result.contains(id) {
-                    result.push(*id);
+                if !group && !named.contains(id) {
+                    named.push(*id);
+                }
+                if !addressed.contains(id) {
+                    addressed.push(*id);
                 }
             }
         }
-        result
+        (named, addressed)
     }
 
     /// The byte ranges of the mentions in `text` (`@` included, in the order they stand, as
-    /// `mention_spans` finds them) whose handles address one of `mentions`, the actors a message
-    /// resolved its mentions to: what is highlighted of its words.
-    pub fn mentioned_spans(&self, text: &str, mentions: &[ActorId]) -> Vec<Range<usize>> {
+    /// `mention_spans` finds them) whose handles address one of `addressees`, whom a message
+    /// addresses (`Message::addressees`): what is highlighted of its words.
+    pub fn mentioned_spans(&self, text: &str, addressees: &[ActorId]) -> Vec<Range<usize>> {
         mention_spans(text)
             .into_iter()
-            .filter(|span| self.lookup(&span.handle).iter().any(|id| mentions.contains(id)))
+            .filter(|span| self.lookup(&span.handle).iter().any(|id| addressees.contains(id)))
             .map(|span| span.range)
             .collect()
     }
@@ -289,8 +296,9 @@ mod tests {
         let bob = ActorId::User(UserId::new());
         let directory = MentionDirectory::new(vec![(sassy, "Sassy"), (bob, "Bob")]);
 
-        assert_eq!(directory.resolve("@bob, ask @SASSY and @nobody"), vec![bob, sassy]);
-        assert!(directory.resolve("no mentions here").is_empty());
+        let both = (vec![bob, sassy], vec![bob, sassy]);
+        assert_eq!(directory.resolve("@bob, ask @SASSY and @nobody"), both, "by name");
+        assert_eq!(directory.resolve("no mentions here"), (vec![], vec![]));
         assert!(directory.ambiguous().is_empty());
     }
 
@@ -314,9 +322,10 @@ mod tests {
     fn a_name_beyond_ascii_is_mentioned_by_its_ascii_form_or_as_written() {
         let zoe = ActorId::User(UserId::new());
         let directory = MentionDirectory::new(vec![(zoe, "Zoë")]);
-        assert_eq!(directory.resolve("@zoe, @Zoë and @ZOË"), vec![zoe]);
+        assert_eq!(directory.resolve("@zoe, @Zoë and @ZOË"), (vec![zoe], vec![zoe]));
     }
 
+    /// A group handle addresses every participant, but mentions nobody by name (issue 602).
     #[test]
     fn a_group_handle_addresses_every_participant() {
         let sassy = ActorId::Agent(AgentId::new());
@@ -326,15 +335,18 @@ mod tests {
             MentionDirectory::new(vec![(sassy, "Sassy"), (bob, "Bob"), (nameless, "!!!")]);
 
         for text in ["@all, what do you think?", "@channel?", "@ALL", "@bob and @all"] {
-            let resolved: HashSet<ActorId> = directory.resolve(text).into_iter().collect();
+            let (named, addressed) = directory.resolve(text);
+            let addressed: HashSet<ActorId> = addressed.into_iter().collect();
             assert_eq!(
-                resolved,
+                addressed,
                 HashSet::from([sassy, bob, nameless]),
                 "{text}: everyone, also who has no handle of their own"
             );
+            let by_name = if text.contains("@bob") { vec![bob] } else { vec![] };
+            assert_eq!(named, by_name, "{text}: by name only whom it names");
         }
-        assert!(directory.resolve("`@all`").is_empty(), "not in code");
-        assert!(directory.resolve("@allison").is_empty(), "a handle of its own");
+        assert_eq!(directory.resolve("`@all`"), (vec![], vec![]), "not in code");
+        assert_eq!(directory.resolve("@allison"), (vec![], vec![]), "a handle of its own");
         assert!(directory.ambiguous().is_empty());
         assert!(
             is_group_handle("all") && is_group_handle("channel") && !is_group_handle("everyone")
@@ -366,7 +378,7 @@ mod tests {
         ]);
 
         assert_eq!(directory.ambiguous(), vec!["sassy".to_string()]);
-        assert_eq!(directory.resolve("@sassy"), vec![first, second]);
+        assert_eq!(directory.resolve("@sassy"), (vec![first, second], vec![first, second]));
         assert!(directory.lookup("").is_empty());
     }
 }

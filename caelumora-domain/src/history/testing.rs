@@ -15,17 +15,14 @@ use crate::work::TurnId;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
-/// The items of the active path of `history` as they stand, in the order
-/// they happened: every message said, with every change since - on whichever
-/// branch - folded into it, and the marks of turns, steps, commands,
-/// activities and compactions; no change, which is in the message it
-/// changes. What a store derives as its items (`StandingItems`), read by the
-/// one rule of folding (`fold`).
+/// The items of `history` as they stand, in the order they happened: every
+/// message said, with every change since folded into it, and the marks of
+/// turns, steps, commands, activities and compactions; no change, which is in
+/// the message it changes. What a store derives as its items
+/// (`StandingItems`), read by the one rule of folding (`fold`).
 pub fn items_of(history: &History) -> Vec<HistoryEntry> {
-    let mut folded: HashMap<Position, Message> = fold(history.all_entries())
-        .into_iter()
-        .map(|(node, message)| (node.seq, message))
-        .collect();
+    let mut folded: HashMap<Position, Message> =
+        fold(history.entries()).into_iter().map(|(node, message)| (node.seq, message)).collect();
     history
         .entries()
         .filter_map(|node| match &node.entry.entry {
@@ -37,20 +34,19 @@ pub fn items_of(history: &History) -> Vec<HistoryEntry> {
         .collect()
 }
 
-/// The messages of the active path of `history` as they stand (`items_of`).
+/// The messages of `history` as they stand (`items_of`).
 pub fn messages_of(history: &History) -> Vec<Message> {
     items_of(history).iter().filter_map(HistoryEntry::said).cloned().collect()
 }
 
-/// What `history` recorded the message `id` - on whichever branch - was
-/// produced from, and in which turn (`HistoryEntry::context`); `None` if its
-/// holder did not produce it.
+/// What `history` recorded the message `id` was produced from, and in which
+/// turn (`HistoryEntry::context`); `None` if its holder did not produce it.
 pub fn recorded_context(
     history: &History,
     id: MessageId,
 ) -> Option<(Option<Digest>, Digest, TurnId)> {
     let said = history
-        .all_entries()
+        .entries()
         .rev()
         .find(|node| node.entry.entry.said().is_some_and(|message| message.id == id))?;
     said.entry.entry.context()
@@ -84,25 +80,24 @@ impl Chain<Recorded> {
         self.enter(Recorded::delivered(item, context));
     }
 
-    /// Records where `context` says that the message `modified.id` - on whichever branch - reads
-    /// as `modified` from now on (issue 234). `false`, and nothing is recorded, if there is no such
-    /// message or it cannot be modified so as it stands (`Message::modify`): taken back, or by
-    /// another sender; one before what it holds is recorded (`is_changed`).
+    /// Records where `context` says that the message `modified.id` reads as `modified` from now
+    /// on (issue 234). `false`, and nothing is recorded, if there is no such message or it cannot
+    /// be modified so as it stands (`Message::modify`): taken back, or by another sender; one
+    /// before what it holds is recorded (`is_changed`).
     pub fn modify(&mut self, context: &EventContext, modified: Message) -> bool {
         self.enter(Recorded::delivered(HistoryEntry::Modified { message: modified }, context))
     }
 
-    /// Records where `context` says that the message `id` - on whichever branch - was taken back
-    /// at `at` (issue 234). `false`, and nothing is recorded, if there is no such message or it was
-    /// taken back already; one before what it holds is recorded (`is_changed`).
+    /// Records where `context` says that the message `id` was taken back at `at` (issue 234).
+    /// `false`, and nothing is recorded, if there is no such message or it was taken back
+    /// already; one before what it holds is recorded (`is_changed`).
     pub fn revoke(&mut self, context: &EventContext, id: MessageId, at: DateTime<Utc>) -> bool {
         self.enter(Recorded::delivered(HistoryEntry::Revoked { message: id, at }, context))
     }
 
-    /// Records where `context` says that message `id` - on whichever branch - is classified
-    /// `classification` from now on (issue 133). `false`, and nothing is recorded, if there is no
-    /// such message or it was taken back (`Message::reclassify`); one before what it holds is
-    /// recorded (`is_changed`).
+    /// Records where `context` says that message `id` is classified `classification` from now on
+    /// (issue 133). `false`, and nothing is recorded, if there is no such message or it was taken
+    /// back (`Message::reclassify`); one before what it holds is recorded (`is_changed`).
     pub fn reclassify(
         &mut self,
         context: &EventContext,

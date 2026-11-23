@@ -8,7 +8,8 @@ recorded with the turn. This document describes both. How tool calls are run is 
 ## Approvals
 
 Some tool calls need a person's approval before they run; the agent suspends its turn while it
-waits.
+waits, setting it aside, and answers in its other threads meanwhile (issue 602, see
+[AGENT-TURN.md](AGENT-TURN.md)).
 
 1.  **Interruption.** The agent registers the calls that require approval, runs whatever needs
     none, and moves to `WaitingForUser`. Its state, the waiting calls included, is stored.
@@ -18,9 +19,11 @@ waits.
     passes it on to the users - to everybody, so that all see what the agent waits for; only who
     may approve is asked. A request nobody taking part may approve is denied at once.
 3.  **Answers.** A user approves or denies through their `UserActor`, naming the request alone
-    (`ApprovalAnswered`, issue 567); the moderator routes the answer to the approver only, which
-    holds the request: it tells which agent asked, and whether the user may approve its calls. A
-    rule of the user's may answer for them (see [Rules of a person](#rules-of-a-person)).
+    (`ApprovalAnswered`, issue 567), in the thread the request was asked in (issue 602), whose
+    context it is of, which the approver holding it tells (`ChannelLoop::approval_thread`); the
+    moderator routes the answer to the approver only, which holds the request: it tells which agent
+    asked, and whether the user may approve its calls. A rule of the user's may answer for them (see
+    [Rules of a person](#rules-of-a-person)).
 4.  **Decision.** The approver decides by its `ApprovalStrategy` (`Any`, `Majority`, `All`),
     counting only those who may approve, and decides again when users join or leave. A request
     nobody decides times out after ten minutes. The approver's decision is the only way a decision
@@ -63,8 +66,9 @@ with the same ids. The approver takes an unknown request up as new; one it still
 announces again, keeping the answers given so far. Answers given before a restart are lost: the
 users are asked again.
 
-Messages that arrive while the agent waits are queued and processed in order once it resumes, so
-its context stays consistent. Approval requests are not redacted by confidentiality: the approvers
+Messages that arrive in the thread of the waiting turn are queued and processed in order once it
+ends, so that its context stays consistent; those of the agent's other threads it takes in and
+answers meanwhile (issue 602). Approval requests are not redacted by confidentiality: the approvers
 see the arguments of the call they are asked to decide.
 
 ### What needs approval
@@ -235,25 +239,27 @@ the record of the answers, nothing raw.
     asked alone if the questions are sensitive - never to the approver or other agents. Only those
     asked answer.
 3.  **Answers.** The user's actor refuses what cannot count - questions not open or not put to them,
-    responses not as the questions ask - before anything is sent; whether the user may answer in the
-    channel at all (`AnswerQuestion`) the channel decides as it admits the answer. Which questions
-    are still the user's to answer - open, put to them, and not answered or declined by them yet -
-    is the actor's to tell (`UserActor::questions_to_answer`): it forgets those answered as the
-    answer is sent, so that they are not offered again until they close. An answer the channel
-    rejects does not bring them back: it is rejected for a standing reason, the user's right to
-    answer there, and asking again would only be rejected again (issue 580). A frontend in the
-    kernel's process, as the terminal is, offers those to be answered, rather than keeping a list
-    beside it; a client of the REST API learns them from the channel's snapshot and stream. The
-    answer goes to the asking agent alone, which takes it only if its sender was asked and the
-    questions are still open, and checks the responses again; who answered it takes from the
-    envelope, never from what was said. The first answer that counts settles the call.
+    responses not as the questions ask - before anything is sent, and answers in the thread they
+    were asked in (issue 602), whose context they are of; whether the user may answer in the channel
+    at all (`AnswerQuestion`) the channel decides as it admits the answer. Which questions are still
+    the user's to answer - open, put to them, and not answered or declined by them yet - is the
+    actor's to tell (`UserActor::questions_to_answer`): it forgets those answered as the answer is
+    sent, so that they are not offered again until they close. An answer the channel rejects does
+    not bring them back: it is rejected for a standing reason, the user's right to answer there, and
+    asking again would only be rejected again (issue 580). A frontend in the kernel's process, as
+    the terminal is, offers those to be answered, rather than keeping a list beside it; a client of
+    the REST API learns them from the channel's snapshot and stream. The answer goes to the asking
+    agent alone, which takes it only if its sender was asked and the questions are still open, and
+    checks the responses again; who answered it takes from the envelope, never from what was said.
+    The first answer that counts settles the call.
 4.  **Declining.** A user may decline, and a message of theirs written while questions put to them
     are open declines them all: the declines are sent before the message, so that the turn goes on
     and the message is heard after it. A declined call is answered `declined` without running.
-5.  **Leaving.** One asked who leaves the channel is no longer asked, and has neither answered nor
-    declined. While others asked are left, the questions stay open for them; once nobody asked is
-    left, they go unanswered: the call is answered as not executed, without running and without a
-    record of answers - also a call still waiting for its approval, whose request is withdrawn.
+5.  **Leaving.** One asked who leaves is no longer asked, and has neither answered nor declined -
+    as their leave reaches the waiting turn: announced in its thread (issue 602). While others asked
+    are left, the questions stay open for them; once nobody asked is left, they go unanswered: the
+    call is answered as not executed, without running and without a record of answers - also a
+    call still waiting for its approval, whose request is withdrawn.
 6.  **Closing.** Once questions are no longer open, the agent tells those they were shown to, and
     every frontend closes its form. A cancel or a stop ends the waiting as for an approval.
 

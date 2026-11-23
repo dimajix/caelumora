@@ -74,17 +74,19 @@ where
 pub(crate) mod testing {
     use super::*;
     use caelumora_domain::agent::AgentChannelState;
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::transcript::{as_they_stand, TranscriptEntry};
     use caelumora_domain::turn::GivenUpReason;
     use caelumora_domain::work::TurnId;
 
-    /// The turns the agent of `state` gave up, as its transcript records
-    /// them on its active path (issue 258): each with why, and the messages
-    /// before its end that carry its id.
+    /// The turns the agent of `state` gave up in `thread`, as its transcript records them on the
+    /// branch of that thread (issue 258): each with why, and the messages before its end that
+    /// carry its id.
     pub(crate) fn given_up_turns(
         state: &AgentChannelState,
+        thread: ThreadId,
     ) -> Vec<(TurnId, GivenUpReason, Vec<Message>)> {
-        let path: Vec<_> = as_they_stand(state.transcript.entries()).collect();
+        let path: Vec<_> = as_they_stand(state.transcript.entries(thread)).collect();
         path.iter()
             .enumerate()
             .filter_map(|(at, (node, _))| {

@@ -10,13 +10,15 @@ use crate::channel::ChannelLoop;
 use crate::command::CommandExecutor;
 use crate::controller::{ChannelController, SessionController};
 use crate::event::EventSubscription;
+use arc_swap::ArcSwap;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::AgentId;
-use caelumora_domain::channel::{Channel, ChannelId, ThreadId};
+use caelumora_domain::channel::{Channel, ChannelId, ThreadId, ThreadOrigin};
 use caelumora_domain::security::SecurityAttributes;
 use caelumora_domain::session::SessionId;
 use caelumora_domain::store::StoreResult;
 use caelumora_security::{AccessPolicy, SecurityContext};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 /// What a participant's actor runs with (issue 69): the context it acts in, built by the kernel at
@@ -35,8 +37,10 @@ pub struct ParticipantRuntime {
     pub(super) actor: ActorId,
     pub(super) session_id: SessionId,
     pub(super) channel_id: ChannelId,
-    /// The thread of its channel the actor takes part in (issue 557).
-    pub(super) thread_id: ThreadId,
+    /// The threads of its channel the actor takes part in (issues 557, 602): shared with the
+    /// channel, which changes them as it takes the actor into a further thread or lets it go from
+    /// one (`ChannelActor::threads`), and read as they are now.
+    pub(super) threads: Arc<ArcSwap<BTreeSet<ThreadId>>>,
     /// In whose name it acts, which the kernel builds into a context at every call (issue 516).
     pub(super) acting: Acting,
 }
@@ -49,10 +53,16 @@ impl ParticipantRuntime {
         self.acting.context_for(initiator)
     }
 
-    /// The thread of its channel the actor takes part in (issue 557): where what it says of itself
-    /// happens.
-    pub(crate) fn thread_id(&self) -> ThreadId {
-        self.thread_id
+    /// The threads of its channel the actor takes part in now (issues 557, 602).
+    pub(crate) fn threads(&self) -> BTreeSet<ThreadId> {
+        BTreeSet::clone(&self.threads.load())
+    }
+
+    /// Where the thread `thread` of its channel hangs (issue 602): the message of another thread it
+    /// was opened at; `None` for its line, a thread the channel does not hold open, or once the
+    /// channel is gone.
+    pub(crate) fn origin_of(&self, thread: ThreadId) -> Option<ThreadOrigin> {
+        self.channel_loop()?.origin_of(thread)
     }
 
     /// The kernel of the process the participant runs in, which the runtime of its agent answers by
@@ -133,7 +143,7 @@ impl ParticipantRuntime {
 }
 
 /// What the tests make of a participant's runtime past its own API: one acting in a context they
-/// give it.
+/// give it, and one whose actor takes part in a further thread.
 #[cfg(any(test, feature = "test-support"))]
 impl ParticipantRuntime {
     /// This runtime, acting in `context` whatever its actor and its initiator are: for a test
@@ -141,6 +151,17 @@ impl ParticipantRuntime {
     /// (issue 516).
     pub fn acting_as(self, context: SecurityContext) -> Self {
         Self { acting: Acting(ActingKind::Given(context)), ..self }
+    }
+
+    /// This runtime, its actor taking part in `thread` as well: for a test of an actor in several
+    /// threads (issue 602) that runs in no channel, which would take it in.
+    pub fn taking_part_also_in(self, thread: ThreadId) -> Self {
+        self.threads.rcu(|threads| {
+            let mut threads = BTreeSet::clone(threads);
+            threads.insert(thread);
+            threads
+        });
+        self
     }
 }
 

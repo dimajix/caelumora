@@ -1,16 +1,19 @@
-//! The participants of a running channel: their actors started and ended, following whether their
-//! agents exist, their mentions, and finding them by name.
+//! The participants of a running channel: their actors started and ended, taken into further
+//! threads and let go from one (issue 602), following whether their agents exist, their mentions,
+//! and finding them by name.
 
 use super::{
-    ActorChange, Actors, Answer, ChannelActor, ChannelLoop, ChannelParticipant,
-    ResolvedParticipant, LEAVE_GRACE,
+    ActorChange, Actors, Answer, ChannelActor, ChannelError, ChannelLoop, ChannelParticipant,
+    ResolvedParticipant, ThreadChange, LEAVE_GRACE,
 };
 use anyhow::{Error, Result};
+use arc_swap::ArcSwap;
 use caelumora_api::actor::Actor;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::AgentId;
 use caelumora_domain::chain::Position;
 use caelumora_domain::channel::Channel;
+use caelumora_domain::channel::Circle;
 use caelumora_domain::channel::Participant;
 use caelumora_domain::channel::ThreadId;
 use caelumora_domain::command::CommandDescription;
@@ -19,7 +22,7 @@ use caelumora_domain::question::{QuestionError, Questions};
 use caelumora_domain::security::SecurityAttributes;
 use caelumora_domain::value::name::{named, Name};
 use caelumora_security::{ActionType, SecurityContext};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use tokio::time;
 use tracing::{info, warn};
@@ -47,10 +50,11 @@ impl ChannelLoop {
             Some(running) => Some(self.leave_actor(participant, running, by)),
             // Without an actor - left out as the channel started - but taking part in its history
             // all the same: its leave is recorded at once, so that its attendance ends here.
-            None => match self.attending().await.get(&participant) {
-                Some(&thread) => {
+            None => match self.attending().await.remove(&participant) {
+                Some(threads) => {
                     let name = self.name_of(participant).await;
-                    let leave = ActorChange::Leave(participant, name, by.clone(), thread);
+                    let threads = Arc::new(ArcSwap::from_pointee(threads));
+                    let leave = ActorChange::Leave(participant, name, by.clone(), threads);
                     Some(self.request(leave))
                 }
                 None => None,
@@ -113,11 +117,11 @@ impl ChannelLoop {
                             return Ok(None);
                         };
                         self.participation.require_runnable(&resolved).await?;
-                        let (from, thread) = self.rejoining(actor).await?;
-                        let thread = self.open_or_line(Some(thread));
+                        let (from, threads) = self.rejoining(actor).await?;
+                        let threads = self.taking_part(Some(&threads));
                         let joined = SecurityContext::system();
                         let from = Some(from);
-                        let started = self.add_actor(resolved, thread, from, Some(&joined));
+                        let started = self.add_actor(resolved, threads, from, Some(&joined));
                         Ok::<_, Error>(Some(started.await?))
                     }
                     .await;
@@ -142,8 +146,8 @@ impl ChannelLoop {
         }
     }
 
-    /// Starts the actor of `resolved` to take part in `thread` (issue 557) - the one way every
-    /// actor of the channel is started: as the channel is built (`ChannelLoop::new`), as a
+    /// Starts the actor of `resolved` to take part in `threads` (issues 557, 602) - the one way
+    /// every actor of the channel is started: as the channel is built (`ChannelLoop::new`), as a
     /// participant is added, joins or founds (`procedure::participant::take_into_channel`), as an
     /// agent is restored (`follow_agents`). Built, taken in (`adopt`) and handed to `run` to start,
     /// which gives it the part of the history it may see - from the position `from` on, nothing if
@@ -158,12 +162,128 @@ impl ChannelLoop {
     pub(crate) async fn add_actor(
         &self,
         resolved: ResolvedParticipant,
-        thread: ThreadId,
+        threads: BTreeSet<ThreadId>,
         from: Option<Position>,
         joined: Option<&SecurityContext>,
     ) -> Result<Answer> {
-        let actor = self.create_actor(&resolved, thread).await?;
-        Ok(self.adopt(Arc::from(actor), resolved, thread, from, joined.cloned()).await)
+        let threads = Arc::new(ArcSwap::from_pointee(threads));
+        let actor = self.create_actor(&resolved, &threads).await?;
+        Ok(self.adopt(Arc::from(actor), resolved, threads, from, joined.cloned()).await)
+    }
+
+    /// Takes the running actor of `participant` into `thread` as well, on behalf of `by` (issue
+    /// 602), for a procedure that holds the participant and the thread
+    /// (`procedure::participant::take_into_thread`): `run` has it take part there - the thread's
+    /// moderator may ask it, and what happens there is delivered to it - as it announces its join
+    /// there in the name of `by`'s caller (`ParticipantJoined`). Of an agent, its branch of the
+    /// thread forks at the message the thread hangs at, as the agent takes its join in.
+    /// What `run` answers once it announced it, or found it drawn in meanwhile (`draw_in`). Asks
+    /// nothing of `by`: the procedure did.
+    ///
+    /// # Errors
+    /// `ChannelError::ThreadNotOpen`; `ClosedCircle` for a thread whose circle is closed;
+    /// `NotAParticipant` if no actor of theirs runs in the channel; `AlreadyInThread`;
+    /// `InOneThreadAlone` for an actor that takes part in one thread alone
+    /// (`Actor::takes_part_in_several_threads`).
+    pub(crate) async fn take_into_thread(
+        &self,
+        participant: ActorId,
+        thread: ThreadId,
+        by: &SecurityContext,
+    ) -> Result<Answer> {
+        let channel = self.id;
+        let there = self.thread(thread).ok_or(ChannelError::ThreadNotOpen { thread, channel })?;
+        if there.circle() == Circle::Closed {
+            return Err(ChannelError::ClosedCircle { thread, channel }.into());
+        }
+        let running = self.actors.load().get(&participant).cloned();
+        let running = running.ok_or(ChannelError::NotAParticipant { participant, channel })?;
+        if running.takes_part_in(thread) {
+            return Err(ChannelError::AlreadyInThread { participant, thread, channel }.into());
+        }
+        if !running.actor.takes_part_in_several_threads() {
+            return Err(ChannelError::InOneThreadAlone { participant, channel }.into());
+        }
+        let name = running.actor.name().to_string();
+        let joins = ActorChange::Thread(participant, name, thread, ThreadChange::Joins, by.clone());
+        Ok(self.request(joins))
+    }
+
+    /// Lets the running actor of `participant` go from `thread` alone, on behalf of `by` (issue
+    /// 602), for a procedure that holds the participant and the thread
+    /// (`procedure::participant::let_go_from_thread`): `run` has it no longer take part there - its
+    /// turn running there ends (`Actor::cancel`), the thread's moderator no longer asks it, nothing
+    /// of the thread is delivered to it - as it announces its leave there
+    /// in the name of `by`'s caller (`ParticipantLeft`), which reaches the actor all the same; it
+    /// goes on in its other threads. Of an agent, its part and its branch of the thread go, as the
+    /// agent takes its leave in. What `run` answers once it announced it. Asks nothing of `by`:
+    /// the procedure did.
+    ///
+    /// # Errors
+    /// `ChannelError::NotAParticipant` if no actor of theirs runs in the channel; `NotInThread`;
+    /// `LastThread` for the one thread it takes part in, which it leaves by leaving the channel.
+    pub(crate) fn let_go_from_thread(
+        &self,
+        participant: ActorId,
+        thread: ThreadId,
+        by: &SecurityContext,
+    ) -> Result<Answer> {
+        let channel = self.id;
+        let running = self.actors.load().get(&participant).cloned();
+        let running = running.ok_or(ChannelError::NotAParticipant { participant, channel })?;
+        // One reading of where it takes part, for whether it does there and whether only there.
+        let threads = running.threads.load();
+        if !threads.contains(&thread) {
+            return Err(ChannelError::NotInThread { participant, thread, channel }.into());
+        }
+        if threads.len() == 1 {
+            return Err(ChannelError::LastThread { participant, thread, channel }.into());
+        }
+        let name = running.actor.name().to_string();
+        let leaves =
+            ActorChange::Thread(participant, name, thread, ThreadChange::Leaves, by.clone());
+        Ok(self.request(leaves))
+    }
+
+    /// Has the running actor of `participant` take part in `thread`, or no longer, as `change`
+    /// says (issue 602): in its threads, which its runtime shares, and with the thread's moderator;
+    /// leaving, its turn running there ends (`Actor::cancel`). For `run`, which announces it right
+    /// after; whether it changed anything - not for an actor that took part so already -, `None`
+    /// for an actor no longer running or a thread no longer open.
+    pub(super) fn take_part(
+        &self,
+        participant: ActorId,
+        thread: ThreadId,
+        change: ThreadChange,
+    ) -> Option<bool> {
+        let there = self.thread(thread)?;
+        let running = self.actors.load().get(&participant).cloned()?;
+        if running.takes_part_in(thread) == (change == ThreadChange::Joins) {
+            return Some(false);
+        }
+        if change == ThreadChange::Leaves {
+            running.actor.cancel(Some(thread));
+        }
+        running.threads.rcu(|threads| {
+            let mut threads = BTreeSet::clone(threads);
+            match change {
+                ThreadChange::Joins => threads.insert(thread),
+                ThreadChange::Leaves => threads.remove(&thread),
+            };
+            threads
+        });
+        let taking = match change {
+            ThreadChange::Joins => {
+                there.add_actor(Arc::clone(&running.actor));
+                "takes part in"
+            }
+            ThreadChange::Leaves => {
+                there.remove_actor(participant);
+                "no longer takes part in"
+            }
+        };
+        info!("{} {} thread {} of channel {}", participant, taking, thread, self.id);
+        Some(true)
     }
 
     /// Makes `running`, the actor of `participant`, leave (`Actor::leave`),
@@ -176,22 +296,28 @@ impl ChannelLoop {
         running: ChannelActor,
         remover: &SecurityContext,
     ) -> Answer {
-        let ChannelActor { actor, thread, .. } = running;
+        let ChannelActor { actor, threads, .. } = running;
         let name = actor.name().to_string();
-        self.drop_actor(participant, &actor, thread);
-        self.request(ActorChange::Leave(participant, name, remover.clone(), thread))
+        self.drop_actor(participant, &actor, &threads.load());
+        self.request(ActorChange::Leave(participant, name, remover.clone(), threads))
     }
 
-    /// Takes `actor`, of `id`, out of the channel's actors, of `thread` it takes part in and of the
-    /// mentions, and makes it leave (`Actor::leave`): what letting it go means for the running
-    /// channel, a participant's actor (`leave_actor`) or a thread's delegate (`let_delegate_go`).
-    pub(super) fn drop_actor(&self, id: ActorId, actor: &Arc<dyn Actor>, thread: ThreadId) {
+    /// Takes `actor`, of `id`, out of the channel's actors, of the `threads` it takes part in and
+    /// of the mentions, and makes it leave (`Actor::leave`): what letting it go means for the
+    /// running channel, a participant's actor (`leave_actor`) or a thread's delegate
+    /// (`let_delegate_go`).
+    pub(super) fn drop_actor(
+        &self,
+        id: ActorId,
+        actor: &Arc<dyn Actor>,
+        threads: &BTreeSet<ThreadId>,
+    ) {
         self.actors.rcu(|actors| {
             let mut actors = HashMap::clone(actors);
             actors.remove(&id);
             actors
         });
-        if let Some(taking_part) = self.thread(thread) {
+        for taking_part in threads.iter().filter_map(|thread| self.thread(*thread)) {
             taking_part.remove_actor(id);
         }
         self.rebuild_mentions();
@@ -449,14 +575,12 @@ mod tests {
             [ActorId::User(alice), sleepers[0].id(), sleepers[1].id()].into();
 
         for text in ["@all, what do you think?", "@channel?"] {
-            assert_eq!(
-                channel.mentions().resolve(text).into_iter().collect::<HashSet<_>>(),
-                everyone,
-                "{text}"
-            );
+            let (named, addressed) = channel.mentions().resolve(text);
+            assert_eq!(addressed.into_iter().collect::<HashSet<_>>(), everyone, "{text}");
+            assert!(named.is_empty(), "{text}: nobody by name");
         }
         assert_eq!(
-            channel.mentions().resolve("@sassy"),
+            channel.mentions().resolve("@sassy").0,
             [sleepers[0].id()],
             "a handle still names one"
         );
@@ -470,13 +594,13 @@ mod tests {
         let (channel, _, sleepers) = channel_with_sleepers(&["Sassy"]).await;
         let sassy = sleepers[0].id();
         channel.participant_renamed(sassy, &Name::new("Saucy").unwrap());
-        assert_eq!(channel.mentions().resolve("@saucy"), [sassy], "by the name announced");
-        assert!(channel.mentions().resolve("@sassy").is_empty(), "not by the old one");
+        assert_eq!(channel.mentions().resolve("@saucy").0, [sassy], "by the name announced");
+        assert!(channel.mentions().resolve("@sassy").0.is_empty(), "not by the old one");
 
         channel.participant_renamed(ActorId::User(UserId::new()), &Name::new("Sassy").unwrap());
-        assert_eq!(channel.mentions().resolve("@saucy"), [sassy], "nobody taking part");
+        assert_eq!(channel.mentions().resolve("@saucy").0, [sassy], "nobody taking part");
         channel.rebuild_mentions();
-        assert_eq!(channel.mentions().resolve("@sassy"), [sassy], "by what its actor tells");
+        assert_eq!(channel.mentions().resolve("@sassy").0, [sassy], "by what its actor tells");
     }
 
     /// Issue 593: who lets a participant go waits until `run` answers that its old actor has
@@ -690,7 +814,7 @@ mod tests {
         };
         let writer = channel.user_actor(owner).expect("the creator takes part");
         for text in ["one", "two", "three"] {
-            writer.send_message(Some(text.to_string()), None, Vec::new()).await.unwrap();
+            writer.send_message(None, Some(text.to_string()), None, Vec::new()).await.unwrap();
         }
         let before = history_of(&channel, 3).await;
         let mut rx = kernel.event_bus().subscribe_all();
@@ -768,7 +892,7 @@ mod tests {
                 "the join is announced: {events:?}");
 
         // What is written after joining is visible.
-        writer.send_message(Some("four".to_string()), None, Vec::new()).await.unwrap();
+        writer.send_message(None, Some("four".to_string()), None, Vec::new()).await.unwrap();
         history_of(&channel, 4).await;
         assert_eq!(channel.visible_messages(other).await.len(), 2);
 
@@ -795,7 +919,7 @@ mod tests {
             .user_actor(ctx.initiator_id.as_user_id().unwrap())
             .expect("the creator takes part");
         let mut mine = writer.watch();
-        writer.send_message(Some("before".to_string()), None, Vec::new()).await.unwrap();
+        writer.send_message(None, Some("before".to_string()), None, Vec::new()).await.unwrap();
         history_of(&channel, 1).await;
         async fn recorded(
             channel: &ChannelLoop,
@@ -1052,7 +1176,7 @@ mod tests {
             .await
             .expect("she keeps the channel, and comes back");
         let back = channel.user_actor(alice.id).expect("her actor");
-        back.send_message(Some("back".to_string()), None, Vec::new()).await.expect("said");
+        back.send_message(None, Some("back".to_string()), None, Vec::new()).await.expect("said");
         let heard = time::timeout(Duration::from_secs(5), async {
             loop {
                 let entries = channel.history_entries().await;
@@ -1254,7 +1378,10 @@ mod tests {
         given_nothing_before_its_join(&main, ActorId::Agent(first), "nothing said yet").await;
 
         let writer = main.user_actor(world.alice).expect("a founder");
-        writer.send_message(Some("@helper hello".to_string()), None, Vec::new()).await.unwrap();
+        writer
+            .send_message(None, Some("@helper hello".to_string()), None, Vec::new())
+            .await
+            .unwrap();
         let turn_ended_last = |entries: Vec<HistoryEntry>| {
             let said = entries.iter().rposition(|e| e.said().is_some());
             let ended =
@@ -1284,7 +1411,7 @@ mod tests {
         let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
         let ActorId::User(owner) = ctx.initiator_id else { unreachable!() };
         let writer = channel.user_actor(owner).expect("the creator takes part");
-        writer.send_message(Some("one".to_string()), None, Vec::new()).await.unwrap();
+        writer.send_message(None, Some("one".to_string()), None, Vec::new()).await.unwrap();
         history_of(&channel, 1).await;
 
         let more = HistoryAccess::LastMessages { count: 9 };

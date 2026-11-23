@@ -113,6 +113,7 @@ mod tests {
     use caelumora_domain::actor::{ActorId, EventContext};
     use caelumora_domain::agent::{AgentChannelState, AgentId};
     use caelumora_domain::channel::ChannelId;
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_domain::session::SessionId;
     use caelumora_domain::type_map::TypeKey;
@@ -142,12 +143,15 @@ mod tests {
 
         let (session, channel) = (SessionId::new(), ChannelId::new());
         let mut state = AgentChannelState::default();
-        state.begin_turn(Work::new(
-            EventContext::new(session, channel, ActorId::None, String::new()),
-            None,
-            Default::default(),
-            Default::default(),
-        ));
+        state.begin_turn(
+            ThreadId::default(),
+            Work::new(
+                EventContext::new(session, channel, ActorId::None, String::new()),
+                None,
+                Default::default(),
+                Default::default(),
+            ),
+        );
         let turn = Turn::under_way(AgentId::new(), &mut state);
         let prompt = part.get_prompt(&turn.situation()).await.unwrap();
         assert!(

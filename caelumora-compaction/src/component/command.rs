@@ -68,6 +68,7 @@ mod tests {
     use crate::CompactionError;
     use caelumora_agents::testing::workspace_turn;
     use caelumora_domain::agent::AgentChannelState;
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::command::CommandVisibility;
     use caelumora_kernel::workspace::testing::session_with_workspace;
 
@@ -76,7 +77,7 @@ mod tests {
     async fn compact(strategy: Scripted, before: Before) -> (CommandResult<CommandOutput>, usize) {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
-        state.perceive(vec![heard("u1")]);
+        state.perceive(ThreadId::line(world.session.channels()[0].id()), vec![heard("u1")]);
         let strategy = Arc::new(strategy);
         let command = CompactCommand::new(Arc::new(component(&strategy)));
         let mut turn = workspace_turn(&world, &mut state);

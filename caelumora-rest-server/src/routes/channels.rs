@@ -28,14 +28,15 @@ use caelumora_kernel::actor::user::{ChannelWatch, Lagged, UserActor};
 use caelumora_kernel::actor::Shown;
 use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::procedure::channel::{Create, Delete, Reclassify, Restore};
-use caelumora_kernel::procedure::participant::{LetGo, TakeIn};
+use caelumora_kernel::procedure::participant::{LetGo, LetGoFromThread, TakeIn, TakeIntoThread};
 use caelumora_kernel::session::ChannelSpec;
 use caelumora_kernel::view::{Reached, SessionView, Views};
 use caelumora_rest_api::actor::ActorPath;
 use caelumora_rest_api::channel::{
     AddParticipantRequest, AnswerQuestionsRequest, ChannelParticipantResponse, ChannelResponse,
     ChannelSnapshot, CommandReplyResponse, CreateChannelRequest, ExecuteCommandRequest,
-    MessageRequest, PublishedNotesResponse, ReadRequest, SendApprovalRequest, TurnRequest,
+    MessageRequest, PublishedNotesResponse, ReadRequest, SendApprovalRequest,
+    ThreadParticipantRequest, TurnRequest,
 };
 use caelumora_rest_api::context::{
     AgentComponentsResponse, AgentToolsResponse, KnowledgeRefResponse, MessageContextResponse,
@@ -433,6 +434,77 @@ pub(super) async fn leave(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Takes participant `participant` of the channel into its thread `tid` as well (issue 602). Only
+/// who may change the channel may do it.
+pub(super) async fn add_thread_participant(
+    State(state): State<Arc<AppState>>,
+    Path((session_id, channel_id, thread)): Path<(SessionId, ChannelId, ThreadId)>,
+    user: AuthenticatedUser,
+    Json(payload): Json<ThreadParticipantRequest>,
+) -> Result<StatusCode, ApiError> {
+    let context = user.security_context();
+    let participant = payload.participant;
+    let adding = TakeIntoThread::added(&context, session_id, channel_id, thread, participant);
+    state.procedures.run(adding).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Lets participant `aid` go from the thread `tid` of the channel alone (issue 602), staying in its
+/// other threads. Only who may change the channel may do it.
+pub(super) async fn remove_thread_participant(
+    State(state): State<Arc<AppState>>,
+    Path((session_id, channel_id, thread, ActorPath(participant))): Path<(
+        SessionId,
+        ChannelId,
+        ThreadId,
+        ActorPath,
+    )>,
+    user: AuthenticatedUser,
+) -> Result<StatusCode, ApiError> {
+    let context = user.security_context();
+    let removing = LetGoFromThread::removed(&context, session_id, channel_id, thread, participant);
+    state.procedures.run(removing).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Takes participant `aid` - the authenticated user, or an agent of theirs - into the thread `tid`
+/// of the channel by their own act (issue 602).
+pub(super) async fn join_thread(
+    State(state): State<Arc<AppState>>,
+    Path((session_id, channel_id, thread, ActorPath(participant))): Path<(
+        SessionId,
+        ChannelId,
+        ThreadId,
+        ActorPath,
+    )>,
+    user: AuthenticatedUser,
+) -> Result<StatusCode, ApiError> {
+    let context = user.security_context();
+    let joining = TakeIntoThread::joining(&context, session_id, channel_id, thread, participant);
+    state.procedures.run(joining).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Takes participant `aid` - the authenticated user, or an agent of theirs - out of the thread
+/// `tid` of the channel by their own act (issue 602), staying in its other threads.
+pub(super) async fn leave_thread(
+    State(state): State<Arc<AppState>>,
+    Path((session_id, channel_id, thread, ActorPath(participant))): Path<(
+        SessionId,
+        ChannelId,
+        ThreadId,
+        ActorPath,
+    )>,
+    user: AuthenticatedUser,
+) -> Result<StatusCode, ApiError> {
+    let context = user.security_context();
+    let leaving = LetGoFromThread::leaving(&context, session_id, channel_id, thread, participant);
+    state.procedures.run(leaving).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Writes a message of the user into the channel, in the thread the body names - the line if none
+/// (issue 602) -, as the user's actor sends it (`UserActor::send_message`).
 pub(super) async fn send_message(
     State(state): State<Arc<AppState>>,
     Path((session_id, channel_id)): Path<(SessionId, ChannelId)>,
@@ -442,7 +514,7 @@ pub(super) async fn send_message(
     let (_, channel) = open_channel(&state, &user, session_id, channel_id).await?;
     let user_actor = user_actor_of(&channel, &user)?;
     let span_id = user_actor
-        .send_message(payload.content, payload.classification, payload.attachments)
+        .send_message(payload.thread, payload.content, payload.classification, payload.attachments)
         .await?;
     Span::current().record("span_id", field::display(span_id));
     Ok(StatusCode::OK)
@@ -487,10 +559,11 @@ pub(super) async fn retry_message(
 }
 
 /// Asks participant `aid`, an agent, to answer again instead of its answer under way, the turn the
-/// body names (issue 235), or anew after its last turn given up (issue 259). Answered once the
-/// request is on its way: whether the turn is either the channel decides as it admits it, and a
-/// rejection comes on the stream (`EventRejected`); otherwise the channel ends a turn under way as
-/// it delivers the request, and the stream shows `RetryAccepted` and the new answer.
+/// body names (issue 235), or anew after its last turn given up (issue 259), in the thread that
+/// turn runs or ran in (issue 602). Answered once the request is on its way: whether the turn is
+/// either the channel decides as it admits it, and a rejection comes on the stream
+/// (`EventRejected`); otherwise the channel ends a turn under way as it delivers the request, and
+/// the stream shows `RetryAccepted` and the new answer.
 pub(super) async fn retry_turn(
     State(state): State<Arc<AppState>>,
     Path((session_id, channel_id, ActorPath(participant))): Path<(SessionId, ChannelId, ActorPath)>,
@@ -690,9 +763,9 @@ pub(super) async fn list_commands(
     Ok(Json(user_actor.visible_commands().await))
 }
 
-/// Runs a user command in the channel (issue 28). Commands are recognised by
-/// the client - a message that starts with a slash is sent here instead of to
-/// `messages` - and never enter the conversation.
+/// Runs a user command in the channel (issue 28), in the thread the body names - the line if none
+/// (issue 602). Commands are recognised by the client - a message that starts with a slash is sent
+/// here instead of to `messages` - and never enter the conversation.
 pub(super) async fn execute_command(
     State(state): State<Arc<AppState>>,
     Path((session_id, channel_id)): Path<(SessionId, ChannelId)>,
@@ -701,7 +774,7 @@ pub(super) async fn execute_command(
 ) -> Result<Json<CommandReplyResponse>, ApiError> {
     let (_, channel) = open_channel(&state, &user, session_id, channel_id).await?;
     let user_actor = user_actor_of(&channel, &user)?;
-    let reply = user_actor.execute_command(&payload.line).await?;
+    let reply = user_actor.execute_command(payload.thread, &payload.line).await?;
     // An answer for the whole channel reaches this client on the channel's
     // stream, like everybody else; returning it here as well would show it twice.
     let output = reply.output.filter(|_| reply.visibility == CommandVisibility::Private);
@@ -1174,10 +1247,10 @@ mod tests {
         let alice = ActorId::User(user_id(&api, &cookie).await);
         let other = ThreadId::new();
         let said = |text: &str| {
-            let mentions = if text.contains("@alice") { vec![alice] } else { Vec::new() };
+            let addressees = if text.contains("@alice") { vec![alice] } else { Vec::new() };
             Message {
                 role: MessageRole::User,
-                mentions,
+                addressees,
                 sender_id: alice,
                 content: Some(text.to_string()),
                 ..Message::new(Classification::CHANNEL_DEFAULT)
@@ -1274,7 +1347,7 @@ mod tests {
         };
         let states = state.kernel.state_store();
         let mut agent_state = states.get_agent_channel_state(helper.id, channel_id).await.unwrap();
-        agent_state.used = Some(used);
+        agent_state.thread_mut(ThreadId::line(channel_id)).used = Some(used);
         states.put_agent_channel_state(helper.id, channel_id, &mut agent_state).await.unwrap();
         let participants =
             format!("/sessions/{}/channels/{}/participants", session_id.0, channel_id.0);
@@ -1300,6 +1373,103 @@ mod tests {
             "a bare UUID names no actor"
         );
         state.session_manager.stop(&SecurityContext::system(), session_id).await.unwrap();
+    }
+
+    /// Issue 602: a participant of the channel is taken into a further thread of it and let go
+    /// from it alone; taken in twice, or let go from the last thread it takes part in, it is told
+    /// why.
+    #[tokio::test]
+    async fn a_participant_is_taken_into_a_thread_and_let_go_from_it_alone() {
+        use caelumora_domain::channel::ThreadOrigin;
+        use caelumora_kernel::channel::ThreadSpec;
+        let state = state();
+        let api = api(Arc::clone(&state), &[]);
+        let cookie = login(&api, "alice").await;
+        let alice_id = user_id(&api, &cookie).await;
+        let alice = ActorId::User(alice_id);
+        let (session_id, channel_id) = session_of(&state, alice_id, &[]).await;
+        let system = SecurityContext::system();
+        let session = state.session_manager.open(&system, session_id).await.unwrap();
+        let line = ThreadId::line(channel_id);
+        let origin = ThreadOrigin { thread: line, message: MessageId::new() };
+        let thread =
+            session.open_thread(&system, channel_id, ThreadSpec::new(origin)).await.unwrap();
+        let threads = format!("/sessions/{}/channels/{}/threads", session_id.0, channel_id.0);
+        let participants = |thread: ThreadId| format!("{threads}/{}/participants", thread.0);
+        let taking_in = Some(json!({ "participant": alice }));
+
+        let (status, _) =
+            send(&api, &cookie, Method::POST, &participants(thread), taking_in.clone()).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "taken in");
+        let (status, refused) =
+            send(&api, &cookie, Method::POST, &participants(thread), taking_in).await;
+        assert_eq!(
+            (status, refused["code"].clone()),
+            (StatusCode::CONFLICT, json!("already_in_thread"))
+        );
+        let leave = |thread| format!("{}/{}/leave", participants(thread), ActorPath(alice));
+        let (status, _) = send(&api, &cookie, Method::POST, &leave(thread), None).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "out of the thread by her own act");
+        let (status, refused) = send(&api, &cookie, Method::POST, &leave(line), None).await;
+        assert_eq!((status, refused["code"].clone()), (StatusCode::CONFLICT, json!("last_thread")));
+        let hers = |thread| format!("{}/{}", participants(thread), ActorPath(alice));
+        let join = format!("{}/join", hers(thread));
+        let (status, _) = send(&api, &cookie, Method::POST, &join, None).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "into the thread again by her own act");
+        let (status, _) = send(&api, &cookie, Method::DELETE, &hers(thread), None).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "let go by the channel's owner");
+
+        state.session_manager.stop(&system, session_id).await.unwrap();
+    }
+
+    /// Issue 602: a message is said in the thread the request names, and a command issued there -
+    /// a nudge of someone who takes part there, refused for one who does not.
+    #[tokio::test]
+    async fn a_message_and_a_command_happen_in_the_thread_they_name() {
+        use caelumora_domain::channel::ThreadOrigin;
+        use caelumora_kernel::channel::ThreadSpec;
+        let state = state();
+        let api = api(Arc::clone(&state), &[]);
+        let cookie = login(&api, "alice").await;
+        let bobs = login(&api, "bob").await;
+        let alice = user_id(&api, &cookie).await;
+        let bob = user_id(&api, &bobs).await;
+        let (session_id, channel_id) = session_of(&state, alice, &[Participant::User(bob)]).await;
+        let system = SecurityContext::system();
+        let session = state.session_manager.open(&system, session_id).await.unwrap();
+        let origin = ThreadOrigin { thread: ThreadId::line(channel_id), message: MessageId::new() };
+        let thread =
+            session.open_thread(&system, channel_id, ThreadSpec::new(origin)).await.unwrap();
+        let channel_uri = format!("/sessions/{}/channels/{}", session_id.0, channel_id.0);
+
+        let said = Some(json!({ "content": "aside", "thread": thread }));
+        let (status, _) =
+            send(&api, &cookie, Method::POST, &format!("{channel_uri}/messages"), said).await;
+        assert_eq!(status, StatusCode::OK, "said in the thread named");
+        let of_thread = format!("{channel_uri}/history?thread={}", thread.0);
+        time::timeout(Duration::from_secs(5), async {
+            while !page_of(&api, &cookie, &of_thread).await.to_string().contains("aside") {
+                time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("in the thread's history");
+        let of_line = page_of(&api, &cookie, &format!("{channel_uri}/history")).await;
+        assert!(!of_line.to_string().contains("aside"), "not in the line's: {of_line}");
+
+        let commands = format!("{channel_uri}/commands");
+        let nudge =
+            |thread: Option<ThreadId>| Some(json!({ "line": "nudge bob", "thread": thread }));
+        let (status, _) = send(&api, &cookie, Method::POST, &commands, nudge(None)).await;
+        assert_eq!(status, StatusCode::OK, "bob takes part in the line");
+        let (status, refused) =
+            send(&api, &cookie, Method::POST, &commands, nudge(Some(thread))).await;
+        assert_eq!(
+            (status, refused["code"].clone()),
+            (StatusCode::BAD_REQUEST, json!("invalid_command_arguments")),
+            "bob takes no part in the thread"
+        );
+        state.session_manager.stop(&system, session_id).await.unwrap();
     }
 
     /// Who takes no part in a channel cannot follow it, whether it runs or

@@ -27,6 +27,7 @@ pub use recorded::{Audience, Recipients, Recorded};
 
 use crate::actor::{ActorId, EventContext};
 use crate::chain::{Chain, Node, Position};
+use crate::channel::ThreadId;
 use crate::confidentiality::Classification;
 use crate::digest;
 use crate::digest::Digest;
@@ -35,13 +36,12 @@ use crate::turn::GivenUpReason;
 use crate::work::TurnId;
 use std::collections::HashMap;
 
-/// The conversation as it happened - a chain like a `Transcript`. What it
-/// records is read from start to end into the messages as they stand: a
-/// reclassification, a modification or a revocation applies to a message on
-/// any branch, as a change made in the channel does, so it is folded over
-/// every branch in the order things happened (`fold`). A message taken back
-/// stays, without what it said (`Message::revoked`), so that whatever names
-/// it by id finds it.
+/// The conversation as it happened - a `Chain` of the same `Node` type as a
+/// `Transcript`'s tree. What it records is read from start to end into the messages as
+/// they stand: a reclassification, a modification or a revocation applies to
+/// a message said before it, so it is folded in the order things happened
+/// (`fold`). A message taken back stays, without what it said
+/// (`Message::revoked`), so that whatever names it by id finds it.
 pub type History = Chain<Recorded>;
 
 /// The messages `nodes` say - a range of a history, in the order its
@@ -106,32 +106,34 @@ impl HistoryPage {
 }
 
 impl Chain<Recorded> {
-    /// The turn of `author` given up, and why, if its end is the last thing
-    /// of the conversation on the active path (issue 259,
-    /// `HistoryEntry::is_conversation`): what may be asked for anew as long
-    /// as nothing followed it - a notice or a request does not count.
-    pub fn turn_given_up_last(&self, author: ActorId) -> Option<(TurnId, GivenUpReason)> {
-        match self
-            .entries()
-            .rev()
-            .map(|node| &node.entry.entry)
-            .find(|entry| entry.is_conversation())
-        {
-            Some(HistoryEntry::TurnGivenUp { turn_id, actor, reason, .. }) if *actor == author => {
-                Some((*turn_id, reason.clone()))
-            }
+    /// The turn of `author` given up in `thread`, and why, if its end is the last thing of that
+    /// thread's conversation (issues 259, 602, `HistoryEntry::is_conversation`): what may be asked
+    /// for anew as long as nothing followed it there - a notice or a request does not count, nor
+    /// what happens in another thread.
+    pub fn turn_given_up_last(
+        &self,
+        author: ActorId,
+        thread: ThreadId,
+    ) -> Option<(TurnId, GivenUpReason)> {
+        let of_thread = |recorded: &&Recorded| recorded.thread() == Some(thread);
+        let mut conversation = self.entries().rev().map(|node| &node.entry).filter(of_thread);
+        match conversation.find(|recorded| recorded.entry.is_conversation()) {
+            Some(Recorded {
+                entry: HistoryEntry::TurnGivenUp { turn_id, actor, reason, .. },
+                ..
+            }) if *actor == author => Some((*turn_id, reason.clone())),
             _ => None,
         }
     }
 
-    /// The message `id` as it stands - on whichever branch - or `None` if
-    /// it was never said here: as it was said, with every entry recorded
-    /// after it folded into it (`HistoryEntry::fold_into`), which only
-    /// changes it if it names it or fits the channel. Read from where it
-    /// was said on, not from the start, and nothing but it is cloned.
+    /// The message `id` as it stands, or `None` if it was never said here:
+    /// as it was said, with every entry recorded after it folded into it
+    /// (`HistoryEntry::fold_into`), which only changes it if it names it or
+    /// fits the channel. Read from where it was said on, not from the start,
+    /// and nothing but it is cloned.
     pub fn message(&self, id: MessageId) -> Option<Message> {
         let said = self
-            .all_entries()
+            .entries()
             .rev()
             .find(|node| node.entry.entry.said().is_some_and(|m| m.id == id))?;
         let mut message = said.entry.entry.said()?.clone();
@@ -155,9 +157,8 @@ impl Chain<Recorded> {
     }
 
     /// Records where `context` says that the channel is classified `channel` now, which every
-    /// message said so far - on every branch: all of them were said in the channel - fits into
-    /// from now on (`Classification::fitted_into`). Recorded whether or not it changes a message:
-    /// telling which would fold the whole history.
+    /// message said so far fits into from now on (`Classification::fitted_into`). Recorded
+    /// whether or not it changes a message: telling which would fold the whole history.
     pub fn fit_into(&mut self, context: &EventContext, channel: &Classification) {
         self.enter(Recorded::delivered(HistoryEntry::Fitted { channel: channel.clone() }, context));
     }
@@ -197,6 +198,7 @@ impl Chain<Recorded> {
             | HistoryEntry::RetryRefused { .. }
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
+            | HistoryEntry::NotDrawnIn { .. }
             | HistoryEntry::EventRejected { .. }
             | HistoryEntry::EventRefused { .. }
             | HistoryEntry::ResponseRequested { .. }
@@ -263,7 +265,7 @@ mod tests {
         let turn = TurnId::new();
         let mut history = History::default();
         history.push(&context, make_message(id(1)));
-        assert_eq!(history.turn_given_up_last(agent), None, "no turn ended");
+        assert_eq!(history.turn_given_up_last(agent, context.thread_id), None, "no turn ended");
         history.record(
             &context,
             HistoryEntry::TurnGivenUp {
@@ -273,8 +275,11 @@ mod tests {
                 at: Utc::now(),
             },
         );
-        assert_eq!(history.turn_given_up_last(agent), Some((turn, GivenUpReason::Left)));
-        assert_eq!(history.turn_given_up_last(other), None, "another agent's");
+        assert_eq!(
+            history.turn_given_up_last(agent, context.thread_id),
+            Some((turn, GivenUpReason::Left))
+        );
+        assert_eq!(history.turn_given_up_last(other, context.thread_id), None, "another agent's");
         // What was only told or asked of it is no part of the conversation
         // (issue 417).
         history.record(
@@ -295,12 +300,37 @@ mod tests {
             },
         );
         assert_eq!(
-            history.turn_given_up_last(agent),
+            history.turn_given_up_last(agent, context.thread_id),
             Some((turn, GivenUpReason::Left)),
             "a notice and a request do not count"
         );
         history.push(&context, make_message(id(2)));
-        assert_eq!(history.turn_given_up_last(agent), None, "something followed it");
+        assert_eq!(
+            history.turn_given_up_last(agent, context.thread_id),
+            None,
+            "something followed it"
+        );
+    }
+
+    /// Issue 602: a turn given up is found by the thread it ran in, whatever happens in another.
+    #[test]
+    fn a_turn_given_up_is_found_in_its_thread_whatever_happens_in_another() {
+        let context = context_in(ChannelId::new());
+        let elsewhere = EventContext { thread_id: ThreadId::new(), ..context.clone() };
+        let agent = ActorId::Agent(AgentId::new());
+        let turn = TurnId::new();
+        let mut history = History::default();
+        let given_up = HistoryEntry::TurnGivenUp {
+            turn_id: turn,
+            actor: agent,
+            reason: GivenUpReason::Left,
+            at: Utc::now(),
+        };
+        history.record(&context, given_up);
+        history.push(&elsewhere, make_message(id(1)));
+        let found = history.turn_given_up_last(agent, context.thread_id);
+        assert_eq!(found, Some((turn, GivenUpReason::Left)), "in its thread");
+        assert_eq!(history.turn_given_up_last(agent, elsewhere.thread_id), None, "not elsewhere");
     }
 
     #[test]
@@ -411,7 +441,7 @@ mod tests {
         history.fit_into(&context, &public);
         history.reclassify(&context, id(4), Classification::general(Confidentiality::Internal));
 
-        let whole: Vec<Message> = fold(history.all_entries()).into_iter().map(|(_, m)| m).collect();
+        let whole: Vec<Message> = fold(history.entries()).into_iter().map(|(_, m)| m).collect();
         let range: Vec<(Position, Message)> =
             fold(history.from(from)).into_iter().map(|(node, m)| (node.seq, m)).collect();
         assert_eq!(
@@ -443,17 +473,10 @@ mod tests {
             ..make_message(id(n))
         };
         let mut history = History::default();
-        history.extend(&context, vec![said(1, &internal)]);
-        let fork = history.digest();
-        history.extend(&context, vec![said(2, &internal)]);
-        history.move_head(fork.as_ref());
-        history.extend(&context, vec![said(3, &internal)]);
+        history.extend(&context, vec![said(1, &internal), said(2, &internal), said(3, &internal)]);
         let before = history.digest();
 
-        assert!(
-            history.reclassify(&context, id(2), public.clone()),
-            "on the branch no longer active"
-        );
+        assert!(history.reclassify(&context, id(2), public.clone()), "said before the last");
         assert!(!history.reclassify(&context, id(9), public.clone()), "never said here");
         let mut revoked = history.clone();
         revoked.revoke(&context, id(1), Utc::now());
@@ -462,36 +485,33 @@ mod tests {
             "taken back: nothing left to release"
         );
         assert_ne!(history.digest(), before, "recorded: the digest covers it");
-        assert_eq!(history.all_entries().len(), 4, "one entry");
+        assert_eq!(history.entries().len(), 4, "one entry");
         assert_eq!(
             history.message(id(2)).map(|m| m.classification),
             Some(public.clone()),
-            "read as it stands, on whichever branch"
+            "read as it stands"
         );
         assert_eq!(
-            messages_of(&history).iter().map(|m| m.id).collect::<Vec<_>>(),
-            [id(1), id(3)],
-            "the active path says what was said"
+            messages_of(&history).iter().map(|m| m.classification.clone()).collect::<Vec<_>>(),
+            [internal.clone(), public.clone(), internal],
+            "and among what was said"
         );
 
-        let entries = history.all_entries().len();
+        let entries = history.entries().len();
         history.fit_into(&context, &public);
         history.fit_into(&context, &public);
         assert_eq!(
-            history.all_entries().len(),
+            history.entries().len(),
             entries + 2,
             "recorded, also when nothing is left to fit"
         );
-        assert!(messages_of(&history)
-            .iter()
-            .chain(history.message(id(2)).iter())
-            .all(|m| m.classification == public));
+        assert!(messages_of(&history).iter().all(|m| m.classification == public));
 
         let loaded: History =
             serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
         assert_eq!(
             messages_of(&loaded).iter().map(|m| &m.classification).collect::<Vec<_>>(),
-            [&public, &public]
+            [&public, &public, &public]
         );
     }
 
@@ -524,15 +544,12 @@ mod tests {
             ..make_message(id(n))
         };
         let mut history = History::default();
-        history.extend(&context, vec![make_message(id(1))]);
-        let fork = history.digest();
-        history.extend(&context, vec![make_message(id(2))]);
-        history.move_head(fork.as_ref());
-        history.extend(&context, vec![make_message(id(3))]);
+        history
+            .extend(&context, vec![make_message(id(1)), make_message(id(2)), make_message(id(3))]);
         let before = history.digest();
 
-        assert!(history.modify(&context, modified(1, "corrected")), "on the active path");
-        assert!(history.revoke(&context, id(2), at), "on a branch no longer active");
+        assert!(history.modify(&context, modified(1, "corrected")), "said before the last");
+        assert!(history.revoke(&context, id(2), at));
         assert!(!history.modify(&context, modified(9, "never said")), "never said here");
         assert!(!history.modify(&context, modified(2, "too late")), "taken back already");
         assert!(
@@ -541,13 +558,13 @@ mod tests {
             "by another sender"
         );
         assert_ne!(history.digest(), before, "recorded: the digest covers it");
-        assert_eq!(history.all_entries().len(), 5, "one entry each, nothing rewritten");
+        assert_eq!(history.entries().len(), 5, "one entry each, nothing rewritten");
 
         let messages = messages_of(&history);
         assert_eq!(
             messages.iter().map(|m| m.id).collect::<Vec<_>>(),
-            [id(1), id(3)],
-            "in their places"
+            [id(1), id(2), id(3)],
+            "in their places, the one taken back too"
         );
         assert_eq!(
             (messages[0].content.as_deref(), messages[0].modified),

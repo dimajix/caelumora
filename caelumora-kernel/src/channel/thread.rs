@@ -5,7 +5,7 @@ use crate::moderator::{Moderator, Routing};
 use caelumora_api::actor::Actor;
 use caelumora_api::component::ComponentImpl;
 use caelumora_domain::actor::{ActorId, Envelope};
-use caelumora_domain::channel::Opening;
+use caelumora_domain::channel::{Circle, Opening};
 use caelumora_security::SecurityContext;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -47,6 +47,11 @@ impl Thread {
     /// Where it was opened and by whom; `None` for the line, which nobody opened.
     pub(crate) fn opening(&self) -> Option<Opening> {
         self.opening
+    }
+
+    /// Whether who takes part in it may grow (issue 602): as it was opened; the line's is open.
+    pub(crate) fn circle(&self) -> Circle {
+        self.opening.map_or(Circle::Open, |opening| opening.circle)
     }
 
     /// What becomes of `event`, which happens in this thread, admitted in `context`

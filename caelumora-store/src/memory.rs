@@ -3,7 +3,7 @@ use crate::history::{
     answer_of, page_of, seen, seen_nodes, Attendance, HistoryStore, StandingItems,
 };
 use crate::kept_chain::KeptChain;
-use crate::transcript::{load_named_by_turn, transcript_of, TranscriptStore};
+use crate::transcript::{load_named_by_turns, transcript_of, TranscriptStore};
 use crate::{PersistenceBackend, Presence, StateStore};
 use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
@@ -12,9 +12,7 @@ use caelumora_domain::chain::{Node, Position};
 use caelumora_domain::channel::{ChannelId, ChannelState, ThreadId};
 use caelumora_domain::context::FrameRef;
 use caelumora_domain::digest::Digest;
-use caelumora_domain::history::{
-    Attended, History, HistoryEntry, HistoryField, HistoryPage, Reader, Recorded,
-};
+use caelumora_domain::history::{Attended, History, HistoryField, HistoryPage, Reader, Recorded};
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::query::{ordered_after, FieldPath, Filter};
 use caelumora_domain::store::{EntityKind, Journaled, Revision, StoreError, StoreResult};
@@ -24,7 +22,7 @@ use caelumora_domain::user::{UserChannelState, UserId};
 use caelumora_domain::value::name::ScopedName;
 use caelumora_security::Admission;
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::mem;
 use std::ops::Range;
 use std::sync::{Arc, RwLock};
@@ -45,7 +43,7 @@ pub struct MemoryStore {
     channel_states: RwLock<HashMap<ChannelId, ChannelState>>,
     user_channel_states: RwLock<HashMap<(UserId, ChannelId), UserChannelState>>,
     histories: RwLock<HashMap<ChannelId, KeptHistory>>,
-    transcripts: RwLock<HashMap<(AgentId, ChannelId), KeptChain<TranscriptEntry>>>,
+    transcripts: RwLock<HashMap<(AgentId, ChannelId), KeptTranscript>>,
     given: RwLock<HashMap<(AgentId, ChannelId), KeptGiven>>,
 }
 
@@ -57,6 +55,10 @@ struct KeptGiven {
     offered_tools: BTreeMap<Digest, Vec<ToolSet>>,
     frames: BTreeMap<Digest, FrameRef>,
 }
+
+/// A transcript as the memory store keeps it: its nodes whole, and the head
+/// of every thread, by its position.
+type KeptTranscript = KeptChain<TranscriptEntry, BTreeMap<ThreadId, Position>>;
 
 /// A history as the memory store keeps it: its chain whole, and the items
 /// and the attendance derived from it.
@@ -82,7 +84,7 @@ impl MemoryStore {
         write_lock(&self.histories, |all| {
             let kept = all.entry(channel).or_default();
             let end = kept.chain.end();
-            kept.chain.append(changes).map_err(|e| {
+            kept.chain.append(changes.entries, changes.head).map_err(|e| {
                 StoreError::Backend(format!(
                     "what the history of channel {channel} added does not fit: {e}"
                 ))
@@ -120,12 +122,14 @@ impl MemoryStore {
     ) -> StoreResult<()> {
         let Some(changes) = transcript.changes() else { return Ok(()) };
         write_lock(&self.transcripts, |all| {
-            all.entry((agent, channel)).or_default().append(changes).map_err(|e| {
-                StoreError::Backend(format!(
-                    "what {} added does not fit: {e}",
-                    transcript_of(agent, channel)
-                ))
-            })
+            all.entry((agent, channel)).or_default().append(changes.entries, changes.heads).map_err(
+                |e| {
+                    StoreError::Backend(format!(
+                        "what {} added does not fit: {e}",
+                        transcript_of(agent, channel)
+                    ))
+                },
+            )
         })?;
         transcript.mark_stored();
         Ok(())
@@ -152,19 +156,14 @@ impl MemoryStore {
         state.frames.mark_stored();
     }
 
-    /// The transcript of `agent` in `channel` from the position `from` on,
-    /// as its state holds it; empty if none is kept.
-    fn load_transcript(
-        &self,
-        agent: AgentId,
-        channel: ChannelId,
-        from: Position,
-    ) -> StoreResult<Transcript> {
+    /// The transcript of `agent` in `channel`, as its state holds it: the
+    /// branch of every thread; empty if none is kept.
+    fn load_transcript(&self, agent: AgentId, channel: ChannelId) -> StoreResult<Transcript> {
         read_lock(&self.transcripts, |all| {
             let Some(kept) = all.get(&(agent, channel)) else { return Ok(Transcript::default()) };
-            kept.suffix(from).map_err(|e| {
+            kept.transcript().map_err(|e| {
                 StoreError::Backend(format!(
-                    "{} cannot be read from position {from}: {e}",
+                    "{} cannot be read: {e}",
                     transcript_of(agent, channel)
                 ))
             })
@@ -386,8 +385,8 @@ impl StateStore for MemoryStore {
         let mut state =
             read_lock(&self.agent_channel_states, |v| v.get(&(agent_id, channel_id)).cloned())
                 .unwrap_or_default();
-        state.transcript = self.load_transcript(agent_id, channel_id, state.transcript_from)?;
-        load_named_by_turn(self, agent_id, channel_id, &mut state).await?;
+        state.transcript = self.load_transcript(agent_id, channel_id)?;
+        load_named_by_turns(self, agent_id, channel_id, &mut state).await?;
         Ok(state)
     }
 
@@ -501,7 +500,7 @@ impl HistoryStore for MemoryStore {
                     newest.map(|item| seen(reader, &attended, filter, item)),
                     from,
                     limit,
-                    kept.chain.head(),
+                    *kept.chain.head(),
                 )
             }
             None => Ok(HistoryPage::default()),
@@ -513,12 +512,13 @@ impl HistoryStore for MemoryStore {
         channel: ChannelId,
         reader: &Reader,
         id: MessageId,
-    ) -> StoreResult<Option<(Position, HistoryEntry)>> {
+    ) -> StoreResult<Option<(Position, Recorded)>> {
         read_lock(&self.histories, |all| {
-            match all.get(&channel).and_then(|kept| kept.items.said(id).map(|item| (kept, item))) {
-                Some((kept, item)) => seen(reader, &kept.attendance.of_reader(reader), None, item),
-                None => Ok(None),
-            }
+            Ok(all.get(&channel).and_then(|kept| {
+                let (at, item) = kept.items.said(id)?;
+                let seen = item.as_seen_by(*at, reader, &kept.attendance.of_reader(reader))?;
+                Some((*at, seen))
+            }))
         })
     }
 
@@ -567,7 +567,10 @@ impl HistoryStore for MemoryStore {
         }))
     }
 
-    async fn attending(&self, channel: ChannelId) -> StoreResult<HashMap<ActorId, ThreadId>> {
+    async fn attending(
+        &self,
+        channel: ChannelId,
+    ) -> StoreResult<HashMap<ActorId, BTreeSet<ThreadId>>> {
         Ok(read_lock(&self.histories, |all| {
             all.get(&channel).map(|kept| kept.attendance.attending()).unwrap_or_default()
         }))
@@ -838,6 +841,7 @@ mod tests {
         let store = MemoryStore::new();
         suite::history_store_behaves(&store, &store).await;
         suite::transcript_store_behaves(&store, &store).await;
+        suite::transcripts_keep_a_branch_per_thread(&store).await;
         suite::given_store_behaves(&store, &store).await;
     }
 

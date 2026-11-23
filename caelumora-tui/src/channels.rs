@@ -513,7 +513,7 @@ mod tests {
         let side = named(&session_loop, "side");
         let ActorId::User(user) = other else { unreachable!("a user") };
         let theirs = side.user_actor(user).expect("they take part");
-        theirs.send_message(Some("hello".to_string()), None, Vec::new()).await.expect("said");
+        theirs.send_message(None, Some("hello".to_string()), None, Vec::new()).await.expect("said");
         let said = async {
             loop {
                 if let Happened::Shown(channel_id, Ok(Shown::Envelope(envelope))) =
@@ -544,7 +544,7 @@ mod tests {
         assert!(
             lines(&channels.take_in(envelope_shown(&side, other, said("hello"))).await).is_empty()
         );
-        let mentioning = Message { mentions: vec![me], ..message(other, "@owner look") };
+        let mentioning = Message { addressees: vec![me], ..message(other, "@owner look") };
         let event = ActorEvent::CompleteMessageGenerated(mentioning);
         assert_eq!(
             lines(&channels.take_in(envelope_shown(&side, other, event)).await),

@@ -20,6 +20,7 @@ use caelumora_api::runtime::ActorRuntime;
 use caelumora_domain::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_domain::agent::{AgentChannelState, AgentId, Personality};
 use caelumora_domain::channel::testing::bare_channel;
+use caelumora_domain::channel::{Channel, ChannelId, ThreadId};
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::{Classification, Confidentiality};
 use caelumora_domain::context::ModelProfile;
@@ -72,14 +73,18 @@ pub fn turn<'a>(
     state: &'a mut AgentChannelState,
 ) -> Turn<'a> {
     let channel = &session.channels()[0];
+    let line = ThreadId::line(channel.id());
     // On the owner's word; with the rights the kernel builds for the agent (issue 516).
-    state.begin_turn(Work::new(
-        EventContext::new(session.id(), channel.id(), ActorId::User(owner), String::new()),
-        None,
-        channel.classification(),
-        Default::default(),
-    ));
-    Turn::of(state, agent_runtime(participant_runtime_in(channel, ActorId::Agent(agent))))
+    state.begin_turn(
+        line,
+        Work::new(
+            EventContext::new(session.id(), channel.id(), ActorId::User(owner), String::new()),
+            None,
+            channel.classification(),
+            Default::default(),
+        ),
+    );
+    Turn::of(state, line, agent_runtime(participant_runtime_in(channel, ActorId::Agent(agent))))
         .expect("a turn was begun")
 }
 
@@ -87,8 +92,13 @@ pub fn turn<'a>(
 /// for a provider whose offer does not depend on the place -, as the tools are described.
 pub async fn offered_anywhere(provider: &dyn ToolProvider) -> Result<Vec<ToolDescription>, String> {
     let mut state = AgentChannelState::default();
-    state.begin_turn(Work::new(Default::default(), None, Default::default(), Default::default()));
-    let Some(turn) = Turn::of(&mut state, detached_actor_runtime(AgentId::new())) else {
+    state.begin_turn(
+        ThreadId::default(),
+        Work::new(Default::default(), None, Default::default(), Default::default()),
+    );
+    let Some(turn) =
+        Turn::of(&mut state, ThreadId::default(), detached_actor_runtime(AgentId::new()))
+    else {
         return Err("no turn was begun".to_string());
     };
     let offered = provider.offered(&turn.situation()).await?;
@@ -169,7 +179,7 @@ pub async fn asked_for_a_call(
         .asked(async {
             main.user_actor(world.bob)
                 .unwrap()
-                .send_message(Some("@helper do it".to_string()), None, Vec::new())
+                .send_message(None, Some("@helper do it".to_string()), None, Vec::new())
                 .await
                 .expect("sent");
             timeout(Duration::from_secs(5), async {
@@ -193,10 +203,13 @@ pub fn detached_actor_runtime(agent: AgentId) -> Arc<dyn ActorRuntime> {
 
 /// The runtime of the participant `agent` in a channel of no running session, never attached, as
 /// the kernel's (`caelumora_kernel::session::testing`), with the agents' library - and so the
-/// agents' texts (issue 57).
+/// agents' texts (issue 57). The channel is, on purpose, the one a default `EventContext` names -
+/// unlike a channel the tests record a history for, whose line a default context never names -,
+/// so that its line is the thread a test of a default work fills (`ThreadId::default()`), the
+/// thread its agent takes part in (`ActorRuntime::threads`).
 pub fn detached_participant(agent: AgentId) -> ParticipantRuntime {
     let session = bare_session(SessionId::new());
-    let channel = bare_channel(session.id);
+    let channel = Channel { id: ChannelId::default(), ..bare_channel(session.id) };
     detached_participant_in(
         TestKernel { libraries: vec![&AgentsLibrary], ..Default::default() }.build(),
         session,
@@ -436,17 +449,16 @@ impl<'a> Turn<'a> {
     /// tools and the default profile, as `under_way` - what a test needs to
     /// work in one.
     pub(crate) fn begun(agent_id: AgentId, agent_channel_state: &'a mut AgentChannelState) -> Self {
-        agent_channel_state.begin_turn(Work::new(
-            Default::default(),
-            None,
-            Default::default(),
-            Default::default(),
-        ));
+        agent_channel_state.begin_turn(
+            ThreadId::default(),
+            Work::new(Default::default(), None, Default::default(), Default::default()),
+        );
         Self::under_way(agent_id, agent_channel_state)
     }
 
-    /// The turn a test began on `agent_channel_state`, of the agent `agent_id` called "agent",
-    /// with a state of its own, in a channel of no running session (`detached_actor_runtime`).
+    /// The turn a test began on `agent_channel_state`, in `ThreadId::default()`, of the agent
+    /// `agent_id` called "agent", with a state of its own, in a channel of no running session
+    /// (`detached_actor_runtime`).
     ///
     /// # Panics
     /// If no turn is under way.
@@ -454,7 +466,7 @@ impl<'a> Turn<'a> {
         agent_id: AgentId,
         agent_channel_state: &'a mut AgentChannelState,
     ) -> Self {
-        Self::of(agent_channel_state, detached_actor_runtime(agent_id))
+        Self::of(agent_channel_state, ThreadId::default(), detached_actor_runtime(agent_id))
             .expect("a turn is under way")
     }
 }
@@ -466,12 +478,16 @@ pub fn workspace_turn<'a>(with: &WithWorkspace, state: &'a mut AgentChannelState
     // On the owner's word; with the rights the kernel builds for the agent, a participant of the
     // channel (issue 516).
     let asked_by = with.context.initiator_id;
-    state.begin_turn(Work::new(
-        EventContext::new(with.session.id(), channel.id(), asked_by, String::new()),
-        None,
-        channel.classification(),
-        Default::default(),
-    ));
-    Turn::of(state, agent_runtime(participant_runtime_in(channel, ActorId::Agent(with.agent))))
-        .expect("a turn was begun")
+    let line = ThreadId::line(channel.id());
+    state.begin_turn(
+        line,
+        Work::new(
+            EventContext::new(with.session.id(), channel.id(), asked_by, String::new()),
+            None,
+            channel.classification(),
+            Default::default(),
+        ),
+    );
+    let runtime = agent_runtime(participant_runtime_in(channel, ActorId::Agent(with.agent)));
+    Turn::of(state, line, runtime).expect("a turn was begun")
 }
