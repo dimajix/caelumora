@@ -4,6 +4,7 @@
 //! reconciles as it is built.
 
 use super::{ActorChange, ChannelLoop};
+use arc_swap::ArcSwap;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::chain::Position;
 use caelumora_domain::channel::{ChannelId, HistoryAccess, HistoryStart, ThreadId};
@@ -15,6 +16,7 @@ use caelumora_security::SecurityContext;
 use caelumora_store::history::HistoryStore;
 use chrono::{DateTime, Utc};
 use std::collections::{BTreeSet, HashMap};
+use std::sync::Arc;
 use tracing::{info, warn};
 
 /// How many items a page holds that is read to find something in a history
@@ -164,7 +166,8 @@ impl ChannelLoop {
             let name = self.name_of(participant).await;
             info!("{} left channel {} while it did not run: recorded now", participant, self.id);
             let system = SecurityContext::system();
-            let leave = ActorChange::Leave(participant, name, system, threads.clone());
+            let threads = Arc::new(ArcSwap::from_pointee(threads.clone()));
+            let leave = ActorChange::Leave(participant, name, system, threads);
             let _ = self.request(leave);
         }
     }

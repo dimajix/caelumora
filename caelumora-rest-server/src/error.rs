@@ -579,6 +579,7 @@ impl From<ChannelError> for ApiError {
             ChannelError::InOneThreadAlone { .. } => Self::conflict("in_one_thread_alone", detail),
             ChannelError::LastThread { .. } => Self::conflict("last_thread", detail),
             ChannelError::ClosedCircle { .. } => Self::conflict("closed_circle", detail),
+            ChannelError::OpenCircle { .. } => Self::conflict("open_circle", detail),
         }
     }
 }

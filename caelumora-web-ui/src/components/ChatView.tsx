@@ -142,6 +142,7 @@ function rejectionText(reason: Rejection): string {
     case 'message_not_found': return 'the message it is about is not in the channel';
     case 'message_unchangeable': return 'the message was taken back or cannot be changed so';
     case 'thread_closed': return 'the thread it is sent into is closed';
+    case 'closed_circle': return 'only those it was opened with speak in the thread it is sent into';
     case 'invalid': return 'it does not fit the channel as it is, or what it is about is over';
     default: return 'for a reason this page does not know';
   }

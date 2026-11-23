@@ -3737,6 +3737,73 @@ async fn an_agent_taken_into_a_thread_forks_its_branch_at_the_message_the_thread
     running.abort();
 }
 
+/// Issue 602: an agent mentioned in a thread it takes no part in is drawn into it: its branch of
+/// the thread forks at the message the thread hangs at, it hears what mentioned it, and it answers
+/// there.
+#[tokio::test]
+async fn an_agent_mentioned_in_a_thread_is_drawn_in_and_answers_there() {
+    use caelumora_domain::channel::ThreadOrigin;
+    use caelumora_domain::message::MessageId;
+    let answer = Message {
+        role: MessageRole::Assistant,
+        content: Some("It is the plan.".to_string()),
+        ..Message::new(Classification::CHANNEL_DEFAULT)
+    };
+    let model = Arc::new(Scripted(Mutex::new([answer].into())));
+    let (channel, context, agent, alice) =
+        agent_channel(Arc::new(AllowAllPolicy::new()), model, Default::default()).await;
+    let line = ThreadId::line(channel.id());
+    let before = Message {
+        id: MessageId::new(),
+        sender_id: ActorId::Agent(AgentId::new()),
+        sender_name: "hermes".to_string(),
+        role: MessageRole::Assistant,
+        content: Some("said before".to_string()),
+        ..Message::new(Classification::CHANNEL_DEFAULT)
+    };
+    channel.record_said(vec![before.clone()]).await;
+    let mut events = channel.observe();
+    let running = tokio::spawn({
+        let channel = Arc::clone(&channel);
+        async move { channel.run().await }
+    });
+    let origin = ThreadOrigin { thread: line, message: before.id };
+    let thread = channel.open_thread_by_procedure(&context, origin, &[]).await.expect("opened");
+
+    let question = "@helper, what is this?";
+    let actor = channel.user_actor(alice).unwrap();
+    actor.send_message(Some(thread), Some(question.to_string()), None, Vec::new()).await.unwrap();
+    let answered = time::timeout(Duration::from_secs(5), async {
+        loop {
+            let envelope = events.recv().await.expect("the channel is running");
+            if envelope.context.sender_id == ActorId::Agent(agent)
+                && matches!(envelope.event, ActorEvent::TurnFinished { .. })
+            {
+                break envelope;
+            }
+        }
+    })
+    .await
+    .expect("the agent answers");
+    assert_eq!(answered.context.thread_id, thread, "there");
+    let state = time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Ok(state) = channel.stored_agent_channel_state(agent).await {
+                if state.transcript.messages(thread).len() == 3 {
+                    break state;
+                }
+            }
+            time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("its branch of the thread holds its answer");
+    let contents: Vec<String> =
+        state.transcript.messages(thread).into_iter().filter_map(|m| m.content).collect();
+    assert_eq!(contents, ["said before", question, "It is the plan."], "forked, asked, answered");
+    running.abort();
+}
+
 /// Whether `entry` notes that `participant` joined.
 fn joined_entry(entry: &TranscriptEntry, participant: ActorId) -> bool {
     matches!(entry, TranscriptEntry::ParticipantJoined { participant: p, .. } if *p == participant)

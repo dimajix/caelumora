@@ -13,6 +13,7 @@ use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::AgentId;
 use caelumora_domain::chain::Position;
 use caelumora_domain::channel::Channel;
+use caelumora_domain::channel::Circle;
 use caelumora_domain::channel::Participant;
 use caelumora_domain::channel::ThreadId;
 use caelumora_domain::command::CommandDescription;
@@ -52,6 +53,7 @@ impl ChannelLoop {
             None => match self.attending().await.remove(&participant) {
                 Some(threads) => {
                     let name = self.name_of(participant).await;
+                    let threads = Arc::new(ArcSwap::from_pointee(threads));
                     let leave = ActorChange::Leave(participant, name, by.clone(), threads);
                     Some(self.request(leave))
                 }
@@ -175,12 +177,14 @@ impl ChannelLoop {
     /// moderator may ask it, and what happens there is delivered to it - as it announces its join
     /// there in the name of `by`'s caller (`ParticipantJoined`). Of an agent, its branch of the
     /// thread forks at the message the thread hangs at, as the agent takes its join in.
-    /// What `run` answers once it announced it. Asks nothing of `by`: the procedure did.
+    /// What `run` answers once it announced it, or found it drawn in meanwhile (`draw_in`). Asks
+    /// nothing of `by`: the procedure did.
     ///
     /// # Errors
-    /// `ChannelError::ThreadNotOpen`; `ClosedCircle` for a thread delegated into; `NotAParticipant`
-    /// if no actor of theirs runs in the channel; `AlreadyInThread`; `InOneThreadAlone` for an
-    /// actor that takes part in one thread alone (`Actor::takes_part_in_several_threads`).
+    /// `ChannelError::ThreadNotOpen`; `ClosedCircle` for a thread whose circle is closed;
+    /// `NotAParticipant` if no actor of theirs runs in the channel; `AlreadyInThread`;
+    /// `InOneThreadAlone` for an actor that takes part in one thread alone
+    /// (`Actor::takes_part_in_several_threads`).
     pub(crate) async fn take_into_thread(
         &self,
         participant: ActorId,
@@ -188,10 +192,8 @@ impl ChannelLoop {
         by: &SecurityContext,
     ) -> Result<Answer> {
         let channel = self.id;
-        if !self.is_open(thread) {
-            return Err(ChannelError::ThreadNotOpen { thread, channel }.into());
-        }
-        if self.state.lock().await.threads.get(&thread).is_some_and(|t| t.delegation.is_some()) {
+        let there = self.thread(thread).ok_or(ChannelError::ThreadNotOpen { thread, channel })?;
+        if there.circle() == Circle::Closed {
             return Err(ChannelError::ClosedCircle { thread, channel }.into());
         }
         let running = self.actors.load().get(&participant).cloned();
@@ -245,15 +247,19 @@ impl ChannelLoop {
     /// Has the running actor of `participant` take part in `thread`, or no longer, as `change`
     /// says (issue 602): in its threads, which its runtime shares, and with the thread's moderator;
     /// leaving, its turn running there ends (`Actor::cancel`). For `run`, which announces it right
-    /// after; whether it did - nothing for an actor no longer running or a thread no longer open.
+    /// after; whether it changed anything - not for an actor that took part so already -, `None`
+    /// for an actor no longer running or a thread no longer open.
     pub(super) fn take_part(
         &self,
         participant: ActorId,
         thread: ThreadId,
         change: ThreadChange,
-    ) -> bool {
-        let Some(there) = self.thread(thread) else { return false };
-        let Some(running) = self.actors.load().get(&participant).cloned() else { return false };
+    ) -> Option<bool> {
+        let there = self.thread(thread)?;
+        let running = self.actors.load().get(&participant).cloned()?;
+        if running.threads.load().contains(&thread) == (change == ThreadChange::Joins) {
+            return Some(false);
+        }
         if change == ThreadChange::Leaves {
             running.actor.cancel(Some(thread));
         }
@@ -276,7 +282,7 @@ impl ChannelLoop {
             }
         };
         info!("{} {} thread {} of channel {}", participant, taking, thread, self.id);
-        true
+        Some(true)
     }
 
     /// Makes `running`, the actor of `participant`, leave (`Actor::leave`),
@@ -291,8 +297,7 @@ impl ChannelLoop {
     ) -> Answer {
         let ChannelActor { actor, threads, .. } = running;
         let name = actor.name().to_string();
-        let threads = BTreeSet::clone(&threads.load());
-        self.drop_actor(participant, &actor, &threads);
+        self.drop_actor(participant, &actor, &threads.load());
         self.request(ActorChange::Leave(participant, name, remover.clone(), threads))
     }
 

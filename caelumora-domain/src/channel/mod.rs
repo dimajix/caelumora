@@ -14,7 +14,7 @@ mod thread;
 pub use history_access::{HistoryAccess, HistoryStart};
 pub use participant::{FormerParticipant, InternalActor, Participant};
 pub use state::{ChannelState, ChannelStateChange};
-pub use thread::{Brief, Delegation, Opening, ThreadId, ThreadOrigin, ThreadState};
+pub use thread::{Brief, Circle, Delegation, Opening, ThreadId, ThreadOrigin, ThreadState};
 
 use crate::actor::ActorId;
 use crate::approval::ApprovalRule;

@@ -759,6 +759,10 @@ pub enum Rejection {
     /// Sent into a thread that was closed (issue 557): nothing more is said in it.
     #[error("the thread it is sent into is closed")]
     ThreadClosed,
+    /// Said in a thread whose circle is closed by one outside it (issue 602): nobody but those it
+    /// was opened with says anything there.
+    #[error("only those it was opened with speak in the thread it is sent into")]
+    ClosedCircle,
     /// It does not fit the channel as it is: sent in another's name, about
     /// someone who takes no part, in a thread the channel does not have
     /// (issue 557), or asking what cannot be asked.

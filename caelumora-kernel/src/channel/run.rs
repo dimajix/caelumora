@@ -12,7 +12,7 @@ use caelumora_api::actor::Answering;
 use caelumora_api::logging::envelope_span;
 use caelumora_domain::actor::{ActorEvent, ActorId, Envelope, Rejection, RetryTarget};
 use caelumora_domain::chain::Position;
-use caelumora_domain::channel::{ChannelState, Said, ThreadId, ThreadState};
+use caelumora_domain::channel::{ChannelState, Circle, Said, ThreadId, ThreadState};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::history::{Audience, Heard, Reader, Recorded};
 use caelumora_domain::message::Message;
@@ -228,40 +228,22 @@ impl ChannelLoop {
                 let _ = carried_out.send(());
             }
             ActorChange::Leave(id, name, remover, threads) => {
-                // Dropping its inbox closes it; told to leave (`Actor::leave`),
-                // the actor ends its task itself once its state is stored
-                // consistent. Only if it does not - a tool that hangs - is it
-                // aborted. It keeps running until then: what it sends is
-                // taken (`handle_actor_event`), and the removal is announced
-                // once its task has ended (issue 262). An actor never started
-                // has nothing to say: announced at once.
-                // Nothing is delivered to it from here on (issue 417).
+                // Nothing is delivered to it from here on (issue 417), in every thread its actor
+                // takes part in now: one may have drawn it in while it was let go (issue 602).
                 let until = self.state.lock().await.history.end();
+                let threads = BTreeSet::clone(&threads.load());
                 let carried_out = vec![carried_out];
-                let mut leaving = Leaving { remover, name, until, threads, carried_out };
-                match running.get_mut(&id) {
-                    Some(handle) => {
-                        handle.inbox = None;
-                        // Asked for again while it was leaving: announced once, as asked last, and
-                        // answered to both.
-                        if let Some(earlier) = handle.leaving.take() {
-                            leaving.carried_out.extend(earlier.carried_out);
-                        }
-                        handle.leaving = Some(leaving);
-                        abort_unless_stopped(
-                            vec![handle.task.clone()],
-                            vec![handle.abort_handle.clone()],
-                            format!("Actor {id} did not stop by itself after leaving channel {}: aborted", self.id),
-                        );
-                        info!("Actor {} is stopping: it left channel {}", id, self.id);
-                    }
-                    None => self.announce_removal(id, leaving, running).await,
-                }
+                let leaving = Leaving { remover, name, until, threads, carried_out };
+                self.take_leave(id, leaving, running).await;
             }
             ActorChange::Thread(id, name, thread, change, by) => {
                 if self.change_thread(id, name, thread, change, by, running).await {
                     let _ = carried_out.send(());
                 }
+            }
+            ActorChange::DrawIn(thread, drawn, by) => {
+                self.draw_in(thread, drawn, &by, running).await;
+                let _ = carried_out.send(());
             }
             ActorChange::End => self.wait_for_end(carried_out, running),
             // A thread opened or closed (issue 557) is of the whole channel: announced in its
@@ -274,11 +256,14 @@ impl ChannelLoop {
                 let _ = carried_out.send(());
             }
             // Its delegate goes as it is closed (issue 557): it has nothing more to
-            // give, and what was open is dropped.
+            // give, and what was open is dropped. Not closed while it drew someone in since
+            // closing it was asked (issue 602).
             ActorChange::Close(thread, by) => {
-                self.let_delegate_go(thread, running).await;
-                self.close(thread, by, running).await;
-                let _ = carried_out.send(());
+                if !self.runs_anyone_in(thread) {
+                    self.let_delegate_go(thread, running).await;
+                    self.close(thread, by, running).await;
+                    let _ = carried_out.send(());
+                }
             }
             ActorChange::Delegate(thread, delegation) => {
                 self.hand_to_delegate(thread, delegation).await;
@@ -287,11 +272,47 @@ impl ChannelLoop {
         }
     }
 
+    /// Has `id` leave as `leaving` says (`ActorChange::Leave`). Dropping its inbox closes it; told
+    /// to leave (`Actor::leave`), the actor ends its task itself once its state is stored
+    /// consistent. Only if it does not - a tool that hangs - is it aborted. It keeps running until
+    /// then: what it sends is taken (`handle_actor_event`), and the removal is announced once its
+    /// task has ended (issue 262). The moderators of the threads it leaves ask it no more, also of
+    /// one it was drawn into while it was let go (issue 602). An actor never started has nothing to
+    /// say: announced at once.
+    async fn take_leave(
+        &self,
+        id: ActorId,
+        mut leaving: Leaving,
+        running: &mut HashMap<ActorId, RunningActor>,
+    ) {
+        let Some(handle) = running.get_mut(&id) else {
+            self.announce_removal(id, leaving, running).await;
+            return;
+        };
+        for there in leaving.threads.iter().filter_map(|thread| self.thread(*thread)) {
+            there.remove_actor(id);
+        }
+        handle.inbox = None;
+        // Asked for again while it was leaving: announced once, as asked last, and answered to
+        // both.
+        if let Some(earlier) = handle.leaving.take() {
+            leaving.carried_out.extend(earlier.carried_out);
+        }
+        handle.leaving = Some(leaving);
+        abort_unless_stopped(
+            vec![handle.task.clone()],
+            vec![handle.abort_handle.clone()],
+            format!("Actor {id} did not stop by itself after leaving channel {}: aborted", self.id),
+        );
+        info!("Actor {} is stopping: it left channel {}", id, self.id);
+    }
+
     /// Has the running actor `id`, called `name`, take part in `thread`, or no longer, as `change`
     /// says, on behalf of `by` (issue 602): right where its join or its leave is announced there
     /// in the name of `by`'s caller - between the events `run` routes, so that what is delivered
-    /// to it of the thread and its attendance there begin and end at one point. Whether it did:
-    /// nothing is announced for an actor that ended meanwhile, or a thread closed.
+    /// to it of the thread and its attendance there begin and end at one point. Whether it takes
+    /// part there so now - nothing is announced for an actor that did already, drawn in
+    /// meanwhile; `false` for an actor that ended meanwhile, or a thread closed.
     async fn change_thread(
         &self,
         id: ActorId,
@@ -302,15 +323,47 @@ impl ChannelLoop {
         running: &HashMap<ActorId, RunningActor>,
     ) -> bool {
         let until = self.state.lock().await.history.end();
-        if !self.take_part(id, thread, change) {
-            return false;
+        let Some(changed) = self.take_part(id, thread, change) else { return false };
+        if changed {
+            let changed = match change {
+                ThreadChange::Joins => ActorEvent::ParticipantJoined { participant: id, name },
+                ThreadChange::Leaves => {
+                    ActorEvent::ParticipantLeft { participant: id, name, until }
+                }
+            };
+            self.announce(changed, by, thread, running).await;
         }
-        let changed = match change {
-            ThreadChange::Joins => ActorEvent::ParticipantJoined { participant: id, name },
-            ThreadChange::Leaves => ActorEvent::ParticipantLeft { participant: id, name, until },
-        };
-        self.announce(changed, by, thread, running).await;
         true
+    }
+
+    /// Takes into `thread` whoever of `drawn` it draws in (issue 602), on behalf of `by`: where
+    /// its circle is open, each whose actor runs in the channel - started and not leaving -, takes
+    /// no part there yet and may take part in several threads
+    /// (`Actor::takes_part_in_several_threads`), its join announced in the name of `by`'s caller
+    /// (`change_thread`). Asks nothing: what draws them in - something said there, its opening -
+    /// was asked already.
+    async fn draw_in(
+        &self,
+        thread: ThreadId,
+        drawn: Vec<ActorId>,
+        by: &SecurityContext,
+        running: &HashMap<ActorId, RunningActor>,
+    ) {
+        if self.thread(thread).is_none_or(|there| there.circle() == Circle::Closed) {
+            return;
+        }
+        for id in drawn {
+            // One taken in whose start `run` has not taken in yet would be asked without an inbox.
+            if running.get(&id).is_none_or(|handle| handle.leaving.is_some()) {
+                continue;
+            }
+            let Some(actor) = self.actor(id) else { continue };
+            if !actor.takes_part_in_several_threads() {
+                continue;
+            }
+            let name = actor.name().to_string();
+            self.change_thread(id, name, thread, ThreadChange::Joins, by.clone(), running).await;
+        }
     }
 
     /// Waits for every actor that runs to end (`ActorChange::End`), told by whoever asked
@@ -420,7 +473,7 @@ impl ChannelLoop {
             .in_thread(thread)
             .envelope(event);
         debug!("Announcing {}", envelope.describe());
-        self.enter(envelope, &by, running).await;
+        self.record_and_route(envelope, &by, running).await;
     }
 
     async fn handle_actor_event(&self, event: Envelope, running: &HashMap<ActorId, RunningActor>) {
@@ -456,14 +509,37 @@ impl ChannelLoop {
         self.enter(event, &context, running).await;
     }
 
-    /// Lets `event` enter the channel, admitted or the channel's own, in `context` - its sender's,
-    /// as the channel built it to admit the event, or the one the channel speaks in (issue 516),
-    /// which the moderator routes it by -: its mentions resolved, appended to the history and
-    /// routed by the thread it happens in (issue 557), which admission made sure the channel has -
-    /// dropped, unrecorded, if it has not. What its sender's owner alone sees is recorded with
-    /// it, and given to nobody else (issue 417): the moderator decides on what everybody may see
-    /// of it, and that is what is delivered; of an event with nothing left to show, nothing is,
-    /// and its entry went to nobody.
+    /// Lets `event`, admitted, enter the channel in `context`, its sender's as the channel built it
+    /// to admit the event: its mentions resolved, whoever it draws into its thread taken in there
+    /// (issue 602) - whoever says a message of no turn in it, and whom a message mentions
+    /// (`draw_in`) -, then recorded and routed (`record_and_route`).
+    async fn enter(
+        &self,
+        event: Envelope,
+        context: &SecurityContext,
+        running: &HashMap<ActorId, RunningActor>,
+    ) {
+        let event = self.resolve_mentions(event);
+        // Their joins come before what draws them in, which they hear so. A message of a turn
+        // draws in no speaker: the turn runs where its agent takes part, or is what remains of a
+        // turn cancelled as it was let go from the thread, which would draw it back.
+        if let ActorEvent::CompleteMessageGenerated(said)
+        | ActorEvent::IntermediateMessageGenerated(said) = &event.event
+        {
+            let speaker = said.turn_id.is_none().then_some(event.context.sender_id);
+            let drawn = speaker.into_iter().chain(said.mentions.iter().copied()).collect();
+            self.draw_in(event.context.thread_id, drawn, context, running).await;
+        }
+        self.record_and_route(event, context, running).await;
+    }
+
+    /// Records `event`, admitted or the channel's own, in `context` - its sender's, as the channel
+    /// built it to admit the event, or the one the channel speaks in (issue 516), which the
+    /// moderator routes it by -, and routes it by the thread it happens in (issue 557), which
+    /// admission made sure the channel has - dropped, unrecorded, if it has not. What its sender's
+    /// owner alone sees is recorded with it, and given to nobody else (issue 417): the moderator
+    /// decides on what everybody may see of it, and that is what is delivered; of an event with
+    /// nothing left to show, nothing is, and its entry went to nobody.
     ///
     /// An answer under way asked for again (issue 235) has its turn ended
     /// first, so that the agent finds it given up as it takes the request
@@ -474,7 +550,7 @@ impl ChannelLoop {
     /// request is dropped, unrecorded: its users see the answer end, and
     /// what is not delivered is not recorded, so that the history never
     /// delivers it either (issue 223).
-    async fn enter(
+    async fn record_and_route(
         &self,
         event: Envelope,
         context: &SecurityContext,
@@ -496,7 +572,6 @@ impl ChannelLoop {
                 return;
             }
         }
-        let event = self.resolve_mentions(event);
         let shown = event.published();
         let routing = match &shown {
             Some(shown) => Some(thread.route(shown, context).await),
@@ -651,11 +726,12 @@ impl ChannelLoop {
     ///
     /// - first, it happens in a thread the channel has (issue 557), else it does not fit the
     ///   channel as it is (`Rejection::Invalid`);
-    /// - a message, by the actor that is acting - only who acts puts something into the channel -,
-    ///   each part of it, the message, its attachments, its tool results and what they gave and
-    ///   showed, as it is classified (`ConfidentialityPolicy::may_publish`, issue 133): its sender
-    ///   misclassified what does not flow in; what a result gave or showed lies in the channel's
-    ///   key space (issues 282, 512);
+    /// - a message, in a thread whose circle is closed by one taking part there alone (issue 602,
+    ///   `Rejection::ClosedCircle`); by the actor that is acting - only who acts puts something
+    ///   into the channel -, each part of it, the message, its attachments, its tool results and
+    ///   what they gave and showed, as it is classified (`ConfidentialityPolicy::may_publish`,
+    ///   issue 133): its sender misclassified what does not flow in; what a result gave or showed
+    ///   lies in the channel's key space (issues 282, 512);
     /// - a change of a message (issue 234): the message is in its history, its author - the sender
     ///   the history names - may change it, and it can be changed so as it stands
     ///   (`Message::modify`, `Message::revoke`); a reclassification (issue 239) by its author or
@@ -699,11 +775,11 @@ impl ChannelLoop {
     ) -> Result<(), Rejection> {
         // In a thread of the channel, and one still open (issue 557).
         let thread = event.context.thread_id;
-        if self.thread(thread).is_none() {
+        let Some(there) = self.thread(thread) else {
             let state = self.state.lock().await;
             let closed = state.threads.get(&thread).is_some_and(|thread| thread.closed);
             return Err(if closed { Rejection::ThreadClosed } else { Rejection::Invalid });
-        }
+        };
         let messages = event.event.messages();
         let classification = self.classification();
         let channel = self.security_attributes();
@@ -714,7 +790,14 @@ impl ChannelLoop {
             ActorEvent::CompleteMessageGenerated(message)
             | ActorEvent::IntermediateMessageGenerated(message) => {
                 said = Some((message, Vec::new()));
-                Ok(())
+                // One outside it runs and takes no part there; one leaving still says what it
+                // says until its task has ended (issue 262).
+                let actors = self.actors.load();
+                let sender = actors.get(&event.context.sender_id);
+                let outside = sender.is_some_and(|actor| !actor.threads.load().contains(&thread));
+                (there.circle() == Circle::Open || !outside)
+                    .then_some(())
+                    .ok_or(Rejection::ClosedCircle)
             }
             ActorEvent::MessageModified(modified) => {
                 let mut message =
@@ -1312,6 +1395,7 @@ mod tests {
     use crate::testing::StandIn;
     use crate::testing::{file, shown, World};
     use anyhow::Result;
+    use arc_swap::ArcSwap;
     use bytes::Bytes;
     use caelumora_api::actor::Actor;
     use caelumora_api::component::ComponentImpl;
@@ -2657,12 +2741,12 @@ mod tests {
         let mut join_set = JoinSet::new();
         let line = ThreadId::line(channel.id);
         let gone = ActorId::Agent(AgentId::new());
-        let in_line = BTreeSet::from([line]);
+        let in_line = Arc::new(ArcSwap::from_pointee(BTreeSet::from([line])));
         let leave = ActorChange::Leave(gone, "gone".to_string(), system.clone(), in_line);
         let left = channel.request(leave);
         let origin = ThreadOrigin { thread: line, message: MessageId::new() };
         let thread = ThreadId::new();
-        let opening = Opening { origin, by: system.caller_id };
+        let opening = Opening { origin, by: system.caller_id, circle: Circle::Closed };
         let opened = channel.request(ActorChange::Open(thread, opening, system.clone()));
         let briefs = VecDeque::new();
         let delegation = Delegation { giver: gone, recipient: gone, initiator: gone, briefs };
@@ -2692,9 +2776,9 @@ mod tests {
         let (line, thread) = (ThreadId::line(channel.id), ThreadId::new());
         let system = SecurityContext::system();
         let origin = ThreadOrigin { thread: line, message: MessageId::new() };
-        channel.open_thread(&system, thread, origin).await.expect("opened");
+        channel.open_thread(&system, thread, origin, Circle::Open).await.expect("opened");
         let gone = ActorId::Agent(AgentId::new());
-        let both = BTreeSet::from([line, thread]);
+        let both = Arc::new(ArcSwap::from_pointee(BTreeSet::from([line, thread])));
         let left = channel.request(ActorChange::Leave(gone, "gone".to_string(), system, both));
         carry_out_requests(&channel, &mut HashMap::new(), &event_tx, &mut join_set).await;
         assert!(left.carried_out().await, "announced");
@@ -2731,7 +2815,7 @@ mod tests {
             gone,
             "gone".to_string(),
             SecurityContext::system(),
-            BTreeSet::from([line]),
+            Arc::new(ArcSwap::from_pointee(BTreeSet::from([line]))),
         ));
         let answered = time::timeout(Duration::from_secs(1), late.carried_out()).await;
         assert!(!answered.expect("answered at once"), "with nothing");
@@ -2753,8 +2837,10 @@ mod tests {
         let leaving = leaving_actor(helper, system.clone(), in_line.clone());
         let mut running = HashMap::from([(helper, leaving)]);
 
-        let leave =
-            || ActorChange::Leave(helper, "helper".to_string(), system.clone(), in_line.clone());
+        let threads = Arc::new(ArcSwap::from_pointee(in_line.clone()));
+        let leave = || {
+            ActorChange::Leave(helper, "helper".to_string(), system.clone(), Arc::clone(&threads))
+        };
         let left = tokio::spawn(channel.request(leave()).carried_out());
         let again = tokio::spawn(channel.request(leave()).carried_out());
         carry_out_requests(&channel, &mut running, &event_tx, &mut join_set).await;

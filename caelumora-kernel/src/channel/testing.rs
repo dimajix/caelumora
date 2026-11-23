@@ -34,7 +34,7 @@ use caelumora_domain::channel::testing::{founded, make_channel};
 #[cfg(test)]
 use caelumora_domain::channel::ChannelId;
 use caelumora_domain::channel::{
-    Channel, Delegation, HistoryAccess, InternalActor, Opening, Participant, ThreadId,
+    Channel, Circle, Delegation, HistoryAccess, InternalActor, Opening, Participant, ThreadId,
     ThreadOrigin, ThreadState,
 };
 use caelumora_domain::confidentiality::Classification;
@@ -264,7 +264,7 @@ impl ChannelLoop {
     ) -> ThreadId {
         let thread = ThreadId::new();
         let origin = ThreadOrigin { thread: ThreadId::line(self.id), message: MessageId::new() };
-        let opening = Opening { origin, by: ActorId::System };
+        let opening = Opening { origin, by: ActorId::System, circle: Circle::Closed };
         let held =
             ThreadState { opening: Some(opening), closed: false, delegation: Some(delegation) };
         self.state.lock().await.threads.insert(thread, held);
@@ -614,9 +614,9 @@ impl ChannelLoop {
         session.procedures().run(adding).await.map(drop).map_err(SessionError::untyped)
     }
 
-    /// Opens a thread of the channel at `origin` on behalf of `context`, with `founders`, by the
-    /// procedure that does it (`thread::Open`), as an entry point does; in a channel of no session
-    /// without founders.
+    /// Opens a thread of the channel at `origin`, its circle open, on behalf of `context`, with
+    /// `founders`, by the procedure that does it (`thread::Open`), as an entry point does; in a
+    /// channel of no session without founders.
     ///
     /// # Errors
     /// As `thread::Open`; if a channel of no session is to take founders in, else as
@@ -629,14 +629,17 @@ impl ChannelLoop {
     ) -> Result<ThreadId> {
         let founders = founders.to_vec();
         if let Some(session) = self.session_loop() {
-            let opening = thread::Open::new(context, session.id(), self.id, origin, founders);
+            let opening =
+                thread::Open::new(context, session.id(), self.id, origin, Circle::Open, founders);
             return session.procedures().run(opening).await.map_err(SessionError::untyped);
         }
         // A channel of no session takes nobody in: its threads are opened without founders.
         anyhow::ensure!(founders.is_empty(), "a channel of no session takes no founders in");
         let (channel, context) = (Arc::clone(self), context.clone());
         let opened = ThreadId::new();
-        self.holding(async move { channel.open_thread(&context, opened, origin).await }).await?;
+        let opening =
+            async move { channel.open_thread(&context, opened, origin, Circle::Open).await };
+        self.holding(opening).await?;
         Ok(opened)
     }
 

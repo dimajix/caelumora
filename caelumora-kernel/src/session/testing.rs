@@ -32,7 +32,7 @@ use caelumora_domain::actor::ActorId;
 use caelumora_domain::actor::{ActorEvent, Rejection};
 use caelumora_domain::channel::testing::main_channel;
 use caelumora_domain::channel::{
-    Channel, ChannelId, HistoryAccess, Participant, ThreadId, ThreadOrigin,
+    Channel, ChannelId, Circle, HistoryAccess, Participant, ThreadId, ThreadOrigin,
 };
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::project::ProjectId;
@@ -692,8 +692,8 @@ impl SessionLoop {
         self.procedures().run(restoring).await.map_err(SessionError::untyped)
     }
 
-    /// Opens a thread of `channel` at `origin` on behalf of `context`, with `founders`, as
-    /// `thread::Open` does.
+    /// Opens a thread of `channel` at `origin`, its circle `circle`, on behalf of `context`, with
+    /// `founders`, as `thread::Open` does.
     ///
     /// # Errors
     /// As `thread::Open`.
@@ -702,9 +702,10 @@ impl SessionLoop {
         context: &SecurityContext,
         channel: ChannelId,
         origin: ThreadOrigin,
+        circle: Circle,
         founders: Vec<ActorId>,
     ) -> Result<ThreadId> {
-        let opening = thread::Open::new(context, self.id(), channel, origin, founders);
+        let opening = thread::Open::new(context, self.id(), channel, origin, circle, founders);
         self.procedures().run(opening).await.map_err(SessionError::untyped)
     }
 

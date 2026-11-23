@@ -1,6 +1,7 @@
 //! The tests of `ChannelLoop` itself, and the fixtures of every test of a running channel.
 
 mod commands;
+mod threads;
 
 pub(super) use crate::channel::testing::*;
 

@@ -20,15 +20,16 @@ use crate::kernel::Kernel;
 use crate::session::{SessionError, SessionLoop};
 use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::channel::{ChannelId, HistoryAccess, ThreadId, ThreadOrigin};
+use caelumora_domain::channel::{ChannelId, Circle, HistoryAccess, ThreadId, ThreadOrigin};
 use caelumora_domain::session::SessionId;
 use caelumora_security::SecurityContext;
 use std::collections::HashSet;
 use std::sync::Arc;
 
 /// Opens a thread of a channel at `origin` on behalf of `context`, starting the session where it
-/// does not run, with its founders - whom `context` acts for, or their own agents (`open`). Holds
-/// the new thread, its id chosen before it is opened, until its founders are taken in.
+/// does not run, its circle as asked, with its founders - whom `context` acts for, or their own
+/// agents (`open`). Holds the new thread, its id chosen before it is opened, until its founders
+/// are taken in.
 pub struct Open {
     context: SecurityContext,
     session: SessionId,
@@ -36,21 +37,24 @@ pub struct Open {
     /// Chosen before it is opened, so that it is held before anyone can find it.
     thread: ThreadId,
     origin: ThreadOrigin,
+    circle: Circle,
     founders: Vec<ActorId>,
 }
 
 impl Open {
-    /// Opens a thread of `channel` of `session` at `origin` on behalf of `context`, with
-    /// `founders`.
+    /// Opens a thread of `channel` of `session` at `origin`, its circle `circle`, on behalf of
+    /// `context`, with `founders`.
     pub fn new(
         context: &SecurityContext,
         session: SessionId,
         channel: ChannelId,
         origin: ThreadOrigin,
+        circle: Circle,
         founders: Vec<ActorId>,
     ) -> Self {
         let context = context.clone();
-        Self { context, session, channel, thread: ThreadId::new(), origin, founders }
+        let thread = ThreadId::new();
+        Self { context, session, channel, thread, origin, circle, founders }
     }
 }
 
@@ -78,34 +82,40 @@ impl Procedure for Open {
         kernel: &Kernel,
         log: &mut Compensation,
     ) -> Result<ThreadId, SessionError> {
-        let Self { context, session, channel, thread, origin, founders } = self;
+        let Self { context, session, channel, thread, origin, circle, founders } = self;
         let session = session::open(kernel, &context, session).await?;
-        open(log, kernel, &session, &context, channel, thread, origin, founders).await?;
+        open(log, kernel, &session, &context, channel, thread, origin, circle, founders).await?;
         Ok(thread)
     }
 }
 
-/// Opens thread `thread` of `channel` of `session` at `origin` on behalf of `context`, with its
-/// founders, `founders` - whom `context` acts for, or agents of their own -, for a procedure that
-/// holds the thread, the one it is opened at and its founders (`Open`), or a founder nobody knows
-/// yet, an agent just made (the sub-agents' start, issue 558). A founder new to the channel takes
-/// part in the thread alone; one who takes part in the channel already takes part in it as well
-/// (issue 602). Everything is asked before anything is stored: whether `context` may open it there
-/// (`require_opening`, asked ahead of the channel, which asks it again as it opens it), what taking
-/// each founder who takes part already into the thread asks (`participant::require_thread_entry`),
-/// and what taking each newcomer in asks, as each is taken into the session
-/// (`participant::take_into_session`); then the thread is opened (`ChannelLoop::open_thread`), each
-/// newcomer taken into the channel as one (`participant::take_into_channel`) and each founder who
-/// takes part already into the thread (`participant::take_into_thread`). Each step is taken back by
-/// `log`, the last first, if a later step fails - a founder as if never taken in, the thread closed
-/// in the name of `context`, who opened it (`ChannelLoop::close_thread`).
+/// Opens thread `thread` of `channel` of `session` at `origin`, its circle `circle`, on behalf of
+/// `context`, with its founders, `founders` - whom `context` acts for, or agents of their own -,
+/// for a procedure that holds the thread, the one it is opened at and its founders (`Open`), or a
+/// founder nobody knows yet, an agent just made (the sub-agents' start, issue 558). A founder new
+/// to the channel takes part in the thread alone; one who takes part in the channel already takes
+/// part in it as well (issue 602). Everything is asked before anything is stored: whether `context`
+/// may open it there (`require_opening`, asked ahead of the channel, which asks it again as it
+/// opens it), what taking each founder who takes part already into the thread asks
+/// (`participant::require_thread_entry`), and what taking each newcomer in asks, as each is taken
+/// into the session (`participant::take_into_session`); then the thread is opened
+/// (`ChannelLoop::open_thread`), each newcomer taken into the channel as one
+/// (`participant::take_into_channel`) and each founder who takes part already into the thread
+/// (`participant::take_into_thread`). Each step is taken back by `log`, the last first, if a later
+/// step fails - a founder as if never taken in, the thread closed in the name of `context`, who
+/// opened it (`ChannelLoop::close_thread`). Last, as nothing fails after it, the thread draws in
+/// the author of the message it hangs at, where its circle is open (`ChannelLoop::draw_in_author`,
+/// issue 602).
 ///
 /// # Errors
 /// `SessionError::ChannelNotFound` for a channel `context` may not read; as `require_opening`,
 /// `participant::require_thread_entry`, `participant::take_into_session`,
 /// `ChannelLoop::open_thread`, `participant::take_into_channel` and
 /// `participant::take_into_thread`.
-#[expect(clippy::too_many_arguments, reason = "the thread, where, by whom, with whom, in what")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the thread, where, by whom, with whom, how closed, in what"
+)]
 pub async fn open(
     log: &mut Compensation,
     kernel: &Kernel,
@@ -114,6 +124,7 @@ pub async fn open(
     channel: ChannelId,
     thread: ThreadId,
     origin: ThreadOrigin,
+    circle: Circle,
     founders: Vec<ActorId>,
 ) -> Result<(), SessionError> {
     let channel = session.channel_for(context, channel).await?;
@@ -139,7 +150,7 @@ pub async fn open(
         let taking_in = take_into_session(log, kernel, session, context, founder, founding, into);
         asked.push(taking_in.await?);
     }
-    channel.open_thread(context, thread, origin).await?;
+    channel.open_thread(context, thread, origin, circle).await?;
     {
         let (channel, context) = (Arc::clone(&channel), context.clone());
         log.record("opening a thread", async move {
@@ -154,6 +165,7 @@ pub async fn open(
     for founder in taking_part {
         take_into_thread(log, &channel, context, founder, thread).await?;
     }
+    channel.draw_in_author(context, thread).await.carried_out().await;
     Ok(())
 }
 
@@ -221,12 +233,14 @@ mod tests {
     use caelumora_domain::actor::ActorState;
     use caelumora_domain::agent::PersonalityKind;
     use caelumora_domain::chain::Position;
-    use caelumora_domain::channel::{ThreadId, ThreadOrigin};
+    use caelumora_domain::channel::{Circle, ThreadId, ThreadOrigin};
     use caelumora_domain::history::{Attended, HistoryEntry};
     use caelumora_domain::message::MessageId;
     use caelumora_domain::store::StoreError;
     use std::collections::BTreeSet;
     use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::time;
 
     /// Opening a thread holds the thread it is opened at, so that it is not closed meanwhile;
     /// closing one waits for whoever holds it - letting someone go from it holds it shared, so
@@ -242,7 +256,7 @@ mod tests {
         let at_the_line = ThreadOrigin { thread: line, message: MessageId::new() };
 
         let held = Held::key(&executor, Key::Thread(id, main, line), true).await;
-        let opening = Open::new(&alice, id, main, at_the_line, vec![]);
+        let opening = Open::new(&alice, id, main, at_the_line, Circle::Open, vec![]);
         let thread = waits_for(held, &executor, opening).await.expect("opened once it is let go");
 
         let held = Held::key(&executor, Key::Thread(id, main, thread), false).await;
@@ -280,7 +294,7 @@ mod tests {
         let session = world.session_of(&[world.bob], &[], &[]).await;
         let main = Arc::clone(&session.channels()[0]);
         let thread = session
-            .open_thread(&alice, main.id(), at_the_line(&main), vec![helper])
+            .open_thread(&alice, main.id(), at_the_line(&main), Circle::Closed, vec![helper])
             .await
             .expect("alice opens a thread with her agent");
 
@@ -363,7 +377,7 @@ mod tests {
         let session = world.session_of(&[world.bob], &[], &[]).await;
         let main = Arc::clone(&session.channels()[0]);
         let thread = session
-            .open_thread(&alice, main.id(), at_the_line(&main), vec![helper])
+            .open_thread(&alice, main.id(), at_the_line(&main), Circle::Closed, vec![helper])
             .await
             .expect("opened");
         let briefed = |text: &'static str| {
@@ -403,7 +417,7 @@ mod tests {
         let main = Arc::clone(&session.channels()[0]);
         let lead = ActorId::Agent(lead);
         let thread = session
-            .open_thread(&alice, main.id(), at_the_line(&main), vec![helper])
+            .open_thread(&alice, main.id(), at_the_line(&main), Circle::Closed, vec![helper])
             .await
             .expect("opened");
         main.delegate(&alice, thread, helper, "look it up".to_string()).await.expect("delegated");
@@ -466,7 +480,7 @@ mod tests {
         let session = world.session_of(&[], &[], &[]).await;
         let main = Arc::clone(&session.channels()[0]);
         let thread = session
-            .open_thread(&alice, main.id(), at_the_line(&main), vec![helper])
+            .open_thread(&alice, main.id(), at_the_line(&main), Circle::Closed, vec![helper])
             .await
             .expect("opened");
         main.delegate(&alice, thread, helper, "look it up".to_string()).await.expect("delegated");
@@ -501,7 +515,7 @@ mod tests {
         let main = Arc::clone(&session.channels()[0]);
 
         let thread = session
-            .open_thread(&alice, main.id(), at_the_line(&main), vec![helper])
+            .open_thread(&alice, main.id(), at_the_line(&main), Circle::Closed, vec![helper])
             .await
             .expect("alice opens a thread with her agent");
         assert!(session.session().takes_part(helper), "taken into the session");
@@ -575,7 +589,7 @@ mod tests {
         let carol = ActorId::User(world.carol);
 
         let refused = session
-            .open_thread(&alice, main.id(), at_the_line(&main), vec![helper, carol])
+            .open_thread(&alice, main.id(), at_the_line(&main), Circle::Closed, vec![helper, carol])
             .await
             .expect_err("carol is not alice's own");
         assert!(
@@ -589,7 +603,7 @@ mod tests {
 
         let elsewhere = ThreadOrigin { thread: ThreadId::new(), message: MessageId::new() };
         let refused = session
-            .open_thread(&alice, main.id(), elsewhere, vec![helper])
+            .open_thread(&alice, main.id(), elsewhere, Circle::Closed, vec![helper])
             .await
             .expect_err("a person branches at the line");
         assert!(
@@ -603,7 +617,7 @@ mod tests {
     /// Issue 602: a founder who takes part in the channel takes part in the thread as well; who
     /// takes part in the channel is taken into a further thread and let go from it alone, each
     /// announced in that thread, which their attendance follows; refused where they take part
-    /// already, from the last thread they take part in, and into a thread delegated into.
+    /// already, from the last thread they take part in, and into a thread whose circle is closed.
     #[tokio::test]
     async fn a_participant_is_taken_into_a_further_thread_and_let_go_from_it_alone() {
         let answering = ScriptedAgents(Script::Answers("ok".to_string()));
@@ -616,7 +630,7 @@ mod tests {
         let main = Arc::clone(&session.channels()[0]);
         let (id, line) = (main.id(), ThreadId::line(main.id()));
         let thread = session
-            .open_thread(&alice, id, at_the_line(&main), vec![hers])
+            .open_thread(&alice, id, at_the_line(&main), Circle::Open, vec![hers])
             .await
             .expect("alice, who takes part in the channel, founds a thread");
         let both = BTreeSet::from([line, thread]);
@@ -648,10 +662,9 @@ mod tests {
             "{refused}"
         );
 
-        let delegated = session
-            .open_thread(&alice, id, at_the_line(&main), vec![helper])
-            .await
-            .expect("alice opens a thread with her agent");
+        let closed =
+            session.open_thread(&alice, id, at_the_line(&main), Circle::Closed, vec![helper]);
+        let delegated = closed.await.expect("alice opens a closed one");
         let brief = "look it up".to_string();
         main.delegate(&alice, delegated, helper, brief).await.expect("delegated");
         let refused = session.take_into_thread(&alice, id, delegated, bob).await;
@@ -660,6 +673,46 @@ mod tests {
             matches!(channel_error(&refused), Some(ChannelError::ClosedCircle { .. })),
             "{refused}"
         );
+        world.manager.stop(&alice, session.id()).await.unwrap();
+    }
+
+    /// Issue 602: a thread opened at a message takes the message's author in, one who takes part in
+    /// the channel - so that whoever opened it asks its author there -, but not whoever opened it,
+    /// who said nothing there yet; and nobody where its circle is closed.
+    #[tokio::test]
+    async fn a_thread_opened_at_a_message_takes_its_author_in_unless_its_circle_is_closed() {
+        let world = World::with(&[], &[], |_| {}).await;
+        let alice = World::as_user(world.alice);
+        let (hers, bob) = (ActorId::User(world.alice), ActorId::User(world.bob));
+        let session = world.session_of(&[world.bob], &[], &[]).await;
+        let main = Arc::clone(&session.channels()[0]);
+        let his = main.user_actor(world.bob).expect("bob's actor");
+        his.send_message(None, Some("look".to_string()), None, Vec::new()).await.expect("said");
+        let message = time::timeout(Duration::from_secs(5), async {
+            loop {
+                let said = main.history().await;
+                if let Some(look) = said.iter().find(|m| m.content.as_deref() == Some("look")) {
+                    break look.id;
+                }
+                time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("recorded");
+        let at_his = ThreadOrigin { thread: ThreadId::line(main.id()), message };
+
+        let thread = session
+            .open_thread(&alice, main.id(), at_his, Circle::Open, vec![])
+            .await
+            .expect("opened");
+        assert!(main.threads_taken_part_in(bob).await.contains(&thread), "its message's author");
+        assert!(!main.threads_taken_part_in(hers).await.contains(&thread), "not who opened it");
+        let joined = main.attendance(bob).await.iter().any(|at| at.thread == thread);
+        assert!(joined, "his join announced there");
+
+        let closed = session.open_thread(&alice, main.id(), at_his, Circle::Closed, vec![]);
+        let closed = closed.await.expect("opened");
+        assert!(!main.threads_taken_part_in(bob).await.contains(&closed), "not into a closed one");
         world.manager.stop(&alice, session.id()).await.unwrap();
     }
 
@@ -697,7 +750,13 @@ mod tests {
         let main = Arc::clone(&session.channels()[0]);
 
         let refused = session
-            .open_thread(&alice, main.id(), at_the_line(&main), vec![helper, broken])
+            .open_thread(
+                &alice,
+                main.id(),
+                at_the_line(&main),
+                Circle::Closed,
+                vec![helper, broken],
+            )
             .await
             .expect_err("the second cannot start");
         assert!(refused.to_string().contains("cannot start"), "{refused}");

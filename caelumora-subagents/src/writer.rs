@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use caelumora_api::reader::ViewError;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::{AgentId, PersonalityId, PersonalityKind};
-use caelumora_domain::channel::{ChannelId, ThreadId, ThreadOrigin};
+use caelumora_domain::channel::{ChannelId, Circle, ThreadId, ThreadOrigin};
 use caelumora_domain::scope::Scope;
 use caelumora_domain::session::SessionId;
 use caelumora_domain::store::StoreError;
@@ -255,8 +255,11 @@ impl Procedure for Starting {
         let context = work.context().clone();
         // Its founder's taking in and the opening, each taken back by `log` (`thread::open`).
         let founders = vec![founder];
-        let opening =
-            thread::open(log, kernel, &session, &context, channel, thread, origin, founders);
+        // A closed circle: nobody but the sub-agent takes part in it (issue 602).
+        let circle = Circle::Closed;
+        let opening = thread::open(
+            log, kernel, &session, &context, channel, thread, origin, circle, founders,
+        );
         opening.await.map_err(told)?;
         channel_loop.delegate(&context, thread, founder, brief).await.map_err(told)?;
         info!("Sub-agent {} started in thread {} by {}", agent, thread, context.caller_id);

@@ -231,10 +231,11 @@ them wherever it happens. The web UI and the TUI show the line (`Envelope::is_sh
 `ChannelView::shown_in_line`): what happens in it and in the whole channel, and of another thread
 its approvals and its questions, which its calls wait for, and what mentions the viewer.
 
-A thread is **opened** at a message of another thread of its channel (`ThreadOrigin`), with its
-**founders** (`procedure::thread::Open`, issue 593, which holds the new thread, the one it is
-opened at and its founders until they are taken in): a founder new to the channel takes part in
-the thread alone, one who takes part in the channel already takes part in it as well (issue 602).
+A thread is **opened** at a message of another thread of its channel (`ThreadOrigin`), its
+**circle** open or closed (see below), with its **founders** (`procedure::thread::Open`, issue
+593, which holds the new thread, the one it is opened at and its founders until they are taken
+in): a founder new to the channel takes part in the thread alone, one who takes part in the
+channel already takes part in it as well (issue 602).
 Opening goes through the session, as every way into a channel does (see [Taking someone into the
 session](#taking-someone-into-the-session)): a founder is mostly new to the session. Whoever reads
 the channel may open a thread (`OpenThread`), founded with whom they act for or agents of their
@@ -278,10 +279,35 @@ turn running there ends (`Actor::cancel` of the thread), and what it kept of the
 as the agent takes its own join or leave in (`AgentBody::follow`, see
 [AGENT-TURN.md](AGENT-TURN.md)). Refused are a thread it takes part in already (`AlreadyInThread`),
 the last thread it takes part in, which it leaves by leaving the channel (`LastThread`), a thread
-delegated into, a closed circle of its founders (`ClosedCircle`), and a further thread for an
-external agent, which keeps one remote state in its channel (`InOneThreadAlone`,
-`Actor::takes_part_in_several_threads`). Letting someone go from the channel lets them go from every
-thread, and their leave is announced in each.
+whose circle is closed (`ClosedCircle`), and a further thread for an external agent, which keeps
+one remote state in its channel (`InOneThreadAlone`, `Actor::takes_part_in_several_threads`).
+Letting someone go from the channel lets them go from every thread, and their leave is announced in
+each; a thread one was drawn into while being let go is among them, as `run` reads where the actor
+takes part as it takes the leave in.
+
+Whether who takes part in a thread may grow is its **circle** (`Circle`, issues 557, 602), fixed as
+it is opened. A thread whose circle is **open** - one a person opens, and the line - **draws in**
+whoever says a message of no turn in it and whom a message said in it mentions
+(`ChannelLoop::draw_in`), and, as it is opened, the author of the message it hangs at
+(`draw_in_author`, once its founders are in), so that a side question asks whom it is about; whoever
+opened it is drawn in by what they say there. A message of a turn draws in no speaker: the turn runs
+where its agent takes part, or remains of a turn cancelled as its agent was let go from the thread.
+A thread whose circle is **closed** - a sub-agent's, opened so by the plugin that delegates into it,
+as only such a thread is delegated into - draws in nobody, takes nobody in (`ClosedCircle`) and lets
+in nothing one outside it says there (`Rejection::ClosedCircle`); one leaving says what it says
+until its task has ended. Drawing in asks nothing of its own: what draws someone in was admitted
+already - a message, whose sender may write in the channel, or the opening -, and whom it draws in
+takes part in the channel, which is all a thread asks (see
+[PERMISSION-CHECKS.md](PERMISSION-CHECKS.md)). The channel's `run` draws them in as it takes in what
+draws them in, before it records and routes it, each join announced there in the name of who said it
+or opened the thread: an agent mentioned hears the message that mentioned it, and the thread's
+moderator asks it as anyone taking part there. One whose actor does not run - not started yet, or
+leaving -, who takes part there already, or an external agent with its one thread is passed over; a
+join asked for someone drawn in meanwhile is carried out without a second announcement, and closing
+a thread asked before someone was drawn in is refused (`ThreadNotEmpty`), which `run` asks again as
+it would close it. Whom a thread drew in hears it from their join on, as anyone taken in: an agent
+drawn in by a later mention knows its branch of the origin up to the thread's message and what is
+said from its join on, not what was said in the thread before.
 
 ### Building a channel
 
@@ -1074,7 +1100,8 @@ them - no policy consulted, no chain between agents counted.
 A participant - the **giver** - has an agent - the **recipient** - work on a **brief** in a thread
 opened at the giver's, and is given back what came of it there (`ChannelLoop::delegate`, issue
 557): the giver is the caller - nobody delegates in another's name -, who reads the channel; the
-recipient runs in the thread, the giver where it was opened. What a thread was delegated is the
+thread's circle is closed (`OpenCircle` otherwise, issue 602); the recipient runs in the thread,
+the giver where it was opened. What a thread was delegated is the
 thread's part of the channel's state (`Delegation`): the giver, the recipient, the root of the
 chain that delegated, and the briefs, the first the one open - a further brief waits behind it; a
 thread delegated into takes no other giver nor recipient (`DelegatedOtherwise`). The channel alone
@@ -1100,9 +1127,10 @@ given what goes to the users and happens in its thread or the whole channel
 
 *   **gives the open brief** to the recipient, in the thread, once (`GivenToRead`);
 *   **takes the recipient's first turn that ends after the brief was given** as its answer - the
-    thread is a closed circle in which the delegate alone gives the recipient anything, and is
-    written in by nobody else: a turn answering a user who wrote in it would be taken so, and the
-    turn that answers the brief taken as the next brief's answer, and so on -
+    thread is a closed circle in which the delegate alone gives the recipient anything, and in
+    which nobody else says anything (`Rejection::ClosedCircle`): a turn answering a user who wrote
+    in it would be taken so, and the turn that answers the brief taken as the next brief's answer,
+    and so on -
 *   **and gives back** to the giver, where the thread was opened, what came of it, once: what
     others hear of the turn, that it ended without an answer, that it was given up and why, that
     the recipient could not be asked - the brief refused, the recipient gone before it was given -,

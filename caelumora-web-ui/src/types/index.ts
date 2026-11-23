@@ -1012,7 +1012,7 @@ export interface ActorEvent {
  * Why the channel did not let in what a user sent (issue 304): a known few,
  * which the UI words itself; one it does not know is shown as such.
  */
-export type Rejection = 'forbidden' | 'classification_refused' | 'message_not_found' | 'message_unchangeable' | 'thread_closed' | 'invalid';
+export type Rejection = 'forbidden' | 'classification_refused' | 'message_not_found' | 'message_unchangeable' | 'thread_closed' | 'closed_circle' | 'invalid';
 
 /**
  * What a request to answer again is about (issue 235): a message of the

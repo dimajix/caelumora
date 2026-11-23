@@ -1380,7 +1380,7 @@ mod tests {
     /// why.
     #[tokio::test]
     async fn a_participant_is_taken_into_a_thread_and_let_go_from_it_alone() {
-        use caelumora_domain::channel::ThreadOrigin;
+        use caelumora_domain::channel::{Circle, ThreadOrigin};
         let state = state();
         let api = api(Arc::clone(&state), &[]);
         let cookie = login(&api, "alice").await;
@@ -1391,7 +1391,8 @@ mod tests {
         let session = state.session_manager.open(&system, session_id).await.unwrap();
         let line = ThreadId::line(channel_id);
         let origin = ThreadOrigin { thread: line, message: MessageId::new() };
-        let thread = session.open_thread(&system, channel_id, origin, vec![]).await.unwrap();
+        let thread =
+            session.open_thread(&system, channel_id, origin, Circle::Open, vec![]).await.unwrap();
         let threads = format!("/sessions/{}/channels/{}/threads", session_id.0, channel_id.0);
         let participants = |thread: ThreadId| format!("{threads}/{}/participants", thread.0);
         let taking_in = Some(json!({ "participant": alice }));
@@ -1424,7 +1425,7 @@ mod tests {
     /// a nudge of someone who takes part there, refused for one who does not.
     #[tokio::test]
     async fn a_message_and_a_command_happen_in_the_thread_they_name() {
-        use caelumora_domain::channel::ThreadOrigin;
+        use caelumora_domain::channel::{Circle, ThreadOrigin};
         let state = state();
         let api = api(Arc::clone(&state), &[]);
         let cookie = login(&api, "alice").await;
@@ -1435,7 +1436,8 @@ mod tests {
         let system = SecurityContext::system();
         let session = state.session_manager.open(&system, session_id).await.unwrap();
         let origin = ThreadOrigin { thread: ThreadId::line(channel_id), message: MessageId::new() };
-        let thread = session.open_thread(&system, channel_id, origin, vec![]).await.unwrap();
+        let thread =
+            session.open_thread(&system, channel_id, origin, Circle::Open, vec![]).await.unwrap();
         let channel_uri = format!("/sessions/{}/channels/{}", session_id.0, channel_id.0);
 
         let said = Some(json!({ "content": "aside", "thread": thread }));

@@ -171,9 +171,19 @@ pub enum ChannelError {
     /// instead.
     #[error("{participant} takes part in no other thread of channel {channel} than {thread}")]
     LastThread { participant: ActorId, thread: ThreadId, channel: ChannelId },
-    /// Someone taken into a thread delegated into (issue 602): a closed circle of its founders.
-    #[error("thread {thread} of channel {channel} is delegated into: nobody is taken into it")]
+    /// Someone taken into a thread whose circle is closed (issue 602): those it was opened with
+    /// take part in it, and nobody else.
+    #[error(
+        "the circle of thread {thread} of channel {channel} is closed: nobody is taken into it"
+    )]
     ClosedCircle { thread: ThreadId, channel: ChannelId },
+    /// Delegating into a thread whose circle is open (issue 602): what its recipient makes of a
+    /// brief is the first turn it ends there, which a thread others write in and are drawn into
+    /// would mistake.
+    #[error(
+        "the circle of thread {thread} of channel {channel} is open: nothing is delegated into it"
+    )]
+    OpenCircle { thread: ThreadId, channel: ChannelId },
     /// A thread delegated into by another giver, or to another recipient, than a brief names
     /// (issue 557): a thread has one delegation, which brings back to its giver what its recipient
     /// made of it.
@@ -287,6 +297,9 @@ enum ActorChange {
     /// join in the thread it joined in - `None` for an actor that starts again with its channel, or
     /// an internal one, which join nothing.
     Start(ChannelActor, Option<Position>, Option<SecurityContext>),
+    /// The participants to take into the thread as far as it draws them in, and on whose behalf
+    /// (issue 602): `run` takes them in as `ChannelLoop::draw_in` says.
+    DrawIn(ThreadId, Vec<ActorId>, SecurityContext),
     /// The running actor taken into a further thread or let go from one, as `ThreadChange` says,
     /// what it is called, and on whose behalf (issue 602): `run` has it take part there or no
     /// longer as it announces its join or its leave there in the name of their caller
@@ -295,17 +308,19 @@ enum ActorChange {
     /// The actor that leaves, what it was called as it left, on whose behalf it was removed - in
     /// whose name `run` announces it once its task has ended (`ParticipantLeft`, issues 162, 262,
     /// 408) -, and the threads it took part in, in each of which it is announced (issues 557,
-    /// 602). Also for one that has no actor but takes part in the history (issue 590) - left out as
-    /// the channel started, or let go while it did not run (`reconcile`) -, which `run` announces
-    /// at once.
-    Leave(ActorId, String, SecurityContext, BTreeSet<ThreadId>),
+    /// 602): its actor's own, which `run` reads as it takes the leave in, since a thread may have
+    /// drawn it in while it was let go. Also for one that has no actor but takes part in the
+    /// history (issue 590) - left out as the channel started, or let go while it did not run
+    /// (`reconcile`) -, which `run` announces at once.
+    Leave(ActorId, String, SecurityContext, Arc<ArcSwap<BTreeSet<ThreadId>>>),
     /// The thread opened as `Opening` says, on whose behalf - in whose name `run` announces it
     /// (`ThreadOpened`, issue 557), before anyone founding it joins it, and records it among the
     /// channel's threads (`ChannelState::threads`).
     Open(ThreadId, Opening, SecurityContext),
     /// The thread to close, on whose behalf - in whose name `run` announces it (`ThreadClosed`) -,
     /// recorded closed at once: whoever closes it holds it, as whoever lets someone go from it does
-    /// until they have left (issue 593).
+    /// until they have left (issue 593). Neither closed nor answered while anyone takes part in it,
+    /// whom it drew in since closing it was asked (issue 602).
     Close(ThreadId, SecurityContext),
     /// What is delegated into the thread (issue 557): `run` records its briefs behind those of the
     /// thread's delegation, starting the delegation with it if the thread has none, and hands them

@@ -8,7 +8,7 @@ use super::{ActorChange, ChannelActor, ChannelError, ChannelLoop};
 use crate::actor::delegate::DelegateActor;
 use anyhow::{anyhow, Result};
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::channel::{Brief, Channel, Delegation, ThreadId};
+use caelumora_domain::channel::{Brief, Channel, Circle, Delegation, ThreadId};
 use caelumora_domain::message::{Message, MessageId, MessageRole};
 use caelumora_domain::store::Stored;
 use caelumora_security::{ActionType, SecurityContext};
@@ -21,14 +21,14 @@ impl ChannelLoop {
     /// Has the delegate of `thread` give its recipient `recipient` the brief `brief` to read on
     /// behalf of whom `context` acts for - its caller, the giver -, and bring what came of it back
     /// to them where the thread was opened; it waits behind a brief still open. Asked: that the
-    /// giver reads the channel; that the thread is an open one opened at another; that the
-    /// recipient runs in it and the giver where it was opened; that a thread delegated into
-    /// before is delegated by the same giver to the same recipient; that the thread is not quiet
-    /// after a cancel. The brief is classified as the channel is, and both directions answer the
-    /// chain `context` belongs to (its initiator).
+    /// giver reads the channel; that the thread is not closed and was opened at another, its circle
+    /// closed (issue 602); that the recipient runs in it and the giver where it was opened; that a
+    /// thread delegated into before is delegated by the same giver to the same recipient; that the
+    /// thread is not quiet after a cancel. The brief is classified as the channel is, and both
+    /// directions answer the chain `context` belongs to (its initiator).
     ///
     /// # Errors
-    /// `ChannelError::Forbidden`, `ThreadNotOpen`, `NotInThread`, `ThreadQuiet` or
+    /// `ChannelError::Forbidden`, `ThreadNotOpen`, `OpenCircle`, `NotInThread`, `ThreadQuiet` or
     /// `DelegatedOtherwise`.
     pub async fn delegate(
         &self,
@@ -46,6 +46,10 @@ impl ChannelLoop {
         let not_open = || ChannelError::ThreadNotOpen { thread, channel: self.id };
         let opening =
             self.thread(thread).and_then(|opened| opened.opening()).ok_or_else(not_open)?;
+        // Into a closed circle alone (issue 602): what answers a brief is the recipient's turn.
+        if opening.circle == Circle::Open {
+            return Err(ChannelError::OpenCircle { thread, channel: self.id }.into());
+        }
         let giver = context.caller_id;
         let origin = opening.origin.thread;
         let not_in = |participant, thread| ChannelError::NotInThread {

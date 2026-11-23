@@ -538,3 +538,25 @@ above. The position of a predecessor (C) is no step yet.
   request was asked in, which the approver holding it tells (`ChannelLoop::approval_thread`); a
   change of a message, which is of the whole channel, happens in the line. A user no longer says
   anything in the thread they joined in: `joined_thread_id` is an agent's alone.
+- **2026-11-23** — Step 3b committed. Decided on the maintainer's word for step 3c, from 557's
+  proposal: whether who takes part in a thread may grow is the thread's circle (`Circle`), fixed as
+  it is opened and kept with its opening - no longer read from a delegation, which comes after the
+  opening -; a sub-agent's thread is opened closed, a thread a person opens open, the line is open,
+  and only a thread whose circle is closed is delegated into (`ChannelError::OpenCircle`). A thread
+  whose circle is open draws in whoever says a message of no turn in it and whom a message said in
+  it mentions, of whatever kind - one rule for users and agents -, and, as it is opened, the author
+  of the message it hangs at, so that a side question asks whom it is about (`ChannelLoop::draw_in`,
+  `draw_in_author`); whoever opens it is drawn in by what they say there, and 557's "whom its first
+  message mentions" is the rule for every message. One whose circle is closed draws in nobody, takes
+  nobody in and lets nothing in one outside it says there (`Rejection::ClosedCircle`). Drawing in
+  asks nothing of its own beyond what drew someone in, as joining a thread asks nothing beyond the
+  channel. Whom a thread drew in hears it from their join on, as anyone taken in: an agent drawn in
+  by a later mention does not know what was said in the thread before. Step 3c done: `run` draws in
+  as it takes in a message said, before recording and routing it, so that whoever it draws in hears
+  it and is asked by the thread's moderator; the author of a thread's message is drawn in once its
+  founders are in. Since `run` draws in without the procedures' locks, taking part in a thread is
+  what `run` makes it at the end: a join asked for someone drawn in meanwhile is carried out without
+  a second announcement, `run` asks again whether anyone takes part before it closes a thread, and a
+  leave is announced in every thread the actor takes part in as `run` takes the leave in; an actor
+  not started yet, or leaving, is not drawn in. The stored channel states with a thread, open or
+  closed, are to be deleted: a thread's opening holds its circle.

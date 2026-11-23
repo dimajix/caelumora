@@ -492,8 +492,9 @@ it is. So does one that was deleted, whose id stays taken: every seeder creates 
 The `StateStore` (in `caelumora-store`) stores the runtime state of channels and agents:
 
 *   **`ChannelState`**: the channel's history (see [Histories](#histories)), and the threads open
-    in it, from which it builds them again as it starts, each with what was delegated into it and
-    is not done (`threads`, `Delegation`, issue 557).
+    in it, from which it builds them again as it starts, each with how it was opened - where, by
+    whom, its circle (issue 602) - and what was delegated into it and is not done (`threads`,
+    `Opening`, `Delegation`, issue 557).
 *   **`AgentChannelState`**: an agent in one channel, of either kind - transcript, notes, prompt
     texts and tool sets, and its part of each thread: the processing state, the turn under way and
     the tokens its calls used (`AgentThreadState`, issue 602, see [AGENT-TURN.md](AGENT-TURN.md));
