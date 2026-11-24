@@ -271,6 +271,36 @@ mod tests {
         error.downcast_ref::<ChannelError>()
     }
 
+    /// Issue 594: a group handle a sub-agent says in its thread, whose circle is closed, addresses
+    /// who takes part there but itself - another agent, a founder - and not alice or bob, who take
+    /// part in the line.
+    #[tokio::test]
+    async fn a_sub_agents_group_handle_addresses_nobody_outside_its_thread() {
+        let answering = ScriptedAgents(Script::Answers("@all, found it".to_string()));
+        let world = World::with(&[], &[&answering], |_| {}).await;
+        let personality = world.personality("helper", Some(world.alice), &[]).await;
+        let helper = ActorId::Agent(world.agent("helper", world.alice, &personality).await);
+        let other = ActorId::Agent(world.agent("other", world.alice, &personality).await);
+        let alice = World::as_user(world.alice);
+        let session = world.session_of(&[world.bob], &[], &[]).await;
+        let main = Arc::clone(&session.channels()[0]);
+        let spec = ThreadSpec {
+            circle: Circle::Closed,
+            founders: vec![helper, other],
+            ..ThreadSpec::new(at_the_line(&main, world.alice).await)
+        };
+        let thread = session.open_thread(&alice, main.id(), spec).await.expect("opened");
+
+        main.delegate(&alice, thread, helper, "look it up".to_string()).await.expect("delegated");
+        let said = |e: &HistoryEntry| match e {
+            HistoryEntry::Said { message } if message.sender_id == helper => Some(message.clone()),
+            _ => None,
+        };
+        let entries = main.history_once(|entries| entries.iter().any(|e| said(e).is_some())).await;
+        let answer = entries.iter().find_map(said).expect("found above");
+        assert_eq!(answer.addressees, [other], "who takes part in the thread, not alice or bob");
+    }
+
     /// Issue 557: what is delegated into a thread its delegate gives the recipient to read there,
     /// and what the recipient answers comes back to the giver where the thread was opened; a
     /// thread delegated into takes no other giver, a brief no recipient outside the thread; and

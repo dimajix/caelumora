@@ -218,6 +218,11 @@ pub struct ChannelResponse {
     /// `ThreadClosed`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub threads: Vec<ThreadResponse>,
+    /// What waits in it for the requesting user (issue 594), where channels are listed and where
+    /// one is asked for alone: absent in a channel that does not run, or that they do not take
+    /// part in. Fetched again on the channel's `waiting_changed` naming them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub waiting: Option<WaitingResponse>,
 }
 
 /// An open thread of a channel (issue 595): where it hangs, who opened it, whether who takes part
@@ -269,6 +274,23 @@ impl From<snapshot::Unread> for UnreadResponse {
     }
 }
 
+/// What waits for the requesting user in a channel (issue 594): the approvals its agents' calls
+/// wait for, and the questions put to them, open.
+#[derive(Debug, Serialize)]
+pub struct WaitingResponse {
+    /// The approvals asked of the users that have neither ended nor been answered by the user.
+    pub approvals: usize,
+    /// The requests of questions put to the user that are open, each of one call, which may ask
+    /// several questions.
+    pub questions: usize,
+}
+
+impl From<snapshot::Waiting> for WaitingResponse {
+    fn from(waiting: snapshot::Waiting) -> Self {
+        Self { approvals: waiting.approvals, questions: waiting.questions }
+    }
+}
+
 /// Up to where the user read a channel (issue 404): the newest message of
 /// someone else they were shown.
 #[derive(Debug, Deserialize)]
@@ -306,6 +328,7 @@ impl From<snapshot::ChannelSnapshot> for ChannelResponse {
                 .collect(),
             unread: view.unread.map(UnreadResponse::from),
             threads: view.threads.into_iter().map(ThreadResponse::from).collect(),
+            waiting: view.waiting.map(WaitingResponse::from),
         }
     }
 }
@@ -589,6 +612,7 @@ mod tests {
             former_participants: Vec::new(),
             unread: None,
             threads: Vec::new(),
+            waiting: None,
         };
 
         let response = ChannelResponse::from(view);
@@ -624,6 +648,7 @@ mod tests {
             former_participants: Vec::new(),
             unread: None,
             threads: Vec::new(),
+            waiting: None,
         };
         let json = serde_json::to_value(ChannelResponse::from(view.clone())).unwrap();
         assert!(json.get("summary").is_none() && json.get("briefing").is_none(), "{json}");
@@ -720,6 +745,7 @@ mod tests {
             former_participants: Vec::new(),
             unread: None,
             threads: Vec::new(),
+            waiting: None,
         };
 
         let json = serde_json::to_value(ChannelSnapshot::of(
@@ -789,6 +815,7 @@ mod tests {
             former_participants: vec![participant(helper, Some(left.clone()))],
             unread: None,
             threads: Vec::new(),
+            waiting: None,
         };
         let json = serde_json::to_value(ChannelResponse::from(view)).unwrap();
         assert!(json["participants"][0].get("left").is_none(), "a participant has not left");

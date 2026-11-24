@@ -51,8 +51,8 @@ impl Participant {
 /// removed or announced, and has no range of the history - what is recorded
 /// to it goes to it by name. Otherwise it is an actor like any other: the
 /// channel starts it with the others, delivers to it by the one rule
-/// (`Envelope::concerns`) and takes in what it sends. It has no record of
-/// its own and is kept here whole.
+/// (`Envelope::recipients`, `Recipients::goes_to`) and takes in what it sends.
+/// It has no record of its own and is kept here whole.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum InternalActor {
     /// The approver, which collects the users' decisions on the tool calls

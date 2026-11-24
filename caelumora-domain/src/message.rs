@@ -190,11 +190,22 @@ impl Message {
 
 impl Message {
     /// Resolves whom its content mentions by name and whom it addresses (`mentions`,
-    /// `addressees`, issues 29, 602) by the handles of `directory`: as it enters the channel,
-    /// which keeps them so; neither for a message without content.
-    pub fn resolve_mentions(&mut self, directory: &MentionDirectory) {
-        let resolved = self.content.as_deref().map(|content| directory.resolve(content));
+    /// `addressees`, issues 29, 594, 602) by the handles of `directory`, said where `present` take
+    /// part (`MentionDirectory::resolve`) - a group handle addressing them but its sender, whom it
+    /// asks nothing of: as it enters the channel, which keeps them so; neither for a message
+    /// without content.
+    pub fn resolve_mentions(&mut self, directory: &MentionDirectory, present: &[ActorId]) {
+        let others: Vec<ActorId> =
+            present.iter().copied().filter(|id| *id != self.sender_id).collect();
+        let resolved = self.content.as_deref().map(|content| directory.resolve(content, &others));
         (self.mentions, self.addressees) = resolved.unwrap_or_default();
+    }
+
+    /// Whether it addresses a user (issues 557, 594), by name or as one of everyone: what a view
+    /// of the line shows them of another thread (`Envelope::addresses`); an agent addressed there
+    /// is told in its thread.
+    pub fn addresses_a_user(&self) -> bool {
+        self.addressees.iter().any(|addressed| matches!(addressed, ActorId::User(_)))
     }
 
     /// About how many tokens the message takes in a model's context (issue
@@ -1047,22 +1058,38 @@ pub(crate) mod tests {
     }
 
     /// Issue 602: a message keeps whom it mentions by name apart from whom it addresses, a group
-    /// handle among them; one without content mentions and addresses nobody.
+    /// handle among them - but its sender, whom it names alone (issue 594) -, and tells whether a
+    /// user is among them; one without content mentions and addresses nobody.
     #[test]
     fn a_message_resolves_whom_it_mentions_by_name_and_whom_it_addresses() {
         use crate::mention::MentionDirectory;
-        let (bob, sassy) = (ActorId::System, ActorId::None);
-        let directory = MentionDirectory::new([(bob, "Bob"), (sassy, "Sassy")]);
-        let mut message =
-            Message { content: Some("@bob and @all".to_string()), ..make_message(id(1)) };
-        message.resolve_mentions(&directory);
+        let bob = ActorId::User(UserId::new());
+        let sassy = ActorId::Agent(AgentId::new());
+        let me = ActorId::User(UserId::new());
+        let directory = MentionDirectory::new([(bob, "Bob"), (sassy, "Sassy"), (me, "Me")]);
+        let present = [bob, sassy, me];
+        let said = |content: &str| Message {
+            content: Some(content.to_string()),
+            sender_id: me,
+            ..make_message(id(1))
+        };
+        let mut message = said("@bob and @all");
+        message.resolve_mentions(&directory, &present);
         assert_eq!(
             (message.mentions.clone(), message.addressees.clone()),
-            (vec![bob], vec![bob, sassy])
+            (vec![bob], vec![bob, sassy]),
+            "everyone present but its sender"
         );
+        let mut naming_me = said("@all, and @me");
+        naming_me.resolve_mentions(&directory, &present);
+        assert_eq!(naming_me.addressees, [bob, sassy, me], "its sender by name");
+        assert!(naming_me.addresses_a_user(), "Bob, and its sender");
+        let mut to_sassy = said("@sassy");
+        to_sassy.resolve_mentions(&directory, &present);
+        assert!(!to_sassy.addresses_a_user(), "an agent alone");
 
         message.content = None;
-        message.resolve_mentions(&directory);
+        message.resolve_mentions(&directory, &present);
         assert!(message.mentions.is_empty() && message.addressees.is_empty(), "without content");
     }
 

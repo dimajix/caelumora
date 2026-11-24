@@ -23,7 +23,9 @@ entity's id as text, `within` the id of the entity it lies in, and `change` an `
     channel does not stop by itself (issue 593) -, `JOINED` and `LEFT` - with the `ActorId` of who
     joined or left -, `AGENT_STATE_CHANGED`, with the agent's id, and `SAID`, with a message others
     hear as it was said and its thread (`Said`: of the line, or of another where it mentions a
-    user, issue 557; see [CHANNELS.md](CHANNELS.md#what-is-new-to-a-user)).
+    user, issue 557; see [CHANNELS.md](CHANNELS.md#what-is-new-to-a-user)), and `WAITING_CHANGED`,
+    with the `ActorId` of the user for whom what waits in the channel changed (issue 594; see
+    [CHANNELS.md](CHANNELS.md#what-waits-for-a-user)).
 
 What happens to a channel's participants is a change of the channel: its readers are the ones who
 hear of it, and it carries the participant in its data.

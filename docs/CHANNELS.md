@@ -228,9 +228,15 @@ channel - what it hears enters its context, and is paid for by every call after 
 everything of the channel, which a frontend sorts by thread; what goes to someone by name reaches
 them wherever it happens. The web UI and the TUI show the line (`Envelope::is_shown_in_line`,
 `ChannelView::shown_in_line`): what happens in it and in the whole channel, and of another thread
-its approvals and its questions, which its calls wait for, and what mentions the viewer. A view of
+its approvals and its questions, which its calls wait for, and what addresses the viewer. A view of
 another thread shows what happens in it and in the whole channel (`Envelope::is_shown_in_thread`,
 `Filter::in_thread`, issue 595): the web UI's pane beside the line, the thread the TUI follows.
+What **concerns** a user wherever they look is one rule beside them (`Envelope::concerns`, issue
+594): an approval, from its request to its end - the request names nobody who may approve it -,
+but a person's answer to it, which goes to the approver; questions put to them, and the closing of
+questions where shown to them, which does not name whom they were put to; and a message heard that
+addresses them. The TUI tells it of a channel not talked in (`Followed::concerns_user`), with what
+tells the user of what they did themselves: an answer of theirs to an approval, a call they made.
 
 A thread is **opened** at a message of another thread of its channel (`ThreadOrigin`), its
 **circle** open or closed (see below), with its **founders**, as its `ThreadSpec` asks
@@ -481,13 +487,35 @@ their positions in the history order them as the user sees them.
     another `Filter::in_thread`), of what the user may read, after its mark and from where their
     view begins - counted up to a cap, and whether one of these messages addresses them, `@all`
     included (`Message::addressees`). The channel's (`ChannelView::unread`, `Detail::UNREAD`) is
-    its line's, what mentions the user elsewhere included; each thread open beside it gives its
+    its line's, what addresses the user elsewhere included; each thread open beside it gives its
     own (`ThreadSnapshot::unread`), so that a sub-agent's work does not count for the channel.
-*   **Announced as it is said.** Every message others hear in the line, and one mentioning a user
+*   **Announced as it is said.** Every message others hear in the line, and one addressing a user
     in another thread, is announced on the event bus once it is stored (`channel::SAID`), with the
     message and its thread (`Said`), classified as the channel: it reaches who may read the channel
     and is cleared for it, which is who reads the message in the history. A frontend counts on from
-    what it listed; of another thread only what mentions the user (issue 557).
+    what it listed; of another thread only what addresses the user (issue 557).
+
+### What waits for a user
+
+What waits for a user in a channel (issue 594) - the approvals its agents' calls wait for, and the
+questions put to them that are open - is kept by their actor (`UserActor::waiting`), which is given
+what is delivered to them: the questions shown to them, as it keeps them to be answered, and the
+approvals the approver asks, from the request to its end - decided, withdrawn - or to the user's
+answer, by their hand or their rule, whether the approver counts it or not; one asked anew by an
+agent that resumed its turn is kept once. Two rare cases tell less than the chat: an approval asked
+before the user joined, which the approver does not ask of them again, and one the user answered
+and an agent restarted in the running channel asks anew, which waits for them again though their
+answer still counts.
+
+*   **Given by the views.** A channel's snapshot gives it to a user taking part (`Waiting`,
+    `Detail::WAITING`), read from their running actor - the approvals only where they are shown
+    them (`shows_approvals`), as the approvals pending are -; nothing where the channel does not
+    run, where no agent waits for anyone.
+*   **Announced as it changes.** As what waits for the user changes, once their actor took in or
+    sent what changed it, the actor announces it on the event bus (`channel::WAITING_CHANGED`,
+    `ChannelController::announce_waiting_changed`), naming the user and nothing of what waits; their
+    frontend reads what waits now. An approval asked anew, or questions put to another, announce
+    nothing.
 
 ## Acting in a channel
 
@@ -538,7 +566,7 @@ no end in anyone's name. A turn whose agent was aborted after the grace, saying 
 without an end: nobody ended it.
 
 **Everything shown is recorded** (issue 417). Every entry says who sent it and whom it went to:
-every participant at the time it concerns by the rule every channel delivers by - resolved as it
+every participant at the time it goes to by the rule every channel delivers by - resolved as it
 is recorded, so that who took part then decides who reads it -, or those the moderator named. What
 a participant was shown live is what the history holds for them, in the same order - also what went
 to them alone: the answer to a request to answer again, a command's answer and a command not carried
@@ -1556,18 +1584,24 @@ participant's name transliterated to ASCII and lowercased, other characters coll
 (`caelumora_domain::mention`): "Zoë" is `@zoe`, and `@Zoë` addresses her too. Unknown handles stay
 plain text, and text in backticks is ignored.
 
-`@all` and its synonym `@channel` address everyone at once: every user and agent taking part, those
-whose name yields no handle included. They are group handles (`GROUP_HANDLES`), not names: a
-participant whose handle is `all` or `channel` is among those they address, but cannot be
+`@all` and its synonym `@channel` address everyone at once: every user and agent taking part in the
+thread the message is said in, those whose name yields no handle included - in a sub-agent's
+thread, not the users of the line -, but whoever says it, whom it asks nothing of (issue 594); by
+name, a sender addresses themselves as anyone. They are group handles (`GROUP_HANDLES`), not names:
+a participant whose handle is `all` or `channel` is among those they address, but cannot be
 mentioned alone by it, and the channel warns of the handle as of one shared by several.
 
 The channel resolves mentions once, as a message enters it, and stores the resolved ids with the
 message (`Message::resolve_mentions`) in two lists (issue 602): whom it mentions by name
 (`mentions`), and everyone it addresses (`addressees`) - those, and everyone a group handle
-addressed, the participants of that moment for `@all`. A mention by name draws its participant
-into the thread (see [Its threads](#its-threads)); whom a message addresses is whom the moderator
-asks and whom it mentions as the frontends show it. Nothing downstream parses the text again, so a
-later rename, or a participant who joins later, cannot change whom a past message addressed.
+addressed, who takes part in the message's thread at that moment for `@all`
+(`ChannelLoop::taking_part_in`): of a modification, which happens in the whole channel, who takes
+part in the thread the message was said in as it is modified - nobody in a thread closed since,
+whoever came in since included -, as its names are resolved anew then. A mention by name reaches
+its participant wherever they take part, and draws them into the thread (see
+[Its threads](#its-threads)); whom a message addresses is whom the moderator asks and whom it
+mentions as the frontends show it. Nothing downstream parses the text again, so a later rename, or
+a participant who joins later, cannot change whom a past message addressed.
 It resolves them by the handles of its participants as they are named now (`ChannelLoop::mentions`),
 built anew as one joins or leaves, and as one is renamed: the session follows the announcements of
 its participants' renames and tells its channels the new name - and after it lost events, has them
@@ -1597,4 +1631,5 @@ agents that greet each other with `@` keep asking the next one to answer.
 An `@all` asks every agent but the author, whoever wrote it, and needs no permission of its own: it
 asks nothing that mentioning each participant would not. What it fans out to is bounded by the same
 limit, as under `broadcast_policy`. An agent's question to `@all` (`ask_user`) is put to every user
-of the channel.
+of the channel, in whichever thread it is asked, as it is answered from any
+(`MentionDirectory::lookup`).

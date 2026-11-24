@@ -1,4 +1,5 @@
-// What is new to the user in the channels they read (issue 404).
+// What is new to the user in the channels they read (issue 404), and what waits for them there
+// (issue 594), told beside the channels and as notifications of the browser.
 //
 // The server counts it as a channel is listed or opened (`unread`), over what
 // the user may read: the messages others said that one hears, after the last
@@ -8,10 +9,14 @@
 // channel read as it shows its newest message of someone else. The mark only
 // moves forward on the server; what another tab or device read is seen here
 // on the next listing.
+//
+// What waits for the user in a channel - approvals, questions put to them - is the server's to
+// count (issue 594): the list fetches the session again as the global stream tells that it changed
+// for them (`waiting_changed`), and notifies where more waits than before.
 
 import {api} from './api';
 import {isOwn, mentions} from './messages';
-import type {ActorId, Message, Unread} from './types';
+import type {ActorId, Message, Unread, Waiting} from './types';
 
 /** More new messages than this are shown as such. */
 const MOST_SHOWN = 99;
@@ -72,10 +77,46 @@ const EXCERPT = 200;
  * if they allowed it; `onOpen` when it is clicked.
  */
 export function notifyMention(message: Message, channelName: string, onOpen: () => void): void {
-  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
   const content = message.content ?? '';
   const body = content.length > EXCERPT ? `${content.slice(0, EXCERPT)}…` : content;
-  const notification = new Notification(`${message.sender_name || 'Someone'} in ${channelName}`, {body, tag: message.id});
+  notify(`${message.sender_name || 'Someone'} in ${channelName}`, body, message.id, onOpen);
+}
+
+/**
+ * How `waiting` is told: `1 approval, 2 sets of questions` - each set a call's, which may ask
+ * several -; empty where nothing waits (issue 594).
+ */
+export function waitingLabel(waiting: Waiting | undefined): string {
+  const counted = (count: number, one: string, many: string) => count > 0 ? [`${count} ${count === 1 ? one : many}`] : [];
+  return [
+    ...counted(waiting?.approvals ?? 0, 'approval', 'approvals'),
+    ...counted(waiting?.questions ?? 0, 'set of questions', 'sets of questions'),
+  ].join(', ');
+}
+
+/**
+ * Whether more waits in `after` than in `before`: an approval or questions asked since (issue 594).
+ */
+export function waitsMore(before: Waiting | undefined, after: Waiting | undefined): boolean {
+  return (after?.approvals ?? 0) > (before?.approvals ?? 0) || (after?.questions ?? 0) > (before?.questions ?? 0);
+}
+
+/**
+ * Shows that `waiting` waits for the user in channel `channelId`, called `channelName` (issue 594),
+ * as a notification of the browser, if they allowed it - in place of one shown of the channel
+ * before; `onOpen` when it is clicked.
+ */
+export function notifyWaiting(waiting: Waiting, channelId: string, channelName: string, onOpen: () => void): void {
+  notify(`Waiting for you in ${channelName}`, waitingLabel(waiting), `waiting:${channelId}`, onOpen);
+}
+
+/**
+ * Shows a notification of the browser, if the user allowed it: `title` and `body`, replacing one
+ * shown with `tag`; `onOpen` when it is clicked.
+ */
+function notify(title: string, body: string, tag: string | undefined, onOpen: () => void): void {
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  const notification = new Notification(title, {body, tag});
   notification.onclick = () => {
     window.focus();
     onOpen();

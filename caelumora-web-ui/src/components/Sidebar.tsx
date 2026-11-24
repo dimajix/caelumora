@@ -1,4 +1,4 @@
-import React, {useEffect, useEffectEvent, useState} from 'react';
+import React, {useEffect, useEffectEvent, useRef, useState} from 'react';
 import {
   Bell,
   BookOpen,
@@ -9,6 +9,7 @@ import {
   Edit2,
   FileText,
   FolderKanban,
+  Hand,
   HardDrive,
   Languages,
   LogOut,
@@ -22,12 +23,12 @@ import {
   Users,
   UsersRound
 } from 'lucide-react';
-import type {AgentResponse, ArtifactResponse, ChannelResponse, GlobalEvent, GroupResponse, ProjectResponse, SessionSnapshot, SkillResponse, Unread, UserResponse, WorkspaceResponse} from '../types';
+import type {ActorId, AgentResponse, ArtifactResponse, ChannelResponse, GlobalEvent, GroupResponse, ProjectResponse, SessionSnapshot, SkillResponse, Unread, UserResponse, Waiting, WorkspaceResponse} from '../types';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
-import {asGlobalEvent, dispatchGlobalEvent, saidInChannel, sessionChange, type Said} from '../globalEvents';
+import {asGlobalEvent, dispatchGlobalEvent, saidInChannel, sessionChange, waitingChanged, type Said} from '../globalEvents';
 import {isSaidInLine, mentions} from '../messages';
-import {askForNotifications, countedIn, isOthers, mayAskForNotifications, notifyMention, onChannelRead, unreadLabel} from '../unread';
+import {askForNotifications, countedIn, isOthers, mayAskForNotifications, notifyMention, notifyWaiting, onChannelRead, unreadLabel, waitingLabel, waitsMore} from '../unread';
 import {openEventStream} from '../stream';
 import {actorPath, sameActor, userActor} from '../actor';
 import {ActionMenu} from './ActionMenu';
@@ -95,6 +96,33 @@ const UnreadBadge: React.FC<{unread: Unread | undefined}> = ({unread}) => {
       aria-label={label}
     >
       {unread.mentioned && '@ '}{unreadLabel(unread.messages)}
+    </span>
+  );
+};
+
+/**
+ * What waits for the user in all of `session`'s channels together (issue 594), shown while they
+ * are folded.
+ */
+function waitingIn(session: SessionSnapshot): Waiting {
+  return {
+    approvals: session.channels.reduce((sum, channel) => sum + (channel.waiting?.approvals ?? 0), 0),
+    questions: session.channels.reduce((sum, channel) => sum + (channel.waiting?.questions ?? 0), 0),
+  };
+}
+
+/** What waits for the user (issue 594) - approvals, questions put to them -, as a badge. */
+const WaitingBadge: React.FC<{waiting: Waiting | undefined}> = ({waiting}) => {
+  const label = waitingLabel(waiting);
+  if (!label) return null;
+  const count = (waiting?.approvals ?? 0) + (waiting?.questions ?? 0);
+  return (
+    <span
+      className="ml-1 shrink-0 inline-flex items-center gap-0.5 rounded-full bg-amber-500 px-1.5 text-[10px] font-semibold leading-4 text-gray-900"
+      title={`Waiting for you: ${label}`}
+      aria-label={`Waiting for you: ${label}`}
+    >
+      <Hand size={10} aria-hidden="true" />{count}
     </span>
   );
 };
@@ -235,11 +263,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
     onSessionGone(sessionId);
   };
 
+  // How many times each session was fetched again, so that an answer overtaken by a later
+  // fetch's is left out: what it tells is older.
+  const fetches = useRef(new Map<string, number>());
+
   // One no longer read - deleted, or left, or no longer shared (issue 590) - leaves the list.
-  const refreshSession = async (sessionId: string) => {
+  // Returns the session as fetched, if it is shown so.
+  const refreshSession = async (sessionId: string): Promise<SessionSnapshot | undefined> => {
+    const fetch = (fetches.current.get(sessionId) ?? 0) + 1;
+    fetches.current.set(sessionId, fetch);
     const session = await fetchSession(sessionId);
+    if (fetches.current.get(sessionId) !== fetch) return undefined;
     if (session === 'gone') removeSession(sessionId);
-    else if (session !== 'failed') setSessions(prev => upsert(prev, session));
+    if (session === 'gone' || session === 'failed') return undefined;
+    setSessions(prev => upsert(prev, session));
+    return session;
   };
 
   // The stream outlives renders; these always see the current props.
@@ -268,6 +306,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (mentions(message, me)) {
       const channel = sessions.find(s => s.id === sessionId)?.channels.find(c => c.id === channelId);
       notifyMention(message, channel ? channelName(channel) : 'a channel', () => onSelectChannel(sessionId, channelId));
+    }
+  });
+
+  // What waits for the user changed in a channel (issue 594): the session fetched again, which
+  // tells what waits now, and a notification where more waits than before and they do not see it.
+  // What changed for another is theirs.
+  const waitingFromStream = useEffectEvent(async ({sessionId, channelId, user}: {sessionId: string; channelId: string; user: ActorId}) => {
+    if (!sameActor(user, me)) return;
+    const before = sessions.find(s => s.id === sessionId)?.channels.find(c => c.id === channelId)?.waiting;
+    const session = await refreshSession(sessionId);
+    const channel = session?.channels.find(c => c.id === channelId);
+    const seen = channelId === selectedChannelId && page === null && document.visibilityState === 'visible';
+    if (channel?.waiting && !seen && waitsMore(before, channel.waiting)) {
+      notifyWaiting(channel.waiting, channelId, channelName(channel), () => onSelectChannel(sessionId, channelId));
     }
   });
 
@@ -304,6 +356,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
         const said = saidInChannel(event);
         if (said) {
           saidFromStream(said);
+          return;
+        }
+        const waiting = waitingChanged(event);
+        if (waiting) {
+          void waitingFromStream(waiting);
           return;
         }
         if (deletedChangedBy(event)) deletedChangedFromStream();
@@ -456,6 +513,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       <Chevron size={16} className="mr-2 shrink-0" />
                       <span className="truncate mr-2">{sessionName(session)}</span>
                       {!expandedSessions[session.id] && <UnreadBadge unread={unreadIn(session)} />}
+                      {!expandedSessions[session.id] && <WaitingBadge waiting={waitingIn(session)} />}
                       {session.privacy && session.privacy !== 'private' && (
                         <span className="ml-1 shrink-0 text-gray-500" title={`${privacyInfo(session.privacy).label}: ${privacyInfo(session.privacy).description}`}>
                           <Users size={12} aria-label={privacyInfo(session.privacy).label} />
@@ -508,6 +566,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             <MessageSquare size={14} className="mr-2 shrink-0" />
                             <span className={cn("truncate mr-2", (channel.unread?.messages ?? 0) > 0 && "text-white font-medium")}>{channelName(channel)}</span>
                             <UnreadBadge unread={channel.unread} />
+                            <WaitingBadge waiting={channel.waiting} />
                           </button>
                           <ActionMenu
                             label={`Options of ${channelName(channel)}`}

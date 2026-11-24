@@ -72,7 +72,9 @@ pub(super) async fn list_channels(
     }
     let mut channels: Vec<ChannelResponse> = Vec::new();
     for channel in session.channels().await {
-        channels.push(channel.snapshot(Detail::PARTICIPANTS | Detail::UNREAD).await.into());
+        channels.push(
+            channel.snapshot(Detail::PARTICIPANTS | Detail::UNREAD | Detail::WAITING).await.into(),
+        );
     }
     Ok(Json(channels).into_response())
 }
@@ -1633,6 +1635,40 @@ mod tests {
             (StatusCode::NOT_FOUND, json!("message_not_found"))
         );
         state.session_manager.stop(&SecurityContext::system(), session_id).await.unwrap();
+    }
+
+    /// Issue 594: what waits for a user in a channel - here questions put to them - is given where
+    /// one is asked for alone and where the channels are listed, also with their session.
+    #[tokio::test]
+    async fn a_channel_gives_a_user_what_waits_for_them_there() {
+        use caelumora_domain::question::testing::make_question_request;
+        let state = state();
+        let api = api(Arc::clone(&state), &[]);
+        let cookie = login(&api, "alice").await;
+        let alice = user_id(&api, &cookie).await;
+        let (session_id, channel_id) = session_of(&state, alice, &[]).await;
+        let system = SecurityContext::system();
+        let session = state.session_manager.open(&system, session_id).await.unwrap();
+        let channel = session.channel(channel_id).expect("the channel runs");
+        let actor = channel.user_actor(alice).expect("her actor runs");
+        let alice_id = ActorId::User(alice);
+        let asked = make_question_request(session_id, channel_id, AgentId::new(), alice_id);
+        let sender = ActorId::Agent(asked.agent_id);
+        let context = EventContext { sender_id: sender, ..channel.event_context() };
+        let event = ActorEvent::QuestionRequested(asked);
+        actor.take_in_as_routed(Envelope::new(context, event)).await;
+
+        let channels = format!("/sessions/{}/channels", session_id.0);
+        let channel_uri = format!("{channels}/{}", channel_id.0);
+        let waits = json!({ "approvals": 0, "questions": 1 });
+        let (_, alone) = send(&api, &cookie, Method::GET, &channel_uri, None).await;
+        assert_eq!(alone["waiting"], waits, "asked for alone");
+        let (_, listed) = send(&api, &cookie, Method::GET, &channels, None).await;
+        assert_eq!(listed[0]["waiting"], waits, "listed");
+        let session_uri = format!("/sessions/{}", session_id.0);
+        let (_, with_session) = send(&api, &cookie, Method::GET, &session_uri, None).await;
+        assert_eq!(with_session["channels"][0]["waiting"], waits, "listed with its session");
+        state.session_manager.stop(&system, session_id).await.unwrap();
     }
 
     /// Issue 595: what others say in a thread is new to a user there, given with the thread as

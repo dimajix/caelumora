@@ -1376,6 +1376,43 @@ mod tests {
         assert!(matches!(unread, Err(ViewError::SessionNotFound(_))), "the session is not theirs");
     }
 
+    /// Issue 594: a channel tells each user taking part in it what waits for them there, as their
+    /// actor keeps it - where it is asked for.
+    #[tokio::test]
+    async fn a_channel_tells_a_user_what_waits_for_them_there() {
+        use caelumora_domain::actor::{ActorEvent, Envelope};
+        use caelumora_domain::approval::testing::make_approval_request;
+        use caelumora_domain::approval::ApproverId;
+        use caelumora_domain::question::testing::make_question_request;
+        use caelumora_domain::snapshot::Waiting;
+        let (_, manager) = owned_kernel(Default::default());
+        let (session_loop, owner, other) = running_session_of_a_user(&manager).await;
+        let (session, channel) = (session_loop.id(), Arc::clone(&session_loop.channels()[0]));
+        let ActorId::User(user) = owner.caller_id else { unreachable!("a user") };
+        let actor = channel.user_actor(user).expect("the owner's actor runs");
+        let agent = AgentId::new();
+        let approver = ActorId::Approver(ApproverId::new());
+        let request = make_approval_request(session, channel.id(), agent);
+        let asked = make_question_request(session, channel.id(), agent, owner.caller_id);
+        for (sender, event) in [
+            (approver, ActorEvent::ApprovalRequested(request)),
+            (ActorId::Agent(agent), ActorEvent::QuestionRequested(asked)),
+        ] {
+            let context = EventContext { sender_id: sender, ..channel.event_context() };
+            actor.take_in_as_routed(Envelope::new(context, event)).await;
+        }
+
+        let waiting = async |viewer: ActorId, detail| {
+            let ActorId::User(user) = viewer else { unreachable!("a user") };
+            let view = manager.views(as_user(user)).channel(session, channel.id()).await.unwrap();
+            view.snapshot(detail).await.waiting
+        };
+        let both = Waiting { approvals: 1, questions: 1 };
+        assert_eq!(waiting(owner.caller_id, Detail::WAITING).await, Some(both));
+        assert_eq!(waiting(owner.caller_id, Detail::empty()).await, None, "where asked for");
+        assert_eq!(waiting(other, Detail::WAITING).await, Some(Waiting::default()), "their own");
+    }
+
     /// A user follows a channel while it lists them, read as it stands once the watch began - not
     /// as the view read it, nor through the loop it reached: a view read before they left, or
     /// before the session was deleted, gives them no watch, since the end their actor showed came

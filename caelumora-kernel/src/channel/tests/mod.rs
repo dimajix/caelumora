@@ -196,7 +196,7 @@ pub(super) async fn channel_moderated_by(
 }
 
 /// The threads an actor taken in by hand (`ChannelLoop::adopt`) takes part in: `thread` alone.
-pub(super) fn taking_part_in(thread: ThreadId) -> Arc<ArcSwap<BTreeSet<ThreadId>>> {
+pub(super) fn in_thread_alone(thread: ThreadId) -> Arc<ArcSwap<BTreeSet<ThreadId>>> {
     Arc::new(ArcSwap::from_pointee(BTreeSet::from([thread])))
 }
 
@@ -223,7 +223,7 @@ pub(super) async fn channel_with_sleepers(
             .adopt(
                 Arc::<StandIn>::clone(sleeper),
                 ResolvedParticipant::approver(channel.session_id, channel.id),
-                taking_part_in(ThreadId::line(channel.id)),
+                in_thread_alone(ThreadId::line(channel.id)),
                 None,
                 None,
             )

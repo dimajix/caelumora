@@ -44,7 +44,7 @@ impl AsRef<HistoryEntry> for Recorded {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Audience {
-    /// Everyone it concerns, by the rule every channel delivers by
+    /// Everyone it goes to, by the rule every channel delivers by
     /// (`Envelope::recipients`, read off an entry as `HistoryEntry::recipients`).
     #[default]
     Everybody,
@@ -160,7 +160,7 @@ impl Recipients {
 }
 
 impl Recorded {
-    /// `entry`, sent by `sender` to `audience` - to everybody resolved into whom it concerns by
+    /// `entry`, sent by `sender` to `audience` - to everybody resolved into whom it goes to by
     /// the rule every channel delivers by (`HistoryEntry::recipients`) -, recorded by its holder
     /// itself with `context` as the head of its envelope - where it happened and in which chain -,
     /// without a position, now: what `of` records, of no envelope (issue 599).

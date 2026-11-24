@@ -1,10 +1,11 @@
 //! The moderators, as components of a channel (issue 174). A moderator decides whom an event goes
 //! to, whom to ask to respond and what to tell of its own - a [`Routing`] - and never what anyone
 //! is told (issue 418): the channel delivers by the rule every channel delivers by
-//! (`Envelope::concerns`) unless the moderator names whom, and builds every envelope. The built-in
-//! one, [`policy_moderator`], asks every agent a message `@`-mentions and leaves whom to ask when
-//! nobody was mentioned to its slot, a [`ResponderPolicy`] (issue 44), and whom to ask when the
-//! policy could not choose to its own rule (issue 441). The policies are components of their own,
+//! (`Envelope::recipients`, `Recipients::goes_to`) unless the moderator names whom, and builds
+//! every envelope. The built-in one, [`policy_moderator`], asks every agent a message
+//! `@`-mentions and leaves whom to ask when nobody was mentioned to its slot, a
+//! [`ResponderPolicy`] (issue 44), and whom to ask when the policy could not choose to its own
+//! rule (issue 441). The policies are components of their own,
 //! one file per kind.
 
 pub mod broadcast_policy;

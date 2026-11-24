@@ -12,7 +12,7 @@
 // (`GET /sessions/{id}`), which answers in the form the snapshot uses.
 // Events that do not change what the list shows are ignored.
 
-import type {ApprovalRule, EntityChange, GlobalEvent, Message} from './types';
+import type {ActorId, ApprovalRule, EntityChange, GlobalEvent, Message} from './types';
 import type {Classification} from './confidentiality';
 
 export type SessionChange =
@@ -133,6 +133,18 @@ export function saidInChannel(event: GlobalEvent): Said | null {
   if (!channel || typeof said !== 'object' || said === null) return null;
   const {message, thread} = said as {message: Message; thread: string};
   return {sessionId: channel.sessionId, channelId: channel.channelId, message, thread};
+}
+
+/**
+ * Where and for whom what waits changed, for a channel's `waiting_changed` (issue 594): its
+ * session, the channel, and the user it waits for, whose list fetches the session again to read
+ * what waits now; `null` for any other event.
+ */
+export function waitingChanged(event: GlobalEvent): {sessionId: string; channelId: string; user: ActorId} | null {
+  const channel = channelEvent(event);
+  const user = channel && dataOf(channel.change, 'waiting_changed');
+  if (!channel || typeof user !== 'object' || user === null) return null;
+  return {sessionId: channel.sessionId, channelId: channel.channelId, user: user as ActorId};
 }
 
 /**

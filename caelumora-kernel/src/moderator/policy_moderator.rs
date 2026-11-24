@@ -1109,12 +1109,12 @@ mod tests {
         for moderator in moderators() {
             let agents = add_agents(&moderator);
             let user = ActorId::User(UserId::new());
-            // `@all`, as the channel resolves it (issue 401): every participant, the sender
-            // included.
+            // `@all`, as the channel resolves it (issues 401, 594): every participant taking part
+            // in the thread but the sender.
             let event = message_from(
                 agents[0],
                 "@all, what do you think?",
-                vec![user, agents[0], agents[1], agents[2]],
+                vec![user, agents[1], agents[2]],
             );
 
             let routing = moderator.route(&event, &SecurityContext::default()).await;

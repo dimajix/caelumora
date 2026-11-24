@@ -1,26 +1,25 @@
 //! `@`-mentions: addressing a channel participant by its handle (see issue 29).
 //!
-//! A *handle* is a normalised form of a participant's name — transliterated
-//! to ASCII, lowercase, with every run of characters that cannot appear in a
-//! mention collapsed into a single `-` — so that "Sassy" is addressed as
-//! `@sassy`, "Dr. Who" as `@dr-who` and "Zoë" as `@zoe` (issue 177). A
-//! mention typed with the original characters, `@zoë`, is normalised alike
-//! and addresses the same participant. The group handles `@all` and
-//! `@channel` address every participant at once (issue 401). Mentions are
-//! resolved to `ActorId`s once, when a message enters the channel, and stored
-//! with the message - whom it mentions by name in `Message::mentions`, whom it
-//! addresses in `Message::addressees` (issue 602); downstream, the text is parsed
-//! again only to find which of its handles to highlight
-//! (`MentionDirectory::mentioned_spans`), never to decide whom it addresses.
+//! A *handle* is a normalised form of a participant's name — transliterated to ASCII, lowercase,
+//! with every run of characters that cannot appear in a mention collapsed into a single `-` — so
+//! that "Sassy" is addressed as `@sassy`, "Dr. Who" as `@dr-who` and "Zoë" as `@zoe` (issue 177).
+//! A mention typed with the original characters, `@zoë`, is normalised alike and addresses the same
+//! participant. The group handles `@all` and `@channel` address every participant taking part where
+//! the message is said - in its thread -, but its sender (issues 401, 594,
+//! `Message::resolve_mentions`). Mentions are resolved to `ActorId`s once, when a message enters
+//! the channel, and stored with the message - whom it mentions by name in `Message::mentions`, whom
+//! it addresses in `Message::addressees` (issue 602); downstream, the text is parsed again only to
+//! find which of its handles to highlight (`MentionDirectory::mentioned_spans`), never to decide
+//! whom it addresses.
 
 use crate::actor::ActorId;
 use std::collections::HashMap;
 use std::ops::Range;
 
-/// The handles that address every participant of a channel at once, rather
-/// than one by its name: `@all` and its synonym `@channel` (issue 401). A
-/// participant whose name yields one of them is among those it addresses,
-/// but is not addressed by it alone.
+/// The handles that address every participant at once, rather than one by its name: `@all` and its
+/// synonym `@channel` (issue 401) - in a message, every participant taking part where it is said
+/// (`MentionDirectory::resolve`). A participant whose name yields one of them is among those it
+/// addresses, but is not addressed by it alone.
 pub const GROUP_HANDLES: [&str; 2] = ["all", "channel"];
 
 /// Returns whether `handle`, normalised as `handle_of` does, addresses every
@@ -170,8 +169,10 @@ impl MentionDirectory {
         Self { handles, everyone }
     }
 
-    /// Returns the actors a handle addresses: every participant if it is a
-    /// group handle, else none if it is unknown, several if it is ambiguous.
+    /// Returns the actors a handle can name in the channel: every participant, wherever they take
+    /// part, if it is a group handle, else none if it is unknown, several if it is ambiguous. What
+    /// a tool's questions ask by a handle, which go to the users of the channel wherever its call
+    /// runs (`Questions::resolve`); a message is resolved where it is said (`resolve`).
     pub fn lookup(&self, handle: &str) -> &[ActorId] {
         if is_group_handle(handle) {
             return &self.everyone;
@@ -194,11 +195,13 @@ impl MentionDirectory {
         result
     }
 
-    /// Resolves the mentions in `text` to the actors they address, each list deduplicated and in
-    /// order of first mention: those mentioned by name, and everyone addressed - those and
-    /// everyone a group handle addresses (issue 602, `Message::mentions`, `Message::addressees`).
-    /// Unknown handles are ignored — they stay plain text.
-    pub fn resolve(&self, text: &str) -> (Vec<ActorId>, Vec<ActorId>) {
+    /// Resolves the mentions in `text`, said where `present` take part - in a thread, those taking
+    /// part in it -, to the actors they address, each list deduplicated and in order of first
+    /// mention: those mentioned by name, wherever they take part, and everyone addressed - those
+    /// and the participants of `present`, whom a group handle addresses (issues 594, 602,
+    /// `Message::mentions`, `Message::addressees`). Unknown handles are ignored — they stay plain
+    /// text.
+    pub fn resolve(&self, text: &str, present: &[ActorId]) -> (Vec<ActorId>, Vec<ActorId>) {
         let mut named: Vec<ActorId> = Vec::new();
         let mut addressed: Vec<ActorId> = Vec::new();
         for handle in parse_mentions(text) {
@@ -207,7 +210,7 @@ impl MentionDirectory {
                 if !group && !named.contains(id) {
                     named.push(*id);
                 }
-                if !addressed.contains(id) {
+                if (!group || present.contains(id)) && !addressed.contains(id) {
                     addressed.push(*id);
                 }
             }
@@ -297,8 +300,9 @@ mod tests {
         let directory = MentionDirectory::new(vec![(sassy, "Sassy"), (bob, "Bob")]);
 
         let both = (vec![bob, sassy], vec![bob, sassy]);
-        assert_eq!(directory.resolve("@bob, ask @SASSY and @nobody"), both, "by name");
-        assert_eq!(directory.resolve("no mentions here"), (vec![], vec![]));
+        let by_name = directory.resolve("@bob, ask @SASSY and @nobody", &[]);
+        assert_eq!(by_name, both, "by name, wherever they take part");
+        assert_eq!(directory.resolve("no mentions here", &[bob, sassy]), (vec![], vec![]));
         assert!(directory.ambiguous().is_empty());
     }
 
@@ -322,20 +326,22 @@ mod tests {
     fn a_name_beyond_ascii_is_mentioned_by_its_ascii_form_or_as_written() {
         let zoe = ActorId::User(UserId::new());
         let directory = MentionDirectory::new(vec![(zoe, "Zoë")]);
-        assert_eq!(directory.resolve("@zoe, @Zoë and @ZOË"), (vec![zoe], vec![zoe]));
+        assert_eq!(directory.resolve("@zoe, @Zoë and @ZOË", &[]), (vec![zoe], vec![zoe]));
     }
 
-    /// A group handle addresses every participant, but mentions nobody by name (issue 602).
+    /// A group handle addresses every participant taking part where it is said, but mentions
+    /// nobody by name (issue 602).
     #[test]
-    fn a_group_handle_addresses_every_participant() {
+    fn a_group_handle_addresses_every_participant_present() {
         let sassy = ActorId::Agent(AgentId::new());
         let bob = ActorId::User(UserId::new());
         let nameless = ActorId::Agent(AgentId::new());
         let directory =
             MentionDirectory::new(vec![(sassy, "Sassy"), (bob, "Bob"), (nameless, "!!!")]);
 
+        let everyone = [sassy, bob, nameless];
         for text in ["@all, what do you think?", "@channel?", "@ALL", "@bob and @all"] {
-            let (named, addressed) = directory.resolve(text);
+            let (named, addressed) = directory.resolve(text, &everyone);
             let addressed: HashSet<ActorId> = addressed.into_iter().collect();
             assert_eq!(
                 addressed,
@@ -345,12 +351,32 @@ mod tests {
             let by_name = if text.contains("@bob") { vec![bob] } else { vec![] };
             assert_eq!(named, by_name, "{text}: by name only whom it names");
         }
-        assert_eq!(directory.resolve("`@all`"), (vec![], vec![]), "not in code");
-        assert_eq!(directory.resolve("@allison"), (vec![], vec![]), "a handle of its own");
+        assert_eq!(directory.resolve("`@all`", &everyone), (vec![], vec![]), "not in code");
+        let own = directory.resolve("@allison", &everyone);
+        assert_eq!(own, (vec![], vec![]), "a handle of its own");
         assert!(directory.ambiguous().is_empty());
         assert!(
             is_group_handle("all") && is_group_handle("channel") && !is_group_handle("everyone")
         );
+    }
+
+    /// Issue 594: where not everyone takes part - in a thread -, a group handle addresses those who
+    /// do alone, in the directory's order, and of them only participants it knows; whom it names
+    /// it addresses wherever they take part.
+    #[test]
+    fn a_group_handle_addresses_only_who_takes_part_where_it_is_said() {
+        let sassy = ActorId::Agent(AgentId::new());
+        let bob = ActorId::User(UserId::new());
+        let alice = ActorId::User(UserId::new());
+        let directory =
+            MentionDirectory::new(vec![(sassy, "Sassy"), (bob, "Bob"), (alice, "Alice")]);
+        let unknown = ActorId::Agent(AgentId::new());
+        let present = [alice, unknown, sassy];
+
+        assert_eq!(directory.resolve("@all", &present), (vec![], vec![sassy, alice]));
+        let named = directory.resolve("@all, and @bob", &present);
+        assert_eq!(named, (vec![bob], vec![sassy, alice, bob]), "by name from outside too");
+        assert_eq!(directory.resolve("@all", &[]), (vec![], vec![]), "nobody present");
     }
 
     #[test]
@@ -378,7 +404,8 @@ mod tests {
         ]);
 
         assert_eq!(directory.ambiguous(), vec!["sassy".to_string()]);
-        assert_eq!(directory.resolve("@sassy"), (vec![first, second], vec![first, second]));
+        let both = (vec![first, second], vec![first, second]);
+        assert_eq!(directory.resolve("@sassy", &[]), both);
         assert!(directory.lookup("").is_empty());
     }
 }

@@ -274,6 +274,16 @@ impl ChannelController {
         ));
     }
 
+    /// Announces that what waits for the user `user` in the channel changed - `waiting_changed`,
+    /// naming them (issue 594): to whoever reads the channel, which tells nothing of what waits.
+    pub(crate) fn announce_waiting_changed(&self, user: ActorId) {
+        self.channel.announce(GlobalEvent::custom::<Channel>(
+            self.channel.address(),
+            channel::WAITING_CHANGED,
+            &user,
+        ));
+    }
+
     /// The event announcing that `participant` joined or left.
     fn joined_or_left_event(&self, participant: ActorId, joined: bool) -> Option<GlobalEvent> {
         let name = if joined { channel::JOINED } else { channel::LEFT };

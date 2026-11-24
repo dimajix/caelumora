@@ -29,6 +29,7 @@ use caelumora_domain::query::Filter;
 use caelumora_domain::removal::Removal;
 use caelumora_domain::snapshot::{
     ChannelParticipantSnapshot, ChannelSnapshot, Detail, PublishedNotes, ThreadSnapshot, Unread,
+    Waiting,
 };
 use caelumora_domain::store::{StoreError, StoreResultExt};
 use caelumora_domain::tool::ToolSet;
@@ -601,6 +602,7 @@ impl ChannelView {
                 true => self.threads(detail).await,
                 false => Vec::new(),
             },
+            waiting: detail.contains(Detail::WAITING).then(|| self.waiting()).flatten(),
         }
     }
 
@@ -619,6 +621,16 @@ impl ChannelView {
             threads.push(ThreadSnapshot { id, opening, recipient, unread });
         }
         threads
+    }
+
+    /// What waits in the channel for the viewer (issue 594), if they are a user taking part in it
+    /// while it runs: as their actor keeps it (`UserActor::waiting`) - the approvals only where
+    /// they are shown them (`shows_approvals`), as their pending approvals are.
+    fn waiting(&self) -> Option<Waiting> {
+        let ActorId::User(user) = self.reader() else { return None };
+        let waiting = self.running()?.user_actor(user)?.waiting();
+        let approvals = if self.shows_approvals() { waiting.approvals } else { 0 };
+        Some(Waiting { approvals, ..waiting })
     }
 
     /// What is new in the channel to the viewer (issue 404), if they are a user: what is new in its

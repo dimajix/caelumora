@@ -88,10 +88,11 @@ the field to write in read.
 
 What the UI computes without the browser - how an event or a page changes a conversation
 (`conversation.ts`), what the line's and a thread's views show and how calls and results are shown
-together (`messages.ts`), how the stream keeps the channel up (`channel.ts`) and how a thread is
-told (`threads.ts`) - is tested beside it, in `*.test.ts` with Vitest, built from `src/testing.ts`;
-`npm run build` type-checks the tests with the rest. The components themselves are not tested; they
-are checked in a browser.
+together (`messages.ts`), how the stream keeps the channel up (`channel.ts`), how a thread is
+told (`threads.ts`), what an event of the global stream says (`globalEvents.ts`) and what waits for
+the user is told (`unread.ts`) - is tested beside it, in `*.test.ts` with Vitest, built from
+`src/testing.ts`; `npm run build` type-checks the tests with the rest. The components themselves
+are not tested; they are checked in a browser.
 
 ## Talking to the server
 
@@ -184,6 +185,13 @@ chat view clears them as it marks the channel read (`unread.ts`). What another t
 is seen here on the next listing. A message that mentions the user is shown as a notification of
 the browser where they allowed it - asked for by the bell at the foot of the sidebar - unless its
 channel is on screen.
+
+What waits for the user in a channel (issue 594) - approvals, questions put to them - is shown
+beside it as a mark with a hand and the number, a folded session's channels summed. The server
+counts it (`waiting` of the snapshot); as the global stream tells that it changed for the user
+(`waiting_changed`), the list fetches the session again, and where more waits than before shows a
+notification of the browser, as for a mention, unless the channel is on screen (`notifyWaiting`).
+An answer overtaken by a later fetch of the session is left out.
 
 A session's privacy is shown to everyone in it; its owner changes it (`PrivacyDialog`). Choosing a
 policy that lets other sessions read says that it holds for what is said from then on. The session's

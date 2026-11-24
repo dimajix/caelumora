@@ -525,7 +525,7 @@ impl ChannelLoop {
         context: &SecurityContext,
         running: &HashMap<ActorId, RunningActor>,
     ) {
-        let event = self.resolve_mentions(event);
+        let event = self.resolve_mentions(event).await;
         // Their joins come before what draws them in, which they hear so - a message heard. A
         // message of a turn draws in no speaker: the turn runs where its agent takes part, or is
         // what remains of a turn cancelled as it was let go from the thread, which would draw it
@@ -1073,17 +1073,29 @@ impl ChannelLoop {
     }
 
     /// Resolves the `@`-mentions in every complete message carried by `event` and stores them
-    /// with it (`Message::resolve_mentions`): whom it mentions by name, and whom it addresses. Done
-    /// here, once, as the message enters the channel, so that every frontend, the history, the
-    /// moderator and the thread it draws into all see the same resolution (issues 29, 602).
-    fn resolve_mentions(&self, mut event: Envelope) -> Envelope {
+    /// with it (`Message::resolve_mentions`): whom it mentions by name, and whom it addresses - a
+    /// group handle those taking part in the thread it is said in (`taking_part_in`, issue 594):
+    /// the event's, and of a modification, which happens in the whole channel, the thread the
+    /// message was said in. Done here, once, as the message enters the channel, so that every
+    /// frontend, the history, the moderator and the thread it draws into all see the same
+    /// resolution (issues 29, 602).
+    async fn resolve_mentions(&self, mut event: Envelope) -> Envelope {
         let directory = self.mentions();
-        let resolve = |m: &mut Message| m.resolve_mentions(&directory);
+        let thread = event.context.thread_id;
         match &mut event.event {
             ActorEvent::CompleteMessageGenerated(m)
-            | ActorEvent::IntermediateMessageGenerated(m)
-            | ActorEvent::MessageModified(m) => resolve(m),
-            ActorEvent::TurnFinished { messages: msgs, .. } => msgs.iter_mut().for_each(resolve),
+            | ActorEvent::IntermediateMessageGenerated(m) => {
+                m.resolve_mentions(&directory, &self.taking_part_in(thread));
+            }
+            ActorEvent::MessageModified(m) => {
+                let said_in = self.said_in(m.id).await.map(|(_, thread)| thread);
+                let present = said_in.map(|thread| self.taking_part_in(thread));
+                m.resolve_mentions(&directory, &present.unwrap_or_default());
+            }
+            ActorEvent::TurnFinished { messages, .. } => {
+                let present = self.taking_part_in(thread);
+                messages.iter_mut().for_each(|m| m.resolve_mentions(&directory, &present));
+            }
             _ => {}
         }
         event
@@ -1282,7 +1294,7 @@ impl ChannelLoop {
             .entry
             .published()
             .and_then(|entry| entry.said().cloned())
-            .filter(|message| (in_line || addresses_a_user(message)) && message.is_heard())
+            .filter(|message| (in_line || message.addresses_a_user()) && message.is_heard())
             .map(|message| Said { message, thread });
         let entry = recorded.entry.clone();
         let mut state = self.state.lock().await;
@@ -1381,12 +1393,6 @@ impl Behind for ChannelLoop {
         }
         Ok((delivered, to))
     }
-}
-
-/// Whether `message` addresses a user (issue 557), by name or as one of everyone: what the line's
-/// view shows them of another thread; an agent addressed there is told in its thread.
-fn addresses_a_user(message: &Message) -> bool {
-    message.addressees.iter().any(|addressed| matches!(addressed, ActorId::User(_)))
 }
 
 #[cfg(test)]
@@ -1598,7 +1604,7 @@ mod tests {
             .adopt(
                 Forger::sending(talker, vec![answer]),
                 ResolvedParticipant::approver(channel.session_id, channel.id),
-                taking_part_in(ThreadId::line(channel.id)),
+                in_thread_alone(ThreadId::line(channel.id)),
                 None,
                 None,
             )
@@ -1720,7 +1726,7 @@ mod tests {
             .adopt(
                 Forger::sending(talker, envelopes),
                 ResolvedParticipant::approver(channel.session_id, channel.id),
-                taking_part_in(ThreadId::line(channel.id)),
+                in_thread_alone(ThreadId::line(channel.id)),
                 None,
                 None,
             )
@@ -2038,7 +2044,7 @@ mod tests {
                 .adopt(
                     Arc::<StandIn>::clone(actor),
                     ResolvedParticipant::approver(channel.session_id, channel.id),
-                    taking_part_in(ThreadId::line(channel.id)),
+                    in_thread_alone(ThreadId::line(channel.id)),
                     None,
                     None,
                 )
@@ -3080,7 +3086,7 @@ mod tests {
             .adopt(
                 Arc::<Listener>::clone(&newcomer),
                 ResolvedParticipant::approver(channel.session_id, channel.id),
-                taking_part_in(ThreadId::line(channel.id)),
+                in_thread_alone(ThreadId::line(channel.id)),
                 Some(from),
                 Some(context.clone()),
             )
@@ -3179,7 +3185,7 @@ mod tests {
                 .adopt(
                     Arc::<StandIn>::clone(actor),
                     ResolvedParticipant::approver(channel.session_id, channel.id),
-                    taking_part_in(ThreadId::line(channel.id)),
+                    in_thread_alone(ThreadId::line(channel.id)),
                     None,
                     None,
                 )

@@ -61,7 +61,7 @@ In a channel, the terminal follows one thread at a time (issue 595): its line, o
 `/thread follow` chose - by its number in the list `/thread list` showed last, or the beginning of
 its id. It prints what the view of that thread shows (`Envelope::is_shown_in_line`,
 `Envelope::is_shown_in_thread`), and, wherever it follows, the approvals and questions waiting for
-the user, which they answer from any thread, and what mentions them; what is typed goes to the
+the user, which they answer from any thread, and what addresses them; what is typed goes to the
 thread followed. A thread followed that closes - or found closed as the channel is caught up with -
 leaves the user in the line again, told so, also from a channel not talked in.
 
@@ -262,7 +262,8 @@ external agent alike.
     not tell apart, or one that a line could not tell from a command of the session, keep the
     agent from starting.
 *   **Always addressed.** A command of an agent names its agent - `/compact @bob`; `@all`, or
-    `@channel`, as for a mention, names every agent of the channel that carries it out. Without a
+    `@channel`, as for a mention, names every agent that carries it out and takes part in the
+    thread the command is issued in (issue 602), as a handle names only such an agent. Without a
     handle, or with one that names no such agent, it is refused with the handles to choose from.
 *   **Seen and asked for.** `ShowAgentCommand` and `ExecuteAgentCommand` carry the command and the
     attributes of the agent and of the channel. Under the ownership policy they are granted to
