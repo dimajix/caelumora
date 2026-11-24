@@ -1085,7 +1085,7 @@ async fn a_thread_is_closed_with_the_agent_it_owns_by_its_owner_alone() {
             "bob: Cleared(bob) yes",
             // Whoever opened it is asked nothing to close it; his agent leaves by his own act.
             "bob as bobs-helper: LeaveSession(alice's) yes",
-            // Deleted once the thread is closed: by the manager, then by the store.
+            // Deleted, by the manager, then by the store; the thread closed last, asking nothing.
             "bob: GetAgent(bob's) yes",
             "bob: DeleteAgent(bob's) yes",
             "bob: GetAgent(bob's) yes",
@@ -1094,6 +1094,58 @@ async fn a_thread_is_closed_with_the_agent_it_owns_by_its_owner_alone() {
         "{asked:#?}"
     );
     assert!(!session.session().takes_part(bobs_helper), "his agent let go");
+}
+
+/// Issue 598: a thread that owns its agent is closed with it in this order - whether it may be
+/// closed asked ahead, the agent let go and deleted, the thread closed last, asking again whether
+/// it may -, so that a closing that stops half-way leaves the thread open, its agent findable.
+/// Here its opener is alice's agent, and alice, who owns the channel, closes it.
+#[tokio::test]
+async fn a_thread_is_closed_after_the_agent_it_owns_is_deleted() {
+    let answering = ScriptedAgents(Script::Answers("ok".to_string()));
+    let world = World::with(&[], &[&answering], |_| {}).await;
+    let personality = world.personality("helper", Some(world.alice), &[]).await;
+    let lead = world.agent("lead", world.alice, &personality).await;
+    let helper = world.agent("helper", world.alice, &personality).await;
+    let session = world.session_of(&[], &[lead], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let line = ThreadOrigin {
+        thread: ThreadId::line(main.id()),
+        message: main.said_by(world.alice, ThreadId::line(main.id())).await,
+    };
+    // Her agent, acting for her, with her roles.
+    let alice = World::as_user(world.alice);
+    let caller = ActorId::Agent(lead);
+    let leads = SecurityContext { caller_id: caller, initiator_id: caller, ..alice.clone() };
+    let owning = ThreadSpec {
+        founders: vec![ActorId::Agent(helper)],
+        circle: Circle::Closed,
+        owns_founders: true,
+        ..ThreadSpec::new(line)
+    };
+    let thread = session.open_thread(&leads, main.id(), owning).await.expect("its lead founds it");
+
+    let (closed, asked) = world.asked(main.close_thread_by_procedure(&alice, thread)).await;
+    assert!(closed.expect("hers to close"), "closed");
+    assert_eq!(
+        asked,
+        checks(&[
+            "alice: GetSession(alice's) yes",
+            "alice: GetChannel(alice's) yes",
+            "alice: Cleared(alice) yes",
+            // Whether she may close it, asked ahead with the agent aside: the channel's owner may.
+            "alice: UpdateChannel(alice's) yes",
+            // Her agent leaves by her own act, and is deleted - by the manager, then the store.
+            "alice as helper: LeaveSession(alice's) yes",
+            "alice: GetAgent(alice's) yes",
+            "alice: DeleteAgent(alice's) yes",
+            "alice: GetAgent(alice's) yes",
+            "alice: DeleteAgent(alice's) yes",
+            // The thread closed last, asked again by the channel as it closes it.
+            "alice: UpdateChannel(alice's) yes",
+        ]),
+        "{asked:#?}"
+    );
 }
 
 /// Issue 598: the kernel closes a thread that owns another's agent - as its follower does once the

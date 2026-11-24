@@ -40,12 +40,13 @@ impl ChannelLoop {
         self.thread(thread)?.opening().map(|opening| opening.origin)
     }
 
-    /// The agents `thread` owns (issue 598, `Opening::owned`), as the channel's state keeps them -
-    /// also once it is closed, so that a closing that stopped half-way finishes; none for the line,
-    /// or a thread the channel never opened.
+    /// The agents `thread` owns (issue 598, `Opening::owned`), as the channel's state keeps them;
+    /// none for the line, a thread closed - with them, since the closing deletes them first -, or
+    /// one the channel never opened.
     pub(crate) async fn owned_by(&self, thread: ThreadId) -> Vec<AgentId> {
         let state = self.state.lock().await;
-        let opening = state.threads.get(&thread).and_then(|held| held.opening.as_ref());
+        let open = state.threads.get(&thread).filter(|held| !held.closed);
+        let opening = open.and_then(|held| held.opening.as_ref());
         opening.map(|opening| opening.owned.clone()).unwrap_or_default()
     }
 

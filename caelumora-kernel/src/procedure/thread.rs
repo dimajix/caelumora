@@ -177,8 +177,10 @@ pub async fn open(
 /// run, once nobody takes part in it (`ChannelLoop::close_thread`); holds it until `run` has
 /// closed it. A thread that owns agents (`Opening::owned`, issue 598) is closed with them: each let
 /// go from the session first - by its own act, as an agent of whom `context` acts for leaves, or
-/// as the kernel's own context has anyone leave -, since closing waits for nobody to take part,
-/// and deleted after. `false` if it is not open.
+/// as the kernel's own context has anyone leave -, since the session lets no deleted agent go and
+/// closing waits for nobody to take part; then each deleted; the thread closed last, so that a
+/// closing that stops half-way leaves it open, its delegation still to be ended - let go, it is
+/// announced again as its channel starts. `false` if it is not open.
 pub struct Close {
     context: SecurityContext,
     session: SessionId,
@@ -222,7 +224,7 @@ impl Procedure for Close {
     }
 
     /// An agent it owns let go already, or deleted already, counts as such: a closing that stopped
-    /// half-way finishes as it is asked again, also once the thread is closed.
+    /// half-way, its thread still open, finishes as it is asked again.
     ///
     /// # Errors
     /// As `session::open`, `SessionLoop::channel_for`, `ChannelLoop::require_closing` - asked
@@ -248,10 +250,10 @@ impl Procedure for Close {
                 Err(error) => return Err(error),
             }
         }
-        let closed = channel.close_thread(&context, thread).await?;
         for agent in owned {
             kernel.agent_manager().delete(&context, agent).await.map_err(Error::from)?;
         }
+        let closed = channel.close_thread(&context, thread).await?;
         Ok(closed)
     }
 }
@@ -359,17 +361,17 @@ mod tests {
     }
 
     /// Issue 598: a thread that owns the agents it is founded with is closed with them - each let
-    /// go from the session, the thread closed, the agent deleted -; a closing that stopped
-    /// half-way - the agent let go, the thread closed - finishes as it is asked again; one of a
-    /// session that does not run starts it and closes it so too; an agent a thread does not own is
-    /// let go and kept; and no thread owns an agent that takes part in the session already.
+    /// go from the session, deleted, and the thread closed last -, one let go already too; closing
+    /// it again finds it closed and fails in nothing; one of a session that does not run starts it
+    /// and closes it so too; an agent a thread does not own is let go and kept; and no thread owns
+    /// an agent that takes part in the session already.
     #[tokio::test]
     async fn a_thread_is_closed_with_the_agents_it_owns() {
         let answering = ScriptedAgents(Script::Answers("found it".to_string()));
         let world = World::with(&[], &[&answering], |_| {}).await;
         let personality = world.personality("helper", Some(world.alice), &[]).await;
         let mut agents = Vec::new();
-        for name in ["helper", "half", "stopped", "kept"] {
+        for name in ["helper", "left", "stopped", "kept"] {
             agents.push(world.agent(name, world.alice, &personality).await);
         }
         let alice = World::as_user(world.alice);
@@ -410,12 +412,12 @@ mod tests {
         assert!(main.close_thread_by_procedure(&alice, threads[0]).await.unwrap(), "closed");
         assert!(!main.participant_ids().contains(&ActorId::Agent(agents[0])), "its agent let go");
         assert!(deleted(agents[0]).await, "and deleted");
+        let again = main.close_thread_by_procedure(&alice, threads[0]).await;
+        assert!(!again.expect("fails in nothing"), "closed already");
 
         session.remove_participant(&alice, ActorId::Agent(agents[1])).await.expect("let go");
-        assert!(main.close_thread(&alice, threads[1]).await.unwrap(), "closed, as half-way");
-        let again = main.close_thread_by_procedure(&alice, threads[1]).await;
-        assert!(!again.expect("fails in nothing"), "closed already");
-        assert!(deleted(agents[1]).await, "the closing finished: its agent deleted");
+        assert!(main.close_thread_by_procedure(&alice, threads[1]).await.unwrap(), "closed");
+        assert!(deleted(agents[1]).await, "an agent it owns let go before is deleted too");
 
         session.remove_participant(&alice, ActorId::Agent(agents[3])).await.expect("let go");
         assert!(main.close_thread_by_procedure(&alice, threads[3]).await.unwrap(), "closed");

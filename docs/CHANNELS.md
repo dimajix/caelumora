@@ -276,8 +276,9 @@ A thread may **own the agents it is founded with**, made for it alone, as its `T
 agent that takes part in the session already (`AlreadyParticipant`): the opening keeps them
 (`Opening::owned`), and closing the thread closes it with them - each let go from the session first,
 by its own act, as an agent of whom the closer acts for leaves or as the kernel has anyone leave,
-then the thread closed, then each deleted. The channel's state keeps them also once the thread is
-closed, so that a closing that stopped half-way finishes as it is asked again.
+then each deleted, the thread closed last: a closing that stops half-way leaves the thread open, its
+delegation still to be ended - let go, it is announced again as the channel starts -, and finishes
+as it is asked again.
 
 A participant of the channel is **taken into a further thread** of it, and **let go from one
 thread** alone, staying in its others (issue 602): `procedure::participant::TakeIntoThread` - added

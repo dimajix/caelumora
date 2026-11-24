@@ -304,3 +304,14 @@ gain fields without a default.
   world may be `unfollowed`, so that what is announced to the follower can be tested. Done: a
   sub-agent nobody ends is ended once its agent leaves it without a word in the turn that read its
   answer, or leaves where it was started.
+- **2026-11-24** — On review of step 3: a closing that deleted the agent after closing the thread
+  could stop between the two - a failure of the store - and leave an agent nobody finds again,
+  since what is let go is looked for in open threads alone (`delegations_let_go`). Asked by the
+  maintainer to fix it within this issue: `thread::Close` deletes the agents it owns before it
+  closes the thread - which leaving first still allows, since only letting go must precede
+  deleting -, so that a closing that stops half-way leaves the thread open: one of the session
+  follower's, its delegation let go, is announced again as the channel starts and closed again;
+  one of `end_subagent`'s is ended as its agent asks again, or once its delegation is let go. The
+  order is held by a test of the security suite, whose last question is the closing's own.
+  Decided by the maintainer then: since no closed thread owns a live agent any more, what a
+  thread owns is read of an open one alone (`ChannelLoop::owned_by`).
