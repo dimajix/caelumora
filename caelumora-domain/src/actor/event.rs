@@ -20,7 +20,13 @@ use std::fmt;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ActorEvent {
-    ApprovalRequested(ApprovalRequest),
+    /// An agent's call waits for a decision on `request` (issue 13): asked by the agent of the
+    /// approvers, and by an approver of the users - of `to` alone where it names one, a user who
+    /// joined while the request waited (issue 603).
+    ApprovalRequested {
+        request: ApprovalRequest,
+        to: Option<ActorId>,
+    },
     /// A user's answer to the approval request `id` (issue 567): whether they approve, and their
     /// part alone (`decision`, issue 419). Sent to the approvers, which hold the request: which
     /// agent asked, and whether the user may approve its calls, the approver tells as it counts
@@ -238,9 +244,15 @@ pub enum ActorEvent {
     /// The channel records it in its history (`HistoryEntry::
     /// ParticipantJoined`), and everybody is told - the agents too, which
     /// take note of it without responding -, also whose name it is told in.
+    ///
+    /// `into_channel` tells a join into the channel - the participant's actor starting, told in
+    /// the thread it joined in - from one into another thread of it, which it is drawn into
+    /// (issue 602), and from the joins told in the other threads a newcomer takes part in: what
+    /// the approver asks a newcomer of what waits by (issue 603).
     ParticipantJoined {
         participant: ActorId,
         name: String,
+        into_channel: bool,
     },
     /// `participant`, called `name`, left the channel (issues 162, 408). The envelope's sender is
     /// who removed it - the kernel itself, `ActorId::System`, if nobody did. Sent by the channel
@@ -519,7 +531,7 @@ impl ActorEvent {
     /// (`Envelope::is_shown_in_line`).
     pub fn is_waited_for(&self) -> bool {
         match self {
-            ActorEvent::ApprovalRequested(_)
+            ActorEvent::ApprovalRequested { .. }
             | ActorEvent::ApprovalAnswered { .. }
             | ActorEvent::ApprovalGranted(_)
             | ActorEvent::ApprovalDenied(_)
@@ -589,7 +601,7 @@ impl ActorEvent {
             | ActorEvent::PlanStepFinished { .. }
             | ActorEvent::WakeupRequested
             | ActorEvent::NudgeRequested { .. } => true,
-            ActorEvent::ApprovalRequested(_)
+            ActorEvent::ApprovalRequested { .. }
             | ActorEvent::ApprovalGranted(_)
             | ActorEvent::ApprovalDenied(_)
             | ActorEvent::ApprovalTimedOut(_)
@@ -694,7 +706,7 @@ impl ActorEvent {
     /// message content.
     pub fn kind(&self) -> &'static str {
         match self {
-            ActorEvent::ApprovalRequested(_) => "ApprovalRequested",
+            ActorEvent::ApprovalRequested { .. } => "ApprovalRequested",
             ActorEvent::ApprovalAnswered { .. } => "ApprovalAnswered",
             ActorEvent::ApprovalGranted(_) => "ApprovalGranted",
             ActorEvent::ApprovalDenied(_) => "ApprovalDenied",

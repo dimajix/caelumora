@@ -174,7 +174,7 @@ impl Envelope {
     /// that addresses them (`addresses`).
     pub fn concerns(&self, viewer: ActorId) -> bool {
         match &self.event {
-            ActorEvent::ApprovalRequested(_)
+            ActorEvent::ApprovalRequested { .. }
             | ActorEvent::ApprovalGranted(_)
             | ActorEvent::ApprovalDenied(_)
             | ActorEvent::ApprovalTimedOut(_)
@@ -320,13 +320,14 @@ impl Envelope {
                     at,
                 }
             }
-            ActorEvent::ParticipantJoined { participant, name } => {
+            ActorEvent::ParticipantJoined { participant, name, into_channel } => {
                 HistoryEntry::ParticipantJoined {
                     participant: *participant,
                     name: name.clone(),
                     by: actor,
                     by_name: self.context.sender_name.clone(),
                     at,
+                    into_channel: *into_channel,
                 }
             }
             ActorEvent::ParticipantLeft { participant, name, until } => {
@@ -388,8 +389,8 @@ impl Envelope {
             ActorEvent::RetryRequested { target, author } => {
                 HistoryEntry::RetryRequested { target: *target, author: *author, by: actor, at }
             }
-            ActorEvent::ApprovalRequested(request) => {
-                HistoryEntry::ApprovalRequested { request: request.clone(), by: actor, at }
+            ActorEvent::ApprovalRequested { request, to } => {
+                HistoryEntry::ApprovalRequested { request: request.clone(), by: actor, at, to: *to }
             }
             ActorEvent::ApprovalAnswered { id, approved, decision } => {
                 HistoryEntry::ApprovalAnswered {
@@ -821,7 +822,10 @@ mod tests {
         let opened = ActorEvent::ThreadOpened { thread: other, origin };
         assert!(shown(&in_other, opened), "of the whole channel");
         let request = make_approval_request(session, channel, agent);
-        assert!(shown(&in_other, ActorEvent::ApprovalRequested(request)), "its call waits");
+        assert!(
+            shown(&in_other, ActorEvent::ApprovalRequested { request, to: None }),
+            "its call waits"
+        );
     }
 
     /// Issue 594: what concerns a viewer wherever they look - an approval from its request to its
@@ -839,7 +843,10 @@ mod tests {
         let concerns = |event: ActorEvent| Envelope::new(context.clone(), event).concerns(viewer);
         let request = make_approval_request(session, channel, agent);
         let verdict = || ApprovalVerdict::new(request.id, agent);
-        assert!(concerns(ActorEvent::ApprovalRequested(request.clone())), "every approval");
+        assert!(
+            concerns(ActorEvent::ApprovalRequested { request: request.clone(), to: None }),
+            "every approval"
+        );
         assert!(concerns(ActorEvent::ApprovalGranted(verdict())), "until its end");
         assert!(concerns(ActorEvent::ApprovalDenied(verdict())));
         assert!(concerns(ActorEvent::ApprovalTimedOut(verdict())));
@@ -1060,10 +1067,6 @@ mod tests {
             ActorEvent::MessageModified(said(Some("changed"), MessageRole::Assistant)),
             ActorEvent::MessageRevoked { message: id, at: Utc::now() },
             ActorEvent::MessageReclassified { message: id, classification: Classification::PUBLIC },
-            ActorEvent::ParticipantJoined {
-                participant: present.users[1],
-                name: "bob".to_string(),
-            },
             ActorEvent::ParticipantLeft {
                 participant: present.agents[1],
                 name: "helper".to_string(),
@@ -1073,6 +1076,15 @@ mod tests {
             let kind = changed.kind();
             assert_eq!(present.reached(sender, changed), present.users_and_agents(), "{kind}");
         }
+        // Issue 603: a join to the approver as well, which asks a user who joined what waits.
+        let joined = ActorEvent::ParticipantJoined {
+            participant: present.users[1],
+            name: "bob".to_string(),
+            into_channel: false,
+        };
+        let mut with_approver = present.users_and_agents();
+        with_approver.insert(present.approver);
+        assert_eq!(present.reached(sender, joined), with_approver, "a join");
     }
 
     /// Issues 220, 243, 258, 284: how an answer comes about, how a turn
@@ -1227,8 +1239,9 @@ mod tests {
     }
 
     /// Issues 81, 148: an approval goes through the approvers - the
-    /// agent's request to them, theirs to the users, a user's answer to
-    /// them, their decision to the users and the agent that asked.
+    /// agent's request to them, theirs to the users, or to the one user it
+    /// names (issue 603), a user's answer to them, their decision to the
+    /// users and the agent that asked.
     #[test]
     fn an_approval_concerns_the_approvers_and_through_them_the_users() {
         use crate::approval::{ApprovalDecision, ApprovalRequest, ApprovalVerdict};
@@ -1236,8 +1249,8 @@ mod tests {
         let present = Present::new();
         let (agent, user, approver) = (present.agents[0], present.users[0], present.approver);
         let ActorId::Agent(agent_id) = agent else { unreachable!() };
-        let request = || {
-            ActorEvent::ApprovalRequested(ApprovalRequest {
+        let request = || ActorEvent::ApprovalRequested {
+            request: ApprovalRequest {
                 suggested: None,
                 explicit: false,
                 id: Default::default(),
@@ -1250,7 +1263,8 @@ mod tests {
                     arguments: serde_json::json!({}),
                     ..make_tool_call("noop")
                 },
-            })
+            },
+            to: None,
         };
         let withdrawn = || ActorEvent::ApprovalRequestWithdrawn { id: Default::default() };
         let response = || ApprovalVerdict::new(Default::default(), agent_id);
@@ -1270,6 +1284,16 @@ mod tests {
                 "what the users act on, or no longer"
             );
         }
+        let ActorEvent::ApprovalRequested { request: asked, .. } = request() else {
+            unreachable!()
+        };
+        let to_one = || ActorEvent::ApprovalRequested { request: asked.clone(), to: Some(user) };
+        assert_eq!(
+            present.reached(approver, to_one()),
+            HashSet::from([user]),
+            "of a newcomer alone"
+        );
+        assert_eq!(present.reached(agent, to_one()), HashSet::from([approver]), "an agent's: no");
         assert!(
             present.reached(user, withdrawn()).is_empty(),
             "only an agent and the approver withdraw"

@@ -66,7 +66,11 @@ pub fn founded(channel: &Channel) -> ChannelState {
     let context = EventContext::new(channel.session_id, channel.id, owner, String::new());
     for participant in &channel.participants {
         let actor = participant.actor_id();
-        let joined = ActorEvent::ParticipantJoined { participant: actor, name: actor.to_string() };
+        let joined = ActorEvent::ParticipantJoined {
+            participant: actor,
+            name: actor.to_string(),
+            into_channel: false,
+        };
         let envelope = Envelope::new(context.clone(), joined);
         if let Some(recorded) = Recorded::of(&envelope, owner, Audience::Everybody) {
             state.history.enter(recorded);

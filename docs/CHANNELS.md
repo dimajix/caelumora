@@ -501,16 +501,21 @@ What waits for a user in a channel (issue 594) - the approvals its agents' calls
 questions put to them that are open - is kept by their actor (`UserActor::waiting`), which is given
 what is delivered to them: the questions shown to them, as it keeps them to be answered, and the
 approvals the approver asks, from the request to its end - decided, withdrawn - or to the user's
-answer, by their hand or their rule, whether the approver counts it or not; one asked anew by an
-agent that resumed its turn is kept once. Two rare cases tell less than the chat: an approval asked
-before the user joined, which the approver does not ask of them again, and one the user answered
-and an agent restarted in the running channel asks anew, which waits for them again though their
-answer still counts.
+answer, by their hand or their rule, whether the approver counts it or not - as the terminal keeps
+it: one answered is theirs to give no more. A user who joins the channel is asked every approval
+still pending that they have not answered, they alone (`ApprovalRequested::to`,
+`ApproverActor::ask_newcomer`, issue 603): their join goes to the approver as well, recorded
+before their actor runs, so that what it answers, which enters after it, reaches them. A join
+says whether it is one into the channel (`ParticipantJoined::into_channel`): being drawn into a
+thread asks nothing again. One asked anew - by an agent that resumed its turn - is kept
+once, and one the user answered waits for them no more and is not answered by their rule again.
+With each approval the actor keeps the thread it was asked in, where the user answers it
+(`OpenApproval`).
 
 *   **Given by the views.** A channel's snapshot gives it to a user taking part (`Waiting`,
-    `Detail::WAITING`), read from their running actor - the approvals only where they are shown
-    them (`shows_approvals`), as the approvals pending are -; nothing where the channel does not
-    run, where no agent waits for anyone.
+    `Detail::WAITING`), read from their running actor. Nothing where the channel does not run,
+    though its chat shows what the agents' stored turns wait for (issue 603): nobody can answer
+    there, and as it runs, the agents ask again and what waits is told.
 *   **Announced as it changes.** As what waits for the user changes, once their actor took in or
     sent what changed it, the actor announces it on the event bus (`channel::WAITING_CHANGED`,
     `ChannelController::announce_waiting_changed`), naming the user and nothing of what waits; their
@@ -1426,13 +1431,15 @@ which for what the history records is the rule its entry is read by (`HistoryEnt
 *   every message said goes, as it was said, to every other participant: to the users always, to the
     agents if there is something to hear in it - its words, or the calls a person made in it (issue
     587) -, each agent takes it in itself;
-*   a change of a message, and who joined or left, go to every user and agent;
+*   a change of a message, and who joined or left, go to every user and agent, who joined to the
+    approvers as well (issue 603);
 *   how an answer comes about - its start, partial and intermediate messages, plan steps - where an
     agent stands, how a turn ended and what an agent does of its own accord go to the users, not to
     the agents;
 *   approvals, questions and commands go to whom they concern: a request for a command to the agent
     it names, that it began to the issuer, its answer to the issuer alone if private, else to every
-    user; an approval through the approvers; questions to the users asked;
+    user; an approval through the approvers - their request to every user, or to the one user it
+    names (issue 603); questions to the users asked;
 *   nothing goes back to its sender, but what the channel announces in their name;
 *   what goes to every agent goes to those of the thread it happens in, and to every agent if it
     happens in the whole channel (see [Its threads](#its-threads)); a user is given it wherever it

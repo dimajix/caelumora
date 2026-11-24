@@ -256,8 +256,8 @@ impl From<snapshot::ThreadSnapshot> for ThreadResponse {
 pub struct UnreadResponse {
     /// How many, counted up to 100: a client shows more than 99 as such.
     pub messages: usize,
-    /// Whether one of them mentions the user, `@all` included.
-    pub mentioned: bool,
+    /// Whether one of them addresses the user, by name or as one of everyone (`@all`).
+    pub addressed: bool,
     /// The last message they read, after which the new ones begin; absent
     /// while they read nothing of the channel.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -268,7 +268,7 @@ impl From<snapshot::Unread> for UnreadResponse {
     fn from(unread: snapshot::Unread) -> Self {
         Self {
             messages: unread.messages,
-            mentioned: unread.mentioned,
+            addressed: unread.addressed,
             read_up_to: unread.read_up_to,
         }
     }
@@ -664,14 +664,14 @@ mod tests {
         );
         assert!(json.get("unread").is_none(), "nothing new is told where it was not read: {json}");
         let unread = snapshot::ChannelSnapshot {
-            unread: Some(snapshot::Unread { messages: 3, mentioned: true, read_up_to: None }),
+            unread: Some(snapshot::Unread { messages: 3, addressed: true, read_up_to: None }),
             threads: Vec::new(),
             ..view
         };
         let json = serde_json::to_value(ChannelResponse::from(unread)).unwrap();
         assert_eq!(
             json["unread"],
-            serde_json::json!({ "messages": 3, "mentioned": true }),
+            serde_json::json!({ "messages": 3, "addressed": true }),
             "nothing read yet: no message it ends at"
         );
         let request: DescriptionRequest =

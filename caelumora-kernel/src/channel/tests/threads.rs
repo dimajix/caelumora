@@ -40,9 +40,10 @@ async fn whoever_says_something_in_a_thread_and_whom_it_mentions_take_part_in_it
         loop {
             let envelope = events.recv().await.expect("open");
             match &envelope.event {
-                ActorEvent::ParticipantJoined { participant, .. } => {
+                ActorEvent::ParticipantJoined { participant, into_channel, .. } => {
                     let (there, by) = (envelope.context.thread_id, envelope.context.sender_id);
                     assert_eq!((there, by), (thread, hers), "there, in her name");
+                    assert!(!into_channel, "into the thread, not the channel (issue 603)");
                     joined.push(*participant);
                 }
                 ActorEvent::CompleteMessageGenerated(said)

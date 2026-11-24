@@ -50,6 +50,7 @@ use caelumora_kernel::channel::*;
 use caelumora_kernel::command::help::HelpCommand;
 use caelumora_kernel::command::CommandExecutor;
 use caelumora_kernel::component::ComponentRegistry;
+use caelumora_kernel::kernel::Kernel;
 use caelumora_kernel::testing::{shown, TestKernel};
 use caelumora_security::AllowAllPolicy;
 use caelumora_security::{AccessPolicy, ActionType, SecurityContext};
@@ -208,6 +209,17 @@ async fn agent_channel_hearing(
     let personality =
         Personality { hears_during_turn: hears, components, ..make_personality("plain") };
     let (context, agent, alice) = alice_and_an_agent(&store, "helper", personality).await;
+    let kernel = agent_kernel(store, access_policy, model);
+    (channel_of_alice_and(kernel, alice, agent).await, context, agent, alice)
+}
+
+/// A kernel keeping everything in `store`, under `access_policy`, whose agents talk to `model` and
+/// may have the components of these tests.
+pub(super) fn agent_kernel(
+    store: Persistence,
+    access_policy: Arc<dyn AccessPolicy>,
+    model: Arc<dyn TestModel>,
+) -> Arc<Kernel> {
     // The model is a component (issue 130): the stand-in is registered as
     // a kind of its own and made every agent's default.
     let components = move |registry: &mut ComponentRegistry| {
@@ -244,7 +256,7 @@ async fn agent_channel_hearing(
         }],
     };
     let config = AppConfig { component_defaults: defaults, ..Default::default() };
-    let kernel = TestKernel {
+    TestKernel {
         store,
         access_policy,
         config,
@@ -252,8 +264,7 @@ async fn agent_channel_hearing(
         libraries: vec![&AgentsLibrary],
         ..Default::default()
     }
-    .build();
-    (channel_of_alice_and(kernel, alice, agent).await, context, agent, alice)
+    .build()
 }
 
 /// The states `agent` told the users of through `shown`, up to `until`.

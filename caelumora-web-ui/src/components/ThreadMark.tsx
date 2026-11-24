@@ -25,8 +25,8 @@ export const ThreadMark: React.FC<{thread: ChannelThread}> = ({thread}) => {
         <span className="text-gray-500 dark:text-gray-400">· {takingPart.map(m => m.name).join(', ')}</span>
       )}
       {(thread.unread?.messages ?? 0) > 0 && (
-        <span className={thread.unread?.mentioned ? 'font-semibold' : 'text-gray-500 dark:text-gray-400'}>
-          · {unreadLabel(thread.unread!.messages)} new{thread.unread?.mentioned ? ', mentions you' : ''}
+        <span className={thread.unread?.addressed ? 'font-semibold' : 'text-gray-500 dark:text-gray-400'}>
+          · {unreadLabel(thread.unread!.messages)} new{thread.unread?.addressed ? ', mentions you' : ''}
         </span>
       )}
       {answering && (

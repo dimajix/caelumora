@@ -20,16 +20,20 @@ waits, setting it aside, and answers in its other threads meanwhile (issue 602, 
     may approve is asked. A request nobody taking part may approve is denied at once.
 3.  **Answers.** A user approves or denies through their `UserActor`, naming the request alone
     (`ApprovalAnswered`, issue 567), in the thread the request was asked in (issue 602), whose
-    context it is of, which the approver holding it tells (`ChannelLoop::approval_thread`); the
+    context it is of, which their actor keeps with the request it was given (issue 603); the
     moderator routes the answer to the approver only, which holds the request: it tells which agent
     asked, and whether the user may approve its calls. A rule of the user's may answer for them (see
     [Rules of a person](#rules-of-a-person)).
 4.  **Decision.** The approver decides by its `ApprovalStrategy` (`Any`, `Majority`, `All`),
-    counting only those who may approve, and decides again when users join or leave. A request
-    nobody decides times out after ten minutes. The approver's decision is the only way a decision
-    reaches an agent, and an approval is over only once the approver says so, not when one user
-    answered. The approver speaks in its own name, answered for by the owner of its channel,
-    with whoever began the call as initiator.
+    counting only those who may approve, and decides again when users join or leave. A user who
+    joins the channel - not a thread of it - is asked every request still pending that they have
+    not answered, they alone (`ApprovalRequested::to`, issue 603):
+    the channel delivers their join to the approver as well, recording it before their actor runs,
+    so that what the approver answers, which enters after it, reaches them. A request nobody
+    decides times out after ten minutes. The approver's decision is the only way a decision
+    reaches an agent, and an approval is over only once the approver says so,
+    not when one user answered. The approver speaks in its own name, answered for by the owner of
+    its channel, with whoever began the call as initiator.
 5.  **Resumption.** The agent runs the granted calls and continues its turn.
 
 A denial or a timeout finishes the call at once, with `denied` or `timed_out`.

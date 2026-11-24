@@ -12,7 +12,7 @@ describe('isShownInLine', () => {
     expect(isShownInLine(envelope({ResponseStarted: {turn_id: 'turn-1'}}), ME)).toBe(true);
   });
 
-  it('leaves out what is said in another thread, but a message that mentions the reader', () => {
+  it('leaves out what is said in another thread, but a message that addresses the reader', () => {
     const said = message('m1');
     expect(isShownInLine(envelope({CompleteMessageGenerated: said}, AGENT, THREAD), ME)).toBe(false);
     expect(isShownInLine(envelope({TurnFinished: {turn_id: 'turn-1', messages: []}}, AGENT, THREAD), ME)).toBe(false);
@@ -38,7 +38,7 @@ describe('isShownInThread', () => {
 });
 
 describe('isSaidInLine', () => {
-  it('shows a message said in the line, or one of another thread that mentions the reader', () => {
+  it('shows a message said in the line, or one of another thread that addresses the reader', () => {
     const said = {sessionId: 'session-1', channelId: CHANNEL, thread: CHANNEL, message: message('m1')};
     expect(isSaidInLine(said, ME)).toBe(true);
     expect(isSaidInLine({...said, thread: THREAD}, ME)).toBe(false);

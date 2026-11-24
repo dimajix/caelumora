@@ -624,13 +624,13 @@ impl ChannelView {
     }
 
     /// What waits in the channel for the viewer (issue 594), if they are a user taking part in it
-    /// while it runs: as their actor keeps it (`UserActor::waiting`) - the approvals only where
-    /// they are shown them (`shows_approvals`), as their pending approvals are.
+    /// while it runs: as their actor keeps it (`UserActor::waiting`). Such a viewer is shown the
+    /// approvals pending (`shows_approvals`): they take part - but for the moment between their
+    /// being let go and their actor's end -, and read the whole channel, since a user reads from no
+    /// place (issue 603).
     fn waiting(&self) -> Option<Waiting> {
         let ActorId::User(user) = self.reader() else { return None };
-        let waiting = self.running()?.user_actor(user)?.waiting();
-        let approvals = if self.shows_approvals() { waiting.approvals } else { 0 };
-        Some(Waiting { approvals, ..waiting })
+        Some(self.running()?.user_actor(user)?.waiting())
     }
 
     /// What is new in the channel to the viewer (issue 404), if they are a user: what is new in its
@@ -645,8 +645,8 @@ impl ChannelView {
     /// What is new in the thread `thread` to the viewer (issues 404, 595), if they are a user: the
     /// messages others said that the viewer hears in the view of that thread (`Filter::shown_in`)
     /// and may read, after the last one they read there and from where their view of the history
-    /// begins - counted up to `Unread::CAP` -, and whether one of them mentions them. Read from the
-    /// store, whether the channel runs or not.
+    /// begins - counted up to `Unread::CAP` -, and whether one of them addresses them. Read from
+    /// the store, whether the channel runs or not.
     ///
     /// # Errors
     /// `Failed` if the history or what the user read cannot be read.
@@ -687,11 +687,11 @@ impl ChannelView {
             .page(key, &reader, from, None, Unread::CAP, new.as_ref())
             .await
             .map_err(|e| self.failed_reading(e))?;
-        // A mention among those not counted is looked for on its own.
+        // A message addressing the viewer among those not counted is looked for on its own.
         let addresses_viewer = |item: &HistoryEntry| {
             item.said().is_some_and(|message| message.addressees.contains(&viewer))
         };
-        let mentioned = counted.entries().any(addresses_viewer)
+        let addressed = counted.entries().any(addresses_viewer)
             || (counted.items.len() == Unread::CAP
                 && !self
                     .views()
@@ -701,7 +701,7 @@ impl ChannelView {
                     .map_err(|e| self.failed_reading(e))?
                     .items
                     .is_empty());
-        Ok(Some(Unread { messages: counted.items.len(), mentioned, read_up_to }))
+        Ok(Some(Unread { messages: counted.items.len(), addressed, read_up_to }))
     }
 }
 

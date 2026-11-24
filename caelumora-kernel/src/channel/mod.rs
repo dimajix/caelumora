@@ -41,7 +41,6 @@ use caelumora_api::component::{ComponentError, ComponentImpl};
 use caelumora_domain::actor::ActorId;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_domain::actor::Envelope;
-use caelumora_domain::approval::ApprovalId;
 use caelumora_domain::chain::Position;
 use caelumora_domain::channel::{
     Channel, ChannelId, ChannelState, Delegation, Opening, Participant, ThreadId,
@@ -775,16 +774,6 @@ impl ChannelLoop {
         let actor = self.actor(ActorId::User(user))?;
         let any_actor: Arc<dyn Any + Send + Sync> = actor;
         Arc::downcast::<UserActor>(any_actor).ok()
-    }
-
-    /// The thread the approval `id` was asked in (issue 602), while the channel's approver holds it
-    /// open: where a user answers it.
-    pub(crate) async fn approval_thread(&self, id: ApprovalId) -> Option<ThreadId> {
-        let actors = self.actors.load();
-        let (_, approver) = actors.iter().find(|(id, _)| matches!(id, ActorId::Approver(_)))?;
-        let actor = Arc::clone(&approver.actor);
-        let any_actor: Arc<dyn Any + Send + Sync> = actor;
-        Arc::downcast::<ApproverActor>(any_actor).ok()?.thread_of(id).await
     }
 
     /// The actor of `resolved`, taking part in `threads`, built but not yet taken in (`adopt`).

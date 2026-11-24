@@ -210,8 +210,11 @@ impl ChannelLoop {
                     let name = started.actor.name().to_string();
                     let first = iter::once(joined_in);
                     for thread in first.chain(threads.into_iter().filter(|t| *t != joined_in)) {
-                        let joined =
-                            ActorEvent::ParticipantJoined { participant: id, name: name.clone() };
+                        let joined = ActorEvent::ParticipantJoined {
+                            participant: id,
+                            name: name.clone(),
+                            into_channel: thread == joined_in,
+                        };
                         self.announce(joined, adder.clone(), thread, running).await;
                     }
                 }
@@ -326,7 +329,9 @@ impl ChannelLoop {
         let Some(changed) = self.take_part(id, thread, change) else { return false };
         if changed {
             let changed = match change {
-                ThreadChange::Joins => ActorEvent::ParticipantJoined { participant: id, name },
+                ThreadChange::Joins => {
+                    ActorEvent::ParticipantJoined { participant: id, name, into_channel: false }
+                }
                 ThreadChange::Leaves => {
                     ActorEvent::ParticipantLeft { participant: id, name, until }
                 }
@@ -1783,6 +1788,7 @@ mod tests {
                 from_her(ActorEvent::ParticipantJoined {
                     participant: stranger,
                     name: "mallory".to_string(),
+                    into_channel: false,
                 }),
                 &actors,
             )

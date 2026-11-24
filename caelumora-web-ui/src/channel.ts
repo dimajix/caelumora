@@ -26,7 +26,7 @@ export function withThreadOpened(channel: ChannelResponse, thread: ChannelThread
  * `channel` with `thread` read up to its message `message` (issue 595): nothing new in it.
  */
 export function withThreadRead(channel: ChannelResponse, thread: string, message: string): ChannelResponse {
-  const unread = {messages: 0, mentioned: false, read_up_to: message};
+  const unread = {messages: 0, addressed: false, read_up_to: message};
   return {...channel, threads: channel.threads?.map(t => t.id === thread ? {...t, unread} : t)};
 }
 

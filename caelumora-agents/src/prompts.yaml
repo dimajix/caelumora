@@ -88,7 +88,7 @@ channel_participants: |
   {% endfor %}
   {% if example %}
   When to write an @handle, and when a name:
-  - @handle, or @all for all of them: only when you need that participant to answer you or to act, now. Mentioning an agent this way makes it stop and take a turn of its own.
+  - @handle, or @all for everyone taking part where you write: only when you need that participant to answer you or to act, now. Mentioning an agent this way makes it stop and take a turn of its own.
   - Name, without @: in everything else - when you greet, thank, praise, agree, answer, or speak about someone. "Thanks, {{ example }}", "as {{ example }} said".
   - Check every @ before you send: if you do not need an answer or an action from that participant, write the name instead.
   {% endif %}

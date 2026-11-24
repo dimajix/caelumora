@@ -1,6 +1,6 @@
 # 603 — What waits for a user is told less than the chat shows in rare cases
 
-**Status:** open
+**Status:** in progress
 **Type:** bug
 **Priority:** low
 **Area:** User interaction
@@ -80,3 +80,51 @@ and the prompt mislead whoever reads the code or the agent that writes `@all`.
 ## History
 
 - **2026-11-24** — Opened as the maintainer asked, from the findings of issue 594 left open.
+- **2026-11-24** — Decided by the maintainer, as the author recommended: a stopped channel stays
+  without a mark - nobody can answer there, and as it runs the agents ask again -, documented in
+  CHANNELS.md; `mentioned` is renamed `addressed` wherever it counts `addressees` (`Unread`, its
+  REST field, the web UI's `Unread` and `addresses`), the moderators left out - "mention" there is
+  writing a handle, and `mentions_only_policy` a kind of the configuration; the mark is checked in
+  a browser against a model of Ollama. Built: the approver asks a user who joins every approval
+  still pending (see below); the user's actor keeps an approval its user answered
+  until it ends, so that one asked anew neither waits for them nor is answered by their rule
+  again; the prompt says what `@all` reaches. Not tested but removed: a user with a running actor
+  is shown the approvals pending - they take part, but for the moment between their being let go
+  and their actor's end, and read from no place, so they read the whole channel -, so the check of
+  `shows_approvals` in `ChannelView::waiting` made no difference worth keeping.
+- **2026-11-24** — Checked in a browser against `gemma4:26b` of a local Ollama, the app run with
+  stores in memory: an approval asked in one channel marked it in the session list with another
+  channel on screen, and the mark went as it was approved; the notification of the browser - its
+  constructor stood in for, the permission not being given - was made once, titled with the
+  channel, its tag the channel's id; a user who joined while the approval waited was told it, and
+  the user who knew it already counted it once and was not notified again.
+- **2026-11-24** — The review found that asking a newcomer on the global stream's `joined` misses
+  them where the approver answers before their actor runs: the stream announces the join before
+  the actor is built, and a user's actor reads from the end of the history as it starts. Decided
+  by the maintainer, since actors talk through the channel alone (issue 567, point 10): the
+  channel delivers a join (`ParticipantJoined`) to the approvers as well, recorded right before
+  what the newcomer reads begins; the approver answers a user's join with every approval it holds,
+  asked of them alone - `ApprovalRequested` names its one recipient (`to`), as `CommandExecuted`
+  does -, so that the others' history holds nothing twice. Rejected: the newcomer's actor asking the
+  approver as its run begins - a call past the channel; the approver asking every user again - the
+  same request in everyone's history once per join. Taken in as well, as the maintainer asked:
+  `ChannelLoop::approval_thread`, by which the user's actor asked the approver directly where an
+  approval was asked (issue 602), is gone - the actor keeps the thread with each approval it was
+  given (`OpenApproval`). A test through a running channel holds it: a user added while an
+  approval waits is told it; it found that the approver's event filter let no join in. Checked in
+  a browser again, as before: the mark and the notification as they were; a user who joined while
+  the approval waited was told it, the history the others read held their join alone, and the
+  user who was there was not notified again; once approved in the chat, the approval waited for
+  neither of them.
+- **2026-11-24** — A second review found that the channel records a join also where a user who
+  takes part is drawn into a thread, and for each further thread a newcomer takes part in, so that
+  every pending approval was asked of them again each time; and that one who answered, left and
+  came back was asked again. Decided by the maintainer: a join says whether it is one into the
+  channel (`ParticipantJoined::into_channel`, `true` for the join told where the newcomer's actor
+  starts alone; `false` for one recorded before), and the approver asks only then, and nothing a
+  user answered. Rejected: the approver remembering whom it asked - one extra request per user and
+  approval all the same, and more state. Also from the review: `to` carries no serde attributes, as
+  `CommandExecuted::to`, and an approver's request names a user alone; the documents say how the
+  join comes before what the approver answers; `send_approval` is held to answer where an approval
+  was asked. Next, as a step of its own: the approver learns of participants from the channel
+  alone, no longer from the global stream.

@@ -319,7 +319,7 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
 
   /**
    * Whether the user may open a thread at `msg` (issue 595): a stored message said in the line -
-   * not one of another thread that mentions them -, not taken back.
+   * not one of another thread that addresses them -, not taken back.
    */
   const mayThreadAt = (msg: Message) =>
     !!onThreadAt && takesPart && !!msg.id && !msg.revoked && !msg.internal

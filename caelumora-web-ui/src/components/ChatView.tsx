@@ -654,7 +654,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       } else if (actorEvent.ApprovalRequested) {
         // Asked again by an agent that resumed its turn (issue 172), or already in the snapshot:
         // shown once.
-        const requested = actorEvent.ApprovalRequested;
+        const requested = actorEvent.ApprovalRequested.request;
         setPendingApprovals(prev => prev.some(req => req.id === requested.id) ? prev : [...prev, requested]);
       } else if (actorEvent.ApprovalGranted || actorEvent.ApprovalDenied || actorEvent.ApprovalTimedOut || actorEvent.ApprovalRequestWithdrawn) {
         // Over only once the approver says so - decided, or no longer asked for (issue 148).

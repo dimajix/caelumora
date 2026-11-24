@@ -456,8 +456,11 @@ mod tests {
         let alice = ActorId::User(UserId::new());
         let thread = ThreadId::new();
         let context = EventContext { thread_id: thread, ..EventContext::default() };
-        let joined =
-            ActorEvent::ParticipantJoined { participant: alice, name: "alice".to_string() };
+        let joined = ActorEvent::ParticipantJoined {
+            participant: alice,
+            name: "alice".to_string(),
+            into_channel: false,
+        };
         let mut history = History::default();
         let recorded = Recorded::of(&Envelope::new(context, joined), alice, Audience::Everybody);
         assert!(history.enter(recorded.expect("a join is recorded")));
@@ -502,6 +505,7 @@ mod tests {
             by: participant,
             by_name: String::new(),
             at: Utc::now(),
+            into_channel: false,
         }
     }
 

@@ -114,13 +114,17 @@ pub enum HistoryEntry {
     /// `participant`, called `name` then, joined the channel at `at`, by the act of `by`, called
     /// `by_name` then - the participant itself if it joined by itself, `ActorId::System` if the
     /// kernel added it (issue 408): recorded where it happened among what was said, with the names
-    /// as they were, so that it reads the same after a renaming.
+    /// as they were, so that it reads the same after a renaming; `into_channel` as
+    /// `ActorEvent::ParticipantJoined` says - `false` for a join recorded before it was told
+    /// (issue 603).
     ParticipantJoined {
         participant: ActorId,
         name: String,
         by: ActorId,
         by_name: String,
         at: DateTime<Utc>,
+        #[serde(default)]
+        into_channel: bool,
     },
     /// `participant` left the channel, as `ParticipantJoined` says - `by`
     /// who removed it, the participant itself if it left by itself. It was
@@ -236,9 +240,15 @@ pub enum HistoryEntry {
     /// `by`, a user, asked `author`, an agent, at `at` to answer again
     /// instead of `target` (issues 234, 223).
     RetryRequested { target: RetryTarget, author: ActorId, by: ActorId, at: DateTime<Utc> },
-    /// `by` asked at `at` for a decision on `request` (issues 81, 223): an
-    /// agent, of the approvers; an approver, of the users.
-    ApprovalRequested { request: ApprovalRequest, by: ActorId, at: DateTime<Utc> },
+    /// `by` asked at `at` for a decision on `request` (issues 81, 223): an agent, of the
+    /// approvers; an approver, of the users - of `to` alone where it names one, a user who joined
+    /// while it waited (issue 603).
+    ApprovalRequested {
+        request: ApprovalRequest,
+        by: ActorId,
+        at: DateTime<Utc>,
+        to: Option<ActorId>,
+    },
     /// `by`, a user, answered the request `id` at `at` (issues 81, 419, 567): whether they approve,
     /// with their part (`decision`) - to the approvers, which hold the request.
     ApprovalAnswered {
@@ -577,7 +587,8 @@ impl HistoryEntry {
     /// channel delivers by (issue 417, `Envelope::recipients`): a message to
     /// every participant who is a user, and to every agent too if there is
     /// something to hear in it; a change of a message and who joined or left
-    /// to every user and agent, who left to them as well (issue 602); how a
+    /// to every user and agent, who left to them as well (issue 602), who
+    /// joined to the approvers as well (issue 603); how a
     /// turn went, what it carried out and what came of what it did of its
     /// own accord to the users; what
     /// answers a command to the user it answers; the part of the history
@@ -586,8 +597,9 @@ impl HistoryEntry {
     /// what it no longer has to read and a compaction to nobody; a command
     /// and a request to answer again to the agent they name (issues 234,
     /// 269); an approval through the approvers - an agent's request to them,
-    /// theirs to the users, a user's answer to them, their decision to the
-    /// users and the agent that asked (issues 81, 148); an agent's questions
+    /// theirs to the users, or to the one user it names (issue 603), a
+    /// user's answer to them, their decision to the users and the agent
+    /// that asked (issues 81, 148); an agent's questions
     /// and their closing to the users, to those asked alone if they are
     /// sensitive (issue 165). Whether it went back to its sender is not this
     /// rule's: a reader is given what it sent itself.
@@ -605,8 +617,11 @@ impl HistoryEntry {
             HistoryEntry::Modified { .. }
             | HistoryEntry::Revoked { .. }
             | HistoryEntry::Reclassified { .. }
-            | HistoryEntry::Fitted { .. }
-            | HistoryEntry::ParticipantJoined { .. } => Recipients::participants(true),
+            | HistoryEntry::Fitted { .. } => Recipients::participants(true),
+            // To the approvers as well (issue 603): a user who joins is asked what still waits.
+            HistoryEntry::ParticipantJoined { .. } => {
+                Recipients { approvers: true, ..Recipients::participants(true) }
+            }
             // To whoever left as well (issue 602): one let go from a thread goes on in its others,
             // and takes its leave in, as it took its join.
             HistoryEntry::ParticipantLeft { participant, .. } => {
@@ -637,6 +652,11 @@ impl HistoryEntry {
                     .into_iter()
                     .collect(),
             ),
+            HistoryEntry::ApprovalRequested { by: ActorId::Approver(_), to: Some(to), .. } => {
+                Recipients::only(
+                    vec![*to].into_iter().filter(|to| matches!(to, ActorId::User(_))).collect(),
+                )
+            }
             HistoryEntry::ApprovalRequested { by, .. }
             | HistoryEntry::ApprovalRequestWithdrawn { by, .. } => match by {
                 ActorId::Agent(_) => Recipients::APPROVERS,
@@ -706,8 +726,8 @@ impl HistoryEntry {
             Self::ActivityFinished { turn_id, activity, output, .. } => {
                 ActorEvent::ActivityFinished { turn_id, activity, output }
             }
-            Self::ParticipantJoined { participant, name, .. } => {
-                ActorEvent::ParticipantJoined { participant, name }
+            Self::ParticipantJoined { participant, name, into_channel, .. } => {
+                ActorEvent::ParticipantJoined { participant, name, into_channel }
             }
             Self::ParticipantLeft { participant, name, until, .. } => {
                 ActorEvent::ParticipantLeft { participant, name, until }
@@ -746,7 +766,9 @@ impl HistoryEntry {
             Self::RetryRequested { target, author, .. } => {
                 ActorEvent::RetryRequested { target, author }
             }
-            Self::ApprovalRequested { request, .. } => ActorEvent::ApprovalRequested(request),
+            Self::ApprovalRequested { request, to, .. } => {
+                ActorEvent::ApprovalRequested { request, to }
+            }
             Self::ApprovalAnswered { id, approved, decision, .. } => {
                 ActorEvent::ApprovalAnswered { id, approved, decision }
             }

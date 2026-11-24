@@ -318,7 +318,7 @@ impl<M> HistoryItemResponse<M> {
     /// opened or closed (issue 557); its message given as `said` makes it.
     fn told(entry: HistoryEntry, said: impl FnOnce(Message) -> M) -> Option<Self> {
         match entry {
-            HistoryEntry::ParticipantJoined { participant, name, by, by_name, at } => {
+            HistoryEntry::ParticipantJoined { participant, name, by, by_name, at, .. } => {
                 Some(Self::ParticipantJoined { participant, name, by, by_name, at })
             }
             HistoryEntry::ParticipantLeft { participant, name, by, by_name, at, .. } => {
@@ -607,6 +607,7 @@ mod tests {
                 by: actor,
                 by_name: "alice".to_string(),
                 at: Utc::now(),
+                into_channel: false,
             },
             |m| m,
         )

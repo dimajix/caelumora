@@ -177,12 +177,13 @@ teams and agents are loaded again on any event of their kind, and what was delet
 or restoring, whatever the kind.
 
 What is new in a channel (issue 404) is shown beside it: how many messages of others came since the
-user last read it, and an `@` where one of them mentions them; a folded session shows the sum of its
-channels. The list takes the numbers from the snapshot and counts on with every message the global
+user last read it, and an `@` where one of them addresses them (`addressed`, by name or as one of
+everyone); a folded session shows the sum of its channels. The list takes the numbers from the
+snapshot and counts on with every message the global
 stream announces (`said`) that the view of the line shows the user (`isSaidInLine`, issue 557) -
 except in the channel on screen while the tab is visible -, and the
 chat view clears them as it marks the channel read (`unread.ts`). What another tab or device read
-is seen here on the next listing. A message that mentions the user is shown as a notification of
+is seen here on the next listing. A message that addresses the user is shown as a notification of
 the browser where they allowed it - asked for by the bell at the foot of the sidebar - unless its
 channel is on screen.
 
@@ -190,8 +191,8 @@ What waits for the user in a channel (issue 594) - approvals, questions put to t
 beside it as a mark with a hand and the number, a folded session's channels summed. The server
 counts it (`waiting` of the snapshot); as the global stream tells that it changed for the user
 (`waiting_changed`), the list fetches the session again, and where more waits than before shows a
-notification of the browser, as for a mention, unless the channel is on screen (`notifyWaiting`).
-An answer overtaken by a later fetch of the session is left out.
+notification of the browser, as for a message addressing them, unless the channel is on screen
+(`notifyWaiting`). An answer overtaken by a later fetch of the session is left out.
 
 A session's privacy is shown to everyone in it; its owner changes it (`PrivacyDialog`). Choosing a
 policy that lets other sessions read says that it holds for what is said from then on. The session's
@@ -385,7 +386,7 @@ A channel that does not run, its components unreadable, says so and why above th
 *   **Threads.** The chat is the channel's line (issue 557): what is said in another thread - a
     sub-agent's - is left out, live (`isShownInLine`, as the kernel's `Envelope::is_shown_in_line`)
     and from the history, which the server reads as the line's view; of another thread its approvals
-    and its questions are shown, since its calls wait for them, and a message that mentions the
+    and its questions are shown, since its calls wait for them, and a message that addresses the
     user. Left out of the chat alone: the participants, what calls used and the workspace follow
     every thread. The unread count and the chat of a reader who takes no part follow what is
     announced as said, as far as the view of the line shows it (`isSaidInLine`). That a thread was
@@ -405,7 +406,7 @@ A channel that does not run, its components unreadable, says so and why above th
     channel. Who takes part and where an agent answers are kept up by the stream (`StateChanged`
     in the turn's thread, the channel fetched again as a thread opens or someone joins or leaves
     one); a thread closed closes its pane. Each thread is read on its own: its mark tells how many
-    messages of others came there since the user last read it, and whether one mentions them -
+    messages of others came there since the user last read it, and whether one addresses them -
     from the snapshot, counted on from the stream (`withChannelEvent`) -, and its pane marks it
     read as the line marks the channel (`…/threads/{tid}/read`), with a line where its new
     messages began as it was opened. The sidebar counts the line alone.

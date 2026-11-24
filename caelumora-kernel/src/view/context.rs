@@ -86,6 +86,7 @@ impl AgentContextView {
             by: actor,
             by_name: actor.to_string(),
             at: Utc::now(),
+            into_channel: false,
         };
         let mut since_join = History::default();
         since_join.enter(Recorded::new(joined, actor, Audience::Everybody, &context_in(channel)));

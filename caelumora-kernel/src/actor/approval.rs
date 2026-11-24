@@ -12,7 +12,7 @@ use caelumora_domain::agent::AgentId;
 use caelumora_domain::approval::{
     ApprovalDecision, ApprovalId, ApprovalStatus, ApprovalStrategy, ApprovalVerdict, Approver,
 };
-use caelumora_domain::channel::{self, Channel, Participant, ThreadId};
+use caelumora_domain::channel::{self, Channel, Participant};
 use caelumora_domain::event::GlobalEvent;
 use caelumora_domain::security::SecurityAttributes;
 use caelumora_domain::value::name::Name;
@@ -93,13 +93,6 @@ impl ApproverActor {
         }
     }
 
-    /// The thread the approval `id` was asked in (issue 602), while it holds it open: where a user
-    /// answers it.
-    pub(crate) async fn thread_of(&self, id: ApprovalId) -> Option<ThreadId> {
-        let pending = self.pending.lock().await;
-        pending.get(&id).map(|pending| pending.request.context.thread_id)
-    }
-
     /// The context it answers `request`, an agent's request for approval,
     /// in (`Answering::to`): in its own name, about the call of whoever asked
     /// (issue 255); the channel admits what it sends answered for by the owner
@@ -168,6 +161,24 @@ impl ApproverActor {
         }
     }
 
+    /// Asks `user`, who joined the channel (`ParticipantJoined::into_channel`), every approval it
+    /// holds that they have not answered (issue 603), of them alone (`ApprovalRequested::to`) and
+    /// in the context of its request. The channel records their join before their actor runs, and
+    /// what is asked here enters after it, so that it reaches them; one who answered, left and
+    /// came back is not asked again, as their answer still counts.
+    async fn ask_newcomer(&self, user: ActorId, output: &dyn EventSender) -> Result<()> {
+        let pending = self.pending.lock().await;
+        for approval in pending.values().filter(|approval| !approval.responses.contains_key(&user))
+        {
+            if let ActorEvent::ApprovalRequested { request, .. } = &approval.request.event {
+                let asked =
+                    ActorEvent::ApprovalRequested { request: request.clone(), to: Some(user) };
+                self.answering(&approval.request).send(asked, output).await?;
+            }
+        }
+        Ok(())
+    }
+
     /// Makes up for the events of the channel it lost (issue 502), as
     /// `handle_global_event` would have taken them: the pending approvals
     /// of every agent that no longer takes part - no longer a participant,
@@ -210,11 +221,16 @@ impl ApproverActor {
 
     async fn handle_envelope(&self, env: Envelope, output: &dyn EventSender) -> Result<()> {
         match env.event {
-            ActorEvent::ApprovalRequested(_) => self.handle_request(env, output).await,
+            ActorEvent::ApprovalRequested { .. } => self.handle_request(env, output).await,
             ActorEvent::ApprovalAnswered { .. } => self.handle_answer(&env, output).await,
             ActorEvent::ApprovalRequestWithdrawn { id } => {
                 self.handle_withdrawal(env.context.sender_id, id, output).await
             }
+            ActorEvent::ParticipantJoined {
+                participant: participant @ ActorId::User(_),
+                into_channel: true,
+                ..
+            } => self.ask_newcomer(participant, output).await,
             _ => Ok(()),
         }
     }
@@ -225,7 +241,7 @@ impl ApproverActor {
     /// that nobody taking part may approve is denied at once, not put to
     /// anyone (issue 14).
     async fn handle_request(&self, envelope: Envelope, output: &dyn EventSender) -> Result<()> {
-        let ActorEvent::ApprovalRequested(request) = &envelope.event else { return Ok(()) };
+        let ActorEvent::ApprovalRequested { request, .. } = &envelope.event else { return Ok(()) };
         {
             let mut pending = self.pending.lock().await;
             let approval = pending.entry(request.id).or_insert_with(|| PendingApproval {
@@ -250,7 +266,9 @@ impl ApproverActor {
             }
         }
 
-        self.answering(&envelope).send(ActorEvent::ApprovalRequested(request.clone()), output).await
+        self.answering(&envelope)
+            .send(ActorEvent::ApprovalRequested { request: request.clone(), to: None }, output)
+            .await
     }
 
     /// Counts `answer`, a user's to the request it names, with their part in it (issue 419): the
@@ -400,8 +418,9 @@ impl Actor for ApproverActor {
             matches!(
                 event.event,
                 ActorEvent::ApprovalAnswered { .. }
-                    | ActorEvent::ApprovalRequested(_)
+                    | ActorEvent::ApprovalRequested { .. }
                     | ActorEvent::ApprovalRequestWithdrawn { .. }
+                    | ActorEvent::ParticipantJoined { .. }
             )
         }
     }
@@ -502,6 +521,7 @@ mod tests {
     use caelumora_domain::agent::Agent;
     use caelumora_domain::approval::ApprovalRequest;
     use caelumora_domain::channel::testing::make_channel;
+    use caelumora_domain::channel::ThreadId;
     use caelumora_domain::channel::{Channel, InternalActor};
     use caelumora_domain::security::{Grant, Subject};
     use caelumora_domain::session::testing::bare_session;
@@ -624,13 +644,16 @@ mod tests {
             self.input
                 .send(self.from(
                     ActorId::Agent(self.agent),
-                    ActorEvent::ApprovalRequested(request.clone()),
+                    ActorEvent::ApprovalRequested { request: request.clone(), to: None },
                 ))
                 .await
                 .unwrap();
             let asked = self.next().await;
             assert!(
-                matches!(asked.event, ActorEvent::ApprovalRequested(ref r) if r.id == request.id),
+                matches!(
+                    asked.event,
+                    ActorEvent::ApprovalRequested { request: ref r, .. } if r.id == request.id
+                ),
                 "put to the users: {:?}",
                 asked.event
             );
@@ -751,25 +774,24 @@ mod tests {
 
     /// An answer to a request the approver does not hold - never asked, or over - is refused, and
     /// its sender told (issue 567): the approver holds what an answer can be to.
-    /// Issue 602: an approval is put to the users in the thread it was asked in, and the channel
-    /// tells that thread while the approver holds it, where a user answers it; not once decided.
+    /// Issue 602: an approval is put to the users in the thread it was asked in, and decided there.
     #[tokio::test]
     async fn an_approval_is_answered_in_the_thread_it_was_asked_in() {
         let mut approving = approving(ApprovalStrategy::Any, 1, shared).await;
         let request = approving.request();
         let thread = ThreadId::new();
-        let mut asked = approving
-            .from(ActorId::Agent(approving.agent), ActorEvent::ApprovalRequested(request.clone()));
+        let mut asked = approving.from(
+            ActorId::Agent(approving.agent),
+            ActorEvent::ApprovalRequested { request: request.clone(), to: None },
+        );
         asked.context.thread_id = thread;
         approving.input.send(asked).await.unwrap();
         let put = approving.next().await;
         assert_eq!(put.context.thread_id, thread, "put to the users where it was asked");
-        assert_eq!(approving.channel.approval_thread(request.id).await, Some(thread));
 
         approving.answer(0, &request, true).await;
         let decided = approving.next().await;
         assert_eq!(decided.context.thread_id, thread, "decided there");
-        assert_eq!(approving.channel.approval_thread(request.id).await, None, "held no longer");
     }
 
     #[tokio::test]
@@ -840,7 +862,7 @@ mod tests {
             .input
             .send(approving.from(
                 ActorId::Agent(approving.agent),
-                ActorEvent::ApprovalRequested(request.clone()),
+                ActorEvent::ApprovalRequested { request: request.clone(), to: None },
             ))
             .await
             .unwrap();
@@ -920,6 +942,51 @@ mod tests {
             decided.event
         );
         approving.holds_no_longer(&request).await;
+    }
+
+    /// Issue 603: a user who joins the channel is asked every approval still pending, they alone,
+    /// where it was asked - not an agent that joins, nor a user drawn into a thread, nor one who
+    /// answered it, left and came back.
+    #[tokio::test]
+    async fn a_user_who_joins_is_asked_what_is_pending() {
+        let mut approving = approving(ApprovalStrategy::All, 2, shared).await;
+        let request = approving.request();
+        approving.ask(&request).await;
+        let joined = |participant: ActorId, into_channel| ActorEvent::ParticipantJoined {
+            participant,
+            name: "newcomer".to_string(),
+            into_channel,
+        };
+        let newcomer = ActorId::User(UserId::new());
+        let answered = ActorId::User(approving.users[1]);
+        approving.answer(1, &request, true).await;
+        for not_asked in [
+            joined(ActorId::Agent(AgentId::new()), true),
+            joined(newcomer, false),
+            joined(answered, true),
+        ] {
+            approving.input.send(approving.from(ActorId::System, not_asked)).await.unwrap();
+        }
+        approving.nothing().await;
+
+        approving
+            .input
+            .send(approving.from(ActorId::System, joined(newcomer, true)))
+            .await
+            .unwrap();
+        let asked = approving.next().await;
+        assert!(
+            matches!(
+                asked.event,
+                ActorEvent::ApprovalRequested { request: ref asked_for, to: Some(to) }
+                    if asked_for.id == request.id && to == newcomer
+            ),
+            "asked of them alone: {:?}",
+            asked.event
+        );
+        assert_eq!(asked.context.sender_id, approving.approver.id(), "in its own name");
+        assert_eq!(asked.context.thread_id, ThreadId::line(approving.channel.id()), "where asked");
+        approving.nothing().await;
     }
 
     /// Issue 502: a leave the approver lost among more events than it holds

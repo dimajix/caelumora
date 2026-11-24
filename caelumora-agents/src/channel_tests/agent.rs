@@ -1768,7 +1768,10 @@ async fn a_plan_runs_its_steps_as_intermediate_messages_and_ends_with_the_final_
     let final_messages = time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
-            assert!(!matches!(envelope.event, ActorEvent::ApprovalRequested(_)), "nobody is asked");
+            assert!(
+                !matches!(envelope.event, ActorEvent::ApprovalRequested { .. }),
+                "nobody is asked"
+            );
             if envelope.context.sender_id != ActorId::Agent(agent) {
                 continue;
             }
@@ -2554,7 +2557,7 @@ async fn a_cancel_ends_a_turn_waiting_for_approval_at_once() {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
             match envelope.event {
-                ActorEvent::ApprovalRequested(request)
+                ActorEvent::ApprovalRequested { request, .. }
                     if matches!(envelope.context.sender_id, ActorId::Approver(_)) =>
                 {
                     requested = Some(request.id)
@@ -2817,12 +2820,61 @@ async fn a_rule_of_the_channel_asks_for_a_call_its_tool_would_run() {
     running.abort();
 }
 
+/// Issue 603: a user who joins a channel while an approval waits there is asked it - they alone -,
+/// so that what waits for them tells it, as it tells the user who was there.
+#[tokio::test]
+async fn a_user_who_joins_while_an_approval_waits_is_asked_it() {
+    use caelumora_domain::channel::HistoryAccess;
+    use caelumora_domain::session::testing::make_session;
+    use caelumora_domain::template::InternalActorTemplate;
+    use caelumora_domain::user::testing::make_user;
+    use caelumora_kernel::actor::user::UserActor;
+    use caelumora_kernel::session::testing::{create, spec};
+    use caelumora_kernel::session::{ChannelSpec, SessionManager};
+    use caelumora_store::testing::record_users;
+    let (call, components) = a_call_needing_approval();
+    let store = Persistence::in_memory();
+    let personality = Personality { components, ..make_personality("plain") };
+    let (context, agent, alice) = alice_and_an_agent(&store, "helper", personality).await;
+    let model = Arc::new(Scripted(Mutex::new([call].into())));
+    let kernel = agent_kernel(store, Arc::new(AllowAllPolicy::new()), model);
+    let bob = make_user("bob");
+    let mut session = make_session("approving", alice);
+    session.participants = record_users(kernel.entity_stores(), &[&bob]).await;
+    session.participants.extend([Participant::User(alice), Participant::Agent(agent)]);
+    let manager = SessionManager::new(Arc::clone(&kernel));
+    let session = create(&manager, &context, session).await.expect("the session starts");
+    let approving = ChannelSpec {
+        internal_actors: vec![InternalActorTemplate::Approver { strategy: Default::default() }],
+        ..spec("approving", vec![ActorId::User(alice), ActorId::Agent(agent)])
+    };
+    let channel = session.create_channel(&context, approving).await.expect("alice makes it");
+    let waits_for = |actor: Arc<UserActor>| async move {
+        time::timeout(Duration::from_secs(5), async {
+            while actor.waiting().approvals == 0 {
+                time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .is_ok()
+    };
+    let hers = channel.user_actor(alice).expect("alice takes part");
+    hers.send_message(None, Some("hello".to_string()), None, Vec::new()).await.unwrap();
+    assert!(waits_for(Arc::clone(&hers)).await, "the call waits for alice");
+
+    let into = Some((channel.id(), HistoryAccess::All));
+    session.add_participant(&context, ActorId::User(bob.id), into).await.expect("added");
+    let his = channel.user_actor(bob.id).expect("bob takes part");
+    assert!(waits_for(his).await, "and for bob, who joined while it waited");
+    assert_eq!(hers.waiting().approvals, 1, "still waiting for alice");
+}
+
 /// The approval the approver asks the users for, from `events`.
 async fn approval_requested(events: &mut broadcast::Receiver<Envelope>) -> ApprovalRequest {
     time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
-            if let ActorEvent::ApprovalRequested(request) = envelope.event {
+            if let ActorEvent::ApprovalRequested { request, .. } = envelope.event {
                 if matches!(envelope.context.sender_id, ActorId::Approver(_)) {
                     break request;
                 }
@@ -2942,7 +2994,7 @@ async fn a_turn_asked_for_again_while_it_waits_for_an_approval_withdraws_the_req
     };
     let Stuck { channel, context, agent, helper, mut events, running } =
         with_an_agent(Arc::new(Scripted(Mutex::new([call, instead].into()))), components).await;
-    let ActorEvent::ApprovalRequested(request) =
+    let ActorEvent::ApprovalRequested { request, .. } =
         shown_by(&mut events, agent, "ApprovalRequested").await
     else {
         unreachable!()

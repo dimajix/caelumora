@@ -1292,7 +1292,11 @@ mod tests {
     /// What the channel shows as `request` is asked for approval in `channel`.
     fn requested(channel: &ChannelLoop, request: ApprovalRequest) -> Occurred {
         let agent = ActorId::Agent(request.agent_id);
-        let shown = Shown::Envelope(from(channel, agent, ActorEvent::ApprovalRequested(request)));
+        let shown = Shown::Envelope(from(
+            channel,
+            agent,
+            ActorEvent::ApprovalRequested { request, to: None },
+        ));
         Occurred::InChannels(Box::new(Happened::Shown(channel.id(), Ok(shown))))
     }
 

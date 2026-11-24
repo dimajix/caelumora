@@ -634,7 +634,11 @@ mod tests {
             in_thread(there, ActorEvent::CompleteMessageGenerated(message))
         };
         let name = "helper".to_string();
-        let its_join = ActorEvent::ParticipantJoined { participant: body.id(), name: name.clone() };
+        let its_join = ActorEvent::ParticipantJoined {
+            participant: body.id(),
+            name: name.clone(),
+            into_channel: false,
+        };
         let until = Position::START;
         let its_leave = ActorEvent::ParticipantLeft { participant: body.id(), name, until };
         let (tx, rx) = mpsc::channel(8);
@@ -739,8 +743,11 @@ mod tests {
             Envelope::new(context, event)
         };
         let name = "helper".to_string();
-        let its_join =
-            || ActorEvent::ParticipantJoined { participant: body.id(), name: name.clone() };
+        let its_join = || ActorEvent::ParticipantJoined {
+            participant: body.id(),
+            name: name.clone(),
+            into_channel: false,
+        };
         let until = Position::START;
         let its_leave =
             || ActorEvent::ParticipantLeft { participant: body.id(), name: name.clone(), until };

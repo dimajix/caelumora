@@ -113,7 +113,7 @@ export function startedChannel(event: GlobalEvent): string | null {
 
 /**
  * What a channel's `said` announces (issues 404, 557): where a message others hear was said - its
- * session, its channel and its thread, the line or another where it mentions a user - and the
+ * session, its channel and its thread, the line or another where it addresses a user - and the
  * message as it was said.
  */
 export interface Said {

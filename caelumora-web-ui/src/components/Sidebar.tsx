@@ -27,8 +27,8 @@ import type {ActorId, AgentResponse, ArtifactResponse, ChannelResponse, GlobalEv
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
 import {asGlobalEvent, dispatchGlobalEvent, saidInChannel, sessionChange, waitingChanged, type Said} from '../globalEvents';
-import {isSaidInLine, mentions} from '../messages';
-import {askForNotifications, countedIn, isOthers, mayAskForNotifications, notifyMention, notifyWaiting, onChannelRead, unreadLabel, waitingLabel, waitsMore} from '../unread';
+import {addresses, isSaidInLine} from '../messages';
+import {askForNotifications, countedIn, isOthers, mayAskForNotifications, notifyAddressed, notifyWaiting, onChannelRead, unreadLabel, waitingLabel, waitsMore} from '../unread';
 import {openEventStream} from '../stream';
 import {actorPath, sameActor, userActor} from '../actor';
 import {ActionMenu} from './ActionMenu';
@@ -78,24 +78,24 @@ function withChannel(sessions: SessionSnapshot[], channelId: string, change: (ch
 function unreadIn(session: SessionSnapshot): Unread {
   return {
     messages: session.channels.reduce((sum, channel) => sum + (channel.unread?.messages ?? 0), 0),
-    mentioned: session.channels.some(channel => channel.unread?.mentioned),
+    addressed: session.channels.some(channel => channel.unread?.addressed),
   };
 }
 
-/** How many messages are new, as a badge - marked `@` where one mentions the user. */
+/** How many messages are new, as a badge - marked `@` where one addresses the user. */
 const UnreadBadge: React.FC<{unread: Unread | undefined}> = ({unread}) => {
   if (!unread || unread.messages === 0) return null;
-  const label = `${unread.messages > 99 ? 'More than 99' : unread.messages} new message${unread.messages === 1 ? '' : 's'}${unread.mentioned ? ', you are mentioned' : ''}`;
+  const label = `${unread.messages > 99 ? 'More than 99' : unread.messages} new message${unread.messages === 1 ? '' : 's'}${unread.addressed ? ', you are mentioned' : ''}`;
   return (
     <span
       className={cn(
         "ml-auto shrink-0 rounded-full px-1.5 text-[10px] font-semibold leading-4",
-        unread.mentioned ? "bg-red-600 text-white" : "bg-gray-600 text-gray-100"
+        unread.addressed ? "bg-red-600 text-white" : "bg-gray-600 text-gray-100"
       )}
       title={label}
       aria-label={label}
     >
-      {unread.mentioned && '@ '}{unreadLabel(unread.messages)}
+      {unread.addressed && '@ '}{unreadLabel(unread.messages)}
     </span>
   );
 };
@@ -295,7 +295,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const agentsChangedFromStream = useEffectEvent(() => agents.reload());
   const refreshSessionFromStream = useEffectEvent((sessionId: string) => void refreshSession(sessionId));
   // Something new was said (issue 404): counted where the user does not see
-  // it now, and shown as a notification where it mentions them - what the
+  // it now, and shown as a notification where it addresses them - what the
   // line's view leaves out is nothing new there (issue 557).
   const saidFromStream = useEffectEvent((said: Said) => {
     const {sessionId, channelId, message} = said;
@@ -303,9 +303,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const seen = channelId === selectedChannelId && page === null && document.visibilityState === 'visible';
     if (seen) return;
     setSessions(prev => withChannel(prev, channelId, channel => ({...channel, unread: countedIn(channel.unread, message, me)})));
-    if (mentions(message, me)) {
+    if (addresses(message, me)) {
       const channel = sessions.find(s => s.id === sessionId)?.channels.find(c => c.id === channelId);
-      notifyMention(message, channel ? channelName(channel) : 'a channel', () => onSelectChannel(sessionId, channelId));
+      notifyAddressed(message, channel ? channelName(channel) : 'a channel', () => onSelectChannel(sessionId, channelId));
     }
   });
 
@@ -325,7 +325,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   // What the chat view marked read is nothing new any more.
   useEffect(() => onChannelRead((channelId, messageId) => {
-    setSessions(prev => withChannel(prev, channelId, channel => ({...channel, unread: {messages: 0, mentioned: false, read_up_to: messageId}})));
+    setSessions(prev => withChannel(prev, channelId, channel => ({...channel, unread: {messages: 0, addressed: false, read_up_to: messageId}})));
   }), []);
 
   // The list is the global stream's: its snapshot, then its events (issue

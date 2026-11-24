@@ -22,8 +22,8 @@ export function isHeard(message: Message): boolean {
   return (message.role === 'User' || message.role === 'Assistant') && !message.internal && (saysSomething || personsCall);
 }
 
-/** Whether `message` mentions `me` - by name or as one of everyone. */
-export function mentions(message: Message, me: ActorId): boolean {
+/** Whether `message` addresses `me` - by name or as one of everyone (`addressees`). */
+export function addresses(message: Message, me: ActorId): boolean {
   return (message.addressees ?? []).some(addressed => sameActor(addressed, me));
 }
 
@@ -435,7 +435,7 @@ export function givenBack(message: Message): Message[] {
  * Whether the line's view of a channel shows `envelope` to `me` (issue 557), as the kernel's
  * `Envelope::is_shown_in_line` says: what happens in the line - whose id is the channel's - or in
  * the whole channel, and of every other thread its approvals and its questions, which its calls
- * wait for, and a message that mentions `me`. Of those the events a user is delivered alone; what
+ * wait for, and a message that addresses `me`. Of those the events a user is delivered alone; what
  * happens in the whole channel known by its kind, since an event names only its context's thread.
  */
 export function isShownInLine(envelope: Envelope, me: ActorId): boolean {
@@ -445,8 +445,8 @@ export function isShownInLine(envelope: Envelope, me: ActorId): boolean {
   const waitedFor = event.ApprovalRequested || event.ApprovalAnswered || event.ApprovalGranted || event.ApprovalDenied
     || event.ApprovalTimedOut || event.ApprovalRequestWithdrawn || event.QuestionRequested || event.QuestionClosed;
   const said = event.CompleteMessageGenerated;
-  const mentionsMe = said !== undefined && isHeard(said) && mentions(said, me);
-  return Boolean(waitedFor || isOfWholeChannel(envelope) || mentionsMe);
+  const addressesMe = said !== undefined && isHeard(said) && addresses(said, me);
+  return Boolean(waitedFor || isOfWholeChannel(envelope) || addressesMe);
 }
 
 /**
@@ -471,10 +471,11 @@ export function isShownInThread(envelope: Envelope, thread: string): boolean {
 
 /**
  * Whether the line's view of its channel shows `said` to `me` (issue 557): a message announced as
- * said in the line, or one that mentions `me` in another thread - as `isShownInLine` shows it live.
+ * said in the line, or one that addresses `me` in another thread - as `isShownInLine` shows it
+ * live.
  */
 export function isSaidInLine(said: Said, me: ActorId): boolean {
-  return said.thread === said.channelId || mentions(said.message, me);
+  return said.thread === said.channelId || addresses(said.message, me);
 }
 
 /**

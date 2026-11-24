@@ -188,7 +188,7 @@ mod tests {
             - Kaya (@kaya), a person. In their own words: \"I run the budget.\"\n\
             - Sassy (@sassy), an agent.\n\
             When to write an @handle, and when a name:\n\
-            - @handle, or @all for all of them: only when you need that participant to answer you or to act, now. Mentioning an agent this way makes it stop and take a turn of its own.\n\
+            - @handle, or @all for everyone taking part where you write: only when you need that participant to answer you or to act, now. Mentioning an agent this way makes it stop and take a turn of its own.\n\
             - Name, without @: in everything else - when you greet, thank, praise, agree, answer, or speak about someone. \"Thanks, Sassy\", \"as Sassy said\".\n\
             - Check every @ before you send: if you do not need an answer or an action from that participant, write the name instead.\n");
         assert!(
@@ -346,7 +346,7 @@ mod tests {
             - Sassy (@sassy), an agent.\n\
             - Bob (@bob), a person.\n\
             When to write an @handle, and when a name:\n\
-            - @handle, or @all for all of them: only when you need that participant to answer you or to act, now. Mentioning an agent this way makes it stop and take a turn of its own.\n\
+            - @handle, or @all for everyone taking part where you write: only when you need that participant to answer you or to act, now. Mentioning an agent this way makes it stop and take a turn of its own.\n\
             - Name, without @: in everything else - when you greet, thank, praise, agree, answer, or speak about someone. \"Thanks, Sassy\", \"as Sassy said\".\n\
             - Check every @ before you send: if you do not need an answer or an action from that participant, write the name instead.\n", "no approver, nobody who no longer exists");
         assert_eq!(prompt.classification, Some(Classification::PUBLIC));

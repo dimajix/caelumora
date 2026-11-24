@@ -1395,7 +1395,7 @@ mod tests {
         let request = make_approval_request(session, channel.id(), agent);
         let asked = make_question_request(session, channel.id(), agent, owner.caller_id);
         for (sender, event) in [
-            (approver, ActorEvent::ApprovalRequested(request)),
+            (approver, ActorEvent::ApprovalRequested { request, to: None }),
             (ActorId::Agent(agent), ActorEvent::QuestionRequested(asked)),
         ] {
             let context = EventContext { sender_id: sender, ..channel.event_context() };
@@ -1707,6 +1707,7 @@ mod tests {
                     by: ActorId::User(alice.id),
                     by_name: "alice".to_string(),
                     at: Utc::now(),
+                    into_channel: false,
                 },
                 ActorId::User(alice.id),
                 Audience::Everybody,
@@ -1721,8 +1722,8 @@ mod tests {
         for message in [&hers, &step, &notice, &asking] {
             state.history.push(&context, message.clone());
         }
-        // Said in another thread (issue 557): left out of the line's view but where it mentions the
-        // viewer, and counted there alone.
+        // Said in another thread (issue 557): left out of the line's view but where it addresses
+        // the viewer, and counted there alone.
         let aside =
             Message { addressees: vec![ActorId::User(bob.id)], ..said(&dave, "@bob, aside") };
         let elsewhere = EventContext { thread_id: ThreadId::new(), ..context };
@@ -1738,7 +1739,7 @@ mod tests {
             }
         };
         let unread =
-            |messages, mentioned, read_up_to| Some(Unread { messages, mentioned, read_up_to });
+            |messages, addressed, read_up_to| Some(Unread { messages, addressed, read_up_to });
         assert_eq!(
             unread_of(&alice).await,
             unread(2, true, None),
@@ -1748,7 +1749,7 @@ mod tests {
         assert_eq!(
             unread_of(&bob).await,
             unread(2, true, None),
-            "hers, from where his view begins, and what mentions him in another thread"
+            "hers, from where his view begins, and what addresses him in another thread"
         );
         let without = manager
             .views(as_user(alice.id))
@@ -1765,7 +1766,7 @@ mod tests {
         let his = manager.views(as_user(bob.id)).channel(session.id, channel.id).await.unwrap();
         let page = his.history_page(None, 20).await.unwrap();
         let read: Vec<_> = page.entries().filter_map(HistoryEntry::said).map(|m| m.id).collect();
-        assert!(read.contains(&aside.id), "with what mentions him in another thread");
+        assert!(read.contains(&aside.id), "with what addresses him in another thread");
 
         let controller = |user: &User| {
             let (manager, user) = (&manager, user.id);
@@ -1882,6 +1883,7 @@ mod tests {
                     by: alice_id,
                     by_name: "alice".to_string(),
                     at: Utc::now(),
+                    into_channel: false,
                 },
                 alice_id,
                 Audience::Everybody,

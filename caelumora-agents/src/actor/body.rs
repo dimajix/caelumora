@@ -575,7 +575,8 @@ mod tests {
         assert!(!body.is_unfollowed(&in_thread(there, said())), "a further thread of its");
         assert!(body.is_unfollowed(&in_thread(elsewhere, said())), "one it takes no part in");
         let name = "helper".to_string();
-        let its_join = ActorEvent::ParticipantJoined { participant: body.id(), name };
+        let its_join =
+            ActorEvent::ParticipantJoined { participant: body.id(), name, into_channel: false };
         assert!(!body.is_unfollowed(&in_thread(elsewhere, its_join)), "but its join of it");
         let revoked = ActorEvent::MessageRevoked { message: MessageId::new(), at: Utc::now() };
         assert!(!body.is_unfollowed(&in_thread(elsewhere, revoked)), "and the whole channel's");
@@ -680,7 +681,11 @@ mod tests {
             Envelope::new(EventContext { thread_id, ..EventContext::default() }, event)
         };
         let name = "helper".to_string();
-        let its_join = ActorEvent::ParticipantJoined { participant: body.id(), name: name.clone() };
+        let its_join = ActorEvent::ParticipantJoined {
+            participant: body.id(),
+            name: name.clone(),
+            into_channel: false,
+        };
         let until = Position::START;
         let its_leave =
             || ActorEvent::ParticipantLeft { participant: body.id(), name: name.clone(), until };

@@ -615,7 +615,7 @@ impl TranscriptEntry {
     /// left. `None` for any other entry.
     pub fn of_announced(entry: &HistoryEntry) -> Option<Self> {
         match entry {
-            HistoryEntry::ParticipantJoined { participant, name, by, by_name, at } => {
+            HistoryEntry::ParticipantJoined { participant, name, by, by_name, at, .. } => {
                 Some(TranscriptEntry::ParticipantJoined {
                     participant: *participant,
                     name: name.clone(),

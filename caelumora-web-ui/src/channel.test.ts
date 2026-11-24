@@ -33,11 +33,11 @@ describe('withChannelEvent', () => {
     const said = (sender: typeof ME, thread: string) =>
       envelope({CompleteMessageGenerated: {...message(`m-${thread}`, sender), addressees: [ME]}}, sender, thread);
     const counted = withChannelEvent(held, said(AGENT, THREAD), ME);
-    expect(counted.threads?.[0].unread).toEqual({messages: 1, mentioned: true, read_up_to: undefined});
+    expect(counted.threads?.[0].unread).toEqual({messages: 1, addressed: true, read_up_to: undefined});
     expect(withChannelEvent(held, said(ME, THREAD), ME)).toBe(held);
     expect(withChannelEvent(held, said(AGENT, CHANNEL), ME)).toBe(held);
     const read = withThreadRead(counted, THREAD, 'm-thread');
-    expect(read.threads?.[0].unread).toEqual({messages: 0, mentioned: false, read_up_to: 'm-thread'});
+    expect(read.threads?.[0].unread).toEqual({messages: 0, addressed: false, read_up_to: 'm-thread'});
   });
 });
 

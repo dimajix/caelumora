@@ -1520,7 +1520,7 @@ async fn ask_helper(world: &World, main: &ChannelLoop, user: UserId) -> Asked {
             let envelope = watch.recv().await.expect("the channel runs");
             let from_approver = matches!(envelope.context.sender_id, ActorId::Approver(_));
             match envelope.event {
-                ActorEvent::ApprovalRequested(request) if from_approver => {
+                ActorEvent::ApprovalRequested { request, .. } if from_approver => {
                     asked.request = Some(request)
                 }
                 ActorEvent::ApprovalAnswered { decision, .. }
@@ -1852,7 +1852,7 @@ async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
         .expect("sent");
     let request = time::timeout(Duration::from_secs(5), async {
         loop {
-            if let ActorEvent::ApprovalRequested(request) =
+            if let ActorEvent::ApprovalRequested { request, .. } =
                 watch.recv().await.expect("the channel runs").event
             {
                 break request;

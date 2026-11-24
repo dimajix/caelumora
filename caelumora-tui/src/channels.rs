@@ -559,7 +559,7 @@ mod tests {
         assert!(lines(&channels.take_in(envelope_shown(&side, agent, theirs)).await).is_empty());
         let request = approval(&side, agent_id);
         let id = request.id;
-        let event = ActorEvent::ApprovalRequested(request);
+        let event = ActorEvent::ApprovalRequested { request, to: None };
         let told = lines(&channels.take_in(envelope_shown(&side, agent, event)).await);
         assert_eq!(told.first(), Some(&format!("In side: Approval requested, id {}:", id.0)));
 
@@ -590,7 +590,11 @@ mod tests {
         let request = approval(&side, agent_id);
         let id = request.id;
         channels
-            .take_in(envelope_shown(&side, agent, ActorEvent::ApprovalRequested(request)))
+            .take_in(envelope_shown(
+                &side,
+                agent,
+                ActorEvent::ApprovalRequested { request, to: None },
+            ))
             .await;
         let withdrawn =
             || envelope_shown(&side, agent, ActorEvent::ApprovalRequestWithdrawn { id });
@@ -603,7 +607,11 @@ mod tests {
         let request = approval(&side, agent_id);
         let id = request.id;
         channels
-            .take_in(envelope_shown(&side, agent, ActorEvent::ApprovalRequested(request)))
+            .take_in(envelope_shown(
+                &side,
+                agent,
+                ActorEvent::ApprovalRequested { request, to: None },
+            ))
             .await;
         let by_rule = answered(me, id, Some(ApprovalRuleId::new()));
         assert_eq!(
@@ -729,7 +737,11 @@ mod tests {
         let request = approval(&side, agent_id);
         let id = request.id;
         channels
-            .take_in(envelope_shown(&side, agent, ActorEvent::ApprovalRequested(request)))
+            .take_in(envelope_shown(
+                &side,
+                agent,
+                ActorEvent::ApprovalRequested { request, to: None },
+            ))
             .await;
         let questions =
             make_question_request(side.session_id(), side.id(), agent_id, owner.caller_id);

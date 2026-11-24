@@ -61,7 +61,7 @@ impl<'t> ToolCalls<'t> {
         self.turn
             .pending_approvals()
             .into_iter()
-            .map(ActorEvent::ApprovalRequested)
+            .map(|request| ActorEvent::ApprovalRequested { request, to: None })
             .chain(self.turn.pending_questions().into_iter().map(ActorEvent::QuestionRequested))
             .collect()
     }
@@ -406,7 +406,7 @@ mod tests {
                 None,
             ),
         ]);
-        let [ActorEvent::ApprovalRequested(request)] = requests.as_slice() else {
+        let [ActorEvent::ApprovalRequested { request, .. }] = requests.as_slice() else {
             panic!("one approval asked for: {requests:?}")
         };
         assert_eq!(request.tool_call.function_name, "ask");
@@ -480,7 +480,7 @@ mod tests {
             ),
             ToolCallState::asking(call("asking"), questions_of(alice)),
         ]);
-        let [ActorEvent::ApprovalRequested(approval), ActorEvent::QuestionRequested(asked)] =
+        let [ActorEvent::ApprovalRequested { request: approval, .. }, ActorEvent::QuestionRequested(asked)] =
             requests.as_slice()
         else {
             panic!("an approval first, the questions of the other call: {requests:?}")
@@ -642,7 +642,7 @@ mod tests {
             ToolCallState::pending(call("approving"), false, None, Some(questions_of(alice))),
             ToolCallState::asking(call("bob"), questions_of(bob)),
         ]);
-        let [ActorEvent::ApprovalRequested(approval), ActorEvent::QuestionRequested(_), ActorEvent::QuestionRequested(alone), ActorEvent::QuestionRequested(_)] =
+        let [ActorEvent::ApprovalRequested { request: approval, .. }, ActorEvent::QuestionRequested(_), ActorEvent::QuestionRequested(alone), ActorEvent::QuestionRequested(_)] =
             requests.as_slice()
         else {
             panic!("{requests:?}")

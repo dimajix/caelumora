@@ -15,7 +15,7 @@
 // for them (`waiting_changed`), and notifies where more waits than before.
 
 import {api} from './api';
-import {isOwn, mentions} from './messages';
+import {addresses, isOwn} from './messages';
 import type {ActorId, Message, Unread, Waiting} from './types';
 
 /** More new messages than this are shown as such. */
@@ -31,11 +31,13 @@ export function isOthers(message: Message, me: ActorId): boolean {
   return message.sender_id !== undefined && !isOwn(message, me);
 }
 
-/** `unread` with `message` of someone else counted: one more, and mentioned if it mentions `me`. */
+/**
+ * `unread` with `message` of someone else counted: one more, and addressed if it addresses `me`.
+ */
 export function countedIn(unread: Unread | undefined, message: Message, me: ActorId): Unread {
   return {
     messages: Math.min((unread?.messages ?? 0) + 1, MOST_SHOWN + 1),
-    mentioned: (unread?.mentioned ?? false) || mentions(message, me),
+    addressed: (unread?.addressed ?? false) || addresses(message, me),
     read_up_to: unread?.read_up_to,
   };
 }
@@ -73,10 +75,10 @@ export async function askForNotifications(): Promise<void> {
 const EXCERPT = 200;
 
 /**
- * Shows `message`, which mentions the user, as a notification of the browser,
+ * Shows `message`, which addresses the user, as a notification of the browser,
  * if they allowed it; `onOpen` when it is clicked.
  */
-export function notifyMention(message: Message, channelName: string, onOpen: () => void): void {
+export function notifyAddressed(message: Message, channelName: string, onOpen: () => void): void {
   const content = message.content ?? '';
   const body = content.length > EXCERPT ? `${content.slice(0, EXCERPT)}…` : content;
   notify(`${message.sender_name || 'Someone'} in ${channelName}`, body, message.id, onOpen);

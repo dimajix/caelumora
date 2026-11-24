@@ -1323,8 +1323,8 @@ mod tests {
     }
 
     /// Issue 557: a page of the channel's history is what the view of its line shows the user -
-    /// with what mentions them in another thread - unless `?thread=` names a thread; each with what
-    /// happens in the whole channel.
+    /// with what addresses them in another thread - unless `?thread=` names a thread; each with
+    /// what happens in the whole channel.
     #[tokio::test]
     async fn a_page_of_the_history_is_of_the_line_unless_a_thread_is_asked_for() {
         let state = state();
@@ -1696,13 +1696,13 @@ mod tests {
             let (_, channel) = send(&api, &alice_cookie, Method::GET, &channel_uri, None).await;
             (channel["unread"]["messages"].clone(), channel["threads"][0]["unread"].clone())
         };
-        let new_in_thread = json!({ "messages": 1, "mentioned": false });
+        let new_in_thread = json!({ "messages": 1, "addressed": false });
         assert_eq!(unread().await, (json!(0), new_in_thread), "his aside, in the thread alone");
         let read = format!("{threads}/{}/read", thread.as_str().unwrap());
         let (status, _) =
             send(&api, &alice_cookie, Method::PUT, &read, Some(json!({ "message_id": his }))).await;
         assert_eq!(status, StatusCode::NO_CONTENT);
-        let read_up_to_his = json!({ "messages": 0, "mentioned": false, "read_up_to": his });
+        let read_up_to_his = json!({ "messages": 0, "addressed": false, "read_up_to": his });
         assert_eq!(unread().await, (json!(0), read_up_to_his));
         let of_the_line = Some(json!({ "message_id": message }));
         let (status, refused) = send(&api, &alice_cookie, Method::PUT, &read, of_the_line).await;

@@ -1611,20 +1611,27 @@ mod tests {
                 ),
                 (
                     user,
-                    ActorEvent::ParticipantJoined { participant: user, name: "user".to_string() },
+                    ActorEvent::ParticipantJoined {
+                        participant: user,
+                        name: "user".to_string(),
+                        into_channel: false,
+                    },
                 ),
                 (
                     agents[0],
-                    ActorEvent::ApprovalRequested(ApprovalRequest {
-                        suggested: None,
-                        explicit: false,
-                        id: Default::default(),
-                        session_id: Default::default(),
-                        channel_id: Default::default(),
-                        thread_id: Default::default(),
-                        agent_id: AgentId::new(),
-                        tool_call: call.clone(),
-                    }),
+                    ActorEvent::ApprovalRequested {
+                        request: ApprovalRequest {
+                            suggested: None,
+                            explicit: false,
+                            id: Default::default(),
+                            session_id: Default::default(),
+                            channel_id: Default::default(),
+                            thread_id: Default::default(),
+                            agent_id: AgentId::new(),
+                            tool_call: call.clone(),
+                        },
+                        to: None,
+                    },
                 ),
                 (user, ActorEvent::MessageRevoked { message: MessageId::new(), at: Utc::now() }),
             ];

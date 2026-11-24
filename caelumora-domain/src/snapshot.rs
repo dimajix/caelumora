@@ -208,8 +208,9 @@ pub struct Unread {
     /// How many, counted up to `Unread::CAP`: a number above it says only
     /// that there are more.
     pub messages: usize,
-    /// Whether one of them mentions the user, `@all` included.
-    pub mentioned: bool,
+    /// Whether one of them addresses the user (`Message::addressees`), by name or as one of
+    /// everyone (issue 603).
+    pub addressed: bool,
     /// The last message the user read, after which the new ones begin;
     /// `None` while they read nothing of the thread.
     pub read_up_to: Option<MessageId>,

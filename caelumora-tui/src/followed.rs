@@ -540,12 +540,12 @@ impl Followed {
             }
             // Shown once: known as what waits was read (`catch_up`), or asked again by an agent
             // that resumed its turn - and not at all where the user answered it.
-            ActorEvent::ApprovalRequested(request)
+            ActorEvent::ApprovalRequested { request, .. }
                 if self.is_pending(request.id) || self.answered_approvals.contains(&request.id) =>
             {
                 Vec::new()
             }
-            ActorEvent::ApprovalRequested(request) => {
+            ActorEvent::ApprovalRequested { request, .. } => {
                 self.pending_approvals.push(request.clone());
                 vec![approval_printed(request)]
             }
@@ -917,7 +917,7 @@ fn shown(envelope: &Envelope) -> Vec<Printed> {
         ActorEvent::ActivityStarted { activity, .. } => plain(format!("{sender} is {activity}.")),
         ActorEvent::ActivityFinished { output, .. } => plain(output.to_string()),
         // Who joined or left (issue 408), by whose act.
-        ActorEvent::ParticipantJoined { participant, name } => plain(match sender_id {
+        ActorEvent::ParticipantJoined { participant, name, .. } => plain(match sender_id {
             by if by == *participant => format!("{name} joined the channel"),
             ActorId::System => format!("{name} was added to the channel"),
             _ => format!("{sender} added {name} to the channel"),
@@ -1323,7 +1323,8 @@ mod tests {
         assert!(followed.concerns_user(&in_other(mentioning.clone())), "it addresses them");
         assert_eq!(lines(&followed.take_in(&in_other(mentioning))), ["other: @owner, look"]);
         assert_eq!(followed.last_answer, None, "no answer of the line to ask for again");
-        let request = ActorEvent::ApprovalRequested(approval(&channel, agent_id));
+        let request =
+            ActorEvent::ApprovalRequested { request: approval(&channel, agent_id), to: None };
         assert!(followed.concerns_user(&in_other(request.clone())));
         assert_eq!(followed.take_in(&in_other(request)).len(), 1, "its call waits");
         // An answer under way read as the channel was caught up with ends with its turn.
@@ -1378,7 +1379,8 @@ mod tests {
             matches!(error, ChannelError::MessageNotFound { message, .. } if message == in_it.id),
             "the thread's answer to ask for again: {error}"
         );
-        let request = ActorEvent::ApprovalRequested(approval(&channel, agent_id));
+        let request =
+            ActorEvent::ApprovalRequested { request: approval(&channel, agent_id), to: None };
         assert_eq!(followed.take_in(&from(&channel, agent, request)).len(), 1, "it waits");
         let mentioning = Message { addressees: vec![me], ..message(agent, "@owner, here") };
         let mentioning = ActorEvent::CompleteMessageGenerated(mentioning);
@@ -1405,7 +1407,7 @@ mod tests {
         let shown = lines(&followed.take_in(&from(
             &channel,
             agent,
-            ActorEvent::ApprovalRequested(request),
+            ActorEvent::ApprovalRequested { request, to: None },
         )));
         assert!(shown.first().is_some_and(|line| line.contains(&id.0.to_string())), "{shown:?}");
         let withdrawn = ActorEvent::ApprovalRequestWithdrawn { id };
@@ -1426,14 +1428,22 @@ mod tests {
         for verdict in over {
             let request = approval(&channel, agent_id);
             let id = request.id;
-            followed.take_in(&from(&channel, agent, ActorEvent::ApprovalRequested(request)));
+            followed.take_in(&from(
+                &channel,
+                agent,
+                ActorEvent::ApprovalRequested { request, to: None },
+            ));
             assert!(followed.take_in(&from(&channel, other, answered(other, id, None))).is_empty());
             assert!(followed.take_in(&from(&channel, approver, verdict(decided(id)))).is_empty());
             assert!(!followed.is_pending(id), "over");
         }
         let request = approval(&channel, agent_id);
         let id = request.id;
-        followed.take_in(&from(&channel, agent, ActorEvent::ApprovalRequested(request)));
+        followed.take_in(&from(
+            &channel,
+            agent,
+            ActorEvent::ApprovalRequested { request, to: None },
+        ));
         followed.take_in(&from(&channel, other, answered(other, id, None)));
         assert!(followed.is_pending(id), "still pending after another's answer");
         assert!(followed.take_in(&from(&channel, me, answered(me, id, None))).is_empty());
@@ -1448,7 +1458,11 @@ mod tests {
         let request = approval(&channel, agent_id);
         let id = request.id;
         let agent = ActorId::Agent(agent_id);
-        followed.take_in(&from(&channel, agent, ActorEvent::ApprovalRequested(request)));
+        followed.take_in(&from(
+            &channel,
+            agent,
+            ActorEvent::ApprovalRequested { request, to: None },
+        ));
         let answer = |by: ActorId, by_rule| from(&channel, by, answered(by, id, by_rule));
         let other = ActorId::User(UserId::new());
         assert!(followed.take_in(&answer(me, None)).is_empty(), "typed by the user");
@@ -1517,7 +1531,7 @@ mod tests {
         let ids = [request.id.0, mine.id.0, theirs.id.0].map(|id| id.to_string());
         let mentioning = Message { addressees: vec![me], ..message(other, "@owner look") };
         let asked = [
-            ActorEvent::ApprovalRequested(request),
+            ActorEvent::ApprovalRequested { request, to: None },
             ActorEvent::QuestionRequested(mine),
             ActorEvent::CompleteMessageGenerated(mentioning),
         ];
@@ -1564,7 +1578,11 @@ mod tests {
         assert!(!followed.concerns_user(&by_rule(other)), "another's answer");
 
         assert!(followed.take_in(&withdrawn).is_empty(), "not shown: nothing told");
-        followed.take_in(&from(&channel, agent, ActorEvent::ApprovalRequested(request)));
+        followed.take_in(&from(
+            &channel,
+            agent,
+            ActorEvent::ApprovalRequested { request, to: None },
+        ));
         assert!(followed.take_in(&typed).is_empty(), "typed by the user: nothing told");
         assert_eq!(followed.take_in(&by_rule(me)).len(), 1, "given by their rule: told");
         assert!(followed.take_in(&granted).is_empty(), "decided: nothing told");
@@ -1599,7 +1617,8 @@ mod tests {
         assert_eq!(shown_again, [true, true], "{waiting}");
 
         let requested = ApprovalRequest { id, ..approval(&channel, agent_id) };
-        let requested = from(&channel, agent, ActorEvent::ApprovalRequested(requested));
+        let requested =
+            from(&channel, agent, ActorEvent::ApprovalRequested { request: requested, to: None });
         assert!(followed.take_in(&requested).is_empty(), "the approval, known");
         assert!(followed.take_in(&asked).is_empty(), "the questions, known");
 
@@ -1636,7 +1655,8 @@ mod tests {
         assert!(followed.catch_up().await.is_empty(), "not told again as the turns are read anew");
         assert!(!followed.is_pending(id), "though the turn still holds it");
         let requested = ApprovalRequest { id, ..approval(&channel, agent_id) };
-        let requested = from(&channel, agent, ActorEvent::ApprovalRequested(requested));
+        let requested =
+            from(&channel, agent, ActorEvent::ApprovalRequested { request: requested, to: None });
         assert!(followed.take_in(&requested).is_empty(), "nor as the agent asks for it again");
         assert!(!followed.is_pending(id) && followed.waiting().is_empty(), "nor waiting");
 

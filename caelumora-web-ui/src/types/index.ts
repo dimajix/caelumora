@@ -308,8 +308,8 @@ export interface ChannelThread {
 export interface Unread {
   /** How many, counted up to 100: more than 99 are shown as such. */
   messages: number;
-  /** Whether one of them mentions you, `@all` included. */
-  mentioned: boolean;
+  /** Whether one of them addresses you, by name or as one of everyone (`@all`, issue 603). */
+  addressed: boolean;
   /**
    * The last message you read, after which the new ones begin; absent while you read nothing of the
    * channel.
@@ -924,7 +924,11 @@ export interface ActorEvent {
   StateChanged?: ActorState;
   PartialMessageGenerated?: Message;
   CompleteMessageGenerated?: Message;
-  ApprovalRequested?: ApprovalRequest;
+  /**
+   * An agent's call waits for a decision on `request`: asked by an approver of the users - of `to`
+   * alone where it names one, a user who joined while it waited (issue 603).
+   */
+  ApprovalRequested?: {request: ApprovalRequest; to: ActorId | null};
   /**
    * A user's answer to the approval request `id` (issue 567), to the approver alone: shown back to
    * that user by their actor - with the rule of theirs that gave it, if one did (issue 13).

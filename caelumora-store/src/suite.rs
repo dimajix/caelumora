@@ -1526,6 +1526,7 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
                 by: speaker,
                 by_name: String::new(),
                 at: Utc::now(),
+                into_channel: false,
             },
             speaker,
             Audience::Everybody,
@@ -1733,7 +1734,11 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
     };
     let mut threads = states.get_channel_state(channel).await.expect("get");
     let from = threads.history.end();
-    let joined = ActorEvent::ParticipantJoined { participant: listener, name: String::new() };
+    let joined = ActorEvent::ParticipantJoined {
+        participant: listener,
+        name: String::new(),
+        into_channel: false,
+    };
     threads.history.enter(in_thread(its, speaker, joined));
     threads.history.enter(in_thread(its, user, heard(900)));
     threads.history.enter(in_thread(another, user, heard(901)));
