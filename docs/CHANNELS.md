@@ -1160,10 +1160,26 @@ thread's part of the channel's state (`Delegation`): the giver, the recipient, t
 chain that delegated, and the briefs, the first the one open - a further brief waits behind it; a
 thread delegated into takes no other giver nor recipient (`DelegatedOtherwise`). The channel alone
 writes it, one change after the other in `run`: a brief recorded as it is delegated - dropped,
-logged, if the thread is no longer open by then -, given as the channel records it, answered as
-the channel records what came of it (`Delegation::follow`), dropped with what came of it if that
-cannot reach the giver, gone from where the thread was opened (`Delegation::refused`), and dropped
-as the thread is closed.
+logged, and refused to the giver, if the thread is no longer open by then, or its delegation was
+let go meanwhile -, given as the channel records it, answered as the channel records what came of
+it (`Delegation::follow`), dropped with what came of it if that cannot reach the giver, gone from
+where the thread was opened (`Delegation::refused`), and dropped as the thread is closed.
+
+Once what came of its last brief is given back, the delegation waits for its **giver's word** on
+it (issue 598, `Delegation::word`): the channel follows the giver reading it, as the giver
+records what it was given (`MessageGiven`, `Delegation::follow_read`) - between its turns, never
+during one -, and takes the giver's first turn that ends after, in the thread the delegation was
+opened at, as the turn that read it: a brief delegated before that turn ends is the word *go on*;
+none is the word *let go* (`Delegation::follow_turn_end`). A turn given up decides nothing, nor
+does a thread quiet after a cancel, in which the giver is not asked to respond: the word stays due.
+The giver leaving the thread the delegation was opened at - alone or with the channel - lets it go
+too, since nothing comes back to it any more (`Delegation::follow_leave`). Only a delegation into a
+thread that owns its recipient is let go, since closing the thread ends the agent with it; no other
+is ever let go. A delegation let go takes no brief (`DelegationLetGo`); the channel announces it
+(`channel::DELEGATION_LET_GO`, with the thread) once stored, and again as it starts while the
+thread is not closed. So that a brief delegated in the turn that read the answer is recorded before
+that turn ends - `run` takes events before changes -, delegating returns only once `run` recorded
+the brief.
 
 The channel knows nothing of what delegates: it offers the building blocks - opening a thread with
 its founders, delegating into it, closing it - and sub-agents are made of them, in a crate of their

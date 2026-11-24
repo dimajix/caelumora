@@ -272,7 +272,9 @@ mod tests {
     use caelumora_domain::actor::ActorState;
     use caelumora_domain::agent::{Agent, PersonalityKind};
     use caelumora_domain::chain::Position;
-    use caelumora_domain::channel::{Circle, ThreadId, ThreadOrigin};
+    use caelumora_domain::channel::{
+        Channel, Circle, Delegation, ThreadId, ThreadOrigin, DELEGATION_LET_GO,
+    };
     use caelumora_domain::history::{Attended, HistoryEntry};
     use caelumora_domain::message::MessageId;
     use caelumora_domain::store::StoreError;
@@ -631,6 +633,49 @@ mod tests {
         assert!(not_open(main.cancel(&alice, elsewhere).await.unwrap_err()), "no such thread");
         assert!(not_open(main.wakeup(&alice, elsewhere).await.unwrap_err()), "to wake either");
         world.manager.stop(&alice, session.id()).await.unwrap();
+    }
+
+    /// Issue 598: a giver leaving lets go its delegation into a thread that owns its recipient -
+    /// where nothing comes back to it any more -, announced as the channel records the leave; the
+    /// thread's agent stays until the thread is closed with it.
+    #[tokio::test]
+    async fn a_giver_leaving_lets_its_delegation_go() {
+        let answering = ScriptedAgents(Script::Answers("found it".to_string()));
+        let world = World::with(&[], &[&answering], |_| {}).await;
+        let personality = world.personality("helper", Some(world.bob), &[]).await;
+        let helper = ActorId::Agent(world.agent("bobs-helper", world.bob, &personality).await);
+        let bob = World::as_user(world.bob);
+        let his = ActorId::User(world.bob);
+        let session = world.session_of(&[world.bob], &[], &[]).await;
+        let main = Arc::clone(&session.channels()[0]);
+        let line = ThreadId::line(main.id());
+        let origin = ThreadOrigin { thread: line, message: main.said_by(world.bob, line).await };
+        let owning = ThreadSpec {
+            circle: Circle::Closed,
+            founders: vec![helper],
+            owns_founders: true,
+            ..ThreadSpec::new(origin)
+        };
+        let thread = session.open_thread(&bob, main.id(), owning).await.expect("opened");
+        main.delegate(&bob, thread, helper, "look it up".to_string()).await.expect("delegated");
+        let back = |e: &HistoryEntry| matches!(e, HistoryEntry::GivenToRead { recipient, .. } if *recipient == his);
+        main.history_once(|entries| entries.iter().any(back)).await;
+        assert!(
+            main.delegation(thread).await.is_some_and(|held| !held.is_let_go()),
+            "its word due"
+        );
+
+        let mut events = world.kernel.event_bus().subscribe_all();
+        session.leave(&bob, his).await.expect("bob leaves");
+        let let_go = |held: Option<Delegation>| held.as_ref().is_some_and(Delegation::is_let_go);
+        assert!(let_go(main.delegation(thread).await), "let go as its giver left");
+        let announced = events.drain().await.iter().any(|event| {
+            event.about::<Channel>().and_then(|(_, change)| change.data(DELEGATION_LET_GO))
+                == Some(thread)
+        });
+        assert!(announced, "announced as it was recorded");
+        assert!(main.channel().lists(helper), "its agent stays until the thread is closed");
+        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 
     /// Issue 557: a delegation is kept with the channel's state: started again, the channel starts

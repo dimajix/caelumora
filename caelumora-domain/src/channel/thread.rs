@@ -79,31 +79,61 @@ impl ThreadState {
             .is_none_or(|held| (held.giver, held.recipient) == (giver, recipient))
     }
 
-    /// Takes `delegation` in: its briefs behind those of the delegation held, or as its delegation
-    /// if it has none. `false`, and nothing taken, if it is delegated otherwise
-    /// (`delegates_alike`).
+    /// Takes `delegation` in: its briefs behind those of the delegation held - its giver's word on
+    /// what came of the last one given so (issue 598) -, or as its delegation if it has none.
+    /// `false`, and nothing taken, if it is delegated otherwise (`delegates_alike`), or its
+    /// delegation was let go.
     pub fn delegate(&mut self, delegation: Delegation) -> bool {
         if !self.delegates_alike(delegation.giver, delegation.recipient) {
             return false;
         }
         match &mut self.delegation {
-            Some(held) => held.briefs.extend(delegation.briefs),
+            Some(held) if held.is_let_go() => return false,
+            Some(held) => {
+                held.briefs.extend(delegation.briefs);
+                held.word = Word::NotDue;
+            }
             None => self.delegation = Some(delegation),
         }
         true
     }
+
+    /// Whether its delegation is to an agent it owns (issue 598, `Opening::owned`): one its giver's
+    /// word lets go, since closing the thread then ends the agent too.
+    pub(crate) fn owns_its_recipient(&self) -> bool {
+        let recipient = self.delegation.as_ref().and_then(|held| held.recipient.as_agent_id());
+        let owned = self.opening.as_ref().map(|opening| opening.owned.as_slice());
+        recipient.zip(owned).is_some_and(|(recipient, owned)| owned.contains(&recipient))
+    }
 }
 
 /// What was delegated into a thread (issue 557): who gives, who works on it, the root of the chain
-/// that delegated - what both directions carry as their initiator -, and the briefs, the first the
-/// one open. The thread's delegate carries it out; the channel alone writes it, following what
-/// the delegate gives as the channel records it (`follow`).
+/// that delegated - what both directions carry as their initiator -, the briefs, the first the
+/// one open, and the giver's word on what came of the last (issue 598, `Word`). The thread's
+/// delegate carries it out; the channel alone writes it, following what the delegate gives as the
+/// channel records it (`follow`), and what the giver does with what came back (`follow_read`,
+/// `follow_turn_end`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Delegation {
     pub giver: ActorId,
     pub recipient: ActorId,
     pub initiator: ActorId,
     pub briefs: VecDeque<Brief>,
+    /// Its giver's word on what came of the last brief (issue 598).
+    pub word: Word,
+}
+
+/// A giver's word on what came of its delegation's last brief (issue 598): due once it is given
+/// back with no brief open, and let go if it was none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Word {
+    /// None is due: a brief is open, or the last brief's answer came with a further brief.
+    NotDue,
+    /// Due on `answer`, what came of the last brief, given back; `read` once the giver read it.
+    Due { answer: MessageId, read: bool },
+    /// It was none, or the giver left where the delegation was opened: let go, it takes no brief.
+    LetGo,
 }
 
 /// A brief of a delegation: the message given to read - its sender the giver, its id its own -,
@@ -134,24 +164,67 @@ impl Delegation {
     }
 
     /// Follows its delegate giving `recipient` `message` to read, as the channel records it at
-    /// `at`: the open brief given there; what came of it given back, and the next brief open.
-    /// Whether it moved on.
+    /// `at`: the open brief given there; what came of it given back, and the next brief open - or,
+    /// if none is, the giver's word on it due (issue 598). Whether it moved on.
     pub fn follow(&mut self, recipient: ActorId, message: &Message, at: Position) -> bool {
         if self.gives_brief(recipient, message) {
             if let Some(open) = self.briefs.front_mut() {
                 open.given_at = Some(at);
             }
             true
+        } else if self.gives_back(recipient, message) && self.briefs.pop_front().is_some() {
+            if self.briefs.is_empty() {
+                self.word = Word::Due { answer: message.id, read: false };
+            }
+            true
         } else {
-            self.gives_back(recipient, message) && self.briefs.pop_front().is_some()
+            false
         }
+    }
+
+    /// Whether it was let go (issue 598): it takes no brief.
+    pub fn is_let_go(&self) -> bool {
+        self.word == Word::LetGo
+    }
+
+    /// Follows `reader` reading `message` (issue 598): the answer its giver's word is due on, read
+    /// by the giver, once. Whether it moved on.
+    pub(crate) fn follow_read(&mut self, reader: ActorId, message: MessageId) -> bool {
+        let reads = reader == self.giver
+            && matches!(self.word, Word::Due { answer, read: false } if answer == message);
+        if reads {
+            self.word = Word::Due { answer: message, read: true };
+        }
+        reads
+    }
+
+    /// Follows a turn of `ender` ending in the thread it was opened at, as the channel records it
+    /// after what it recorded before (issue 598): let go if it is the giver's, ending once the
+    /// giver read the answer its word was due on, with no brief given since - its word was none.
+    /// Whether it was let go.
+    pub(crate) fn follow_turn_end(&mut self, ender: ActorId) -> bool {
+        let lets_go = ender == self.giver && matches!(self.word, Word::Due { read: true, .. });
+        if lets_go {
+            self.word = Word::LetGo;
+        }
+        lets_go
+    }
+
+    /// Follows `participant` leaving the thread it was opened at, alone or with the channel (issue
+    /// 598): let go if it is the giver, to whom nothing comes back any more. Whether it was let go.
+    pub(crate) fn follow_leave(&mut self, participant: ActorId) -> bool {
+        let lets_go = participant == self.giver;
+        if lets_go {
+            self.word = Word::LetGo;
+        }
+        lets_go
     }
 
     /// Follows the channel refusing its delegate to give `recipient` `message` to read: what came
     /// of the open brief, which cannot reach its giver - gone from where the thread was opened -,
     /// is dropped with the brief, and the next brief is open. A brief refused stays open: its
     /// delegate gives back that the recipient could not be asked. Whether it moved on.
-    pub fn refused(&mut self, recipient: ActorId, message: &Message) -> bool {
+    pub(crate) fn refused(&mut self, recipient: ActorId, message: &Message) -> bool {
         self.gives_back(recipient, message) && self.briefs.pop_front().is_some()
     }
 }
@@ -180,7 +253,8 @@ mod tests {
         };
         let (first, second) = (brief("first"), brief("second"));
         let briefs = VecDeque::from([first.clone(), second.clone()]);
-        let mut delegation = Delegation { giver, recipient, initiator: giver, briefs };
+        let mut delegation =
+            Delegation { giver, recipient, initiator: giver, briefs, word: Word::NotDue };
         let answer = Message { sender_id: recipient, ..Message::new(Classification::PUBLIC) };
 
         assert!(delegation.gives_back(giver, &answer), "what came of the open brief, given or not");
@@ -221,6 +295,7 @@ mod tests {
                 message: Message::new(Classification::CHANNEL_DEFAULT),
                 given_at: None,
             }]),
+            word: Word::NotDue,
         };
         let mut thread = ThreadState { opening: None, closed: false, delegation: None };
         assert!(thread.delegate(briefed(giver, recipient)), "the first");
@@ -232,6 +307,71 @@ mod tests {
         assert!(!thread.delegate(briefed(other, recipient)), "not another giver");
         assert!(!thread.delegates_alike(giver, other), "nor to another recipient");
         assert_eq!(thread.delegation.map(|held| held.briefs.len()), Some(2), "behind each other");
+    }
+
+    /// Issue 598: once what came of its last brief is given back, a delegation waits for its
+    /// giver's word: read by the giver, a turn of the giver's ending after lets it go - not before
+    /// the reading, not one of another, not once a brief came since; let go, it takes no brief;
+    /// its giver leaving lets it go too.
+    #[test]
+    fn a_delegation_waits_for_its_givers_word_on_what_came_back() {
+        let giver = ActorId::Agent(AgentId::new());
+        let recipient = ActorId::Agent(AgentId::new());
+        let brief = || Brief {
+            message: Message {
+                id: MessageId::new(),
+                sender_id: giver,
+                ..Message::new(Classification::CHANNEL_DEFAULT)
+            },
+            given_at: None,
+        };
+        let delegated = |briefs: usize| Delegation {
+            giver,
+            recipient,
+            initiator: giver,
+            briefs: (0..briefs).map(|_| brief()).collect(),
+            word: Word::NotDue,
+        };
+        let answer = || Message {
+            id: MessageId::new(),
+            sender_id: recipient,
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        };
+        let at = Position::new;
+
+        let mut two = delegated(2);
+        two.follow(giver, &answer(), at(2));
+        assert_eq!(two.word, Word::NotDue, "another brief open: no word due");
+
+        let mut delegation = delegated(1);
+        let back = answer();
+        delegation.follow(giver, &back, at(4));
+        let due = Word::Due { answer: back.id, read: false };
+        assert_eq!(delegation.word, due, "its giver's word due");
+        assert!(!delegation.follow_turn_end(giver), "not read yet");
+        assert!(!delegation.follow_read(recipient, back.id), "read by another");
+        assert!(!delegation.follow_read(giver, MessageId::new()), "another message");
+        assert!(delegation.follow_read(giver, back.id), "read by its giver");
+        assert!(!delegation.follow_read(giver, back.id), "once");
+        assert!(!delegation.follow_turn_end(recipient), "a turn of another");
+        assert!(delegation.follow_turn_end(giver), "its giver's turn after, without a word");
+        assert!(delegation.is_let_go(), "let go");
+        let mut thread = ThreadState { opening: None, closed: false, delegation: Some(delegation) };
+        assert!(!thread.delegate(delegated(1)), "let go, it takes no brief");
+
+        let mut asked = delegated(1);
+        let back = answer();
+        asked.follow(giver, &back, at(4));
+        asked.follow_read(giver, back.id);
+        let mut thread = ThreadState { opening: None, closed: false, delegation: Some(asked) };
+        assert!(thread.delegate(delegated(1)), "a brief before the turn's end: its word");
+        let held = thread.delegation.as_mut().expect("delegated");
+        assert_eq!(held.word, Word::NotDue, "no word due any more");
+        assert!(!held.follow_turn_end(giver), "and its turn's end lets nothing go");
+
+        let mut left = delegated(0);
+        assert!(!left.follow_leave(recipient), "another leaving");
+        assert!(left.follow_leave(giver) && left.is_let_go(), "its giver leaving");
     }
 
     /// Issue 557: a channel's line is named by the channel alone - the same for the same channel,

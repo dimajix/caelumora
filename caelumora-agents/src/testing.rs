@@ -52,6 +52,7 @@ use futures::stream::BoxStream;
 use futures::StreamExt;
 use serde_json::{json, Value};
 use std::collections::VecDeque;
+use std::fmt;
 use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -276,20 +277,50 @@ pub fn with_agent_kinds(registry: &mut ComponentRegistry) {
     with_unasked_language_model(registry);
 }
 
+/// What a scripted model answers to one call, made of the messages it is called with - what an
+/// answer that names what the conversation gave it is built from (issue 598: the thread a tool
+/// returned).
+pub type Answer = Box<dyn Fn(&[Message]) -> Message + Send>;
+
 /// A model that gives the answers it was given, one per call, and then
 /// none: a call after the last is never answered.
-#[derive(Debug)]
-pub struct Scripted(pub Mutex<VecDeque<Message>>);
+pub struct Scripted(Mutex<VecDeque<Answer>>);
+
+impl Scripted {
+    /// A model that gives `answers` as they are.
+    pub fn new(answers: impl IntoIterator<Item = Message>) -> Self {
+        let answers =
+            answers.into_iter().map(|answer| -> Answer { Box::new(move |_| answer.clone()) });
+        Self::answering(answers)
+    }
+
+    /// A model that gives each of `answers` made of what it is called with.
+    pub fn answering(answers: impl IntoIterator<Item = Answer>) -> Self {
+        Self(Mutex::new(answers.into_iter().collect()))
+    }
+
+    /// How many answers it has left to give.
+    pub fn left(&self) -> usize {
+        self.0.lock().unwrap().len()
+    }
+}
+
+impl fmt::Debug for Scripted {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Scripted").field("left", &self.left()).finish()
+    }
+}
 
 #[async_trait]
 impl LanguageModelClient for Scripted {
     async fn chat_completion(
         &self,
         _: ActorId,
-        _: &[Message],
+        messages: &[Message],
         _: &[ToolDescription],
     ) -> BoxStream<'static, ModelResult<MessageEvent>> {
-        match self.0.lock().unwrap().pop_front() {
+        let answer = self.0.lock().unwrap().pop_front().map(|answer| answer(messages));
+        match answer {
             Some(answer) => stream::iter([Ok(MessageEvent::Complete(answer))]).boxed(),
             None => stream::pending().boxed(),
         }
@@ -412,7 +443,18 @@ pub fn asked_as_a_call_on_the_workspace(asked: &[String]) {
 /// A model component of the kind `kind` that gives `answers`, one per call
 /// (`Scripted`), registered with `registry`.
 pub fn register_scripted(registry: &mut ComponentRegistry, kind: &str, answers: Vec<Message>) {
-    let model = Arc::new(Scripted(Mutex::new(answers.into())));
+    register_model(registry, kind, Scripted::new(answers));
+}
+
+/// A model component of the kind `kind` that gives each of `answers` made of what it is called
+/// with, one per call (`Scripted::answering`), registered with `registry`.
+pub fn register_answering(registry: &mut ComponentRegistry, kind: &str, answers: Vec<Answer>) {
+    register_model(registry, kind, Scripted::answering(answers));
+}
+
+/// `model`, as a model component of the kind `kind`, registered with `registry`.
+fn register_model(registry: &mut ComponentRegistry, kind: &str, model: Scripted) {
+    let model = Arc::new(model);
     registry.register(
         ComponentKind::new(kind)
             .provides::<dyn LanguageModelClient>()

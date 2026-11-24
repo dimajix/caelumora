@@ -449,7 +449,7 @@ async fn an_external_agent_is_given_what_was_said_since_it_was_last_asked_and_an
 async fn an_external_agent_is_given_what_a_delegate_gives_it_to_read_and_answers() {
     use crate::external::ExternalEvent;
     use caelumora_domain::chain::Position;
-    use caelumora_domain::channel::{Brief, Delegation, ThreadId};
+    use caelumora_domain::channel::{Brief, Delegation, ThreadId, Word};
     use caelumora_domain::message::MessageRole;
     use std::collections::VecDeque;
 
@@ -499,6 +499,7 @@ async fn an_external_agent_is_given_what_a_delegate_gives_it_to_read_and_answers
         recipient: alice,
         initiator: alice,
         briefs: VecDeque::from([briefed]),
+        word: Word::NotDue,
     };
     channel.forge_delegate(delegation, given).await;
     let second = answered(&mut events, agent).await;

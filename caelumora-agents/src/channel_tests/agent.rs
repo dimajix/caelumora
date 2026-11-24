@@ -1186,8 +1186,7 @@ async fn a_sleeping_agent_woken_by_a_mention_answers_it() {
             fail_policy: ComponentFailPolicy::FailClosed,
         }],
     };
-    let model =
-        Scripted(Mutex::new([answer("Good bye.", stop), answer("I am back.", Vec::new())].into()));
+    let model = Scripted::new([answer("Good bye.", stop), answer("I am back.", Vec::new())]);
     let Stuck { channel, context, agent, helper, mut events, running } =
         with_an_agent(Arc::new(model), components).await;
     settled(&helper, ActorState::Sleeping).await;
@@ -1218,7 +1217,7 @@ async fn a_sleeping_agent_woken_by_a_mention_answers_it() {
 #[tokio::test]
 async fn an_agent_given_something_to_read_wakes_takes_it_in_and_answers() {
     use caelumora_domain::chain::Position;
-    use caelumora_domain::channel::{Brief, Delegation, ThreadId};
+    use caelumora_domain::channel::{Brief, Delegation, ThreadId, Word};
     use caelumora_domain::tool::ToolCall;
     use std::collections::VecDeque;
 
@@ -1242,8 +1241,7 @@ async fn an_agent_given_something_to_read_wakes_takes_it_in_and_answers() {
             fail_policy: ComponentFailPolicy::FailClosed,
         }],
     };
-    let model =
-        Scripted(Mutex::new([answer("Good bye.", stop), answer("Found it.", Vec::new())].into()));
+    let model = Scripted::new([answer("Good bye.", stop), answer("Found it.", Vec::new())]);
     let Stuck { channel, context, agent, helper, mut events, running } =
         with_an_agent(Arc::new(model), components).await;
     settled(&helper, ActorState::Sleeping).await;
@@ -1278,6 +1276,7 @@ async fn an_agent_given_something_to_read_wakes_takes_it_in_and_answers() {
         recipient: alice,
         initiator: alice,
         briefs: VecDeque::from([briefed]),
+        word: Word::NotDue,
     };
     channel.forge_delegate(delegation, given).await;
 
@@ -1341,7 +1340,7 @@ async fn the_calls_of_a_message_dropped_on_its_way_out_are_not_run() {
         }],
     };
     let Stuck { channel, agent, mut events, running, .. } =
-        with_an_agent(Arc::new(Scripted(Mutex::new([calls].into()))), components).await;
+        with_an_agent(Arc::new(Scripted::new([calls])), components).await;
 
     answered(&mut events, agent).await;
     let line = ThreadId::line(channel.id());
@@ -1384,7 +1383,7 @@ async fn a_step_whose_message_is_dropped_ends_and_the_plan_goes_on() {
         [PLANNING_KIND, "test_dropping_calls"].map(|kind| ComponentDescriptor::new(kind, kind));
     let components = ComponentConfig { component_nodes: component_nodes.into() };
     let Stuck { channel, agent, mut events, running, .. } =
-        with_an_agent(Arc::new(Scripted(Mutex::new(script.into()))), components).await;
+        with_an_agent(Arc::new(Scripted::new(script)), components).await;
     let line = ThreadId::line(channel.id());
 
     let mut seen = Vec::new();
@@ -1449,7 +1448,7 @@ async fn a_call_an_emit_processor_changes_runs_as_it_changed_it() {
     let component_nodes = ["test_whispering_tool", "test_renaming_calls"]
         .map(|kind| ComponentDescriptor::new(kind, kind));
     let components = ComponentConfig { component_nodes: component_nodes.into() };
-    let model = Scripted(Mutex::new([drafted, answer].into()));
+    let model = Scripted::new([drafted, answer]);
     let Stuck { channel, agent, mut events, running, .. } =
         with_an_agent(Arc::new(model), components).await;
 
@@ -1494,14 +1493,14 @@ async fn an_emit_processor_that_fails_closed_gives_the_turn_up() {
             fail_policy,
         }],
     };
-    let model = Scripted(Mutex::new([answer("Hello.")].into()));
+    let model = Scripted::new([answer("Hello.")]);
     let Stuck { agent, mut events, running, .. } =
         with_an_agent(Arc::new(model), failing(ComponentFailPolicy::FailClosed)).await;
     let reason = turn_given_up(&mut events, agent).await;
     assert!(reason.contains("the filter is broken"), "given up, and why: {reason}");
     running.abort();
 
-    let model = Scripted(Mutex::new([answer("Hello.")].into()));
+    let model = Scripted::new([answer("Hello.")]);
     let Stuck { agent, mut events, running, .. } =
         with_an_agent(Arc::new(model), failing(ComponentFailPolicy::FailOpen)).await;
     let said = answered(&mut events, agent).await;
@@ -1569,7 +1568,7 @@ async fn an_agent_that_calls_stop_ends_its_turn_with_the_call_and_sleeps() {
         }],
     };
     let Stuck { channel, agent, helper, running, .. } =
-        with_an_agent(Arc::new(Scripted(Mutex::new([bye].into()))), components).await;
+        with_an_agent(Arc::new(Scripted::new([bye])), components).await;
 
     // The turn ends with the call - the model is not asked again - and
     // the agent sleeps, as the tool asked; no turn is left behind.
@@ -1613,12 +1612,9 @@ async fn an_agent_tells_the_users_where_it_stands_and_that_it_was_woken() {
             fail_policy: ComponentFailPolicy::FailClosed,
         }],
     };
-    let (channel, context, agent, alice) = agent_channel(
-        Arc::new(AllowAllPolicy::new()),
-        Arc::new(Scripted(Mutex::new([bye].into()))),
-        components,
-    )
-    .await;
+    let (channel, context, agent, alice) =
+        agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(Scripted::new([bye])), components)
+            .await;
     // What reaches alice, watched since before it ran.
     let mut shown = channel.user_actor(alice).unwrap().watch();
     let running = tokio::spawn({
@@ -1710,7 +1706,7 @@ async fn a_plan_whose_steps_need_more_calls_than_a_turn_runs_to_its_end() {
         .collect(),
     };
     let Stuck { agent, helper, mut events, running, .. } =
-        with_an_agent(Arc::new(Scripted(Mutex::new(script))), components).await;
+        with_an_agent(Arc::new(Scripted::new(script)), components).await;
 
     let final_messages = time::timeout(Duration::from_secs(5), async {
         loop {
@@ -1763,7 +1759,7 @@ async fn a_plan_runs_its_steps_as_intermediate_messages_and_ends_with_the_final_
         }],
     };
     let Stuck { channel, agent, helper, mut events, running, .. } =
-        with_an_agent(Arc::new(Scripted(Mutex::new(script.into()))), components).await;
+        with_an_agent(Arc::new(Scripted::new(script)), components).await;
 
     // The plan needs no approval: it runs at once.
     let mut seen = Vec::new();
@@ -1896,7 +1892,7 @@ async fn every_message_of_a_turn_carries_the_turn_its_start_announced() {
         }],
     };
     let Stuck { channel, agent, helper, mut events, running, .. } =
-        with_an_agent(Arc::new(Scripted(Mutex::new(script.into()))), components).await;
+        with_an_agent(Arc::new(Scripted::new(script)), components).await;
     let line = ThreadId::line(channel.id());
 
     let mut started = None;
@@ -1981,7 +1977,7 @@ async fn a_turn_is_stored_with_the_step_that_comes_next() {
         }],
     };
     let Stuck { channel, agent, running, .. } =
-        with_an_agent(Arc::new(Scripted(Mutex::new([calculate].into()))), components).await;
+        with_an_agent(Arc::new(Scripted::new([calculate])), components).await;
     let line = ThreadId::line(channel.id());
 
     // What a crash now would leave: `Planning`, with the tool's result
@@ -2138,7 +2134,7 @@ async fn a_turn_that_reaches_the_limit_of_model_calls_is_given_up_and_may_be_ans
         ..Message::new(Classification::CHANNEL_DEFAULT)
     });
     let Stuck { channel, context, agent, helper, mut events, running } =
-        with_an_agent(Arc::new(Scripted(Mutex::new(answers))), components).await;
+        with_an_agent(Arc::new(Scripted::new(answers)), components).await;
 
     // The users are told why the turn ended (issue 411).
     let (turn, reason) = time::timeout(Duration::from_secs(5), async {
@@ -2325,7 +2321,7 @@ async fn an_agent_removed_during_a_turn_gives_it_up() {
         }],
     };
     let Stuck { channel, context, agent, running, .. } =
-        with_an_agent(Arc::new(Scripted(Mutex::new([calculate].into()))), components).await;
+        with_an_agent(Arc::new(Scripted::new([calculate])), components).await;
     time::timeout(Duration::from_secs(5), async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
@@ -2418,7 +2414,7 @@ async fn lowering_the_channel_gives_up_a_running_turn() {
     let (calculate, components) = calculator();
     let Stuck { channel, context, agent, helper, mut events, running } = with_an_agent_under(
         Arc::new(AllowAllPolicy::new()),
-        Arc::new(Scripted(Mutex::new([calculate.clone()].into()))),
+        Arc::new(Scripted::new([calculate.clone()])),
         components,
     )
     .await;
@@ -2498,7 +2494,7 @@ async fn lowering_the_channel_ends_a_turn_waiting_for_approval_at_once() {
     let (call, components) = a_call_needing_approval();
     let Stuck { channel, context, agent, helper, mut events, running } = with_an_agent_under(
         Arc::new(AllowAllPolicy::new()),
-        Arc::new(Scripted(Mutex::new([call].into()))),
+        Arc::new(Scripted::new([call])),
         components,
     )
     .await;
@@ -2543,7 +2539,7 @@ async fn raising_the_channel_lets_a_running_turn_go_on() {
 async fn a_cancel_ends_a_turn_waiting_for_approval_at_once() {
     let (call, components) = a_call_needing_approval();
     let Stuck { channel, context, agent, helper, mut events, running } =
-        with_an_agent(Arc::new(Scripted(Mutex::new([call].into()))), components).await;
+        with_an_agent(Arc::new(Scripted::new([call])), components).await;
     let line = ThreadId::line(channel.id());
     settled(&helper, ActorState::WaitingForUser).await;
 
@@ -2592,7 +2588,7 @@ async fn a_cancel_ends_a_turn_waiting_for_approval_at_once() {
 async fn a_turn_waiting_for_a_person_is_set_aside_while_the_agent_answers_elsewhere() {
     let (call, components) = a_call_needing_approval();
     let answers = [call, saying("In the line."), saying("Done.")];
-    let model = Arc::new(Scripted(Mutex::new(answers.into())));
+    let model = Arc::new(Scripted::new(answers));
     let (channel, context, agent, alice) =
         agent_channel(Arc::new(AllowAllPolicy::new()), model, components).await;
     let mut events = channel.observe();
@@ -2636,7 +2632,7 @@ async fn a_turn_waiting_for_a_person_is_set_aside_while_the_agent_answers_elsewh
 #[tokio::test]
 async fn a_turn_set_aside_ends_with_its_thread_and_what_was_said_there_waits_for_it() {
     let (call, components) = a_call_needing_approval();
-    let model = Arc::new(Scripted(Mutex::new([call].into())));
+    let model = Arc::new(Scripted::new([call]));
     let (channel, context, agent, alice) =
         agent_channel(Arc::new(AllowAllPolicy::new()), model, components).await;
     let mut events = channel.observe();
@@ -2682,7 +2678,7 @@ async fn a_turn_set_aside_ends_with_its_thread_and_what_was_said_there_waits_for
 async fn a_turn_set_aside_is_answered_again_and_given_up_as_its_agent_leaves() {
     let (call, components) = a_call_needing_approval();
     let (again, _) = a_call_needing_approval();
-    let model = Arc::new(Scripted(Mutex::new([call, again].into())));
+    let model = Arc::new(Scripted::new([call, again]));
     let (channel, context, agent, alice) =
         agent_channel(Arc::new(AllowAllPolicy::new()), model, components).await;
     let mut events = channel.observe();
@@ -2795,12 +2791,9 @@ async fn a_rule_of_the_channel_asks_for_a_call_its_tool_would_run() {
 
     let (call, mut components) = a_call_needing_approval();
     components.component_nodes[0].params = serde_json::json!({ "requires_approval": false });
-    let built = agent_channel(
-        Arc::new(AllowAllPolicy::new()),
-        Arc::new(Scripted(Mutex::new([call].into()))),
-        components,
-    )
-    .await;
+    let built =
+        agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(Scripted::new([call])), components)
+            .await;
     let ask = ApprovalRule::new(
         ToolMatcher { tool: "sleep".to_string(), arguments: Default::default() },
         RuleDecision::Ask,
@@ -2848,7 +2841,7 @@ async fn approving(strategy: ApprovalStrategy, with_bob: bool) -> Approving {
     let store = Persistence::in_memory();
     let personality = Personality { components, ..make_personality("plain") };
     let (context, agent, alice) = alice_and_an_agent(&store, "helper", personality).await;
-    let model = Arc::new(Scripted(Mutex::new([call].into())));
+    let model = Arc::new(Scripted::new([call]));
     let kernel = agent_kernel(store, Arc::new(AllowAllPolicy::new()), model);
     let bob = make_user("bob");
     let mut session = make_session("approving", alice);
@@ -2960,7 +2953,7 @@ async fn a_turn_waiting_for_approval_can_be_decided_after_a_restart() {
         ..Message::new(Classification::CHANNEL_DEFAULT)
     };
     let Stuck { channel, agent, helper, mut events, running, .. } =
-        with_an_agent(Arc::new(Scripted(Mutex::new([call, done].into()))), components).await;
+        with_an_agent(Arc::new(Scripted::new([call, done])), components).await;
     settled(&helper, ActorState::WaitingForUser).await;
     let asked = approval_requested(&mut events).await;
 
@@ -3044,7 +3037,7 @@ async fn with_an_agent_in_long_tools(calls: &[&str]) -> (Stuck, Arc<Scripted>) {
         content: Some("never given".to_string()),
         ..Message::new(Classification::CHANNEL_DEFAULT)
     };
-    let model = Arc::new(Scripted(Mutex::new([call, unasked].into())));
+    let model = Arc::new(Scripted::new([call, unasked]));
     let stuck = with_an_agent(Arc::<Scripted>::clone(&model), components).await;
     settled(&stuck.helper, ActorState::ExecutingTools).await;
     (stuck, model)
@@ -3059,7 +3052,7 @@ async fn a_turn_asked_for_again_while_it_waits_for_an_approval_withdraws_the_req
         ..Message::new(Classification::CHANNEL_DEFAULT)
     };
     let Stuck { channel, context, agent, helper, mut events, running } =
-        with_an_agent(Arc::new(Scripted(Mutex::new([call, instead].into()))), components).await;
+        with_an_agent(Arc::new(Scripted::new([call, instead])), components).await;
     let ActorEvent::ApprovalRequested { request, .. } =
         shown_by(&mut events, agent, "ApprovalRequested").await
     else {
@@ -3167,7 +3160,7 @@ async fn a_cancel_while_a_tool_runs_interrupts_the_tool_and_ends_the_turn() {
     assert_eq!(results[0].status, ToolResultStatus::Interrupted);
     assert!(results[0].started_at.is_some(), "it ran");
     settled(&helper, ActorState::Idle).await;
-    assert_eq!(model.0.lock().unwrap().len(), 1, "the second answer was never asked for");
+    assert_eq!(model.left(), 1, "the second answer was never asked for");
     running.abort();
 }
 
@@ -3222,7 +3215,7 @@ async fn a_tool_call_interrupted_alone_is_answered_so_and_the_turn_goes_on() {
     );
     let said: Vec<_> = finished.iter().filter_map(|m| m.content.clone()).collect();
     assert_eq!(said, ["never given"], "the turn goes on with the results");
-    assert_eq!(model.0.lock().unwrap().len(), 0, "the model was asked again");
+    assert_eq!(model.left(), 0, "the model was asked again");
     running.abort();
 }
 
@@ -3362,13 +3355,13 @@ async fn an_agent_stopped_while_a_tool_runs_records_the_call_as_stopped_and_goes
     );
     let said: Vec<_> = finished.iter().filter_map(|m| m.content.clone()).collect();
     assert_eq!(said, ["never given"], "the turn goes on with the results");
-    assert_eq!(model.0.lock().unwrap().len(), 0, "the model was asked again");
+    assert_eq!(model.left(), 0, "the model was asked again");
     running.abort();
 }
 
 #[tokio::test]
 async fn an_idle_agent_stopped_ends_at_once_where_it_stands() {
-    let model = Arc::new(Scripted(Mutex::new([saying("Hello.")].into())));
+    let model = Arc::new(Scripted::new([saying("Hello.")]));
     let Stuck { channel, agent, helper, mut events, running, .. } =
         with_an_agent(model, Default::default()).await;
     answered(&mut events, agent).await;
@@ -3408,7 +3401,7 @@ async fn an_agent_whose_channel_is_deleted_while_a_tool_runs_gives_its_turn_up()
 async fn an_agent_removed_while_waiting_for_approval_gives_up_its_turn() {
     let (call, components) = a_call_needing_approval();
     let Stuck { channel, context, agent, helper, mut events, running } =
-        with_an_agent(Arc::new(Scripted(Mutex::new([call].into()))), components).await;
+        with_an_agent(Arc::new(Scripted::new([call])), components).await;
     settled(&helper, ActorState::WaitingForUser).await;
 
     channel.remove_participant(&context, ActorId::Agent(agent)).await.expect("permitted");
@@ -3478,7 +3471,7 @@ async fn a_call_with_invalid_arguments_is_answered_without_asking_anyone() {
     };
     let built = agent_channel(
         Arc::new(AllowAllPolicy::new()),
-        Arc::new(Scripted(Mutex::new([not_a_plan, answer].into()))),
+        Arc::new(Scripted::new([not_a_plan, answer])),
         components,
     )
     .await;
@@ -3774,7 +3767,7 @@ async fn all_an_agent_was_offered_is_in_its_channels_history_and_what_passes_its
         component_nodes: vec![ComponentDescriptor::new("filter", "test_no_secrets")],
     };
     let Stuck { channel, context, agent, helper, mut events, running } =
-        with_an_agent(Arc::new(Scripted(Mutex::new([hi].into()))), components).await;
+        with_an_agent(Arc::new(Scripted::new([hi])), components).await;
     let line = ThreadId::line(channel.id());
     answered(&mut events, agent).await;
     settled(&helper, ActorState::Idle).await;
@@ -3829,7 +3822,7 @@ async fn asked_to_nap(listed: Vec<ComponentDescriptor>, afterwards: Vec<Message>
         }],
     };
     components.component_nodes.extend(listed);
-    let mut stuck = with_an_agent(Arc::new(Scripted(Mutex::new(script.into()))), components).await;
+    let mut stuck = with_an_agent(Arc::new(Scripted::new(script)), components).await;
     answered(&mut stuck.events, stuck.agent).await;
     settled(&stuck.helper, ActorState::Idle).await;
     stuck
@@ -4040,7 +4033,7 @@ async fn an_agent_mentioned_in_a_thread_is_drawn_in_and_answers_there() {
         content: Some("It is the plan.".to_string()),
         ..Message::new(Classification::CHANNEL_DEFAULT)
     };
-    let model = Arc::new(Scripted(Mutex::new([answer].into())));
+    let model = Arc::new(Scripted::new([answer]));
     let (channel, context, agent, alice) =
         agent_channel(Arc::new(AllowAllPolicy::new()), model, Default::default()).await;
     let line = ThreadId::line(channel.id());

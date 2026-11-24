@@ -25,7 +25,9 @@ entity's id as text, `within` the id of the entity it lies in, and `change` an `
     hear as it was said and its thread (`Said`: of the line, or of another where it mentions a
     user, issue 557; see [CHANNELS.md](CHANNELS.md#what-is-new-to-a-user)), and `WAITING_CHANGED`,
     with the `ActorId` of the user for whom what waits in the channel changed (issue 594; see
-    [CHANNELS.md](CHANNELS.md#what-waits-for-a-user)).
+    [CHANNELS.md](CHANNELS.md#what-waits-for-a-user)), and `DELEGATION_LET_GO`, with the thread
+    whose delegation was let go, to be closed with the agent it owns (issue 598; see
+    [CHANNELS.md](CHANNELS.md#delegating-into-a-thread)).
 
 What happens to a channel's participants is a change of the channel: its readers are the ones who
 hear of it, and it carries the participant in its data.

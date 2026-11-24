@@ -269,9 +269,11 @@ impl ChannelLoop {
                 }
                 let _ = carried_out.send(());
             }
+            // Answered only if the brief was taken (issue 598): the delegating caller asks why not.
             ActorChange::Delegate(thread, delegation) => {
-                self.hand_to_delegate(thread, delegation).await;
-                let _ = carried_out.send(());
+                if self.hand_to_delegate(thread, delegation).await {
+                    let _ = carried_out.send(());
+                }
             }
         }
     }
@@ -1300,12 +1302,14 @@ impl ChannelLoop {
         self.record(Recorded::of(envelope, envelope.context.sender_id, audience)?).await
     }
 
-    /// Records `recorded` in the channel's history and stores it
-    /// (`append_history`); returns its position, or `None` if it was not
-    /// recorded - a change of a message that changes nothing. What a delegate gave is followed in
-    /// its delegation (`Delegation::follow`), stored with it.
+    /// Records `recorded` in the channel's history and stores it (`append_history`); returns its
+    /// position, or `None` if it was not recorded - a change of a message that changes nothing.
+    /// What a delegate gave is followed in its delegation (`Delegation::follow`), stored with it,
+    /// and so is what its giver did with what came back (issue 598): its reading, then its turn's
+    /// end or its leave, which let the delegation go - announced once stored
+    /// (`channel::DELEGATION_LET_GO`).
     async fn record(&self, recorded: Recorded) -> Option<Position> {
-        let thread = recorded.context.thread_id;
+        let (thread, sender) = (recorded.context.thread_id, recorded.sender);
         let in_line = recorded.thread().is_none_or(|of| of == ThreadId::line(self.id));
         let said = recorded
             .entry
@@ -1319,18 +1323,24 @@ impl ChannelLoop {
             return None;
         }
         let position = state.history.end().previous();
-        // What a delegate gave, followed in its delegation with its entry, stored together, and
-        // its delegate in step with it (issue 557).
+        // What a delegate gave, and what its giver did with what came back, followed in the
+        // delegation with its entry, stored together, and its delegate in step with it (issues
+        // 557, 598).
         let delegated = position.and_then(|at| state.follow_given(&entry, at));
-        if let Some(thread) = delegated {
-            if let Some(delegation) = state.delegation(thread) {
-                self.sync_delegate(thread, delegation);
+        let read = state.follow_read(sender, &entry);
+        let let_go = state.follow_giver(&entry, thread);
+        for followed in delegated.into_iter().chain(read).chain(let_go.iter().copied()) {
+            if let Some(delegation) = state.delegation(followed) {
+                self.sync_delegate(followed, delegation);
             }
         }
         match self.store_state(&mut state).await {
             Ok(()) => {
                 if let Some(message) = said {
                     self.channel.announce_said(&message);
+                }
+                for thread in let_go {
+                    self.channel.announce_delegation_let_go(thread);
                 }
             }
             Err(e) => warn!("Cannot store state of channel {}: {}", self.id, e),
@@ -1439,7 +1449,7 @@ mod tests {
     };
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::channel::{
-        Brief, ChannelId, Delegation, Opening, ThreadId, ThreadOrigin,
+        Brief, ChannelId, Delegation, Opening, ThreadId, ThreadOrigin, Word,
     };
     use caelumora_domain::confidentiality::{Classification, Confidentiality};
     use caelumora_domain::content::ContentRef;
@@ -2764,8 +2774,8 @@ mod tests {
         *channel.requests_rx.lock().unwrap() = Some(requests);
     }
 
-    /// Issue 593: `run` answers a leave of one without an actor, an opening, a brief - also one it
-    /// drops - and a closing at once.
+    /// Issue 593: `run` answers a leave of one without an actor, an opening, a brief - one it drops
+    /// as not taken (issue 598) - and a closing at once.
     #[tokio::test]
     async fn run_answers_at_once_what_it_carries_out_at_once() {
         let alice = make_user("alice");
@@ -2784,15 +2794,21 @@ mod tests {
             Opening { origin, by: system.caller_id, circle: Circle::Closed, owned: Vec::new() };
         let opened = channel.request(ActorChange::Open(thread, opening, system.clone()));
         let briefs = VecDeque::new();
-        let delegation = Delegation { giver: gone, recipient: gone, initiator: gone, briefs };
+        let delegation = Delegation {
+            giver: gone,
+            recipient: gone,
+            initiator: gone,
+            briefs,
+            word: Word::NotDue,
+        };
         let delegated = channel.request(ActorChange::Delegate(thread, delegation));
         let mut running = HashMap::new();
         carry_out_requests(&channel, &mut running, &event_tx, &mut join_set).await;
         assert!(left.carried_out().await, "a leave without an actor, announced at once");
         assert!(opened.carried_out().await, "an opening, announced");
         assert!(
-            delegated.carried_out().await,
-            "a brief, dropped for a thread the channel holds not"
+            !delegated.carried_out().await,
+            "a brief dropped for a thread the channel holds not: answered at once as not taken"
         );
 
         let close = channel.request(ActorChange::Close(thread, system.clone()));
@@ -3437,7 +3453,8 @@ mod tests {
         };
         let brief = Brief { message, given_at: Some(Position::START) };
         let briefs = VecDeque::from([brief]);
-        let delegation = Delegation { giver: his, recipient: hers, initiator: hers, briefs };
+        let delegation =
+            Delegation { giver: his, recipient: hers, initiator: hers, briefs, word: Word::NotDue };
         let thread = channel.forge_delegate(delegation, |_| Vec::new()).await;
         (channel, thread)
     }

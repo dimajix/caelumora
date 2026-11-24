@@ -8,7 +8,6 @@ use caelumora_domain::channel::ThreadId;
 use caelumora_domain::tool::testing::make_tool_call;
 use caelumora_domain::transcript::TranscriptEntry;
 use caelumora_kernel::command::{CommandContext, CommandReply};
-use std::sync::Mutex;
 
 /// A running channel with alice and an agent, `helper`, that carries
 /// out `/mark`, idle after it answered alice's "hello" - or asleep, if
@@ -40,8 +39,7 @@ async fn with_a_marking_agent_under(access_policy: Arc<dyn AccessPolicy>, asleep
         ],
     };
     let mut stuck =
-        with_an_agent_under(access_policy, Arc::new(Scripted(Mutex::new([hi].into()))), components)
-            .await;
+        with_an_agent_under(access_policy, Arc::new(Scripted::new([hi])), components).await;
     answered(&mut stuck.events, stuck.agent).await;
     settled(&stuck.helper, if asleep { ActorState::Sleeping } else { ActorState::Idle }).await;
     stuck

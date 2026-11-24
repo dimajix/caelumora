@@ -8,7 +8,6 @@ use caelumora_domain::question::{QuestionError, QuestionRequest};
 use caelumora_domain::tool::testing::make_tool_call;
 use caelumora_domain::tool::{ToolCallResult, ToolResultStatus};
 use caelumora_domain::transcript::TranscriptEntry;
-use std::sync::Mutex;
 use tokio::time;
 
 /// A call of the `asking` tool, the component that gives it -
@@ -63,7 +62,7 @@ async fn a_call_waits_for_the_answers_and_the_turn_goes_on_with_them() {
     use caelumora_domain::question::Response;
     let (call, done, components) = a_call_asking(false);
     let Stuck { channel, context, agent, helper, mut events, running } =
-        with_an_agent(Arc::new(Scripted(Mutex::new([call, done].into()))), components).await;
+        with_an_agent(Arc::new(Scripted::new([call, done])), components).await;
     let line = ThreadId::line(channel.id());
     let asked = questions_requested(&mut events).await;
     settled(&helper, ActorState::WaitingForUser).await;
@@ -137,7 +136,7 @@ async fn a_call_waits_for_the_answers_and_the_turn_goes_on_with_them() {
 async fn a_message_instead_of_the_answers_declines_them_and_is_heard_after_the_turn() {
     let (call, done, components) = a_call_asking(false);
     let Stuck { channel, context, agent, helper, mut events, running } =
-        with_an_agent(Arc::new(Scripted(Mutex::new([call, done].into()))), components).await;
+        with_an_agent(Arc::new(Scripted::new([call, done])), components).await;
     let line = ThreadId::line(channel.id());
     questions_requested(&mut events).await;
     settled(&helper, ActorState::WaitingForUser).await;
@@ -183,7 +182,7 @@ async fn sensitive_answers_reach_the_tool_alone_and_are_never_stored() {
     use caelumora_domain::question::Response;
     let (call, done, components) = a_call_asking(true);
     let Stuck { channel, context, agent, helper, mut events, running } =
-        with_an_agent(Arc::new(Scripted(Mutex::new([call, done].into()))), components).await;
+        with_an_agent(Arc::new(Scripted::new([call, done])), components).await;
     let asked = questions_requested(&mut events).await;
     assert_eq!(asked.shown_to(), Some(vec![ActorId::User(alice_of(&context))]));
     settled(&helper, ActorState::WaitingForUser).await;
@@ -229,7 +228,7 @@ async fn ask_user_asks_whom_it_names_and_gives_the_model_the_answers() {
     };
     let components =
         ComponentConfig { component_nodes: vec![ComponentDescriptor::new("ask", ASK_USER_KIND)] };
-    let model = Scripted(Mutex::new([ask("1", "@carol"), ask("2", "@alice"), done].into()));
+    let model = Scripted::new([ask("1", "@carol"), ask("2", "@alice"), done]);
     let Stuck { channel, context, agent, helper, mut events, running } =
         with_an_agent(Arc::new(model), components).await;
     let line = ThreadId::line(channel.id());
@@ -271,7 +270,7 @@ async fn ask_user_asks_whom_it_names_and_gives_the_model_the_answers() {
 async fn questions_nobody_asked_is_left_to_answer_go_unanswered_and_the_turn_goes_on() {
     let (call, done, components) = a_call_asking(false);
     let Stuck { channel, context, agent, helper, mut events, running } =
-        with_an_agent(Arc::new(Scripted(Mutex::new([call, done].into()))), components).await;
+        with_an_agent(Arc::new(Scripted::new([call, done])), components).await;
     let line = ThreadId::line(channel.id());
     let asked = questions_requested(&mut events).await;
     settled(&helper, ActorState::WaitingForUser).await;

@@ -19,7 +19,7 @@ use caelumora_domain::session::SessionId;
 use caelumora_domain::store::StoreError;
 use caelumora_domain::value::name::Name;
 use caelumora_kernel::agent::{AgentError, AgentManager, AgentSpec};
-use caelumora_kernel::channel::{ChannelLoop, ThreadSpec};
+use caelumora_kernel::channel::{ChannelError, ChannelLoop, ThreadSpec};
 use caelumora_kernel::error::{refusal, user_message};
 use caelumora_kernel::kernel::Kernel;
 use caelumora_kernel::procedure::thread;
@@ -163,11 +163,17 @@ impl SubAgentWriter for SubAgents {
         self.procedures()?.run(starting).await
     }
 
+    /// One whose delegation was let go (issue 598) - the work's agent left it without a word in
+    /// the turn that read its answer - is none.
     async fn ask(&self, thread: ThreadId, text: String) -> SubAgentResult<()> {
         let (_, channel) = self.running().await?;
         let agent = self.sub_agent(&channel, thread).await?;
         let context = self.context();
-        channel.delegate(context, thread, ActorId::Agent(agent), text).await.map_err(told)
+        let asking = channel.delegate(context, thread, ActorId::Agent(agent), text).await;
+        asking.map_err(|error| match error.downcast_ref::<ChannelError>() {
+            Some(ChannelError::DelegationLetGo { .. }) => SubAgentError::NoSubAgent(thread),
+            _ => told(error),
+        })
     }
 
     /// Closing its thread, with the agent it owns (`procedure::thread::Close`), one procedure as

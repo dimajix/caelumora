@@ -305,6 +305,7 @@ mod tests {
     use caelumora_domain::actor::Rejection;
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::chain::Position;
+    use caelumora_domain::channel::Word;
     use caelumora_domain::prompt_catalogue::{KERNEL, KERNEL_PROMPTS};
     use caelumora_domain::turn::GivenUpReason;
     use caelumora_domain::user::UserId;
@@ -343,7 +344,8 @@ mod tests {
         let giver = ActorId::User(UserId::new());
         let recipient = ActorId::Agent(AgentId::new());
         let briefs = VecDeque::from(briefs(giver));
-        let delegation = Delegation { giver, recipient, initiator: giver, briefs };
+        let delegation =
+            Delegation { giver, recipient, initiator: giver, briefs, word: Word::NotDue };
         let mut prompts = PromptCatalogue::new();
         prompts.add(KERNEL, KERNEL_PROMPTS).expect("the kernel's texts");
         let delegate = Arc::new(DelegateActor::new(

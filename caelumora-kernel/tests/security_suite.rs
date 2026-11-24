@@ -1251,7 +1251,10 @@ async fn a_brief_is_delegated_by_a_reader_of_the_channel_in_their_own_name() {
     let (delegated, asked) =
         world.asked(main.delegate(&bob, thread, bobs_helper, "look it up".to_string())).await;
     delegated.expect("bob reads the channel");
-    assert_eq!(asked, checks(&["bob: GetChannel(alice's) yes"]), "and nothing else: {asked:?}");
+    // Delegating waits until the brief is recorded (issue 598): what the delegate gives is admitted
+    // meanwhile, in its own context, and asked in nobody's name but bob's own.
+    let his: Vec<String> = asked.iter().filter(|line| line.starts_with("bob: ")).cloned().collect();
+    assert_eq!(his, checks(&["bob: GetChannel(alice's) yes"]), "and nothing else: {asked:?}");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

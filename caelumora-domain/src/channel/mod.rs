@@ -14,7 +14,7 @@ mod thread;
 pub use history_access::{HistoryAccess, HistoryStart};
 pub use participant::{FormerParticipant, InternalActor, Participant};
 pub use state::{ChannelState, ChannelStateChange};
-pub use thread::{Brief, Circle, Delegation, Opening, ThreadId, ThreadOrigin, ThreadState};
+pub use thread::{Brief, Circle, Delegation, Opening, ThreadId, ThreadOrigin, ThreadState, Word};
 
 use crate::actor::ActorId;
 use crate::approval::ApprovalRule;
@@ -90,6 +90,12 @@ pub const SAID: &str = "said";
 /// reader reads their own (`Detail::WAITING`). Published with the channel's attributes once the
 /// user's actor took in or sent what changed it.
 pub const WAITING_CHANGED: &str = "waiting_changed";
+
+/// A delegation was let go (issue 598): its giver's word on what came of its last brief was none,
+/// or the giver left - the thread in the change's data, to be closed with the agent it owns.
+/// Published as the channel recorded it, and again as the channel starts while the thread is not
+/// closed yet.
+pub const DELEGATION_LET_GO: &str = "delegation_let_go";
 
 /// What `SAID` announces (issues 404, 557): the message as it was said, and the thread it was said
 /// in - by which a frontend tells one of the line from one of another thread that mentions another

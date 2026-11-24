@@ -8,7 +8,7 @@ use super::{ActorChange, ChannelActor, ChannelError, ChannelLoop};
 use crate::actor::delegate::DelegateActor;
 use anyhow::{anyhow, Result};
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::channel::{Brief, Channel, Circle, Delegation, ThreadId};
+use caelumora_domain::channel::{Brief, Channel, Circle, Delegation, ThreadId, Word};
 use caelumora_domain::message::{Message, MessageId, MessageRole};
 use caelumora_domain::store::Stored;
 use caelumora_security::{ActionType, SecurityContext};
@@ -23,13 +23,15 @@ impl ChannelLoop {
     /// to them where the thread was opened; it waits behind a brief still open. Asked: that the
     /// giver reads the channel; that the thread is not closed and was opened at another, its circle
     /// closed (issue 602); that the recipient runs in it and the giver where it was opened; that a
-    /// thread delegated into before is delegated by the same giver to the same recipient; that the
-    /// thread is not quiet after a cancel. The brief is classified as the channel is, and both
-    /// directions answer the chain `context` belongs to (its initiator).
+    /// thread delegated into before is delegated by the same giver to the same recipient, and was
+    /// not let go (issue 598); that the thread is not quiet after a cancel. The brief is classified
+    /// as the channel is, and both directions answer the chain `context` belongs to (its
+    /// initiator). Returns once `run` has recorded the brief, so that one delegated in the turn
+    /// that read what came of the last is the giver's word before that turn ends.
     ///
     /// # Errors
-    /// `ChannelError::Forbidden`, `ThreadNotOpen`, `OpenCircle`, `NotInThread`, `ThreadQuiet` or
-    /// `DelegatedOtherwise`.
+    /// `ChannelError::Forbidden`, `ThreadNotOpen`, `OpenCircle`, `NotInThread`, `ThreadQuiet`,
+    /// `DelegatedOtherwise` or `DelegationLetGo`.
     pub async fn delegate(
         &self,
         context: &SecurityContext,
@@ -71,6 +73,9 @@ impl ChannelLoop {
         if !self.delegated_alike(thread, giver, recipient).await {
             return Err(ChannelError::DelegatedOtherwise { thread, channel: self.id }.into());
         }
+        if self.delegation(thread).await.is_some_and(|held| held.is_let_go()) {
+            return Err(ChannelError::DelegationLetGo { thread, channel: self.id }.into());
+        }
         let message = Message {
             id: MessageId::new(),
             sender_id: giver,
@@ -81,8 +86,16 @@ impl ChannelLoop {
         };
         let brief = Brief { message, given_at: None };
         let briefs = VecDeque::from([brief]);
-        let delegation = Delegation { giver, recipient, initiator: context.initiator_id, briefs };
-        let _ = self.request(ActorChange::Delegate(thread, delegation));
+        let delegation = Delegation {
+            giver,
+            recipient,
+            initiator: context.initiator_id,
+            briefs,
+            word: Word::NotDue,
+        };
+        if !self.request(ActorChange::Delegate(thread, delegation)).carried_out().await {
+            return Err(self.not_taken(thread).await.into());
+        }
         debug!("{} delegates into thread {} of channel {}", giver, thread, self.id);
         Ok(())
     }
@@ -95,6 +108,20 @@ impl ChannelLoop {
         state.threads.get(&thread).filter(|held| !held.closed)?.delegation.clone()
     }
 
+    /// Why `run` did not take a brief into `thread` (`hand_to_delegate`), asked as it answered: its
+    /// delegation let go meanwhile (issue 598), the thread closed, or else delegated otherwise -
+    /// or the channel stopped, which leaves the thread as not open to whom asks again.
+    async fn not_taken(&self, thread: ThreadId) -> ChannelError {
+        let channel = self.id;
+        if !self.is_open(thread) {
+            return ChannelError::ThreadNotOpen { thread, channel };
+        }
+        match self.delegation(thread).await {
+            Some(held) if held.is_let_go() => ChannelError::DelegationLetGo { thread, channel },
+            _ => ChannelError::DelegatedOtherwise { thread, channel },
+        }
+    }
+
     /// Whether `giver` may delegate into `thread` to `recipient` (`ThreadState::delegates_alike`):
     /// a thread opened that `run` has not recorded yet is delegated into by nobody.
     async fn delegated_alike(&self, thread: ThreadId, giver: ActorId, recipient: ActorId) -> bool {
@@ -105,9 +132,10 @@ impl ChannelLoop {
     /// Records `delegation`'s briefs behind those of the delegation of `thread`, or as its
     /// delegation if it has none (`ThreadState::delegate`), and stores them; then has its delegate
     /// follow - starting it if it does not run, built from what was just stored. For `run` alone,
-    /// which carries out what `delegate` asked, one change after the other. A thread no longer
-    /// open, or delegated otherwise since, takes nothing: the brief is dropped, logged.
-    pub(super) async fn hand_to_delegate(&self, thread: ThreadId, delegation: Delegation) {
+    /// which carries out what `delegate` asked, one change after the other. Whether it was taken: a
+    /// thread no longer open, delegated otherwise since, or whose delegation was let go since
+    /// (issue 598), takes nothing - the brief is dropped, logged.
+    pub(super) async fn hand_to_delegate(&self, thread: ThreadId, delegation: Delegation) -> bool {
         let held = {
             let mut state = self.state.lock().await;
             let open = self.is_open(thread);
@@ -119,7 +147,7 @@ impl ChannelLoop {
             }
             let Some(held) = taken else {
                 warn!("A brief into thread {} of channel {} is dropped", thread, self.id);
-                return;
+                return false;
             };
             if let Err(e) = self.store_state(&mut state).await {
                 warn!("Cannot store the delegation into thread {}: {}", thread, e);
@@ -130,6 +158,7 @@ impl ChannelLoop {
             Some(delegate) => delegate.sync(held),
             None => self.start_delegate(thread).await,
         }
+        true
     }
 
     /// Has the delegate of `thread`, if it runs, follow `delegation` as the channel's state holds
@@ -142,7 +171,8 @@ impl ChannelLoop {
 
     /// Starts the delegates of the threads with briefs still to answer, as the channel starts -
     /// after its threads are built and what changed while it did not run is reconciled, before
-    /// its participants: each reads on from where its open brief was given (`DelegateActor`).
+    /// its participants: each reads on from where its open brief was given (`DelegateActor`). A
+    /// delegation let go and not ended yet is announced again (issue 598).
     pub(super) async fn start_delegates(&self) {
         let delegated: Vec<ThreadId> = {
             let state = self.state.lock().await;
@@ -156,6 +186,10 @@ impl ChannelLoop {
         };
         for thread in delegated {
             self.start_delegate(thread).await;
+        }
+        let let_go = self.state.lock().await.delegations_let_go();
+        for thread in let_go {
+            self.channel.announce_delegation_let_go(thread);
         }
     }
 

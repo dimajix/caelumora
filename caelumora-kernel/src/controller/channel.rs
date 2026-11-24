@@ -8,7 +8,9 @@ use arc_swap::Guard;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::AgentId;
 use caelumora_domain::approval::ApprovalRule;
-use caelumora_domain::channel::{self, Channel, ChannelId, ChannelUpdateEvent, Participant, Said};
+use caelumora_domain::channel::{
+    self, Channel, ChannelId, ChannelUpdateEvent, Participant, Said, ThreadId,
+};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::event::{EventPublisher, GlobalEvent};
 use caelumora_domain::group::Group;
@@ -281,6 +283,17 @@ impl ChannelController {
             self.channel.address(),
             channel::WAITING_CHANGED,
             &user,
+        ));
+    }
+
+    /// Announces that the delegation into `thread` was let go (issue 598,
+    /// `channel::DELEGATION_LET_GO`): the thread in the change's data, to be closed with the agent
+    /// it owns.
+    pub(crate) fn announce_delegation_let_go(&self, thread: ThreadId) {
+        self.channel.announce(GlobalEvent::custom::<Channel>(
+            self.channel.address(),
+            channel::DELEGATION_LET_GO,
+            &thread,
         ));
     }
 

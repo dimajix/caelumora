@@ -4,11 +4,13 @@
 #![expect(clippy::unwrap_used, reason = "test code: what fails here fails the test that runs it")]
 
 use caelumora_agents::library::AgentsLibrary;
-use caelumora_agents::testing::{agent_runtime, calling, register_scripted};
+use caelumora_agents::testing::{
+    agent_runtime, calling, register_answering, register_scripted, Answer,
+};
 use caelumora_agents::tool::ToolProvider;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::{Agent, Personality, PersonalityId, PersonalityKind};
-use caelumora_domain::channel::{ThreadId, ThreadOrigin};
+use caelumora_domain::channel::{Channel, ThreadId, ThreadOrigin, DELEGATION_LET_GO};
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::{Classification, Confidentiality};
 use caelumora_domain::history::HistoryEntry;
@@ -20,7 +22,7 @@ use caelumora_domain::value::name::ScopedName;
 use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::component::testing::{built, descriptor};
 use caelumora_kernel::testing::{participant_runtime_in, World};
-use caelumora_subagents::component::{START_SUBAGENT, SUBAGENTS_KIND};
+use caelumora_subagents::component::{ASK_SUBAGENT, START_SUBAGENT, SUBAGENTS_KIND};
 use caelumora_subagents::extension::{SubAgentError, SubAgentWriter};
 use caelumora_subagents::library::SubagentsLibrary;
 use caelumora_subagents::plugin::SubagentsPlugin;
@@ -34,19 +36,41 @@ fn said(text: &str) -> Message {
     }
 }
 
-/// The world with sub-agents, whose model "leading" starts a researcher, and whose model
-/// "researching" answers what it is given.
+/// The world with sub-agents, whose model "leading" starts a researcher, asks it again in the turn
+/// that reads its first answer, and leaves it without a word in the turn that reads its second;
+/// and whose model "researching" answers what it is given.
 async fn world() -> World {
     let start = calling(
         START_SUBAGENT,
         serde_json::json!({ "personality": "researcher", "brief": "Find it." }),
     );
     World::with(&[&SubagentsPlugin], &[&AgentsLibrary, &SubagentsLibrary], |registry| {
-        let leading = vec![start, said("started"), said("thanks"), said("thanks again")];
-        register_scripted(registry, "leading", leading);
+        let fixed = |answer: Message| -> Answer { Box::new(move |_| answer.clone()) };
+        let ask_again: Answer = Box::new(|messages| {
+            let thread = started(messages);
+            calling(ASK_SUBAGENT, serde_json::json!({ "thread": thread, "text": "And more?" }))
+        });
+        let leading = vec![
+            fixed(start),
+            fixed(said("started")),
+            ask_again,
+            fixed(said("asked")),
+            fixed(said("thanks")),
+        ];
+        register_answering(registry, "leading", leading);
         register_scripted(registry, "researching", vec![said("found it"), said("found more")]);
     })
     .await
+}
+
+/// The thread `start_subagent` returned, as the model was given its result among `messages`.
+fn started(messages: &[Message]) -> ThreadId {
+    let results = messages.iter().flat_map(|message| &message.tool_results);
+    let thread = results.filter(|result| result.tool_name == START_SUBAGENT).find_map(|result| {
+        let result: serde_json::Value = serde_json::from_str(&result.content).ok()?;
+        serde_json::from_value(result.get("thread")?.clone()).ok()
+    });
+    thread.unwrap()
 }
 
 /// The personality `name` of `owner`, with `components` and of `kind`.
@@ -77,11 +101,14 @@ async fn recorded(
 
 /// Issue 558: an agent starts a sub-agent of a personality its tool lists - a new agent, named by
 /// an adjective and the personality, in a thread of its own at the call -, is given back to read
-/// what it answered, asks it again through the same writer and is given that back too, and ends
-/// it: let go, its thread closed, the agent deleted. A personality of an external agent is no
-/// sub-agent's, and a thread without one of the work's is none to ask.
+/// what it answered, and asks it again in the turn that read it (issue 598), and is given that back
+/// too; the turn that reads the second answer leaves it without a word, which lets it go - kept
+/// and announced again as the channel starts again -: asked again then, it is none. Its agent
+/// still ends it: let go, its thread closed, the agent deleted; nothing is left to ask. A
+/// personality of an external agent is no sub-agent's, and a thread without one of the work's is
+/// none to ask.
 #[tokio::test]
-async fn an_agent_starts_a_sub_agent_is_given_back_its_answer_asks_it_again_and_ends_it() {
+async fn an_agent_starts_a_sub_agent_asks_it_again_as_it_reads_its_answer_and_lets_it_go() {
     let world = world().await;
     let model = |kind: &str| ComponentDescriptor::new("model", kind);
     let alice = world.alice;
@@ -112,7 +139,17 @@ async fn an_agent_starts_a_sub_agent_is_given_back_its_answer_asks_it_again_and_
                 if *recipient == lead && message.content.as_deref() == Some(text))
         }
     };
-    let entries = recorded(&main, given_back("found it")).await;
+    // The lead's turn that reads the second answer ends, without a word.
+    let entries = main
+        .history_once(|entries| {
+            let second = entries.iter().position(given_back("found more"));
+            second.is_some_and(|second| {
+                entries[second..].iter().any(
+                    |e| matches!(e, HistoryEntry::TurnFinished { actor, .. } if *actor == lead),
+                )
+            })
+        })
+        .await;
     let thread = entries
         .iter()
         .find_map(|e| match e {
@@ -120,20 +157,39 @@ async fn an_agent_starts_a_sub_agent_is_given_back_its_answer_asks_it_again_and_
             _ => None,
         })
         .expect("opened by the lead");
+    let asked = entries.iter().any(|e| {
+        matches!(e, HistoryEntry::GivenToRead { message, .. }
+            if message.content.as_deref() == Some("And more?"))
+    });
+    assert!(asked, "asked again in the turn that read the first answer");
     let held = main.delegation(thread).await.expect("delegated into");
+    assert_eq!(held.giver, lead, "given by the lead");
+    assert!(held.is_let_go(), "left without a word as the second answer was read: let go");
     let sub_agent = held.recipient.as_agent_id().expect("an agent");
     let stored: Agent =
         world.entity_store::<Agent>().get(&World::system(), sub_agent).await.unwrap();
     let name = stored.name.name.to_string();
     assert!(name.ends_with("-researcher"), "an adjective and the personality: {name}");
-    assert_eq!(held.giver, lead, "given by the lead");
+
+    // Started again, the channel announces again what was let go and is not ended yet.
+    let mut events = world.kernel.event_bus().subscribe_all();
+    let owner = World::as_user(world.alice);
+    world.manager.stop(&owner, session.id()).await.unwrap();
+    let session = world.manager.open(&owner, session.id()).await.unwrap();
+    let main = Arc::clone(&session.channels()[0]);
+    let announced = events.drain().await.iter().any(|event| {
+        event.about::<Channel>().and_then(|(_, change)| change.data(DELEGATION_LET_GO))
+            == Some(thread)
+    });
+    assert!(announced, "let go, announced again");
+    assert!(main.delegation(thread).await.is_some_and(|held| held.is_let_go()), "kept let go");
 
     let runtime = agent_runtime(participant_runtime_in(&main, lead));
     let internal = Classification::general(Confidentiality::Internal);
     let alice = ActorId::User(world.alice);
     let writer = runtime.writer::<dyn SubAgentWriter>(alice, internal).await.expect("bound");
-    writer.ask(thread, "And more?".to_string()).await.expect("asked again");
-    recorded(&main, given_back("found more")).await;
+    let refused = writer.ask(thread, "Still there?".to_string()).await.unwrap_err();
+    assert!(matches!(refused, SubAgentError::NoSubAgent(_)), "let go, none to ask: {refused}");
 
     let origin = ThreadOrigin { thread: ThreadId::line(main.id()), message: MessageId::new() };
     let refused = writer.start("remote", origin, "Find it.".to_string()).await.unwrap_err();
@@ -146,10 +202,8 @@ async fn an_agent_starts_a_sub_agent_is_given_back_its_answer_asks_it_again_and_
     let others = agent_runtime(participant_runtime_in(&main, ActorId::Agent(other)));
     let internal = Classification::general(Confidentiality::Internal);
     let theirs = others.writer::<dyn SubAgentWriter>(alice, internal).await.expect("bound");
-    let refused = theirs.ask(thread, "Mine now?".to_string()).await.unwrap_err();
-    assert!(matches!(refused, SubAgentError::NoSubAgent(_)), "not another's to ask: {refused}");
     let refused = theirs.end(thread).await.unwrap_err();
-    assert!(matches!(refused, SubAgentError::NoSubAgent(_)), "nor to end: {refused}");
+    assert!(matches!(refused, SubAgentError::NoSubAgent(_)), "not another's to end: {refused}");
 
     writer.end(thread).await.expect("ended");
     recorded(&main, |e| matches!(e, HistoryEntry::ThreadClosed { thread: t, .. } if *t == thread))

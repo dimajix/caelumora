@@ -191,6 +191,10 @@ pub enum ChannelError {
     /// made of it.
     #[error("thread {thread} of channel {channel} is delegated by another or to another")]
     DelegatedOtherwise { thread: ThreadId, channel: ChannelId },
+    /// A brief into a thread whose delegation was let go (issue 598): its giver's word on what
+    /// came of the last brief was none, or the giver left; the thread is to be closed.
+    #[error("the delegation into thread {thread} of channel {channel} was let go")]
+    DelegationLetGo { thread: ThreadId, channel: ChannelId },
     /// A brief into a thread quiet after a cancel (issue 557): delegating does not wake it, so that
     /// a giver cannot undo a user's cancel.
     #[error("thread {thread} of channel {channel} is quiet after a cancel")]
@@ -281,9 +285,10 @@ struct Request {
 /// What `run` answers a change it was handed (`ChannelLoop::request`, issue 593): that it carried
 /// it out - the actor started and its join announced, or found removed again; the actor's leave
 /// announced once its task has ended; the tasks of every actor ended (`End`); the thread's opening
-/// announced; the thread closed and announced; the brief handed to the delegate, or dropped for a
-/// thread no longer open -, or nothing, if `run` ended with the change under way or before it was
-/// handed in, or the channel is gone. A change handed in before `run` starts waits for it.
+/// announced; the thread closed and announced; the brief handed to the delegate -, or nothing, if
+/// `run` ended with the change under way or before it was handed in, or the channel is gone, or a
+/// brief was not taken (issue 598: a thread no longer open, delegated otherwise, its delegation
+/// let go). A change handed in before `run` starts waits for it.
 #[derive(Debug)]
 pub(crate) struct Answer(oneshot::Receiver<()>);
 

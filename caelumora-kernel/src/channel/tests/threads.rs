@@ -5,7 +5,7 @@
 use super::*;
 use crate::testing::shown;
 use caelumora_domain::actor::Rejection;
-use caelumora_domain::channel::{Delegation, ThreadOrigin};
+use caelumora_domain::channel::{Delegation, ThreadOrigin, Word};
 use caelumora_domain::history::HistoryEntry;
 use caelumora_domain::message::{Message, MessageId};
 use std::collections::VecDeque;
@@ -79,7 +79,13 @@ async fn a_closed_circle_draws_nobody_in_and_refuses_whoever_is_outside() {
     answered(&mut events, agent).await;
     settled(&helper, ActorState::Idle).await;
     let briefs = VecDeque::new();
-    let delegation = Delegation { giver: hers, recipient: helper_id, initiator: hers, briefs };
+    let delegation = Delegation {
+        giver: hers,
+        recipient: helper_id,
+        initiator: hers,
+        briefs,
+        word: Word::NotDue,
+    };
     let closed = channel.forge_delegate(delegation, |_| Vec::new()).await;
     let actor = channel.user_actor(alice_of(&context)).unwrap();
     let mut shown_to_her = actor.watch();

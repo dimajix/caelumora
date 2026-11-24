@@ -25,11 +25,12 @@ pub trait SubAgentWriter: Send + Sync {
     ) -> SubAgentResult<ThreadId>;
 
     /// Gives the sub-agent of `thread` `text` to read and asks it to respond, once it answered
-    /// what it was given before.
+    /// what it was given before - asked in the turn that read that answer, or it is let go then
+    /// (issue 598).
     ///
     /// # Errors
-    /// `NoSubAgent` if `thread` holds none the work started, `Forbidden` or `Failed` as for
-    /// `start`.
+    /// `NoSubAgent` if `thread` holds none the work started, or one let go; `Forbidden` or
+    /// `Failed` as for `start`.
     async fn ask(&self, thread: ThreadId, text: String) -> SubAgentResult<()>;
 
     /// Ends the sub-agent of `thread`: let go from its channel and its session, its thread closed,

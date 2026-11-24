@@ -265,3 +265,28 @@ gain fields without a default.
   it alone - `thread::open` refuses to found a thread owning an agent that takes part in the
   session already (`SessionError::AlreadyParticipant`), so that no closing deletes an agent that
   was there before the thread.
+- **2026-11-24** — Step 2 built: `Delegation::awaiting` and `let_go`, `follow_read`,
+  `follow_turn_end` and `follow_leave`; `ThreadState::delegate` taking no brief into a delegation
+  let go; `ChannelLoop::record` following the giver's reading and its turn's end or leave;
+  `channel::DELEGATION_LET_GO`, announced once stored and again as the channel starts;
+  `ChannelLoop::delegate` waiting until `run` recorded the brief, refusing one into a delegation
+  let go (`ChannelError::DelegationLetGo`, which the plugin answers as `NoSubAgent`). Changed
+  from the plan as it was built: the channel's state follows the giver by
+  `ChannelState::follow_read(reader, entry, at)` - the entry of what an agent was given names no
+  reader - and `follow_giver(entry, thread, at)`, one rule for a turn's end and a leave, in place
+  of `follow_turn_end` and `let_go_of`; only a delegation into a thread that owns its recipient is
+  let go, so that no other delegation stops taking briefs with nothing to end it; the giver is told
+  the rule by the descriptions of `start_subagent` and `ask_subagent` alone, not by what the
+  delegate gives back, which is the recipient's words. The scripted model of the agents' tests
+  answers what it is called with as well (`Scripted::answering`, `register_answering`), so that a
+  test's lead can ask the sub-agent of the thread its start returned. On review: the giver leaving
+  the thread the delegation was opened at - alone, or with the channel, which records its leave
+  there too - lets it go, since nothing comes back to it any more; a brief `run` does not take
+  is refused to the giver (`run` answers only one taken, `delegate` asks why not) instead of
+  dropped behind an `Ok`. A turn given up is held by a test of the domain alone.
+- **2026-11-24** — Decided by the maintainer on step 2's review, before its commit: the giver's
+  word is one state of the delegation, not two fields - `Delegation::word`, a `Word` of `NotDue`,
+  `Due { answer, read }` and `LetGo` -, and where the giver read the answer is not kept: the
+  channel follows the entries in the order of its history, so that a turn's end it follows after
+  the reading always comes after it (`read: bool`; `follow_read` and `follow_turn_end` without a
+  position, `ChannelState::follow_read` and `follow_giver` likewise).
