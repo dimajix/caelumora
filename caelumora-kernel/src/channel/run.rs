@@ -1294,7 +1294,7 @@ impl ChannelLoop {
             .entry
             .published()
             .and_then(|entry| entry.said().cloned())
-            .filter(|message| (in_line || addresses_a_user(message)) && message.is_heard())
+            .filter(|message| (in_line || message.addresses_a_user()) && message.is_heard())
             .map(|message| Said { message, thread });
         let entry = recorded.entry.clone();
         let mut state = self.state.lock().await;
@@ -1393,12 +1393,6 @@ impl Behind for ChannelLoop {
         }
         Ok((delivered, to))
     }
-}
-
-/// Whether `message` addresses a user (issue 557), by name or as one of everyone: what the line's
-/// view shows them of another thread; an agent addressed there is told in its thread.
-fn addresses_a_user(message: &Message) -> bool {
-    message.addressees.iter().any(|addressed| matches!(addressed, ActorId::User(_)))
 }
 
 #[cfg(test)]

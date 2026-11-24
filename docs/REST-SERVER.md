@@ -345,7 +345,7 @@ before `?before=`, the last ones without it, as `{"items": […], "earlier": …
 position in the history of the oldest item of the page, what the page before it is read with
 (`?before=`), and `null` once there is none; a client passes it on and computes nothing with it. A
 page of the channel's history is what the view of its line shows the user - the line, what happens
-in the whole channel, and what mentions them in another thread; with `?thread=`, of that thread
+in the whole channel, and what addresses them in another thread; with `?thread=`, of that thread
 instead (issue 557). A page of an agent's history is of every thread it
 took part in, of one with `?thread=`. With `?attachments=true`, a page holds only the messages
 carrying attachments, and counts only them (issue 509) - what a tool's result gave its model is no

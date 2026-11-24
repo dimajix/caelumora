@@ -201,6 +201,13 @@ impl Message {
         (self.mentions, self.addressees) = resolved.unwrap_or_default();
     }
 
+    /// Whether it addresses a user (issues 557, 594), by name or as one of everyone: what a view
+    /// of the line shows them of another thread (`Envelope::addresses`); an agent addressed there
+    /// is told in its thread.
+    pub fn addresses_a_user(&self) -> bool {
+        self.addressees.iter().any(|addressed| matches!(addressed, ActorId::User(_)))
+    }
+
     /// About how many tokens the message takes in a model's context (issue
     /// 284): its text, its reasoning, its calls and their results, as
     /// `estimated_tokens` estimates. For where no call measured it - on the
@@ -1051,8 +1058,8 @@ pub(crate) mod tests {
     }
 
     /// Issue 602: a message keeps whom it mentions by name apart from whom it addresses, a group
-    /// handle among them - but its sender, whom it names alone (issue 594); one without content
-    /// mentions and addresses nobody.
+    /// handle among them - but its sender, whom it names alone (issue 594) -, and tells whether a
+    /// user is among them; one without content mentions and addresses nobody.
     #[test]
     fn a_message_resolves_whom_it_mentions_by_name_and_whom_it_addresses() {
         use crate::mention::MentionDirectory;
@@ -1076,6 +1083,10 @@ pub(crate) mod tests {
         let mut naming_me = said("@all, and @me");
         naming_me.resolve_mentions(&directory, &present);
         assert_eq!(naming_me.addressees, [bob, sassy, me], "its sender by name");
+        assert!(naming_me.addresses_a_user(), "Bob, and its sender");
+        let mut to_sassy = said("@sassy");
+        to_sassy.resolve_mentions(&directory, &present);
+        assert!(!to_sassy.addresses_a_user(), "an agent alone");
 
         message.content = None;
         message.resolve_mentions(&directory, &present);

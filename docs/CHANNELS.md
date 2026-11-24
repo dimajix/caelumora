@@ -228,9 +228,15 @@ channel - what it hears enters its context, and is paid for by every call after 
 everything of the channel, which a frontend sorts by thread; what goes to someone by name reaches
 them wherever it happens. The web UI and the TUI show the line (`Envelope::is_shown_in_line`,
 `ChannelView::shown_in_line`): what happens in it and in the whole channel, and of another thread
-its approvals and its questions, which its calls wait for, and what mentions the viewer. A view of
+its approvals and its questions, which its calls wait for, and what addresses the viewer. A view of
 another thread shows what happens in it and in the whole channel (`Envelope::is_shown_in_thread`,
 `Filter::in_thread`, issue 595): the web UI's pane beside the line, the thread the TUI follows.
+What **concerns** a user wherever they look is one rule beside them (`Envelope::concerns`, issue
+594): an approval, from its request to its end - the request names nobody who may approve it -,
+but a person's answer to it, which goes to the approver; questions put to them, and the closing of
+questions where shown to them, which does not name whom they were put to; and a message heard that
+addresses them. The TUI tells it of a channel not talked in (`Followed::concerns_user`), with what
+tells the user of what they did themselves: an answer of theirs to an approval, a call they made.
 
 A thread is **opened** at a message of another thread of its channel (`ThreadOrigin`), its
 **circle** open or closed (see below), with its **founders**, as its `ThreadSpec` asks
@@ -481,13 +487,13 @@ their positions in the history order them as the user sees them.
     another `Filter::in_thread`), of what the user may read, after its mark and from where their
     view begins - counted up to a cap, and whether one of these messages addresses them, `@all`
     included (`Message::addressees`). The channel's (`ChannelView::unread`, `Detail::UNREAD`) is
-    its line's, what mentions the user elsewhere included; each thread open beside it gives its
+    its line's, what addresses the user elsewhere included; each thread open beside it gives its
     own (`ThreadSnapshot::unread`), so that a sub-agent's work does not count for the channel.
-*   **Announced as it is said.** Every message others hear in the line, and one mentioning a user
+*   **Announced as it is said.** Every message others hear in the line, and one addressing a user
     in another thread, is announced on the event bus once it is stored (`channel::SAID`), with the
     message and its thread (`Said`), classified as the channel: it reaches who may read the channel
     and is cleared for it, which is who reads the message in the history. A frontend counts on from
-    what it listed; of another thread only what mentions the user (issue 557).
+    what it listed; of another thread only what addresses the user (issue 557).
 
 ## Acting in a channel
 
@@ -538,7 +544,7 @@ no end in anyone's name. A turn whose agent was aborted after the grace, saying 
 without an end: nobody ended it.
 
 **Everything shown is recorded** (issue 417). Every entry says who sent it and whom it went to:
-every participant at the time it concerns by the rule every channel delivers by - resolved as it
+every participant at the time it goes to by the rule every channel delivers by - resolved as it
 is recorded, so that who took part then decides who reads it -, or those the moderator named. What
 a participant was shown live is what the history holds for them, in the same order - also what went
 to them alone: the answer to a request to answer again, a command's answer and a command not carried

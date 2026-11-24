@@ -149,21 +149,42 @@ impl Envelope {
     /// Whether a frontend shows it to `viewer` in the view of its channel's line (issue 557): what
     /// happens in the line or in the whole channel (`thread`), and of every other thread its
     /// approvals and its questions, which its calls wait for (`ActorEvent::is_waited_for`), and a
-    /// message heard that mentions the viewer - as a page of the line holds them
+    /// message heard that addresses the viewer - as a page of the line holds them
     /// (`Filter::shown_in_line`).
     pub fn is_shown_in_line(&self, viewer: ActorId) -> bool {
         let line = ThreadId::line(self.context.channel_id);
         self.event.is_waited_for() || self.addresses(viewer) || self.is_shown_in_thread(line)
     }
 
-    /// Whether it is a message heard that mentions `viewer` (issues 557, 595): what a view shows
-    /// them of a thread it is not of.
+    /// Whether it is a message heard that addresses `viewer` (issues 557, 595, 602), by name or as
+    /// one of everyone (`Message::addressees`): what a view shows them of a thread it is not of.
     pub fn addresses(&self, viewer: ActorId) -> bool {
         matches!(
             &self.event,
             ActorEvent::CompleteMessageGenerated(message)
                 if message.is_heard() && message.addressees.contains(&viewer)
         )
+    }
+
+    /// Whether it concerns `viewer` wherever they look (issue 594): an approval, from its request
+    /// to its end - the request names nobody who may approve it, so it concerns everyone -, but a
+    /// person's answer to it, which goes to the approver; questions put to them
+    /// (`Questions::is_asked`), and the closing of questions where they were shown to them - to
+    /// every user unless sensitive -, which does not name whom they were put to; a message heard
+    /// that addresses them (`addresses`).
+    pub fn concerns(&self, viewer: ActorId) -> bool {
+        match &self.event {
+            ActorEvent::ApprovalRequested(_)
+            | ActorEvent::ApprovalGranted(_)
+            | ActorEvent::ApprovalDenied(_)
+            | ActorEvent::ApprovalTimedOut(_)
+            | ActorEvent::ApprovalRequestWithdrawn { .. } => true,
+            ActorEvent::QuestionRequested(request) => request.questions.is_asked(viewer),
+            ActorEvent::QuestionClosed { shown_to, .. } => {
+                shown_to.as_ref().is_none_or(|shown_to| shown_to.contains(&viewer))
+            }
+            _ => self.addresses(viewer),
+        }
     }
 
     /// Whether a frontend shows it in the view of the thread `thread` (issue 595): what happens in
@@ -773,9 +794,9 @@ mod tests {
     }
 
     /// Issue 557: the line's view shows what happens in the line and in the whole channel, and of
-    /// another thread its approvals and questions and what mentions the viewer alone.
+    /// another thread its approvals and questions and what addresses the viewer alone.
     #[test]
-    fn the_lines_view_shows_of_another_thread_what_waits_or_mentions_the_viewer() {
+    fn the_lines_view_shows_of_another_thread_what_waits_or_addresses_the_viewer() {
         let (session, channel) = (SessionId::new(), ChannelId::new());
         let agent = AgentId::new();
         let in_line = EventContext::new(session, channel, ActorId::Agent(agent), "bob");
@@ -791,7 +812,7 @@ mod tests {
         assert!(!shown(&in_other, said()), "said in another thread");
         let mentioning = Message { addressees: vec![viewer], ..make_message(MessageId::new()) };
         let mentioning = ActorEvent::CompleteMessageGenerated(mentioning);
-        assert!(shown(&in_other, mentioning), "mentioning the viewer");
+        assert!(shown(&in_other, mentioning), "addressing the viewer");
         let step =
             Message { internal: true, addressees: vec![viewer], ..make_message(MessageId::new()) };
         let step = ActorEvent::IntermediateMessageGenerated(step);
@@ -801,6 +822,58 @@ mod tests {
         assert!(shown(&in_other, opened), "of the whole channel");
         let request = make_approval_request(session, channel, agent);
         assert!(shown(&in_other, ActorEvent::ApprovalRequested(request)), "its call waits");
+    }
+
+    /// Issue 594: what concerns a viewer wherever they look - an approval from its request to its
+    /// end, questions put to them and their closing where shown to them, a message heard that
+    /// addresses them -, not another's answer, questions put to another, nor what is said
+    /// without addressing them, or is not heard.
+    #[test]
+    fn what_concerns_a_viewer_is_an_approval_questions_put_to_them_and_what_addresses_them() {
+        use crate::approval::{ApprovalDecision, ApprovalVerdict};
+        use crate::question::testing::make_question_request;
+        let (session, channel) = (SessionId::new(), ChannelId::new());
+        let agent = AgentId::new();
+        let context = EventContext::new(session, channel, ActorId::Agent(agent), "bob");
+        let (viewer, other) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
+        let concerns = |event: ActorEvent| Envelope::new(context.clone(), event).concerns(viewer);
+        let request = make_approval_request(session, channel, agent);
+        let verdict = || ApprovalVerdict::new(request.id, agent);
+        assert!(concerns(ActorEvent::ApprovalRequested(request.clone())), "every approval");
+        assert!(concerns(ActorEvent::ApprovalGranted(verdict())), "until its end");
+        assert!(concerns(ActorEvent::ApprovalDenied(verdict())));
+        assert!(concerns(ActorEvent::ApprovalTimedOut(verdict())));
+        assert!(concerns(ActorEvent::ApprovalRequestWithdrawn { id: request.id }));
+        let answered = ActorEvent::ApprovalAnswered {
+            id: request.id,
+            approved: true,
+            decision: ApprovalDecision {
+                by: other,
+                name: "other".to_string(),
+                by_rule: None,
+                at: Utc::now(),
+            },
+        };
+        assert!(!concerns(answered), "another's answer, which goes to the approver");
+
+        let asked = make_question_request(session, channel, agent, viewer);
+        assert!(concerns(ActorEvent::QuestionRequested(asked)), "put to them");
+        let of_other = make_question_request(session, channel, agent, other);
+        assert!(!concerns(ActorEvent::QuestionRequested(of_other)), "put to another");
+        let closed = |shown_to| ActorEvent::QuestionClosed { id: QuestionId::new(), shown_to };
+        assert!(concerns(closed(None)), "closed where shown to every user");
+        assert!(concerns(closed(Some(vec![viewer]))), "closed where shown to them");
+        assert!(!concerns(closed(Some(vec![other]))), "closed where shown to another alone");
+
+        let said = |internal, addressees| Message {
+            internal,
+            addressees,
+            ..make_message(MessageId::new())
+        };
+        let complete = |message| ActorEvent::CompleteMessageGenerated(message);
+        assert!(concerns(complete(said(false, vec![viewer]))), "addressing them");
+        assert!(!concerns(complete(said(false, vec![other]))), "addressing another");
+        assert!(!concerns(complete(said(true, vec![viewer]))), "not heard");
     }
 
     /// Issue 595: a thread's view shows what happens in it and in the whole channel, nothing of
@@ -911,7 +984,7 @@ mod tests {
         }
 
         /// Whom of them `event` of `sender` goes to (`Envelope::recipients`).
-        fn concerned(&self, sender: ActorId, event: ActorEvent) -> HashSet<ActorId> {
+        fn reached(&self, sender: ActorId, event: ActorEvent) -> HashSet<ActorId> {
             let envelope =
                 Envelope::new(EventContext { sender_id: sender, ..EventContext::default() }, event);
             let recipients = envelope.recipients();
@@ -964,7 +1037,7 @@ mod tests {
         };
 
         assert_eq!(
-            present.concerned(
+            present.reached(
                 sender,
                 ActorEvent::CompleteMessageGenerated(said(Some("hello"), MessageRole::Assistant))
             ),
@@ -977,7 +1050,7 @@ mod tests {
             Message { internal: true, ..said(Some("thinking"), MessageRole::Assistant) },
         ] {
             assert_eq!(
-                present.concerned(sender, ActorEvent::CompleteMessageGenerated(unheard)),
+                present.reached(sender, ActorEvent::CompleteMessageGenerated(unheard)),
                 present.users(),
                 "nothing to hear, the users alone"
             );
@@ -998,7 +1071,7 @@ mod tests {
             },
         ] {
             let kind = changed.kind();
-            assert_eq!(present.concerned(sender, changed), present.users_and_agents(), "{kind}");
+            assert_eq!(present.reached(sender, changed), present.users_and_agents(), "{kind}");
         }
     }
 
@@ -1046,7 +1119,7 @@ mod tests {
         ] {
             let kind = event.kind();
             assert_eq!(
-                present.concerned(present.agents[0], event),
+                present.reached(present.agents[0], event),
                 present.users(),
                 "{kind} goes to the users, not to the agents"
             );
@@ -1070,7 +1143,7 @@ mod tests {
         };
 
         assert_eq!(
-            present.concerned(
+            present.reached(
                 issuer,
                 ActorEvent::CommandRequested {
                     command: "compact".to_string(),
@@ -1081,7 +1154,7 @@ mod tests {
             HashSet::from([agent])
         );
         assert_eq!(
-            present.concerned(
+            present.reached(
                 issuer,
                 ActorEvent::RetryRequested {
                     target: RetryTarget::Message(MessageId::new()),
@@ -1091,7 +1164,7 @@ mod tests {
             HashSet::from([agent])
         );
         assert_eq!(
-            present.concerned(
+            present.reached(
                 issuer,
                 ActorEvent::CommandRequested {
                     command: "compact".to_string(),
@@ -1103,17 +1176,17 @@ mod tests {
             "only an agent carries one out"
         );
         assert_eq!(
-            present.concerned(agent, command(None)),
+            present.reached(agent, command(None)),
             present.users(),
             "everybody's answer, to the users"
         );
         assert_eq!(
-            present.concerned(agent, command(Some(issuer))),
+            present.reached(agent, command(Some(issuer))),
             HashSet::from([issuer]),
             "a private one, to its issuer"
         );
         assert_eq!(
-            present.concerned(
+            present.reached(
                 agent,
                 ActorEvent::CommandStarted {
                     command: "compact".to_string(),
@@ -1125,7 +1198,7 @@ mod tests {
             HashSet::from([issuer])
         );
         assert_eq!(
-            present.concerned(
+            present.reached(
                 agent,
                 ActorEvent::CommandFailed {
                     command: "compact".to_string(),
@@ -1149,8 +1222,8 @@ mod tests {
             message: None,
             reason: Rejection::Forbidden,
         };
-        assert_eq!(present.concerned(approver, refused(user)), HashSet::from([user]));
-        assert_eq!(present.concerned(present.agents[0], refused(user)), HashSet::from([user]));
+        assert_eq!(present.reached(approver, refused(user)), HashSet::from([user]));
+        assert_eq!(present.reached(present.agents[0], refused(user)), HashSet::from([user]));
     }
 
     /// Issues 81, 148: an approval goes through the approvers - the
@@ -1185,20 +1258,20 @@ mod tests {
         for asked in [request(), withdrawn()] {
             let kind = asked.kind();
             assert_eq!(
-                present.concerned(agent, asked),
+                present.reached(agent, asked),
                 HashSet::from([approver]),
                 "{kind}: internal, not shown to the users yet"
             );
         }
         for asked in [request(), withdrawn()] {
             assert_eq!(
-                present.concerned(approver, asked),
+                present.reached(approver, asked),
                 present.users(),
                 "what the users act on, or no longer"
             );
         }
         assert!(
-            present.concerned(user, withdrawn()).is_empty(),
+            present.reached(user, withdrawn()).is_empty(),
             "only an agent and the approver withdraw"
         );
         let decision = ApprovalDecision {
@@ -1210,7 +1283,7 @@ mod tests {
         let answered =
             ActorEvent::ApprovalAnswered { id: Default::default(), approved: true, decision };
         assert_eq!(
-            present.concerned(user, answered),
+            present.reached(user, answered),
             HashSet::from([approver]),
             "a user's answer, to the approver alone"
         );
@@ -1218,7 +1291,7 @@ mod tests {
             [ActorEvent::ApprovalGranted(response()), ActorEvent::ApprovalTimedOut(response())]
         {
             let kind = decision.kind();
-            assert!(present.concerned(user, decision).is_empty(), "{kind}: the approver's alone");
+            assert!(present.reached(user, decision).is_empty(), "{kind}: the approver's alone");
         }
         let decided = present.users().into_iter().chain([agent]).collect::<HashSet<_>>();
         for decision in [
@@ -1228,7 +1301,7 @@ mod tests {
         ] {
             let kind = decision.kind();
             assert_eq!(
-                present.concerned(approver, decision),
+                present.reached(approver, decision),
                 decided,
                 "{kind} ends the approval for the users, and goes to the agent that asked"
             );
@@ -1272,35 +1345,35 @@ mod tests {
         let closed = |shown_to| ActorEvent::QuestionClosed { id: QuestionId::new(), shown_to };
 
         assert_eq!(
-            present.concerned(agent, request(false)),
+            present.reached(agent, request(false)),
             present.users(),
             "every user sees what the agent waits for"
         );
         assert_eq!(
-            present.concerned(agent, request(true)),
+            present.reached(agent, request(true)),
             HashSet::from([alice]),
             "sensitive: those asked alone"
         );
-        assert!(present.concerned(alice, request(false)).is_empty(), "only an agent asks");
-        assert_eq!(present.concerned(agent, closed(None)), present.users());
-        assert_eq!(present.concerned(agent, closed(Some(vec![alice]))), HashSet::from([alice]));
+        assert!(present.reached(alice, request(false)).is_empty(), "only an agent asks");
+        assert_eq!(present.reached(agent, closed(None)), present.users());
+        assert_eq!(present.reached(agent, closed(Some(vec![alice]))), HashSet::from([alice]));
         let answered =
             ActorEvent::QuestionAnswered { id: QuestionId::new(), agent_id, responses: Vec::new() };
         assert_eq!(
-            present.concerned(alice, answered.clone()),
+            present.reached(alice, answered.clone()),
             HashSet::from([agent]),
             "neither the other agent, the other users nor the approver"
         );
         assert_eq!(
             present
-                .concerned(alice, ActorEvent::QuestionDeclined { id: QuestionId::new(), agent_id }),
+                .reached(alice, ActorEvent::QuestionDeclined { id: QuestionId::new(), agent_id }),
             HashSet::from([agent])
         );
-        assert!(present.concerned(present.agents[1], answered).is_empty(), "only a user answers");
+        assert!(present.reached(present.agents[1], answered).is_empty(), "only a user answers");
     }
 
     /// Issues 200, 278, 304, 418: what only asks, and what the channel or
-    /// the moderator say of their own, concerns nobody by the rule - the
+    /// the moderator say of their own, goes to nobody by the rule - the
     /// moderator and the channel name whom.
     #[test]
     fn what_only_asks_concerns_nobody() {
@@ -1324,7 +1397,7 @@ mod tests {
             },
         ] {
             let kind = event.kind();
-            assert!(present.concerned(user, event).is_empty(), "{kind}");
+            assert!(present.reached(user, event).is_empty(), "{kind}");
         }
     }
 

@@ -367,12 +367,13 @@ impl Followed {
         !self.views.listed_in(self.channel.session_id(), self.channel_id()).await
     }
 
-    /// Whether `envelope` concerns the user wherever they talk: it asks something of them - an
-    /// approval, questions put to them, a message that mentions them -, ends an approval for
-    /// them - withdrawn, or answered by them (issue 566) -, or is a call they made (issue 587). Of
-    /// the end of an approval, `take_in` tells what concerns them: a withdrawal of one pending, an
-    /// answer given by a rule of theirs. What the view of the thread followed leaves out concerns
-    /// them nowhere (`shows`, issues 557, 595); the thread followed closing does.
+    /// Whether `envelope` concerns the user wherever they talk: what concerns them wherever they
+    /// look (`Envelope::concerns`, issue 594) - an approval, questions put to them, a message that
+    /// addresses them -, and what tells them of what they did themselves: an answer of theirs to
+    /// an approval (issue 566), a call they made (issue 587). Of the end of an approval, `take_in`
+    /// tells what concerns them: a withdrawal of one pending, an answer given by a rule of theirs.
+    /// What the view of the thread followed leaves out concerns them nowhere (`shows`, issues 557,
+    /// 595); the thread followed closing does.
     pub(crate) fn concerns_user(&self, envelope: &Envelope) -> bool {
         if matches!(envelope.event, ActorEvent::ThreadClosed { thread } if thread == self.thread) {
             return true;
@@ -380,16 +381,14 @@ impl Followed {
         if !self.shows(envelope) {
             return false;
         }
-        match &envelope.event {
-            ActorEvent::ApprovalRequested(_) | ActorEvent::ApprovalRequestWithdrawn { .. } => true,
+        let of_their_own = match &envelope.event {
             ActorEvent::ApprovalAnswered { .. } => envelope.context.sender_id == self.me(),
-            ActorEvent::QuestionRequested(request) => request.questions.is_asked(self.me()),
             ActorEvent::CompleteMessageGenerated(message) => {
-                message.addressees.contains(&self.me())
-                    || (message.sender_id == self.me() && message.is_a_persons_call())
+                message.sender_id == self.me() && message.is_a_persons_call()
             }
             _ => false,
-        }
+        };
+        of_their_own || envelope.concerns(self.me())
     }
 
     /// Takes in `event`, sent in the user's name, and answers what the terminal prints of it:
@@ -417,7 +416,7 @@ impl Followed {
 
     /// Takes in `message`, complete, as `envelope` shows it, and answers what the terminal prints
     /// of it: each message as soon as it is complete, as the web UI shows it; the full response
-    /// that ends an answer holds them again (issue 220). One of another thread that mentions the
+    /// that ends an answer holds them again (issue 220). One of another thread that addresses the
     /// user (issue 557) is no answer of the thread followed that `/retry` asks for again.
     fn take_in_complete(&mut self, envelope: &Envelope, message: &Message) -> Vec<Printed> {
         if envelope.context.thread_id == self.thread {
@@ -477,7 +476,7 @@ impl Followed {
     /// Whether the view of the thread followed shows `envelope` (issue 595): the line's view
     /// (`Envelope::is_shown_in_line`), or of another thread what happens in it and in the whole
     /// channel (`Envelope::is_shown_in_thread`) - and, wherever the user follows, what waits for
-    /// them, which they answer from any thread, and what mentions them, as the line's view shows
+    /// them, which they answer from any thread, and what addresses them, as the line's view shows
     /// it of the other threads.
     fn shows(&self, envelope: &Envelope) -> bool {
         if self.thread == self.line() {
@@ -812,7 +811,7 @@ impl Followed {
     /// shows after - said as the history was read - is not printed twice; the quiet calls among
     /// them join those under way, so that a result that comes live finds its call. The last answer
     /// of an agent in the thread followed is what `/retry` asks for, as one shown live is - not one
-    /// of another thread that mentions the user (issue 595).
+    /// of another thread that addresses the user (issue 595).
     fn history_printed(&mut self, page: &HistoryPage) -> Vec<Printed> {
         let mut printed = Vec::new();
         self.from_history.clear();
@@ -1304,8 +1303,8 @@ mod tests {
         assert!(told[0].contains("calls run_command") && told[1].contains("answered"), "{told:?}");
     }
 
-    /// Issue 557: of another thread the line's view prints its approvals and what mentions the user
-    /// alone; what came back from it is printed as given back, and a thread opened as such.
+    /// Issue 557: of another thread the line's view prints its approvals and what addresses the
+    /// user alone; what came back from it is printed as given back, and a thread opened as such.
     #[tokio::test]
     async fn of_another_thread_only_what_waits_or_mentions_the_user_is_printed() {
         let (mut followed, channel, me) = followed().await;
@@ -1321,7 +1320,7 @@ mod tests {
         assert!(followed.take_in(&in_other(said)).is_empty(), "said in another thread");
         let mentioning = Message { addressees: vec![me], ..message(agent, "@owner, look") };
         let mentioning = ActorEvent::CompleteMessageGenerated(mentioning);
-        assert!(followed.concerns_user(&in_other(mentioning.clone())), "it mentions them");
+        assert!(followed.concerns_user(&in_other(mentioning.clone())), "it addresses them");
         assert_eq!(lines(&followed.take_in(&in_other(mentioning))), ["other: @owner, look"]);
         assert_eq!(followed.last_answer, None, "no answer of the line to ask for again");
         let request = ActorEvent::ApprovalRequested(approval(&channel, agent_id));
@@ -1350,7 +1349,7 @@ mod tests {
 
     /// Issue 595: following a thread, the terminal prints what its view shows - what happens in it
     /// and in the whole channel, not what is said in the line -, and what waits for the user or
-    /// mentions them wherever it was asked; the last answer `/retry` asks for is the thread's; as
+    /// addresses them wherever it was asked; the last answer `/retry` asks for is the thread's; as
     /// the thread closes, which concerns the user wherever they talk, they follow the line again,
     /// nothing of the thread left to ask for again.
     #[tokio::test]
@@ -1541,9 +1540,9 @@ mod tests {
         assert!(!waiting.contains(&ids[2]), "put to another: {waiting}");
     }
 
-    /// What ends an approval for the user concerns them - withdrawn, or answered by them -, not
-    /// another's answer; of it, what is told is a withdrawal of one shown, and an answer of theirs
-    /// given by a rule (issue 566).
+    /// What ends an approval concerns the user - withdrawn, decided by the approver (issue 594),
+    /// or answered by them -, not another's answer; of it, what is told is a withdrawal of one
+    /// shown, and an answer of theirs given by a rule (issue 566).
     #[tokio::test]
     async fn the_end_of_an_approval_concerns_the_user() {
         let (mut followed, channel, me) = followed().await;
@@ -1555,7 +1554,11 @@ mod tests {
         let withdrawn = from(&channel, agent, ActorEvent::ApprovalRequestWithdrawn { id });
         let by_rule = |by| from(&channel, by, answered(by, id, Some(ApprovalRuleId::new())));
         let typed = from(&channel, me, answered(me, id, None));
+        let approver = ActorId::Approver(ApproverId::new());
+        let granted = ActorEvent::ApprovalGranted(ApprovalVerdict::new(id, agent_id));
+        let granted = from(&channel, approver, granted);
         assert!(followed.concerns_user(&withdrawn));
+        assert!(followed.concerns_user(&granted), "decided");
         assert!(followed.concerns_user(&by_rule(me)));
         assert!(followed.concerns_user(&typed));
         assert!(!followed.concerns_user(&by_rule(other)), "another's answer");
@@ -1564,6 +1567,7 @@ mod tests {
         followed.take_in(&from(&channel, agent, ActorEvent::ApprovalRequested(request)));
         assert!(followed.take_in(&typed).is_empty(), "typed by the user: nothing told");
         assert_eq!(followed.take_in(&by_rule(me)).len(), 1, "given by their rule: told");
+        assert!(followed.take_in(&granted).is_empty(), "decided: nothing told");
     }
 
     /// What waits for the user as a channel is followed - the approvals the agents' turns wait
@@ -1991,7 +1995,7 @@ mod tests {
     /// Of a page of the history, what was said is printed - the user's own words, a step of a
     /// plan, tool calls and how they ended -, a quiet call left out and its result paired with it
     /// as it comes live; the last answer of an agent in the line is what `/retry` asks for (issue
-    /// 569), not one of another thread that mentions the user after it (issue 595).
+    /// 569), not one of another thread that addresses the user after it (issue 595).
     #[tokio::test]
     async fn what_a_page_of_the_history_says_is_printed() {
         let (mut followed, channel, me) = followed().await;

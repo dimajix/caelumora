@@ -61,7 +61,7 @@ In a channel, the terminal follows one thread at a time (issue 595): its line, o
 `/thread follow` chose - by its number in the list `/thread list` showed last, or the beginning of
 its id. It prints what the view of that thread shows (`Envelope::is_shown_in_line`,
 `Envelope::is_shown_in_thread`), and, wherever it follows, the approvals and questions waiting for
-the user, which they answer from any thread, and what mentions them; what is typed goes to the
+the user, which they answer from any thread, and what addresses them; what is typed goes to the
 thread followed. A thread followed that closes - or found closed as the channel is caught up with -
 leaves the user in the line again, told so, also from a channel not talked in.
 

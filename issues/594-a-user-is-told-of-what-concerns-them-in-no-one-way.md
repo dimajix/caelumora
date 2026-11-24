@@ -128,7 +128,7 @@ snapshot), so what was missed is the unread messages addressing them (`Filter::a
 what is pending now. The web UI cannot ask a predicate of the kernel, and `said` reaches every
 reader alike: it keeps a TypeScript mirror of the predicate, as `isShownInLine` is one, documented
 as such and tested with the same cases. A stream filtered per subscriber was weighed and found out
-of proportion.
+of proportion. (Changed on 2026-11-24: no mirror, see *History*.)
 
 **D3 - How it is told is each frontend's.** The rule of D2 says what concerns a user; how each
 frontend tells it is its own. The web UI marks a channel where something waits for the user - an
@@ -154,7 +154,22 @@ Each step a commit of its own, reviewed before the next.
 2. **What concerns a user.** `Envelope::concerns`; `Followed::concerns_user` built on it; the
    TypeScript mirror; the web UI marks what waits for the user in the session list and notifies of
    approvals and questions put to them. `addresses_a_user`, which decides what `said` announces, is
-   aligned with the rule.
+   aligned with the rule. Changed on 2026-11-24 (see *History*) to two steps, without the
+   mirror:
+   - **2a - the rule.** `Envelope::concerns`: an approval from its request to its end, questions
+     put to the viewer and their closing where shown to them, a message heard that addresses them
+     (`Envelope::addresses`). `Followed::concerns_user` built on it, keeping what is the
+     terminal's own: the thread followed closing, the feedback on a call or an approval answer of
+     the user's.
+     `addresses_a_user`, which decides what `said` announces, moved to the domain as
+     `Message::addresses_a_user`.
+   - **2b - what waits for a user, in the web UI.** The `UserActor` keeps what waits for its user
+     in its channel: the open questions put to them, as it keeps them already, and now the
+     approvals requested, from their request to their end. A channel's snapshot gives it to the
+     viewer (`ChannelSnapshot::waiting`, a `Waiting` of approvals and questions counted, with
+     `Detail::WAITING`), read from the viewer's running actor; as it changes, the actor announces
+     `waiting_changed`, carrying the user's `ActorId` alone. The session list fetches the session
+     again on it, marks the channels where something waits, and notifies where a count rose.
 
 572 is built apart, whenever it is taken up.
 
@@ -174,3 +189,22 @@ Each step a commit of its own, reviewed before the next.
   whom it addresses does not depend on whether the message draws its sender into the thread
   first; and a modification resolves against who takes part in the thread as it is modified, as
   its names are resolved anew then.
+- **2026-11-24** — Step 2 split in two, and its source for the web UI decided by the maintainer
+  (*Plan*). The global stream tells nothing of approvals and questions, so the TypeScript mirror of
+  `concerns` that D2 foresaw would have nothing to run on for a channel not open; it is not built,
+  the kernel tells what waits for a user instead. Weighed: the channel loop keeping what waits, from
+  the requests it records - a third keeper of pending approvals beside the turn and the approver,
+  and the rule a second time where the view counts it per viewer; reading the agents' stored
+  state, which lags - the agent sends its requests before it stores them (`request_approvals`), so
+  a mark would come late or stay; announcing the requests on the global stream - it reaches every
+  reader of the channel, where sensitive questions go to those asked alone. Chosen: the
+  `UserActor`, which is given what is delivered to its user and keeps the questions put to them
+  already.
+- **2026-11-24** — Step 2a done: `Envelope::concerns`, `Followed::concerns_user` built on it,
+  `Message::addresses_a_user` in the domain. What the terminal tells of a channel not talked in
+  changes in two ways: the end of an approval and the closing of questions concern the user - it
+  prints nothing of them, as before -, and a message not heard (`Message::is_heard`) that
+  addresses them is told there no more, as the web UI leaves it out. Reworded with it, as the
+  maintainer asked: what a view shows of another thread is what *addresses* the viewer, not what
+  mentions them (issue 602), and the rule every channel delivers by says whom an event *goes to*,
+  where it said whom it concerns.
