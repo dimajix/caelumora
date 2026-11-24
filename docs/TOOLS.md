@@ -590,8 +590,9 @@ in a thread of its own opened at the call, and gives back only what came of it. 
 block: the call returns the thread at once, and what the sub-agent answers is given to the agent to
 read where the thread was opened, once it is there - as the kernel's delegate gives it (see
 [CHANNELS.md](CHANNELS.md#delegating-into-a-thread)). `ask_subagent` gives it more to read,
-`end_subagent` ends it: let go from its channel and its session, its thread closed, the agent
-deleted, never purged. A brief still open as it is ended is dropped - if its leave came first, the
+`end_subagent` ends it: its thread, which owns it, closed with it (`procedure::thread::Close`,
+issue 598) - let go from its channel and its session, the thread closed, the agent deleted, never
+purged. A brief still open as it is ended is dropped - if its leave came first, the
 agent is given back that it left before it answered.
 
 They are offered where the work's session runs, and act through the `SubAgentWriter` the plugin

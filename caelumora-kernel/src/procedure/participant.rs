@@ -695,7 +695,8 @@ pub(crate) async fn take_into_channel(
 
 /// Lets `participant` go from `session` and every channel of it on behalf of `context`, by the way
 /// `exit` says (issue 590), for a procedure that holds what letting them go needs
-/// (`lock_letting_go`) - `LetGo`, or the sub-agents' end (issue 558). Everything is asked first:
+/// (`lock_letting_go`) - `LetGo`, or closing a thread with the agents it owns (`thread::Close`,
+/// issue 598). Everything is asked first:
 /// of whoever removes them whether they may change the session (`UpdateSession`), before anything
 /// of the one let go; then that they take part, and whether they may leave by their own act
 /// (`require_exit_from_session`). Out of the session first, so that nobody takes them into one of
@@ -712,7 +713,7 @@ pub(crate) async fn take_into_channel(
 /// # Errors
 /// `StoreError::PermissionDenied` if whoever removes them may not change the session; as
 /// `require_exit_from_session`; whatever storing the session or a channel reports.
-pub async fn let_go_from_session(
+pub(crate) async fn let_go_from_session(
     kernel: &Kernel,
     session: &SessionLoop,
     context: &SecurityContext,
@@ -1057,13 +1058,13 @@ pub(crate) async fn let_go_where_not_running(
 /// participant exclusively; the channel `from`, or every channel of the session - also one that
 /// does not run, whose document letting go changes, and one that lists them only once they were
 /// founded into it meanwhile - shared; and in each the threads they take part in shared, until they
-/// have left them, so that nobody closes one before (`thread::Close`). What `LetGo` locks, and a
-/// plugin's procedure that lets someone go within a change of its own (issue 558's sub-agents).
+/// have left them, so that nobody closes one before (`thread::Close`). What `LetGo` locks, and
+/// `thread::Close` for each agent the thread owns (issue 598).
 /// Asks nothing; of a session that does not run, the participant and the channel named alone.
 ///
 /// # Errors
 /// `Deferred` if anything of it is held otherwise.
-pub async fn lock_letting_go(
+pub(crate) async fn lock_letting_go(
     locks: &mut Locks<'_>,
     running: Option<&SessionLoop>,
     session: SessionId,

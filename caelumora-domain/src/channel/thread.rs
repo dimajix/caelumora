@@ -3,6 +3,7 @@
 
 use super::ChannelId;
 use crate::actor::ActorId;
+use crate::agent::AgentId;
 use crate::chain::Position;
 use crate::message::{Message, MessageId};
 use serde::{Deserialize, Serialize};
@@ -25,13 +26,17 @@ pub struct ThreadOrigin {
     pub message: MessageId,
 }
 
-/// How a thread was opened: where it hangs, who opened it, and whether who takes part in it may
-/// grow.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// How a thread was opened: where it hangs, who opened it, whether who takes part in it may grow,
+/// and the agents it owns.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Opening {
     pub origin: ThreadOrigin,
     pub by: ActorId,
     pub circle: Circle,
+    /// The agents it was founded with, made for it alone (issue 598), which end with it: let go
+    /// and deleted as it is closed (`procedure::thread::Close`). None unless its opener asked
+    /// (`ThreadSpec`).
+    pub owned: Vec<AgentId>,
 }
 
 /// Whether who takes part in a thread may grow (issues 557, 602), fixed as it is opened: the one

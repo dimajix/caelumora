@@ -143,6 +143,15 @@ The plugin opens a sub-agent's thread with `owns_founders`, and `end_subagent` c
 `thread::End` after checking that the work's agent is the giver; `Ending` and `wind_up` go. Tests:
 `End` lets go, closes and deletes, an owned founder only; the plugin's ending, as tested today.
 
+Changed on 2026-11-24, as the bodies were begun (see *History*): a flag alone does not tell a
+closing whom to end - the founders are kept nowhere, and those taking part are not they once one
+was let go by a closing that stopped half-way. The opening keeps the agents it owns instead
+(`Opening::owned: Vec<AgentId>`, from `ThreadSpec::owns_founders`, the agents among the founders),
+and no procedure of its own is added: `thread::Close` closes a thread that owns agents with them -
+each let go from the session, the thread closed, each deleted -, read from the channel's state, so
+that asking again finishes it also once the thread is closed. A thread that owns nobody closes as
+before.
+
 ### Step 2 - The giver's word, followed by the channel
 
 ```rust
@@ -213,7 +222,7 @@ giver leaving lets go; what is let go survives a restart and is announced again.
 
 ### Step 3 - The follower ends what was let go
 
-The `AgentFollower` follows delegations let go as well, carrying out `thread::End` for each, and,
+The `AgentFollower` follows delegations let go as well, carrying out `thread::Close` for each, and,
 after it lost events, for every delegation let go in the running sessions
 (`ChannelLoop::delegations_let_go`). Its one sentence changes - it follows what ends or comes back
 from outside a procedure - and its name with it (proposed: `Follower`), so that every program that
@@ -223,7 +232,7 @@ deleted; asked again before, it stays.
 
 ### Open for the interface review
 
-- **In whose name `thread::End` runs from the follower**: the delegate's context
+- **In whose name `thread::Close` runs from the follower**: the delegate's context
   (`SecurityContext::of_delegate`, answered for by the channel's owner), as the delegate acts - to
   be checked against [PERMISSION-CHECKS.md](../docs/PERMISSION-CHECKS.md).
 - **The follower's name**, if it is renamed.
@@ -243,3 +252,12 @@ gain fields without a default.
   let go ends a thread made for its founders, by a procedure of the kernel the follower carries
   out. Weighed and rejected: a timeout, a new start ending idle sub-agents, an obligation kept by
   the agent, a hook of the event queue. Plan written in three steps, its interfaces to be agreed.
+- **2026-11-24** — Step 1, changed by the maintainer as it was begun: the opening keeps the agents
+  it owns (`Opening::owned`), and `thread::Close` closes a thread with them, in place of a
+  procedure `thread::End`. Built: `ThreadSpec::owns_founders`, `Opening::owned` (`Opening` no
+  longer `Copy`), `ChannelLoop::owned_by`, `thread::Close` letting the owned agents go, closing
+  and deleting them - whether it may close the thread asked ahead, with the owned agents aside
+  (`ChannelLoop::require_closing`, taken out of `close_thread`), so that nobody is let go for a
+  closing refused -; the sub-agents' start opens its thread owning the sub-agent, `end_subagent`
+  closes it; the plugin's `Ending` gone, and with it the last users outside the kernel of
+  `close_thread`, `let_go_from_session` and `lock_letting_go`, now `pub(crate)`.

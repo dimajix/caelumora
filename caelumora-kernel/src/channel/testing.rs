@@ -264,9 +264,13 @@ impl ChannelLoop {
     ) -> ThreadId {
         let thread = ThreadId::new();
         let origin = ThreadOrigin { thread: ThreadId::line(self.id), message: MessageId::new() };
-        let opening = Opening { origin, by: ActorId::System, circle: Circle::Closed };
-        let held =
-            ThreadState { opening: Some(opening), closed: false, delegation: Some(delegation) };
+        let opening =
+            Opening { origin, by: ActorId::System, circle: Circle::Closed, owned: Vec::new() };
+        let held = ThreadState {
+            opening: Some(opening.clone()),
+            closed: false,
+            delegation: Some(delegation),
+        };
         self.state.lock().await.threads.insert(thread, held);
         let moderator = self.moderator().await.expect("a moderator");
         let opened = Arc::new(Thread::new(moderator, Some(opening)));

@@ -1,23 +1,25 @@
 //! The procedures of a thread's lifecycle (issue 593): opening a thread of a channel with its
-//! founders, and closing it once nobody takes part in it.
+//! founders, and closing it once nobody takes part in it - with the agents it owns (issue 598).
 //!
 //! Opening holds the new thread exclusively - its id chosen before -, the thread it is opened at
 //! shared, so that it is not closed meanwhile, and its founders; closing holds the thread
-//! exclusively. Whoever lets someone go holds the threads they take part in shared, until they have
-//! left (`participant::LetGo`), so that a thread is closed only once whoever left it has left. Both
-//! open the session as opening it does; the `ChannelLoop` opens and closes the thread, enforcing
-//! who may (`ChannelLoop::open_thread`, `close_thread`) - as a plugin's procedures may have it,
-//! which open or close a thread within a change of their own (issue 558's sub-agents).
+//! exclusively, and what letting each agent it owns go needs. Whoever lets someone go holds the
+//! threads they take part in shared, until they have left (`participant::LetGo`), so that a thread
+//! is closed only once whoever left it has left. Both open the session as opening it does; the
+//! `ChannelLoop` opens and closes the thread, enforcing who may (`ChannelLoop::open_thread`,
+//! `close_thread`) - as a plugin's procedure may have it opened within a change of its own (issue
+//! 558's sub-agents).
 
 use super::participant::{
-    require_thread_entry, take_into_channel, take_into_session, take_into_thread, Entry,
-    ThreadEntry,
+    let_go_from_session, lock_letting_go, require_thread_entry, take_into_channel,
+    take_into_session, take_into_thread, Entry, Exit, ThreadEntry,
 };
 use super::session::{self, lock_to_open};
 use super::{Compensation, Deferred, Key, Locks, Procedure};
 use crate::channel::{require_opening, ThreadSpec};
 use crate::kernel::Kernel;
 use crate::session::{SessionError, SessionLoop};
+use anyhow::Error;
 use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::channel::{ChannelId, HistoryAccess, ThreadId};
@@ -159,7 +161,9 @@ pub async fn open(
 
 /// Closes a thread of a channel on behalf of `context`, starting the session where it does not
 /// run, once nobody takes part in it (`ChannelLoop::close_thread`); holds it until `run` has
-/// closed it. `false` if it is not open.
+/// closed it. A thread that owns agents (`Opening::owned`, issue 598) is closed with them: each let
+/// go from the session first - by its own act, as an agent of whom `context` acts for leaves -,
+/// since closing waits for nobody to take part, and deleted after. `false` if it is not open.
 pub struct Close {
     context: SecurityContext,
     session: SessionId,
@@ -185,13 +189,30 @@ impl Procedure for Close {
     type Output = bool;
     type Error = SessionError;
 
+    /// The thread exclusively; in a session that runs, what letting each agent it owns go needs
+    /// (`participant::lock_letting_go`) - one it starts is locked exclusively, its channels with
+    /// it.
     async fn enumerate(&self, kernel: &Kernel, locks: &mut Locks<'_>) -> Result<(), Deferred> {
         lock_to_open(kernel, locks, self.session)?;
+        let running = kernel.sessions().and_then(|sessions| sessions.running(self.session));
+        let owned = match running.as_ref().and_then(|running| running.channel(self.channel)) {
+            Some(channel) => channel.owned_by(self.thread).await,
+            None => Vec::new(),
+        };
+        for agent in owned {
+            let agent = ActorId::Agent(agent);
+            lock_letting_go(locks, running.as_deref(), self.session, agent, None).await?;
+        }
         locks.exclusive(Key::Thread(self.session, self.channel, self.thread))
     }
 
+    /// An agent it owns let go already, or deleted already, counts as such: a closing that stopped
+    /// half-way finishes as it is asked again, also once the thread is closed.
+    ///
     /// # Errors
-    /// As `session::open`, `SessionLoop::channel_for` and `ChannelLoop::close_thread`.
+    /// As `session::open`, `SessionLoop::channel_for`, `ChannelLoop::require_closing` - asked
+    /// ahead, with the agents it owns leaving -, `participant::let_go_from_session`,
+    /// `ChannelLoop::close_thread` and `AgentManager::delete`.
     async fn carry_out(
         self,
         (): (),
@@ -201,7 +222,22 @@ impl Procedure for Close {
         let Self { context, session, channel, thread } = self;
         let session = session::open(kernel, &context, session).await?;
         let channel = session.channel_for(&context, channel).await?;
-        Ok(channel.close_thread(&context, thread).await?)
+        let owned = channel.owned_by(thread).await;
+        // Asked ahead, so that nobody is let go for a closing that is refused.
+        let leaving: Vec<ActorId> = owned.iter().copied().map(ActorId::Agent).collect();
+        channel.require_closing(&context, thread, &leaving).await?;
+        for agent in &owned {
+            let leaving = ActorId::Agent(*agent);
+            match let_go_from_session(kernel, &session, &context, leaving, Exit::Leaving).await {
+                Ok(()) | Err(SessionError::NotAParticipant { .. }) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        let closed = channel.close_thread(&context, thread).await?;
+        for agent in owned {
+            kernel.agent_manager().delete(&context, agent).await.map_err(Error::from)?;
+        }
+        Ok(closed)
     }
 }
 
@@ -219,7 +255,7 @@ mod tests {
     use caelumora_api::library::{Library, LibraryBuilder};
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::actor::ActorState;
-    use caelumora_domain::agent::PersonalityKind;
+    use caelumora_domain::agent::{Agent, PersonalityKind};
     use caelumora_domain::chain::Position;
     use caelumora_domain::channel::{Circle, ThreadId, ThreadOrigin};
     use caelumora_domain::history::{Attended, HistoryEntry};
@@ -299,6 +335,60 @@ mod tests {
         let entries = main.history_once(|entries| entries.iter().any(|e| said(e).is_some())).await;
         let answer = entries.iter().find_map(said).expect("found above");
         assert_eq!(answer.addressees, [other], "who takes part in the thread, not alice or bob");
+    }
+
+    /// Issue 598: a thread that owns the agents it is founded with is closed with them - each let
+    /// go from the session, the thread closed, the agent deleted -; a closing that stopped
+    /// half-way - the agent let go, the thread closed - finishes as it is asked again; one of a
+    /// session that does not run starts it and closes it so too; and an agent a thread does not
+    /// own is let go and kept.
+    #[tokio::test]
+    async fn a_thread_is_closed_with_the_agents_it_owns() {
+        let answering = ScriptedAgents(Script::Answers("found it".to_string()));
+        let world = World::with(&[], &[&answering], |_| {}).await;
+        let personality = world.personality("helper", Some(world.alice), &[]).await;
+        let mut agents = Vec::new();
+        for name in ["helper", "half", "stopped", "kept"] {
+            agents.push(world.agent(name, world.alice, &personality).await);
+        }
+        let alice = World::as_user(world.alice);
+        let session = world.session_of(&[world.bob], &[], &[]).await;
+        let (id, main) = (session.id(), Arc::clone(&session.channels()[0]));
+        let mut threads = Vec::new();
+        for (at, agent) in agents.iter().enumerate() {
+            let spec = ThreadSpec {
+                circle: Circle::Closed,
+                founders: vec![ActorId::Agent(*agent)],
+                owns_founders: at < 3,
+                ..ThreadSpec::new(at_the_line(&main, world.alice).await)
+            };
+            threads.push(session.open_thread(&alice, main.id(), spec).await.expect("opened"));
+        }
+        let store = world.entity_store::<Agent>();
+        let deleted = |agent| {
+            let (store, alice) = (Arc::clone(&store), alice.clone());
+            async move { store.get_deleted(&alice, agent).await.is_ok() }
+        };
+
+        assert!(main.close_thread_by_procedure(&alice, threads[0]).await.unwrap(), "closed");
+        assert!(!main.participant_ids().contains(&ActorId::Agent(agents[0])), "its agent let go");
+        assert!(deleted(agents[0]).await, "and deleted");
+
+        session.remove_participant(&alice, ActorId::Agent(agents[1])).await.expect("let go");
+        assert!(main.close_thread(&alice, threads[1]).await.unwrap(), "closed, as half-way");
+        let again = main.close_thread_by_procedure(&alice, threads[1]).await;
+        assert!(!again.expect("fails in nothing"), "closed already");
+        assert!(deleted(agents[1]).await, "the closing finished: its agent deleted");
+
+        session.remove_participant(&alice, ActorId::Agent(agents[3])).await.expect("let go");
+        assert!(main.close_thread_by_procedure(&alice, threads[3]).await.unwrap(), "closed");
+        assert!(!deleted(agents[3]).await, "an agent it does not own is kept");
+
+        world.manager.stop(&alice, id).await.unwrap();
+        let closing = Close::new(&alice, id, main.id(), threads[2]);
+        assert!(world.kernel.procedures().run(closing).await.unwrap(), "started and closed");
+        assert!(deleted(agents[2]).await, "its agent deleted");
+        world.manager.stop(&alice, id).await.unwrap();
     }
 
     /// Issue 557: what is delegated into a thread its delegate gives the recipient to read there,

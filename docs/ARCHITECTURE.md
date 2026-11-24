@@ -513,7 +513,8 @@ out within another - it would wait for itself -, and the executor refuses it. A 
 channel's `run` carries a step out for holds its objects until `run` answers. The REST server, as it
 opens a session for a request, has its channels left out as it started built again by a procedure of
 its own (`procedure::channel::Start`). A plugin writes procedures of its own, of the kernel's
-building blocks, as the sub-agents' start and end are (issue 558).
+building blocks, as the sub-agents' start is (issue 558), and carries out the kernel's, as their
+end closes the thread that owns the sub-agent (`procedure::thread::Close`, issue 598).
 
 Beside the procedures, guards stay where no procedure reaches. The executor locks within one
 process: where several share the stores, a session is held against the others as well

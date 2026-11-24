@@ -45,13 +45,13 @@ impl Thread {
     }
 
     /// Where it was opened and by whom; `None` for the line, which nobody opened.
-    pub(crate) fn opening(&self) -> Option<Opening> {
-        self.opening
+    pub(crate) fn opening(&self) -> Option<&Opening> {
+        self.opening.as_ref()
     }
 
     /// Whether who takes part in it may grow (issue 602): as it was opened; the line's is open.
     pub(crate) fn circle(&self) -> Circle {
-        self.opening.map_or(Circle::Open, |opening| opening.circle)
+        self.opening.as_ref().map_or(Circle::Open, |opening| opening.circle)
     }
 
     /// What becomes of `event`, which happens in this thread, admitted in `context`

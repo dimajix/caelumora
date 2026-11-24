@@ -1,10 +1,10 @@
-//! The writer of sub-agents (issue 558), bound to the session of an agent's work: starting and
-//! ending a sub-agent are procedures of its own (issue 593) - an agent made (`AgentManager`), a
-//! thread founded with it (`procedure::thread::open`), a brief delegated into it
-//! (`ChannelLoop::delegate`); the agent let go (`procedure::participant::let_go_from_session`), its
-//! thread closed (`ChannelLoop::close_thread`) and the agent deleted as its work ends (issue
-//! 557) -, made of the kernel's building blocks. It acts in the work's context, each operation of
-//! the kernel checking itself: the agent of the work gives, its owner owns what it starts.
+//! The writer of sub-agents (issue 558), bound to the session of an agent's work: starting a
+//! sub-agent is a procedure of its own (issue 593) - an agent made (`AgentManager`), a thread
+//! founded with it that owns it (`procedure::thread::open`, issue 598), a brief delegated into it
+//! (`ChannelLoop::delegate`) -; ending it is closing its thread, with the agent it owns
+//! (`procedure::thread::Close`) - made of the kernel's building blocks. It acts in the work's
+//! context, each operation of the kernel checking itself: the agent of the work gives, its owner
+//! owns what it starts.
 
 use crate::extension::{SubAgentError, SubAgentResult, SubAgentWriter};
 use crate::names;
@@ -22,7 +22,6 @@ use caelumora_kernel::agent::{AgentError, AgentManager, AgentSpec};
 use caelumora_kernel::channel::{ChannelLoop, ThreadSpec};
 use caelumora_kernel::error::{refusal, user_message};
 use caelumora_kernel::kernel::Kernel;
-use caelumora_kernel::procedure::participant::{self, lock_letting_go, Exit};
 use caelumora_kernel::procedure::thread;
 use caelumora_kernel::procedure::{
     Compensation, Deferred, Key, Locks, Procedure, ProcedureError, ProcedureExecutor,
@@ -137,34 +136,6 @@ impl SubAgents {
         let no_session = || SubAgentError::Failed("its session does not run".to_string());
         Ok(self.session.session_loop().ok_or_else(no_session)?.procedures())
     }
-
-    /// Lets `agent`, the sub-agent of `thread`, go from the session and closes `thread`, for a
-    /// procedure that holds them - in this order, since closing waits for nobody to take part. One
-    /// let go already - an end asked again after it stopped half-way - counts as let go.
-    async fn wind_up(
-        &self,
-        kernel: &Kernel,
-        session: &SessionLoop,
-        channel: &ChannelLoop,
-        thread: ThreadId,
-        agent: AgentId,
-    ) -> SubAgentResult<()> {
-        let context = self.context();
-        let leaving = participant::let_go_from_session(
-            kernel,
-            session,
-            context,
-            ActorId::Agent(agent),
-            Exit::Leaving,
-        );
-        match leaving.await {
-            // Let go already, as its owner may take it out.
-            Ok(()) | Err(SessionError::NotAParticipant { .. }) => {}
-            Err(error) => return Err(told(error.untyped())),
-        }
-        channel.close_thread(context, thread).await.map_err(told)?;
-        Ok(())
-    }
 }
 
 #[async_trait]
@@ -199,20 +170,29 @@ impl SubAgentWriter for SubAgents {
         channel.delegate(context, thread, ActorId::Agent(agent), text).await.map_err(told)
     }
 
-    /// One procedure, as `start`, so that no sub-agent is left half ended.
+    /// Closing its thread, with the agent it owns (`procedure::thread::Close`), one procedure as
+    /// `start`, so that no sub-agent is left half ended; one closed meanwhile by another end is
+    /// none.
     async fn end(&self, thread: ThreadId) -> SubAgentResult<()> {
+        let (_, channel) = self.running().await?;
+        let agent = self.sub_agent(&channel, thread).await?;
         let context = self.context();
-        let (session, channel) = (context.session_id, context.channel_id);
-        self.procedures()?.run(Ending { work: self.clone(), session, channel, thread }).await
+        let closing = thread::Close::new(context, context.session_id, context.channel_id, thread);
+        let closed = self.procedures()?.run(closing).await.map_err(|e| told(e.untyped()))?;
+        if !closed {
+            return Err(SubAgentError::NoSubAgent(thread));
+        }
+        info!("Sub-agent {} of thread {} ended", agent, thread);
+        Ok(())
     }
 }
 
 /// Starting a sub-agent (issue 558) as one procedure (issue 593): an agent of `personality` made, a
-/// thread opened at `origin` with it as its founder (`procedure::thread::open`), `brief` delegated
-/// into it - undone by its compensation, the last first, if a step fails: the agent taken out of
-/// the channel and the session, its thread closed, the agent deleted. Holds the new thread, its id
-/// chosen before, and the thread it is opened at; the agent it makes nobody knows before it is
-/// made, so that it holds none of it.
+/// thread opened at `origin` with it as its founder, which owns it (`procedure::thread::open`,
+/// issue 598), `brief` delegated into it - undone by its compensation, the last first, if a step
+/// fails: the agent taken out of the channel and the session, its thread closed, the agent
+/// deleted. Holds the new thread, its id chosen before, and the thread it is opened at; the agent
+/// it makes nobody knows before it is made, so that it holds none of it.
 struct Starting {
     work: SubAgents,
     personality: Name,
@@ -254,10 +234,12 @@ impl Procedure for Starting {
         }
         let context = work.context().clone();
         // Its founder's taking in and the opening, each taken back by `log` (`thread::open`).
-        // A closed circle: nobody but the sub-agent takes part in it (issue 602).
+        // A closed circle: nobody but the sub-agent takes part in it (issue 602); it owns the
+        // sub-agent, which ends with it (issue 598).
         let spec = ThreadSpec {
             circle: Circle::Closed,
             founders: vec![founder],
+            owns_founders: true,
             ..ThreadSpec::new(origin)
         };
         let opening = thread::open(log, kernel, &session, &context, channel, thread, &spec);
@@ -265,61 +247,6 @@ impl Procedure for Starting {
         channel_loop.delegate(&context, thread, founder, brief).await.map_err(told)?;
         info!("Sub-agent {} started in thread {} by {}", agent, thread, context.caller_id);
         Ok(thread)
-    }
-}
-
-/// Ending a sub-agent (issue 558) as one procedure (issue 593): let go from the session, its
-/// thread closed, the agent deleted - in this order, each only once the one before it is done,
-/// since the session lets no deleted agent go and closing waits for nobody to take part. Holds
-/// what letting the agent go needs (`procedure::participant::lock_letting_go`), and the thread
-/// exclusively.
-struct Ending {
-    work: SubAgents,
-    session: SessionId,
-    channel: ChannelId,
-    thread: ThreadId,
-}
-
-#[async_trait]
-impl Procedure for Ending {
-    /// The sub-agent of the thread, as read in the kernel's name, or why there is none.
-    type Plan = SubAgentResult<AgentId>;
-    type Output = ();
-    type Error = SubAgentError;
-
-    async fn enumerate(&self, _: &Kernel, locks: &mut Locks<'_>) -> Result<Self::Plan, Deferred> {
-        let Some(session) = self.work.session.session_loop() else {
-            return Ok(Err(SubAgentError::Failed("its session does not run".to_string())));
-        };
-        let Some(channel) = session.channel(self.channel) else {
-            return Ok(Err(SubAgentError::NoSubAgent(self.thread)));
-        };
-        let agent = match self.work.sub_agent(&channel, self.thread).await {
-            Ok(agent) => agent,
-            Err(error) => return Ok(Err(error)),
-        };
-        // As letting the agent go needs it, and its thread to close exclusively.
-        let participant = ActorId::Agent(agent);
-        lock_letting_go(locks, Some(session), self.session, participant, None).await?;
-        locks.exclusive(Key::Thread(self.session, self.channel, self.thread))?;
-        Ok(Ok(agent))
-    }
-
-    /// The sub-agent asked again, holding it: one ended meanwhile by another end is none.
-    async fn carry_out(
-        self,
-        agent: Self::Plan,
-        kernel: &Kernel,
-        _: &mut Compensation,
-    ) -> SubAgentResult<()> {
-        agent?;
-        let Self { work, thread, .. } = self;
-        let (session, channel) = work.running().await?;
-        let agent = work.sub_agent(&channel, thread).await?;
-        work.wind_up(kernel, &session, &channel, thread, agent).await?;
-        work.agents.delete(work.context(), agent).await.map_err(told)?;
-        info!("Sub-agent {} of thread {} ended", agent, thread);
-        Ok(())
     }
 }
 

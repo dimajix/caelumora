@@ -175,7 +175,7 @@ mod tests {
         assert_eq!((copy.channel_id, copy.history_from.get()), (state.channel_id, 1));
         let held = |state: &ChannelState| {
             let threads = state.threads.iter();
-            threads.map(|(id, held)| (*id, held.opening, held.closed)).collect::<Vec<_>>()
+            threads.map(|(id, held)| (*id, held.opening.clone(), held.closed)).collect::<Vec<_>>()
         };
         assert_eq!(held(&copy), held(&state), "its threads with it");
     }

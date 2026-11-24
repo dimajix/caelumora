@@ -6,6 +6,7 @@ use super::thread::Thread;
 use super::{ActorChange, Answer, ChannelError, ChannelLoop, ThreadSpec};
 use anyhow::Result;
 use caelumora_domain::actor::ActorId;
+use caelumora_domain::agent::AgentId;
 use caelumora_domain::channel::{Channel, Opening, ThreadId, ThreadOrigin, ThreadState};
 use caelumora_domain::history::Reader;
 use caelumora_domain::store::Stored;
@@ -26,7 +27,7 @@ impl ChannelLoop {
     ) -> Result<()> {
         let mut built = HashMap::new();
         for (id, state) in threads.iter().filter(|(_, state)| !state.closed) {
-            let thread = Thread::new(self.moderator().await?, state.opening);
+            let thread = Thread::new(self.moderator().await?, state.opening.clone());
             built.insert(*id, Arc::new(thread));
         }
         self.threads.store(Arc::new(built));
@@ -37,6 +38,15 @@ impl ChannelLoop {
     /// the line, or a thread the channel does not hold open.
     pub(crate) fn origin_of(&self, thread: ThreadId) -> Option<ThreadOrigin> {
         self.thread(thread)?.opening().map(|opening| opening.origin)
+    }
+
+    /// The agents `thread` owns (issue 598, `Opening::owned`), as the channel's state keeps them -
+    /// also once it is closed, so that a closing that stopped half-way finishes; none for the line,
+    /// or a thread the channel never opened.
+    pub(crate) async fn owned_by(&self, thread: ThreadId) -> Vec<AgentId> {
+        let state = self.state.lock().await;
+        let opening = state.threads.get(&thread).and_then(|held| held.opening.as_ref());
+        opening.map(|opening| opening.owned.clone()).unwrap_or_default()
     }
 
     /// That the message a person opens a thread at was said where it is to hang, as far as their
@@ -73,7 +83,8 @@ impl ChannelLoop {
     /// the order of their ids, so that a list of them stays as it is.
     pub(crate) fn openings(&self) -> Vec<(ThreadId, Opening)> {
         let threads = self.threads.load();
-        let opened = threads.iter().filter_map(|(id, held)| held.opening().map(|o| (*id, o)));
+        let opened =
+            threads.iter().filter_map(|(id, held)| held.opening().map(|o| (*id, o.clone())));
         opened.collect::<BTreeMap<_, _>>().into_iter().collect()
     }
 
@@ -122,8 +133,8 @@ impl ChannelLoop {
         let open = self.is_open(origin.thread);
         let access = self.policies.access_policy();
         require_opening(access.as_ref(), context, &self.channel(), origin, open).await?;
-        let opening = Opening { origin, by: context.caller_id, circle };
-        let opened = Arc::new(Thread::new(self.moderator().await?, Some(opening)));
+        let opening = Opening { origin, by: context.caller_id, circle, owned: spec.owned() };
+        let opened = Arc::new(Thread::new(self.moderator().await?, Some(opening.clone())));
         self.threads.rcu(|threads| {
             let mut threads = HashMap::clone(threads);
             threads.insert(thread, Arc::clone(&opened));
@@ -154,23 +165,57 @@ impl ChannelLoop {
 
     /// Closes `thread` on behalf of `context` (issue 557), for a procedure that holds it
     /// (`procedure::thread::Close`), or takes back opening it (`procedure::thread::open`): nothing
-    /// more is said in it. Asked of whoever opened it - the same caller - or else whoever may
-    /// change the channel (`UpdateChannel`); refused while anyone takes part in it - an actor
-    /// running in it, or a participant listed without one whose range of attendance is open
-    /// there -, so that nobody is left in a thread closed: whoever takes part is let go first, and
-    /// letting them go holds the thread until they have left (issue 593). `run` closes it,
-    /// announces it (`ThreadClosed`) in the name of `context`'s caller and keeps it as closed in
-    /// the channel's state, and answers then; from then on what is sent into it is not let in
-    /// (`Rejection::ThreadClosed`) - unless it drew someone in since it was asked (issue 602),
-    /// which `run` asks again. `false` if it is not open - never opened, closed already, or the
-    /// channel's line, which is never closed -, or the channel stopped before closing it. An actor
-    /// that does not end even when aborted has letting it go give up after `LEAVE_GRACE` (`left`):
-    /// its leave, announced late, may then follow the closing - logged, as such an actor is a bug.
+    /// more is said in it. Asked as `require_closing` asks it, with nobody leaving: whoever takes
+    /// part is let go first, and letting them go holds the thread until they have left (issue
+    /// 593). `run` closes it, announces it (`ThreadClosed`) in the name of `context`'s caller and
+    /// keeps it as closed in the channel's state, and answers then; from then on what is sent into
+    /// it is not let in (`Rejection::ThreadClosed`) - unless it drew someone in since it was asked
+    /// (issue 602), which `run` asks again. `false` if it is not open - never opened, closed
+    /// already, or the channel's line, which is never closed -, or the channel stopped before
+    /// closing it. An actor that does not end even when aborted has letting it go give up after
+    /// `LEAVE_GRACE` (`left`): its leave, announced late, may then follow the closing - logged, as
+    /// such an actor is a bug.
     ///
     /// # Errors
-    /// `ChannelError::Forbidden` if `context` may not close it, `ThreadNotEmpty` if anyone takes
-    /// part in it.
-    pub async fn close_thread(&self, context: &SecurityContext, thread: ThreadId) -> Result<bool> {
+    /// As `require_closing`.
+    pub(crate) async fn close_thread(
+        &self,
+        context: &SecurityContext,
+        thread: ThreadId,
+    ) -> Result<bool> {
+        if !self.require_closing(context, thread, &[]).await? {
+            return Ok(false);
+        }
+        let closing = self.request(ActorChange::Close(thread, context.clone()));
+        if !closing.carried_out().await {
+            return Ok(false);
+        }
+        // Left open by `run`: someone it drew in meanwhile takes part (issue 602). Nobody else
+        // closes it: whoever closes it holds it.
+        if self.is_open(thread) {
+            return Err(ChannelError::ThreadNotEmpty { thread, channel: self.id }.into());
+        }
+        info!("Thread {} of channel {} is closed by {}", thread, self.id, context.caller_id);
+        Ok(true)
+    }
+
+    /// Whether `thread` is open, and may be closed on behalf of `context` once those `leaving` have
+    /// left it - asked ahead by a closing that lets them go first (`procedure::thread::Close`,
+    /// issue 598), and by `close_thread` itself: of whoever opened it - the same caller - or else
+    /// whoever may change the channel (`UpdateChannel`); refused while anyone else takes part in
+    /// it - an actor running in it, or a participant listed without one whose range of attendance
+    /// is open there -, so that nobody is left in a thread closed. `false`, asking nothing, if it
+    /// is not open.
+    ///
+    /// # Errors
+    /// `ChannelError::Forbidden` if `context` may not close it, `ThreadNotEmpty` if anyone else
+    /// takes part in it.
+    pub(crate) async fn require_closing(
+        &self,
+        context: &SecurityContext,
+        thread: ThreadId,
+        leaving: &[ActorId],
+    ) -> Result<bool> {
         let Some(open) = self.thread(thread) else { return Ok(false) };
         let Some(opening) = open.opening() else { return Ok(false) };
         if opening.by != context.caller_id {
@@ -183,33 +228,26 @@ impl ChannelLoop {
         }
         let attending = self.attending().await;
         let listed = self.channel();
-        let resting = listed.participants.iter().any(|participant| {
-            attending.get(&participant.actor_id()).is_some_and(|there| there.contains(&thread))
+        let resting = listed.participants.iter().map(|listed| listed.actor_id()).any(|listed| {
+            !leaving.contains(&listed)
+                && attending.get(&listed).is_some_and(|there| there.contains(&thread))
         });
-        let not_empty = || ChannelError::ThreadNotEmpty { thread, channel: self.id };
-        if self.runs_anyone_in(thread) || resting {
-            return Err(not_empty().into());
+        if self.runs_anyone_in(thread, leaving) || resting {
+            return Err(ChannelError::ThreadNotEmpty { thread, channel: self.id }.into());
         }
-        let closing = self.request(ActorChange::Close(thread, context.clone()));
-        if !closing.carried_out().await {
-            return Ok(false);
-        }
-        // Left open by `run`: someone it drew in meanwhile takes part (issue 602). Nobody else
-        // closes it: whoever closes it holds it.
-        if self.is_open(thread) {
-            return Err(not_empty().into());
-        }
-        info!("Thread {} of channel {} is closed by {}", thread, self.id, context.caller_id);
         Ok(true)
     }
 
     /// Whether an actor runs in `thread` and takes part in it, its delegate aside, which goes as it
-    /// is closed (issue 557): what keeps it from being closed, asked as closing is asked and again
-    /// as `run` closes it, since it may have drawn someone in meanwhile (issue 602).
-    pub(super) fn runs_anyone_in(&self, thread: ThreadId) -> bool {
+    /// is closed (issue 557), and those `leaving` aside, whom a closing lets go first (issue 598):
+    /// what keeps it from being closed, asked as closing is asked and again as `run` closes it,
+    /// since it may have drawn someone in meanwhile (issue 602).
+    pub(super) fn runs_anyone_in(&self, thread: ThreadId, leaving: &[ActorId]) -> bool {
         let delegate = ActorId::Delegate(thread);
         let actors = self.actors.load();
-        actors.iter().any(|(id, actor)| *id != delegate && actor.takes_part_in(thread))
+        actors.iter().any(|(id, actor)| {
+            *id != delegate && !leaving.contains(id) && actor.takes_part_in(thread)
+        })
     }
 }
 

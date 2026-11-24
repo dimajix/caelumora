@@ -1034,6 +1034,68 @@ async fn a_thread_draws_in_whom_its_messages_concern_and_asks_nothing_of_its_own
     world.manager.stop(&alice, session.id()).await.unwrap();
 }
 
+/// Issue 598: a thread that owns the agent it is founded with is closed with it, in the closer's
+/// name: whether they may close it is asked ahead, with the agent aside, so that nobody is let go
+/// for a closing refused; then the agent leaves by its owner's own act, and is deleted
+/// (`DeleteAgent`). Another than its owner cannot have it leave, and closes nothing.
+#[tokio::test]
+async fn a_thread_is_closed_with_the_agent_it_owns_by_its_owner_alone() {
+    let answering = ScriptedAgents(Script::Answers("ok".to_string()));
+    let world = World::with(&[], &[&answering], |_| {}).await;
+    let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
+    let bobs_helper = ActorId::Agent(world.agent("bobs-helper", world.bob, &shared).await);
+    let session = world.shared_session(&[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
+    let line = ThreadOrigin {
+        thread: ThreadId::line(main.id()),
+        message: main.said_by(world.alice, ThreadId::line(main.id())).await,
+    };
+    let owning = ThreadSpec {
+        founders: vec![bobs_helper],
+        circle: Circle::Closed,
+        owns_founders: true,
+        ..ThreadSpec::new(line)
+    };
+    let bobs = session.open_thread(&bob, main.id(), owning).await.expect("bob founds it");
+
+    let (refused, asked) = world.asked(main.close_thread_by_procedure(&alice, bobs)).await;
+    let refused = refused.expect_err("not hers to have leave");
+    assert!(denied(&refused), "{refused}");
+    assert_eq!(
+        asked,
+        checks(&[
+            "alice: GetSession(alice's) yes",
+            "alice: GetChannel(alice's) yes",
+            "alice: Cleared(alice) yes",
+            // Whether she may close it, asked ahead with the agent aside: the channel's owner may.
+            "alice: UpdateChannel(alice's) yes",
+        ]),
+        "then his agent is not hers to have leave (structural)"
+    );
+    assert!(session.session().takes_part(bobs_helper), "nobody let go");
+
+    let (closed, asked) = world.asked(main.close_thread_by_procedure(&bob, bobs)).await;
+    assert!(closed.expect("his to close"), "closed");
+    assert_eq!(
+        asked,
+        checks(&[
+            "bob: GetSession(alice's) yes",
+            "bob: GetChannel(alice's) yes",
+            "bob: Cleared(bob) yes",
+            // Whoever opened it is asked nothing to close it; his agent leaves by his own act.
+            "bob as bobs-helper: LeaveSession(alice's) yes",
+            // Deleted once the thread is closed: by the manager, then by the store.
+            "bob: GetAgent(bob's) yes",
+            "bob: DeleteAgent(bob's) yes",
+            "bob: GetAgent(bob's) yes",
+            "bob: DeleteAgent(bob's) yes",
+        ]),
+        "{asked:#?}"
+    );
+    assert!(!session.session().takes_part(bobs_helper), "his agent let go");
+}
+
 /// Issue 557: whoever reads a channel opens a thread in it (`OpenThread`), founded with their own
 /// agents - taken into the session and the channel without the right to change either, so that a
 /// participant who does not own the session can start a sub-agent - and never with another's. A

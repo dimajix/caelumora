@@ -202,8 +202,9 @@ does with its kind it offers as **extensions**, by one pattern:
     the places of the stores where their backend tells none. A face that acts on a running channel
     acts through the running session the work's `SessionView` gives out (`session_loop`),
     reaching the channel as a frontend does (`channel_for`). What changes a lifecycle there it
-    carries out as a procedure of its own (issue 593): built of what the kernel's procedures share
-    (`procedure::thread::open`) and the methods of its objects (`ChannelLoop::close_thread`), given
+    carries out as a procedure of its own (issue 593) - or as one of the kernel's
+    (`procedure::thread::Close`, issue 598) -: built of what the kernel's procedures share
+    (`procedure::thread::open`) and the methods of its objects (`ChannelLoop::delegate`), given
     the kernel as the executor hands it over, carried out by that executor, which the running
     session hands out (`SessionLoop::procedures`), and answering the face's error type, into which
     it translates what the executor fails with (`From<ProcedureError>`) - the sub-agents' writer

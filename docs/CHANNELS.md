@@ -271,6 +271,13 @@ thread only once whoever left it has left: what they still sent until their task
 thread, and their leave is recorded there; from then on what is sent into it is not let in. The line
 is never closed.
 
+A thread may **own the agents it is founded with**, made for it alone, as its `ThreadSpec` asks
+(`owns_founders`, issue 598; a sub-agent's thread): the opening keeps them (`Opening::owned`), and
+closing the thread closes it with them - each let go from the session first, by its own act, as an
+agent of whom the closer acts for leaves, then the thread closed, then each deleted. The channel's
+state keeps them also once the thread is closed, so that a closing that stopped half-way finishes
+as it is asked again.
+
 A participant of the channel is **taken into a further thread** of it, and **let go from one
 thread** alone, staying in its others (issue 602): `procedure::participant::TakeIntoThread` - added
 by whoever may change the channel, or joining by their own act where they may read it - and
@@ -1160,8 +1167,8 @@ as the thread is closed.
 The channel knows nothing of what delegates: it offers the building blocks - opening a thread with
 its founders, delegating into it, closing it - and sub-agents are made of them, in a crate of their
 own (`caelumora-subagents`, issue 558; see [TOOLS.md](TOOLS.md#sub-agents)): an agent made for a
-brief, the thread founded with it at the call, the brief delegated to it by the agent that started
-it, which is given back what came of it.
+brief, the thread founded with it at the call and owning it, the brief delegated to it by the agent
+that started it, which is given back what came of it, and the thread closed with it as it ends.
 
 The **delegate** of the thread carries it out (`ActorId::Delegate`, named by the thread it
 delegates into; `DelegateActor`). It is no participant but an internal actor of the channel, which

@@ -252,9 +252,10 @@ impl ChannelLoop {
             // A thread opened or closed (issue 557) is of the whole channel: announced in its
             // line, and recorded among the threads open with its entry, which stores them.
             ActorChange::Open(thread, opening, by) => {
+                let origin = opening.origin;
                 let state = ThreadState { opening: Some(opening), closed: false, delegation: None };
                 self.state.lock().await.threads.insert(thread, state);
-                let opened = ActorEvent::ThreadOpened { thread, origin: opening.origin };
+                let opened = ActorEvent::ThreadOpened { thread, origin };
                 self.announce(opened, by, ThreadId::line(self.id), running).await;
                 let _ = carried_out.send(());
             }
@@ -262,7 +263,7 @@ impl ChannelLoop {
             // was open is dropped. Answered either way; left open while someone takes part, whom
             // it drew in since closing it was asked (issue 602).
             ActorChange::Close(thread, by) => {
-                if !self.runs_anyone_in(thread) {
+                if !self.runs_anyone_in(thread, &[]) {
                     self.let_delegate_go(thread, running).await;
                     self.close(thread, by, running).await;
                 }
@@ -1000,7 +1001,7 @@ impl ChannelLoop {
         let ActorId::Delegate(delegated) = event.context.sender_id else {
             return Err(Rejection::Invalid);
         };
-        let Some(opening) = self.thread(delegated).and_then(|opened| opened.opening()) else {
+        let Some(origin) = self.origin_of(delegated) else {
             return Err(Rejection::Invalid);
         };
         let as_delegated = {
@@ -1012,7 +1013,7 @@ impl ChannelLoop {
                 let gives = if thread == delegated {
                     delegation.gives_brief(recipient, message) && !self.is_quiet(thread)
                 } else {
-                    thread == opening.origin.thread && delegation.gives_back(recipient, message)
+                    thread == origin.thread && delegation.gives_back(recipient, message)
                 };
                 gives && event.context.initiator_id == delegation.initiator
             })
@@ -2779,7 +2780,8 @@ mod tests {
         let left = channel.request(leave);
         let origin = ThreadOrigin { thread: line, message: MessageId::new() };
         let thread = ThreadId::new();
-        let opening = Opening { origin, by: system.caller_id, circle: Circle::Closed };
+        let opening =
+            Opening { origin, by: system.caller_id, circle: Circle::Closed, owned: Vec::new() };
         let opened = channel.request(ActorChange::Open(thread, opening, system.clone()));
         let briefs = VecDeque::new();
         let delegation = Delegation { giver: gone, recipient: gone, initiator: gone, briefs };

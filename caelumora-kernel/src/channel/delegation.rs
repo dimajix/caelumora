@@ -44,8 +44,8 @@ impl ChannelLoop {
         )
         .await?;
         let not_open = || ChannelError::ThreadNotOpen { thread, channel: self.id };
-        let opening =
-            self.thread(thread).and_then(|opened| opened.opening()).ok_or_else(not_open)?;
+        let opened = self.thread(thread).ok_or_else(not_open)?;
+        let opening = opened.opening().ok_or_else(not_open)?;
         // Into a closed circle alone (issue 602): what answers a brief is the recipient's turn.
         if opening.circle == Circle::Open {
             return Err(ChannelError::OpenCircle { thread, channel: self.id }.into());
@@ -175,7 +175,8 @@ impl ChannelLoop {
     pub(super) async fn build_delegate(&self, thread: ThreadId) -> Result<DelegateActor> {
         let state = self.state.lock().await;
         let held = state.threads.get(&thread);
-        let origin = held.and_then(|held| held.opening).map(|opening| opening.origin.thread);
+        let origin =
+            held.and_then(|held| held.opening.as_ref()).map(|opening| opening.origin.thread);
         let delegation = held.and_then(|held| held.delegation.clone());
         drop(state);
         let (Some(origin), Some(delegation)) = (origin, delegation) else {
