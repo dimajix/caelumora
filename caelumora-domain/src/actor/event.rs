@@ -248,7 +248,7 @@ pub enum ActorEvent {
     /// `into_channel` tells a join into the channel - the participant's actor starting, told in
     /// the thread it joined in - from one into another thread of it, which it is drawn into
     /// (issue 602), and from the joins told in the other threads a newcomer takes part in: what
-    /// the approver asks a newcomer of what waits by (issue 603).
+    /// the approver follows the participants by, asking a newcomer what waits (issue 603).
     ParticipantJoined {
         participant: ActorId,
         name: String,
@@ -263,10 +263,17 @@ pub enum ActorEvent {
     /// nothing to it from the position `until` on (issue 417): where it
     /// stopped, which its history records, so that it says to the position
     /// whom the channel delivered what.
+    ///
+    /// `out_of_channel` tells a leave of the channel - the participant's actor ended, told where it
+    /// counts as joined, the line if it takes part there - from one of a single thread it is let
+    /// go from (issue 602), and from
+    /// the leaves told in its other threads: what the approver follows the channel's participants
+    /// by (issue 603).
     ParticipantLeft {
         participant: ActorId,
         name: String,
         until: Position,
+        out_of_channel: bool,
     },
     /// `participant` is given the channel's history from the position `from`
     /// on as it joins (issues 46, 417): how much of it `by`, called

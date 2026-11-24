@@ -640,7 +640,12 @@ mod tests {
             into_channel: false,
         };
         let until = Position::START;
-        let its_leave = ActorEvent::ParticipantLeft { participant: body.id(), name, until };
+        let its_leave = ActorEvent::ParticipantLeft {
+            participant: body.id(),
+            name,
+            until,
+            out_of_channel: false,
+        };
         let (tx, rx) = mpsc::channel(8);
         let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
         tx.try_send(heard("in there")).expect("room");
@@ -749,8 +754,12 @@ mod tests {
             into_channel: false,
         };
         let until = Position::START;
-        let its_leave =
-            || ActorEvent::ParticipantLeft { participant: body.id(), name: name.clone(), until };
+        let its_leave = || ActorEvent::ParticipantLeft {
+            participant: body.id(),
+            name: name.clone(),
+            until,
+            out_of_channel: false,
+        };
         let aside = Message { sender_id: alice, ..said("before it left") };
         let mut state = AgentChannelState::default();
         body.take_in_said(&mut state, in_there(its_join())).await;

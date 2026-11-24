@@ -1,6 +1,6 @@
 # 603 — What waits for a user is told less than the chat shows in rare cases
 
-**Status:** in progress
+**Status:** done
 **Type:** bug
 **Priority:** low
 **Area:** User interaction
@@ -121,10 +121,30 @@ and the prompt mislead whoever reads the code or the agent that writes `@all`.
   every pending approval was asked of them again each time; and that one who answered, left and
   came back was asked again. Decided by the maintainer: a join says whether it is one into the
   channel (`ParticipantJoined::into_channel`, `true` for the join told where the newcomer's actor
-  starts alone; `false` for one recorded before), and the approver asks only then, and nothing a
+  starts alone), and the approver asks only then, and nothing a
   user answered. Rejected: the approver remembering whom it asked - one extra request per user and
   approval all the same, and more state. Also from the review: `to` carries no serde attributes, as
   `CommandExecuted::to`, and an approver's request names a user alone; the documents say how the
   join comes before what the approver answers; `send_approval` is held to answer where an approval
   was asked. Next, as a step of its own: the approver learns of participants from the channel
   alone, no longer from the global stream.
+- **2026-11-24** — Step 2, as the maintainer decided: the approver learns of participants from the
+  channel alone. A leave says whether it is one out of the channel
+  (`ParticipantLeft::out_of_channel`, `true` for the leave told where the participant counts as
+  joined, as its actor ended), and the channel delivers it to the
+  approvers as it does a join. The approver denies the pending requests of an agent that left the
+  channel, decides the others again on a join or a leave of the channel, and asks a user who
+  joined what waits (`participant_joined`, `participant_left`). Its subscription to the global
+  stream is gone, and with it what made up for events it lost (`catch_up`, issue 502): what its
+  inbox misses it reads from the history. `ParticipantRuntime::subscribe_channel`, and with it the
+  bus's topic of a channel (`EventBus::subscribe_channel`, `SubscriptionTopic::Channel`), had no
+  other user and are gone too. A test through a running channel holds the leave: an approval all
+  but a user who left gave is decided.
+- **2026-11-24** — Decided by the maintainer on the review of step 2: `into_channel` and
+  `out_of_channel` read no older form (no `#[serde(default)]`, as CODING-GUIDELINES asks of stored
+  data), so that histories stored before this step cannot be read and are to be deleted; and taking
+  someone into a channel, undone, takes the channel's document back before their actor leaves
+  (`take_into_channel`, one step of the compensation, as letting someone go stores first), so that
+  the approver, told of the leave, reads them gone - an actor that cannot start takes the document
+  back at once. That order is not held by a test: what the approver reads at the leave cannot be
+  seen from outside without a hook of its own. Done.

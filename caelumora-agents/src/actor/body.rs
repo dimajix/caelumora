@@ -687,8 +687,12 @@ mod tests {
             into_channel: false,
         };
         let until = Position::START;
-        let its_leave =
-            || ActorEvent::ParticipantLeft { participant: body.id(), name: name.clone(), until };
+        let its_leave = || ActorEvent::ParticipantLeft {
+            participant: body.id(),
+            name: name.clone(),
+            until,
+            out_of_channel: false,
+        };
         let mut state = AgentChannelState::default();
         body.take_in_said(&mut state, in_thread(there, its_join)).await;
         let work = Work::new(EventContext::default(), None, Classification::PUBLIC, TimeZone::UTC);

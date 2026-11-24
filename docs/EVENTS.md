@@ -78,15 +78,14 @@ them.
 ### Subscriptions
 
 Every subscription is made the same way: `subscribe(context, topics)` names whom it receives for and
-the `SubscriptionTopic`s it follows - everything, or a session, channel, agent or user -, and
-receives the matching events that context may read through an `EventSubscription`; `follow` adds a
-topic later, through the subscription's `Following`, which can be kept apart from its receiver. An
-event about a session, an agent or a user goes to its topic; one about a channel - and so about its
-participants - to the channel's and to the session's it lies in, which the bus reads from the
-event's address. Other kinds have no topic of their own. The kernel's own subscribers - the
-controllers, a running session, an approver, the `CommandReaper`, the follower of the agents -
-subscribe as the system (`subscribe_all`, `subscribe_session`, …), which the bus does not ask about:
-they receive everything on their topics.
+the `SubscriptionTopic`s it follows - everything, or a session, agent or user -, and receives the
+matching events that context may read through an `EventSubscription`; `follow` adds a topic later,
+through the subscription's `Following`, which can be kept apart from its receiver. An event about a
+session, an agent or a user goes to its topic; one about a channel - and so about its participants -
+to the session's it lies in, which the bus reads from the event's address. Other kinds have no topic
+of their own. The kernel's own subscribers - the controllers, a running session, the
+`CommandReaper`, the follower of the agents - subscribe as the system (`subscribe_all`,
+`subscribe_session`, …), which the bus does not ask about: they receive everything on their topics.
 
 All subscriptions are served by one dispatcher task, in the order the events were published, so that
 every subscriber receives what it shares with others in the same order - the place where the events
@@ -115,8 +114,6 @@ what it keeps (issue 502) - a loss between instances will be the rule, not the e
     [CHANNELS.md](CHANNELS.md)); its own document it does not read again, since a session runs in
     one instance and its controller is the one writer of it there, which holds every change of it
     live already;
-*   an approver denies the pending requests of every agent that no longer runs in its channel, and
-    decides the others again (see [APPROVALS.md](APPROVALS.md));
 *   the `CommandReaper` checks the commands, as at any event that may concern them;
 *   a stream sends its client a fresh snapshot (see [REST-SERVER.md](REST-SERVER.md#streams));
 *   the terminal follows every channel of its session its user takes part in that it does not

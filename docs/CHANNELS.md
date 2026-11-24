@@ -1431,8 +1431,8 @@ which for what the history records is the rule its entry is read by (`HistoryEnt
 *   every message said goes, as it was said, to every other participant: to the users always, to the
     agents if there is something to hear in it - its words, or the calls a person made in it (issue
     587) -, each agent takes it in itself;
-*   a change of a message, and who joined or left, go to every user and agent, who joined to the
-    approvers as well (issue 603);
+*   a change of a message, and who joined or left, go to every user and agent, who left to them as
+    well (issue 602), and who joined or left to the approvers too (issue 603);
 *   how an answer comes about - its start, partial and intermediate messages, plan steps - where an
     agent stands, how a turn ended and what an agent does of its own accord go to the users, not to
     the agents;

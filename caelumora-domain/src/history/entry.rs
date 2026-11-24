@@ -115,22 +115,21 @@ pub enum HistoryEntry {
     /// `by_name` then - the participant itself if it joined by itself, `ActorId::System` if the
     /// kernel added it (issue 408): recorded where it happened among what was said, with the names
     /// as they were, so that it reads the same after a renaming; `into_channel` as
-    /// `ActorEvent::ParticipantJoined` says - `false` for a join recorded before it was told
-    /// (issue 603).
+    /// `ActorEvent::ParticipantJoined` says (issue 603).
     ParticipantJoined {
         participant: ActorId,
         name: String,
         by: ActorId,
         by_name: String,
         at: DateTime<Utc>,
-        #[serde(default)]
         into_channel: bool,
     },
     /// `participant` left the channel, as `ParticipantJoined` says - `by`
     /// who removed it, the participant itself if it left by itself. It was
     /// given nothing from the position `until` on (issue 417): where the
     /// channel stopped delivering to it, which may lie before this entry -
-    /// what it still sent until its task ended comes first (issue 262).
+    /// what it still sent until its task ended comes first (issue 262); `out_of_channel` as
+    /// `ActorEvent::ParticipantLeft` says (issue 603).
     ParticipantLeft {
         participant: ActorId,
         name: String,
@@ -138,6 +137,7 @@ pub enum HistoryEntry {
         by_name: String,
         until: Position,
         at: DateTime<Utc>,
+        out_of_channel: bool,
     },
     /// `participant` was given the history from the position `from` on as
     /// it joined at `at`, by the act of `by`, called `by_name` then (issues
@@ -587,8 +587,8 @@ impl HistoryEntry {
     /// channel delivers by (issue 417, `Envelope::recipients`): a message to
     /// every participant who is a user, and to every agent too if there is
     /// something to hear in it; a change of a message and who joined or left
-    /// to every user and agent, who left to them as well (issue 602), who
-    /// joined to the approvers as well (issue 603); how a
+    /// to every user and agent, who left to them as well (issue 602), and
+    /// who joined or left to the approvers too (issue 603); how a
     /// turn went, what it carried out and what came of what it did of its
     /// own accord to the users; what
     /// answers a command to the user it answers; the part of the history
@@ -618,15 +618,18 @@ impl HistoryEntry {
             | HistoryEntry::Revoked { .. }
             | HistoryEntry::Reclassified { .. }
             | HistoryEntry::Fitted { .. } => Recipients::participants(true),
-            // To the approvers as well (issue 603): a user who joins is asked what still waits.
+            // To the approvers as well (issue 603), which follow the participants by them: a user
+            // who joins is asked what still waits, an agent that leaves takes its approvals along.
             HistoryEntry::ParticipantJoined { .. } => {
                 Recipients { approvers: true, ..Recipients::participants(true) }
             }
             // To whoever left as well (issue 602): one let go from a thread goes on in its others,
-            // and takes its leave in, as it took its join.
-            HistoryEntry::ParticipantLeft { participant, .. } => {
-                Recipients { named: vec![*participant], ..Recipients::participants(true) }
-            }
+            // and takes its leave in, as it took its join; to the approvers, as a join.
+            HistoryEntry::ParticipantLeft { participant, .. } => Recipients {
+                named: vec![*participant],
+                approvers: true,
+                ..Recipients::participants(true)
+            },
             HistoryEntry::TurnFinished { .. }
             | HistoryEntry::TurnGivenUp { .. }
             | HistoryEntry::PlanStepStarted { .. }
@@ -729,8 +732,8 @@ impl HistoryEntry {
             Self::ParticipantJoined { participant, name, into_channel, .. } => {
                 ActorEvent::ParticipantJoined { participant, name, into_channel }
             }
-            Self::ParticipantLeft { participant, name, until, .. } => {
-                ActorEvent::ParticipantLeft { participant, name, until }
+            Self::ParticipantLeft { participant, name, until, out_of_channel, .. } => {
+                ActorEvent::ParticipantLeft { participant, name, until, out_of_channel }
             }
             Self::HistoryShared { participant, from, by, by_name, .. } => {
                 ActorEvent::HistoryShared { participant, from, by, by_name }

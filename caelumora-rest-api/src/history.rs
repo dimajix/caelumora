@@ -628,6 +628,7 @@ mod tests {
                 by_name: "bob".to_string(),
                 until: Position::new(3),
                 at: Utc::now(),
+                out_of_channel: false,
             },
             |m| m,
         )

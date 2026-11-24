@@ -9,7 +9,6 @@ use crate::attachment::AttachmentManager;
 use crate::channel::ChannelLoop;
 use crate::command::CommandExecutor;
 use crate::controller::{ChannelController, SessionController};
-use crate::event::EventSubscription;
 use arc_swap::ArcSwap;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::AgentId;
@@ -116,14 +115,6 @@ impl ParticipantRuntime {
     /// else the store reports.
     pub(crate) async fn agent_attributes(&self, id: AgentId) -> StoreResult<SecurityAttributes> {
         self.runtime.kernel.controller_manager().agent_attributes(id).await
-    }
-
-    /// The global events about the actor's channel (issue 69): nothing about
-    /// other channels can be subscribed to. Changes to the actor's own user
-    /// or agent are the session's to take in, into the controller the actor
-    /// shares (issue 120).
-    pub(crate) fn subscribe_channel(&self) -> EventSubscription {
-        self.runtime.kernel.event_bus().subscribe_channel(self.channel_id)
     }
 
     /// The actor's channel as it stands, read from its controller - as it stood last once the

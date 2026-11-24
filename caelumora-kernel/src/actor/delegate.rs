@@ -497,6 +497,7 @@ mod tests {
             participant: recipient,
             name: "helper".to_string(),
             until: Position::new(9),
+            out_of_channel: false,
         };
         delegate.hears(giver, 9, left).await;
         for brief in ["look it up", "and this"] {

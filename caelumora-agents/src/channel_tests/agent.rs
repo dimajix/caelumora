@@ -15,7 +15,7 @@ use caelumora_api::model::{LanguageModelClient, ModelError, ModelProfileProvider
 use caelumora_domain::agent::{
     AgentChannelState, AgentId, HearsDuringTurn, HearsFrom, RetryRefused,
 };
-use caelumora_domain::approval::ApprovalRequest;
+use caelumora_domain::approval::{ApprovalId, ApprovalRequest, ApprovalStrategy};
 use caelumora_domain::channel::{ThreadId, ThreadOrigin};
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::Classification;
@@ -27,6 +27,8 @@ use caelumora_domain::tool::{ToolDescription, ToolResultStatus};
 use caelumora_domain::transcript::TranscriptEntry;
 use caelumora_domain::turn::GivenUpReason;
 use caelumora_domain::work::TurnId;
+use caelumora_kernel::actor::user::UserActor;
+use caelumora_kernel::session::{SessionLoop, SessionManager};
 use caelumora_security::AllowAllPolicy;
 use futures::stream;
 use futures::stream::BoxStream;
@@ -2820,17 +2822,27 @@ async fn a_rule_of_the_channel_asks_for_a_call_its_tool_would_run() {
     running.abort();
 }
 
-/// Issue 603: a user who joins a channel while an approval waits there is asked it - they alone -,
-/// so that what waits for them tells it, as it tells the user who was there.
-#[tokio::test]
-async fn a_user_who_joins_while_an_approval_waits_is_asked_it() {
-    use caelumora_domain::channel::HistoryAccess;
+/// A running session of alice, bob and an agent whose one call waits for approval, in a channel
+/// of theirs with an approver deciding by `strategy`, which bob takes part in if `with_bob`: the
+/// agent asked as alice said hello, and the approval waits for alice (issue 603).
+struct Approving {
+    /// Held while the session runs.
+    _manager: Arc<SessionManager>,
+    session: Arc<SessionLoop>,
+    channel: Arc<ChannelLoop>,
+    context: SecurityContext,
+    alice: UserId,
+    bob: UserId,
+    /// The approval asked of the users.
+    request: ApprovalId,
+}
+
+async fn approving(strategy: ApprovalStrategy, with_bob: bool) -> Approving {
     use caelumora_domain::session::testing::make_session;
     use caelumora_domain::template::InternalActorTemplate;
     use caelumora_domain::user::testing::make_user;
-    use caelumora_kernel::actor::user::UserActor;
     use caelumora_kernel::session::testing::{create, spec};
-    use caelumora_kernel::session::{ChannelSpec, SessionManager};
+    use caelumora_kernel::session::ChannelSpec;
     use caelumora_store::testing::record_users;
     let (call, components) = a_call_needing_approval();
     let store = Persistence::in_memory();
@@ -2844,29 +2856,83 @@ async fn a_user_who_joins_while_an_approval_waits_is_asked_it() {
     session.participants.extend([Participant::User(alice), Participant::Agent(agent)]);
     let manager = SessionManager::new(Arc::clone(&kernel));
     let session = create(&manager, &context, session).await.expect("the session starts");
-    let approving = ChannelSpec {
-        internal_actors: vec![InternalActorTemplate::Approver { strategy: Default::default() }],
-        ..spec("approving", vec![ActorId::User(alice), ActorId::Agent(agent)])
+    let mut taking_part = vec![ActorId::User(alice), ActorId::Agent(agent)];
+    if with_bob {
+        taking_part.push(ActorId::User(bob.id));
+    }
+    let spec = ChannelSpec {
+        internal_actors: vec![InternalActorTemplate::Approver { strategy }],
+        ..spec("approving", taking_part)
     };
-    let channel = session.create_channel(&context, approving).await.expect("alice makes it");
-    let waits_for = |actor: Arc<UserActor>| async move {
-        time::timeout(Duration::from_secs(5), async {
-            while actor.waiting().approvals == 0 {
-                time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .is_ok()
-    };
+    let channel = session.create_channel(&context, spec).await.expect("alice makes it");
     let hers = channel.user_actor(alice).expect("alice takes part");
+    let mut shown = hers.watch();
     hers.send_message(None, Some("hello".to_string()), None, Vec::new()).await.unwrap();
-    assert!(waits_for(Arc::clone(&hers)).await, "the call waits for alice");
+    let request = time::timeout(Duration::from_secs(5), async {
+        loop {
+            let envelope = shown.recv().await.expect("followed");
+            if let ActorEvent::ApprovalRequested { request, .. } = envelope.event {
+                break request.id;
+            }
+        }
+    })
+    .await
+    .expect("the call waits for alice");
+    assert!(waiting(&hers, 1).await, "and she is told");
+    Approving { _manager: manager, session, channel, context, alice, bob: bob.id, request }
+}
 
+/// Whether `approvals` approvals wait for the user of `actor` within five seconds.
+async fn waiting(actor: &UserActor, approvals: usize) -> bool {
+    time::timeout(Duration::from_secs(5), async {
+        while actor.waiting().approvals != approvals {
+            time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .is_ok()
+}
+
+/// Issue 603: a user who joins a channel while an approval waits there is asked it - they alone -,
+/// so that what waits for them tells it, as it tells the user who was there.
+#[tokio::test]
+async fn a_user_who_joins_while_an_approval_waits_is_asked_it() {
+    use caelumora_domain::channel::HistoryAccess;
+    let Approving { _manager: _running, session, channel, context, alice, bob, .. } =
+        approving(ApprovalStrategy::Any, false).await;
     let into = Some((channel.id(), HistoryAccess::All));
-    session.add_participant(&context, ActorId::User(bob.id), into).await.expect("added");
-    let his = channel.user_actor(bob.id).expect("bob takes part");
-    assert!(waits_for(his).await, "and for bob, who joined while it waited");
+    session.add_participant(&context, ActorId::User(bob), into).await.expect("added");
+    let his = channel.user_actor(bob).expect("bob takes part");
+    assert!(waiting(&his, 1).await, "and for bob, who joined while it waited");
+    let hers = channel.user_actor(alice).expect("alice takes part");
     assert_eq!(hers.waiting().approvals, 1, "still waiting for alice");
+}
+
+/// Issue 603: as a user leaves the channel, the approver, told so by the channel, waits for them
+/// no more - an approval all the others gave is decided.
+#[tokio::test]
+async fn an_approval_waits_no_more_for_a_user_who_left() {
+    let Approving { _manager: _running, session, channel, context, alice, bob, request: id } =
+        approving(ApprovalStrategy::All, true).await;
+    let hers = channel.user_actor(alice).expect("alice takes part");
+    let his = channel.user_actor(bob).expect("bob takes part");
+    assert!(waiting(&his, 1).await, "it waits for bob too");
+    hers.send_approval(id, true).await.unwrap();
+    assert!(waiting(&hers, 0).await, "answered by alice");
+
+    let mut shown = hers.watch();
+    session.remove_participant(&context, ActorId::User(bob)).await.expect("bob is let go");
+    let decided = time::timeout(Duration::from_secs(5), async {
+        loop {
+            let envelope = shown.recv().await.expect("followed");
+            if let ActorEvent::ApprovalGranted(verdict) = envelope.event {
+                break verdict.id;
+            }
+        }
+    })
+    .await
+    .expect("decided by alice alone, bob gone");
+    assert_eq!(decided, id);
 }
 
 /// The approval the approver asks the users for, from `events`.

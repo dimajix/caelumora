@@ -577,6 +577,7 @@ mod tests {
                 participant: user,
                 name: "user".to_string(),
                 until: Position::new(3),
+                out_of_channel: false,
             },
             ActorEvent::MessageModified(heard.clone()),
             ActorEvent::MessageRevoked { message: heard.id, at: Utc::now() },

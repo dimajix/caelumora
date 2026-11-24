@@ -2,7 +2,6 @@
 //! follows it and may read it, in the order it was published.
 
 use caelumora_domain::agent::{Agent, AgentId};
-use caelumora_domain::channel::ChannelId;
 use caelumora_domain::channel::{Channel, Participant};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::event::{EntityChange, EventPublisher, GlobalEvent};
@@ -25,7 +24,6 @@ use tracing::{info, warn};
 pub enum SubscriptionTopic {
     All,
     Session(SessionId),
-    Channel(ChannelId),
     Agent(AgentId),
     User(UserId),
 }
@@ -33,16 +31,15 @@ pub enum SubscriptionTopic {
 impl SubscriptionTopic {
     /// The topics `event` reaches: everything, and the entity it is about
     /// where that has a topic - a channel's events, and those of its
-    /// participants, the session it lies in too (issue 335). Other kinds
+    /// participants, the session it lies in (issue 335). Other kinds
     /// have no topic of their own until something follows one of them
     /// (issues 253, 22, 271, 286, 346): `All` alone.
     fn of(event: &GlobalEvent) -> Vec<Self> {
         let mut topics = vec![Self::All];
         if let Some((sid, _)) = event.about::<Session>() {
             topics.push(Self::Session(sid));
-        } else if let Some(((sid, cid), _)) = event.about::<Channel>() {
+        } else if let Some(((sid, _), _)) = event.about::<Channel>() {
             topics.push(Self::Session(sid));
-            topics.push(Self::Channel(cid));
         } else if let Some((aid, _)) = event.about::<Agent>() {
             topics.push(Self::Agent(aid));
         } else if let Some((uid, _)) =
@@ -501,11 +498,6 @@ impl EventBus {
         self.subscribe(SecurityContext::system(), vec![SubscriptionTopic::Session(id)])
     }
 
-    /// The events of channel `id`, as `subscribe_all`.
-    pub fn subscribe_channel(&self, id: ChannelId) -> EventSubscription {
-        self.subscribe(SecurityContext::system(), vec![SubscriptionTopic::Channel(id)])
-    }
-
     /// What is handed to the dispatcher, whose task is started the first
     /// time.
     fn queue(&self) -> &mpsc::UnboundedSender<Dispatched> {
@@ -590,6 +582,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use caelumora_domain::actor::ActorId;
+    use caelumora_domain::channel::ChannelId;
     use caelumora_domain::channel::{self, ChannelUpdateEvent};
     use caelumora_domain::group::{Group, GroupId};
     use caelumora_domain::scope::Scope;
@@ -683,14 +676,13 @@ mod tests {
     }
 
     /// Issue 335: a channel's events, and those of its participants, reach the
-    /// session it lies in and the channel, by what the event names.
+    /// session it lies in, by what the event names - no other session.
     #[tokio::test]
-    async fn a_channel_s_events_reach_its_session_and_itself() {
+    async fn a_channel_s_events_reach_its_session() {
         let bus = bus();
-        let (session, channel, other) = (SessionId::new(), ChannelId::new(), ChannelId::new());
+        let (session, channel) = (SessionId::new(), ChannelId::new());
         let mut sessions = bus.subscribe_session(session);
-        let mut channels = bus.subscribe_channel(channel);
-        let mut others = bus.subscribe_channel(other);
+        let mut others = bus.subscribe_session(SessionId::new());
         let agent = AgentId::new();
         bus.publish(
             GlobalEvent::custom::<Channel>(
@@ -714,12 +706,7 @@ mod tests {
             ["channel joined", "channel agent_state_changed"],
             "its session"
         );
-        assert_eq!(
-            described(channels.drain().await),
-            ["channel joined", "channel agent_state_changed"],
-            "the channel"
-        );
-        assert!(others.drain().await.is_empty(), "no other channel");
+        assert!(others.drain().await.is_empty(), "no other session");
     }
 
     #[tokio::test]

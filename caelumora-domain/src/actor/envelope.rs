@@ -330,7 +330,7 @@ impl Envelope {
                     into_channel: *into_channel,
                 }
             }
-            ActorEvent::ParticipantLeft { participant, name, until } => {
+            ActorEvent::ParticipantLeft { participant, name, until, out_of_channel } => {
                 HistoryEntry::ParticipantLeft {
                     participant: *participant,
                     name: name.clone(),
@@ -338,6 +338,7 @@ impl Envelope {
                     by_name: self.context.sender_name.clone(),
                     until: *until,
                     at,
+                    out_of_channel: *out_of_channel,
                 }
             }
             ActorEvent::HistoryShared { participant, from, by, by_name } => {
@@ -1067,24 +1068,27 @@ mod tests {
             ActorEvent::MessageModified(said(Some("changed"), MessageRole::Assistant)),
             ActorEvent::MessageRevoked { message: id, at: Utc::now() },
             ActorEvent::MessageReclassified { message: id, classification: Classification::PUBLIC },
-            ActorEvent::ParticipantLeft {
-                participant: present.agents[1],
-                name: "helper".to_string(),
-                until: Position::new(0),
-            },
         ] {
             let kind = changed.kind();
             assert_eq!(present.reached(sender, changed), present.users_and_agents(), "{kind}");
         }
-        // Issue 603: a join to the approver as well, which asks a user who joined what waits.
+        // Issue 603: a join or a leave to the approver as well, which follows the participants by
+        // them.
         let joined = ActorEvent::ParticipantJoined {
             participant: present.users[1],
             name: "bob".to_string(),
             into_channel: false,
         };
+        let left = ActorEvent::ParticipantLeft {
+            participant: present.agents[1],
+            name: "helper".to_string(),
+            until: Position::new(0),
+            out_of_channel: false,
+        };
         let mut with_approver = present.users_and_agents();
         with_approver.insert(present.approver);
         assert_eq!(present.reached(sender, joined), with_approver, "a join");
+        assert_eq!(present.reached(sender, left), with_approver, "a leave");
     }
 
     /// Issues 220, 243, 258, 284: how an answer comes about, how a turn

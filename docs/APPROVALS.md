@@ -60,9 +60,11 @@ whose inbox fell behind (issue 223), and no page shows them.
 A turn that ends while it waits - cancelled, given up - withdraws its requests. The approver takes a
 withdrawal only from the agent that asked, forgets the request without deciding it, and tells the
 users, so that nobody is asked any longer. A stopped agent withdraws nothing; the approver answers
-its pending requests as it leaves (see [CHANNELS.md](CHANNELS.md)). It learns of a leave from
-the channel's events; after it lost some, it denies the requests of every agent that no longer runs
-in the channel, and decides the others again by who may approve now.
+its pending requests as it leaves (see [CHANNELS.md](CHANNELS.md)). It learns of a join and a
+leave from the channel alone, as it is delivered what the channel records (`ParticipantJoined`,
+`ParticipantLeft`, issue 603): those into or out of the channel, not of a single thread, decide
+again what is pending by who may approve now. What its inbox misses it reads from the history, so
+nothing of it is lost.
 
 The agent's turn is the record of what it waits for: the approver holds its requests only in memory
 and starts empty after a restart. An agent that resumes a turn with calls still pending asks again,

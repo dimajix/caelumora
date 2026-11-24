@@ -332,9 +332,12 @@ impl ChannelLoop {
                 ThreadChange::Joins => {
                     ActorEvent::ParticipantJoined { participant: id, name, into_channel: false }
                 }
-                ThreadChange::Leaves => {
-                    ActorEvent::ParticipantLeft { participant: id, name, until }
-                }
+                ThreadChange::Leaves => ActorEvent::ParticipantLeft {
+                    participant: id,
+                    name,
+                    until,
+                    out_of_channel: false,
+                },
             };
             self.announce(changed, by, thread, running).await;
         }
@@ -442,6 +445,8 @@ impl ChannelLoop {
     /// between the events `run` routes, once the participant's task has ended: what it sent before
     /// is in the channel, nothing of it follows (issue 262). Nothing was delivered to it from the
     /// position `until` on (issue 417). Whoever asked for the leave is answered then (issue 593).
+    /// The leave told where it counts as joined (`joined_in`) is the leave of the channel
+    /// (`ParticipantLeft::out_of_channel`, issue 603).
     async fn announce_removal(
         &self,
         participant: ActorId,
@@ -449,8 +454,14 @@ impl ChannelLoop {
         running: &HashMap<ActorId, RunningActor>,
     ) {
         let Leaving { remover, name, until, threads, carried_out } = leaving;
+        let left_in = joined_in(self.id, &threads);
         for thread in threads {
-            let removed = ActorEvent::ParticipantLeft { participant, name: name.clone(), until };
+            let removed = ActorEvent::ParticipantLeft {
+                participant,
+                name: name.clone(),
+                until,
+                out_of_channel: thread == left_in,
+            };
             self.announce(removed, remover.clone(), thread, running).await;
         }
         for asked in carried_out {
@@ -1799,6 +1810,7 @@ mod tests {
                     participant: her,
                     name: "alice".to_string(),
                     until: Position::new(0),
+                    out_of_channel: false,
                 }),
                 &actors,
             )
@@ -2786,7 +2798,8 @@ mod tests {
         assert!(close.carried_out().await, "a closing, announced");
     }
 
-    /// Issue 602: a leave is announced in every thread the participant took part in.
+    /// Issue 602: a leave is announced in every thread the participant took part in - the first
+    /// of them as the leave of the channel (issue 603).
     #[tokio::test]
     async fn a_leave_is_announced_in_every_thread_taken_part_in() {
         let alice = make_user("alice");
@@ -2805,13 +2818,16 @@ mod tests {
         assert!(left.carried_out().await, "announced");
 
         let mut announced = BTreeSet::new();
+        let mut of_channel = 0;
         while let Ok(event) = events.try_recv() {
-            if let ActorEvent::ParticipantLeft { participant, .. } = event.event {
+            if let ActorEvent::ParticipantLeft { participant, out_of_channel, .. } = event.event {
                 assert_eq!(participant, gone, "who left");
                 announced.insert(event.context.thread_id);
+                of_channel += usize::from(out_of_channel);
             }
         }
         assert_eq!(announced, BTreeSet::from([line, thread]), "in each");
+        assert_eq!(of_channel, 1, "one of them the leave of the channel");
     }
 
     /// Issue 602: an actor drawn into a thread while it was let go - after the channel took it out

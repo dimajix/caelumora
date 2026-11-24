@@ -1752,6 +1752,7 @@ mod tests {
             by_name: "alice".to_string(),
             until: Position::new(1),
             at: Utc::now(),
+            out_of_channel: false,
         };
 
         state.note_announced(ThreadId::default(), left);

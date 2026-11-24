@@ -12,16 +12,14 @@ use caelumora_domain::agent::AgentId;
 use caelumora_domain::approval::{
     ApprovalDecision, ApprovalId, ApprovalStatus, ApprovalStrategy, ApprovalVerdict, Approver,
 };
-use caelumora_domain::channel::{self, Channel, Participant};
-use caelumora_domain::event::GlobalEvent;
+use caelumora_domain::channel::Participant;
 use caelumora_domain::security::SecurityAttributes;
 use caelumora_domain::value::name::Name;
 use caelumora_security::{AccessPolicy, AccessQuestions, ActionType, Enforcement};
 use chrono::{DateTime, Duration, Utc};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::future;
 use std::sync::Arc;
-use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::Mutex;
 use tokio::time;
 use tokio_util::sync::CancellationToken;
@@ -137,28 +135,31 @@ impl ApproverActor {
         approvers
     }
 
-    /// Follows the channel's participants (issue 46), which its
-    /// `ChannelController` has already changed when the event arrives: an
-    /// agent that left takes its pending approvals with it - they are
-    /// answered as denied, so that nobody keeps waiting for them - and every
-    /// join or leave may decide a pending approval, since who may approve
-    /// changed.
-    async fn handle_global_event(&self, event: &GlobalEvent, output: &dyn EventSender) {
-        let Some(((_, channel_id), change)) = event.about::<Channel>() else { return };
-        if channel_id != self.channel.id() {
-            return;
+    /// Follows `participant` joining the channel (issues 46, 603), as the channel tells it
+    /// (`ParticipantJoined::into_channel`), its document changed before: who may approve changed,
+    /// which may decide a pending approval, and a user who joined is asked what still waits
+    /// (`ask_newcomer`).
+    async fn participant_joined(
+        &self,
+        participant: ActorId,
+        output: &dyn EventSender,
+    ) -> Result<()> {
+        self.recheck_all_pending(output).await?;
+        match participant {
+            ActorId::User(_) => self.ask_newcomer(participant, output).await,
+            _ => Ok(()),
         }
-        let left = change.data::<ActorId>(channel::LEFT);
-        if let Some(ActorId::Agent(agent)) = left {
-            if let Err(e) = self.discard_pending_of(agent, output).await {
-                warn!("ApproverActor error discarding the approvals of agent {}: {:?}", agent, e);
-            }
+    }
+
+    /// Follows `participant` leaving the channel (issues 46, 603), as the channel tells it
+    /// (`ParticipantLeft::out_of_channel`), its document changed before: an agent takes its
+    /// pending approvals with it - they are answered as denied, so that nobody keeps waiting for
+    /// them -, and who may approve changed, which may decide one still pending.
+    async fn participant_left(&self, participant: ActorId, output: &dyn EventSender) -> Result<()> {
+        if let ActorId::Agent(agent) = participant {
+            self.discard_pending_of(agent, output).await?;
         }
-        if left.is_some() || change.data::<ActorId>(channel::JOINED).is_some() {
-            if let Err(e) = self.recheck_all_pending(output).await {
-                warn!("ApproverActor error rechecking approvals: {:?}", e);
-            }
-        }
+        self.recheck_all_pending(output).await
     }
 
     /// Asks `user`, who joined the channel (`ParticipantJoined::into_channel`), every approval it
@@ -177,33 +178,6 @@ impl ApproverActor {
             }
         }
         Ok(())
-    }
-
-    /// Makes up for the events of the channel it lost (issue 502), as
-    /// `handle_global_event` would have taken them: the pending approvals
-    /// of every agent that no longer takes part - no longer a participant,
-    /// which its `ChannelController` changed before announcing the leave, or
-    /// resting in the channel without an actor - are answered as denied, and
-    /// every other is decided again by who may approve now. Nothing is
-    /// denied while the channel does not run.
-    async fn catch_up(&self, output: &dyn EventSender) -> Result<()> {
-        if let Some(running) = self.participant_runtime.channel_loop() {
-            let asking: HashSet<AgentId> =
-                self.pending.lock().await.values().map(|p| p.agent_id).collect();
-            let channel = self.channel.load();
-            let gone: Vec<AgentId> = asking
-                .into_iter()
-                .filter(|agent| {
-                    let actor = ActorId::Agent(*agent);
-                    !channel.lists(actor) || !running.runs(actor)
-                })
-                .collect();
-            drop(channel);
-            for agent in gone {
-                self.discard_pending_of(agent, output).await?;
-            }
-        }
-        self.recheck_all_pending(output).await
     }
 
     /// Answers the pending approvals of `agent` as denied and forgets them.
@@ -226,11 +200,12 @@ impl ApproverActor {
             ActorEvent::ApprovalRequestWithdrawn { id } => {
                 self.handle_withdrawal(env.context.sender_id, id, output).await
             }
-            ActorEvent::ParticipantJoined {
-                participant: participant @ ActorId::User(_),
-                into_channel: true,
-                ..
-            } => self.ask_newcomer(participant, output).await,
+            ActorEvent::ParticipantJoined { participant, into_channel: true, .. } => {
+                self.participant_joined(participant, output).await
+            }
+            ActorEvent::ParticipantLeft { participant, out_of_channel: true, .. } => {
+                self.participant_left(participant, output).await
+            }
             _ => Ok(()),
         }
     }
@@ -421,14 +396,13 @@ impl Actor for ApproverActor {
                     | ActorEvent::ApprovalRequested { .. }
                     | ActorEvent::ApprovalRequestWithdrawn { .. }
                     | ActorEvent::ParticipantJoined { .. }
+                    | ActorEvent::ParticipantLeft { .. }
             )
         }
     }
 
     async fn run(&self, mut rx: Box<dyn EventReceiver>, tx: Box<dyn EventSender>) -> Result<()> {
         info!("ApproverActor {:?} started", self.id);
-        let mut global_rx = self.participant_runtime.subscribe_channel();
-        let mut following = true;
 
         loop {
             let next_timeout = {
@@ -464,22 +438,6 @@ impl Actor for ApproverActor {
                         None => break,
                     }
                 }
-                received = global_rx.receiver().recv(), if following => {
-                    match received {
-                        Ok(event) => self.handle_global_event(&event, &*tx).await,
-                        Err(RecvError::Lagged(lost)) => {
-                            warn!(
-                                "ApproverActor {:?} lost {} events and checks its approvals again",
-                                self.id, lost
-                            );
-                            if let Err(e) = self.catch_up(&*tx).await {
-                                warn!("ApproverActor error catching up: {:?}", e);
-                            }
-                        }
-                        // Not while the kernel holds the bus.
-                        Err(RecvError::Closed) => following = false,
-                    }
-                }
                 _ = timeout_fut => {
                     if let Err(e) = self.handle_timeouts(&*tx).await {
                         if is_closed(&e) {
@@ -513,7 +471,7 @@ impl Actor for ApproverActor {
 mod tests {
     use super::*;
     use crate::channel::ChannelLoop;
-    use crate::kernel::{ChannelRuntime, Kernel};
+    use crate::kernel::ChannelRuntime;
     use crate::testing::TestKernel;
     use crate::transport::{InMemoryEventReceiver, InMemoryEventSender};
     use caelumora_domain::actor::EventContext;
@@ -547,7 +505,6 @@ mod tests {
     struct Approving {
         channel: Arc<ChannelLoop>,
         approver: Arc<ApproverActor>,
-        kernel: Arc<Kernel>,
         agent: AgentId,
         users: Vec<UserId>,
         input: mpsc::Sender<Envelope>,
@@ -616,7 +573,7 @@ mod tests {
                 .await
                 .unwrap();
         });
-        Approving { channel, approver, kernel, agent: stored.id, users: ids, input, output }
+        Approving { channel, approver, agent: stored.id, users: ids, input, output }
     }
 
     impl Approving {
@@ -690,6 +647,18 @@ mod tests {
                 "an answer to it is refused, as not held: {:?}",
                 refused.event
             );
+        }
+
+        /// The channel tells the approver that `participant` left - the channel itself if
+        /// `out_of_channel`, else a thread of it (issue 603).
+        async fn left(&self, participant: ActorId, out_of_channel: bool) {
+            let left = ActorEvent::ParticipantLeft {
+                participant,
+                name: participant.to_string(),
+                until: Default::default(),
+                out_of_channel,
+            };
+            self.input.send(self.from(ActorId::System, left)).await.unwrap();
         }
 
         async fn next(&mut self) -> Envelope {
@@ -904,11 +873,9 @@ mod tests {
         approving.answer(0, &request, true).await;
         approving.nothing().await;
 
-        approving
-            .channel
-            .remove_participant(&SecurityContext::system(), ActorId::User(approving.users[1]))
-            .await
-            .unwrap();
+        let leaving = ActorId::User(approving.users[1]);
+        approving.channel.remove_participant(&SecurityContext::system(), leaving).await.unwrap();
+        approving.left(leaving, true).await;
         let decided = approving.next().await;
         assert!(
             matches!(decided.event, ActorEvent::ApprovalGranted(ref r) if r.id == request.id),
@@ -917,24 +884,19 @@ mod tests {
         );
     }
 
+    /// Issues 46, 603: an agent that leaves the channel takes its pending approvals with it, as
+    /// the channel tells - not one let go from a thread alone.
     #[tokio::test]
     async fn an_agent_that_leaves_takes_its_pending_approvals_with_it() {
         let mut approving = approving(ApprovalStrategy::All, 1, shared).await;
         let request = approving.request();
         approving.ask(&request).await;
+        let agent = ActorId::Agent(approving.agent);
+        approving.left(agent, false).await;
+        approving.nothing().await;
 
-        // The agent leaves before anyone decided (issue 46).
-        let (session, channel) = (approving.channel.session_id(), approving.channel.id());
-        approving.kernel.event_bus().publish(
-            GlobalEvent::custom::<Channel>(
-                &(session, channel),
-                channel::LEFT,
-                &ActorId::Agent(approving.agent),
-            ),
-            SecurityAttributes::systems(),
-        );
-
-        // Nobody keeps waiting: the request is answered as denied.
+        // The agent leaves before anyone decided: nobody keeps waiting, the request is denied.
+        approving.left(agent, true).await;
         let decided = approving.next().await;
         assert!(
             matches!(decided.event, ActorEvent::ApprovalDenied(ref r) if r.id == request.id),
@@ -987,38 +949,5 @@ mod tests {
         assert_eq!(asked.context.sender_id, approving.approver.id(), "in its own name");
         assert_eq!(asked.context.thread_id, ThreadId::line(approving.channel.id()), "where asked");
         approving.nothing().await;
-    }
-
-    /// Issue 502: a leave the approver lost among more events than it holds
-    /// is made up for - the agent no longer runs in the channel, so its
-    /// pending approvals are denied all the same.
-    #[tokio::test]
-    async fn an_agent_whose_leave_was_lost_takes_its_pending_approvals_with_it() {
-        let mut approving = approving(ApprovalStrategy::All, 1, shared).await;
-        let request = approving.request();
-        approving.ask(&request).await;
-
-        // The leave, and more than a subscription holds after it, published
-        // before the approver runs again: the leave is lost.
-        let address = (approving.channel.session_id(), approving.channel.id());
-        let bus = approving.kernel.event_bus();
-        let agent = approving.agent;
-        bus.publish(
-            GlobalEvent::custom::<Channel>(&address, channel::LEFT, &ActorId::Agent(agent)),
-            SecurityAttributes::systems(),
-        );
-        bus.publish_past_capacity(&GlobalEvent::custom::<Channel>(
-            &address,
-            channel::AGENT_STATE_CHANGED,
-            &agent,
-        ));
-
-        let decided = approving.next().await;
-        assert!(
-            matches!(decided.event, ActorEvent::ApprovalDenied(ref r) if r.id == request.id),
-            "denied: {:?}",
-            decided.event
-        );
-        approving.holds_no_longer(&request).await;
     }
 }

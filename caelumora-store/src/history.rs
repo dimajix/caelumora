@@ -485,6 +485,7 @@ mod tests {
             by_name: String::new(),
             until: Position::new(2),
             at: Utc::now(),
+            out_of_channel: false,
         };
         for (entry, sender) in [(joined(alice), alice), (left, alice)] {
             assert!(history.enter(Recorded::new(entry, sender, Audience::Everybody, &context)));
@@ -1007,6 +1008,7 @@ mod tests {
                     by_name: String::new(),
                     until: Position::new(5),
                     at: Utc::now(),
+                    out_of_channel: false,
                 },
                 alice,
                 Audience::Everybody,
@@ -1093,6 +1095,7 @@ mod tests {
                     by_name: String::new(),
                     until: Position::new(8),
                     at: Utc::now(),
+                    out_of_channel: false,
                 },
                 alice,
             ), // 8
@@ -1124,6 +1127,7 @@ mod tests {
             by_name: String::new(),
             until: Position::new(3),
             at: Utc::now(),
+            out_of_channel: false,
         };
         let mut history = History::default();
         for (entry, context) in [

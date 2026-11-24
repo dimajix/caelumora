@@ -31,7 +31,7 @@ use futures::future;
 use std::collections::{BTreeSet, HashSet};
 use std::slice;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{info, warn};
 
 /// Takes a participant into a session, and into a channel of it at once if one is named - added
 /// by whoever may change them, or joining by their own act -, starting the session where it does
@@ -626,8 +626,11 @@ async fn require_entry(
 /// in the name the way `entry` says and announced by the channel's controller; then their actor is
 /// started to take part in its thread (`ChannelLoop::add_actor`), and waited for - but a
 /// founder's, which starts with the channel or the thread it founds: what `run` is handed after it
-/// comes after its start. Each step is taken back by `log` if a later one fails, the last first:
-/// the actor leaves, waited for, and the channel is again as it was, their invitation given back.
+/// comes after its start. Taken back by `log` if a later step fails: the channel is again as it
+/// was, their invitation given back, and then the actor leaves, waited for - stored first, as
+/// letting someone go stores first (`let_go_out_of`), so that whoever follows the participants by
+/// the leave the channel tells, the approver among them, reads them gone (issue 603). An actor
+/// that cannot be started takes the channel back at once.
 ///
 /// # Errors
 /// As `ChannelLoop::history_start` and `add_actor`; `ChannelError::AlreadyParticipant` or
@@ -656,19 +659,31 @@ pub(crate) async fn take_into_channel(
         return Err(refusal(ChannelError::NotInSession { participant, channel: channel.id() }));
     };
     let before = channel.controller().add_participant(&entry.storing(context), listed).await?;
+    let taken_back = {
+        let channel = Arc::clone(channel);
+        async move { channel.controller().roll_back_participant_addition(participant, &before).await }
+    };
+    let threads = BTreeSet::from([thread]);
+    let started = match channel.add_actor(resolved, threads, from, Some(context)).await {
+        Ok(started) => started,
+        Err(e) => {
+            if let Err(undone) = taken_back.await {
+                warn!(
+                    "Taking {} into channel {} cannot be undone: {}",
+                    participant,
+                    channel.id(),
+                    undone
+                );
+            }
+            return Err(e.into());
+        }
+    };
     {
         let channel = Arc::clone(channel);
         log.record("taking someone into a channel", async move {
-            Ok(channel.controller().roll_back_participant_addition(participant, &before).await?)
-        });
-    }
-    let threads = BTreeSet::from([thread]);
-    let started = channel.add_actor(resolved, threads, from, Some(context)).await?;
-    {
-        let channel = Arc::clone(channel);
-        log.record("starting someone in a channel", async move {
+            let undone = taken_back.await;
             channel.remove_actor(participant, &SecurityContext::system()).await;
-            Ok(())
+            Ok(undone?)
         });
     }
     if !entry.founds() && !started.carried_out().await {

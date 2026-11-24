@@ -410,8 +410,7 @@ async fn the_database_gives_a_reader_what_the_model_gives_them() {
     let store = database.backend();
     let channel = ChannelId::new();
     let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
-    let agent = ActorId::Agent(AgentId::new());
-    let approver = ActorId::Approver(ApproverId::new());
+    let (agent, approver) = (ActorId::Agent(AgentId::new()), ActorId::Approver(ApproverId::new()));
     let joined = |participant| HistoryEntry::ParticipantJoined {
         participant,
         name: String::new(),
@@ -455,6 +454,7 @@ async fn the_database_gives_a_reader_what_the_model_gives_them() {
                 by_name: String::new(),
                 until: Position::new(6),
                 at: Utc::now(),
+                out_of_channel: false,
             },
             alice,
             Audience::Everybody,
