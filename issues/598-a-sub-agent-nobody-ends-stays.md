@@ -261,3 +261,7 @@ gain fields without a default.
   closing refused -; the sub-agents' start opens its thread owning the sub-agent, `end_subagent`
   closes it; the plugin's `Ending` gone, and with it the last users outside the kernel of
   `close_thread`, `let_go_from_session` and `lock_letting_go`, now `pub(crate)`.
+- **2026-11-24** — Decided by the maintainer on step 1's review: a thread owns only agents made for
+  it alone - `thread::open` refuses to found a thread owning an agent that takes part in the
+  session already (`SessionError::AlreadyParticipant`), so that no closing deletes an agent that
+  was there before the thread.

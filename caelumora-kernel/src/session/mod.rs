@@ -64,7 +64,8 @@ pub enum SessionError {
     InvalidComponents(#[source] ComponentError),
     #[error("{participant} is not a participant of session {session}")]
     NotAParticipant { session: SessionId, participant: ActorId },
-    /// Taken in already, and no channel named to take them into (issue 221).
+    /// Taken in already, and no channel named to take them into (issue 221); or an agent a thread
+    /// is to own that takes part already (issue 598).
     #[error("{participant} is a participant of session {session} already")]
     AlreadyParticipant { session: SessionId, participant: ActorId },
     /// Only a user or an agent is taken into a session after it was built

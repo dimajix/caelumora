@@ -87,12 +87,15 @@ impl Procedure for Open {
 /// Opens thread `thread` of `channel` of `session` as `spec` says, on behalf of `context`, with its
 /// founders - whom `context` acts for, or agents of their own -, each once, for a procedure that
 /// holds the thread, the one it is opened at and its founders (`Open`), or a founder nobody knows
-/// yet, an agent just made (the sub-agents' start, issue 558). A founder new to the channel takes
-/// part in the thread alone; one who takes part in the channel already takes part in it as well
-/// (issue 602). Everything is asked before anything is stored: whether `context` may open it there
-/// (`require_opening`, asked ahead of the channel, which asks it again as it opens it), that a
-/// person opens it at a message said where it is to hang (`ChannelLoop::require_origin`, issue
-/// 595), what taking each founder who takes part already into the thread asks
+/// yet, an agent just made (the sub-agents' start, issue 558). A thread that owns the agents it is
+/// founded with (`ThreadSpec::owns_founders`, issue 598) is founded only with agents that take part
+/// in the session not yet - that they were made for it alone is its opener's to promise. A founder
+/// new to the channel takes part in the thread alone; one who takes part in the channel already
+/// takes part in it as well (issue 602). Everything is asked before anything is stored: whether
+/// `context` may open it there (`require_opening`, asked ahead of the channel, which asks it again
+/// as it opens it), that a person opens it at a message said where it is to hang
+/// (`ChannelLoop::require_origin`, issue 595), that each agent it is to own takes part in the
+/// session not yet, what taking each founder who takes part already into the thread asks
 /// (`participant::require_thread_entry`), and what taking each newcomer in asks, as each is taken
 /// into the session (`participant::take_into_session`); then the thread is opened
 /// (`ChannelLoop::open_thread`), each newcomer taken into the channel as one
@@ -104,7 +107,8 @@ impl Procedure for Open {
 /// issue 602).
 ///
 /// # Errors
-/// `SessionError::ChannelNotFound` for a channel `context` may not read; as `require_opening`,
+/// `SessionError::ChannelNotFound` for a channel `context` may not read; `AlreadyParticipant` for
+/// an agent it is to own that takes part in the session already; as `require_opening`,
 /// `ChannelLoop::require_origin`, `participant::require_thread_entry`,
 /// `participant::take_into_session`, `ChannelLoop::open_thread`, `participant::take_into_channel`
 /// and `participant::take_into_thread`.
@@ -122,6 +126,16 @@ pub async fn open(
     let access = kernel.access_policy();
     require_opening(access.as_ref(), context, &channel.channel(), spec.origin, open).await?;
     channel.require_origin(context, spec.origin).await?;
+    // What a thread owns, it lets go and deletes as it is closed (issue 598): no agent that takes
+    // part in the session already.
+    if let Some(there) = spec
+        .owned()
+        .into_iter()
+        .map(ActorId::Agent)
+        .find(|owned| session.session().takes_part(*owned))
+    {
+        return Err(SessionError::AlreadyParticipant { session: session.id(), participant: there });
+    }
     // Each once, in the order named.
     let mut named = HashSet::new();
     let founders = spec.founders.iter().copied().filter(|founder| named.insert(*founder));
@@ -249,6 +263,7 @@ mod tests {
     use crate::procedure::participant::LetGo;
     use crate::procedure::testing::{waits_for, Held};
     use crate::procedure::Key;
+    use crate::session::SessionError;
     use crate::testing::{Script, ScriptedAgent, ScriptedAgents, World};
     use anyhow::Error;
     use caelumora_api::actor::{agent_factory, Actor};
@@ -340,8 +355,8 @@ mod tests {
     /// Issue 598: a thread that owns the agents it is founded with is closed with them - each let
     /// go from the session, the thread closed, the agent deleted -; a closing that stopped
     /// half-way - the agent let go, the thread closed - finishes as it is asked again; one of a
-    /// session that does not run starts it and closes it so too; and an agent a thread does not
-    /// own is let go and kept.
+    /// session that does not run starts it and closes it so too; an agent a thread does not own is
+    /// let go and kept; and no thread owns an agent that takes part in the session already.
     #[tokio::test]
     async fn a_thread_is_closed_with_the_agents_it_owns() {
         let answering = ScriptedAgents(Script::Answers("found it".to_string()));
@@ -364,6 +379,22 @@ mod tests {
             };
             threads.push(session.open_thread(&alice, main.id(), spec).await.expect("opened"));
         }
+        // In the session, though in no channel: only what a thread may own stops it.
+        let elsewhere = ActorId::Agent(world.agent("elsewhere", world.alice, &personality).await);
+        session.add_participant(&alice, elsewhere, None).await.expect("taken into the session");
+        let owning = ThreadSpec {
+            founders: vec![elsewhere],
+            owns_founders: true,
+            ..ThreadSpec::new(at_the_line(&main, world.alice).await)
+        };
+        let refused = session.open_thread(&alice, main.id(), owning).await.unwrap_err();
+        assert!(
+            matches!(
+                refused.downcast_ref::<SessionError>(),
+                Some(SessionError::AlreadyParticipant { .. })
+            ),
+            "an agent in the session already is owned by no thread: {refused}"
+        );
         let store = world.entity_store::<Agent>();
         let deleted = |agent| {
             let (store, alice) = (Arc::clone(&store), alice.clone());

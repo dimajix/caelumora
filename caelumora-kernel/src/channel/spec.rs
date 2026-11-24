@@ -17,7 +17,8 @@ pub struct ThreadSpec {
     /// named.
     pub founders: Vec<ActorId>,
     /// Whether the agents it is founded with were made for it alone, and end with it as it is
-    /// closed (issue 598, `Opening::owned`); not unless asked.
+    /// closed (issue 598, `Opening::owned`) - refused for one that takes part in the session
+    /// already (`procedure::thread::open`); not unless asked.
     pub owns_founders: bool,
 }
 

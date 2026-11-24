@@ -272,11 +272,12 @@ thread, and their leave is recorded there; from then on what is sent into it is 
 is never closed.
 
 A thread may **own the agents it is founded with**, made for it alone, as its `ThreadSpec` asks
-(`owns_founders`, issue 598; a sub-agent's thread): the opening keeps them (`Opening::owned`), and
-closing the thread closes it with them - each let go from the session first, by its own act, as an
-agent of whom the closer acts for leaves, then the thread closed, then each deleted. The channel's
-state keeps them also once the thread is closed, so that a closing that stopped half-way finishes
-as it is asked again.
+(`owns_founders`, issue 598; a sub-agent's thread) - what its opener promises; the kernel refuses
+an agent that takes part in the session already (`AlreadyParticipant`): the opening keeps them
+(`Opening::owned`), and closing the thread closes it with them - each let go from the session
+first, by its own act, as an agent of whom the closer acts for leaves, then the thread closed, then
+each deleted. The channel's state keeps them also once the thread is closed, so that a closing that
+stopped half-way finishes as it is asked again.
 
 A participant of the channel is **taken into a further thread** of it, and **let go from one
 thread** alone, staying in its others (issue 602): `procedure::participant::TakeIntoThread` - added
