@@ -1,6 +1,6 @@
 # 598 — A sub-agent nobody ends stays
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** low
 **Area:** Sessions and channels
@@ -290,3 +290,17 @@ gain fields without a default.
   channel follows the entries in the order of its history, so that a turn's end it follows after
   the reading always comes after it (`read: bool`; `follow_read` and `follow_turn_end` without a
   position, `ChannelState::follow_read` and `follow_giver` likewise).
+- **2026-11-24** — Step 3, decided by the maintainer as it was begun: the follower closes a thread
+  whose delegation was let go in the kernel's name (`SecurityContext::system`) - the delegate's
+  context, the plan's proposal, may neither have another's agent leave nor delete it, and the
+  giver's has no rights once it left -, as a consequence of what the giver did with its own
+  sub-agent; the kernel's own context may have anyone leave as by their own act, asked in their
+  own context (`Participation::require_own_leave`, leaving alone: joining and founding stay as
+  they were). Built: `AgentFollower` renamed `SessionFollower` - decided on review: it carries out,
+  for the running sessions, what follows from events outside any procedure -, following
+  `channel::DELEGATION_LET_GO` by `thread::Close` in a running session - a stopped one announces
+  it again as it starts, so that the follower starts no session -, and, after it lost events,
+  every delegation let go in the running sessions (`ChannelLoop::delegations_let_go`); the test
+  world may be `unfollowed`, so that what is announced to the follower can be tested. Done: a
+  sub-agent nobody ends is ended once its agent leaves it without a word in the turn that read its
+  answer, or leaves where it was started.

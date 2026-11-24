@@ -794,7 +794,7 @@ async fn require_exit_from_session(
             return Err(StoreError::PermissionDenied(leaving.refused()).into());
         };
         let refusal = StoreError::PermissionDenied;
-        kernel.participation().require_own_act(&resolved, context, leaving, refusal).await?;
+        kernel.participation().require_own_leave(&resolved, context, leaving, refusal).await?;
     }
     Ok(())
 }
@@ -847,7 +847,7 @@ async fn require_exit_from_channel(
         let Some(resolved) = resolved else {
             return Err(refusal(leaving.refused()).into());
         };
-        kernel.participation().require_own_act(&resolved, context, leaving, refusal).await?;
+        kernel.participation().require_own_leave(&resolved, context, leaving, refusal).await?;
     }
     Ok(())
 }
@@ -1195,7 +1195,7 @@ mod tests {
     use crate::event::SubscriptionTopic;
     use crate::kernel::Kernel;
     use crate::procedure::channel::Start;
-    use crate::procedure::follower::AgentFollower;
+    use crate::procedure::follower::SessionFollower;
     use crate::procedure::testing::{waits_for, Held};
     use crate::procedure::Key;
     use crate::session::testing::*;
@@ -1684,7 +1684,7 @@ mod tests {
     }
 
     /// Deletes `agent` and waits until its actor stopped in `channel`: the
-    /// kernel's follower heard of the deletion.
+    /// session follower heard of the deletion.
     async fn deleted_stops_in(
         kernel: &Kernel,
         ctx: &SecurityContext,
@@ -1707,7 +1707,7 @@ mod tests {
         let kernel = test_kernel();
         let manager = SessionManager::new(Arc::clone(&kernel));
         // Followed as the programs follow them (issue 593).
-        let _followed = AgentFollower::spawn(&manager);
+        let _followed = SessionFollower::spawn(&manager);
         let helper = stored_agent(
             kernel.entity_stores(),
             "helper",
@@ -1727,7 +1727,7 @@ mod tests {
             .await
             .expect("taken in");
         assert!(main.participant_ids().contains(&actor), "it runs in the channel");
-        // Announced, and followed by the follower of the agents as any agent.
+        // Announced, and followed by the session follower as any agent.
         let announced = |events: &[GlobalEvent]| {
             events.iter().any(|e| matches!(e.about::<Session>().and_then(|(_, change)| change.update::<SessionUpdateEvent>()),
             Some(SessionUpdateEvent::ParticipantJoined(p)) if p.actor_id() == actor))

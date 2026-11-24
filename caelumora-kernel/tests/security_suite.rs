@@ -1096,6 +1096,45 @@ async fn a_thread_is_closed_with_the_agent_it_owns_by_its_owner_alone() {
     assert!(!session.session().takes_part(bobs_helper), "his agent let go");
 }
 
+/// Issue 598: the kernel closes a thread that owns another's agent - as its follower does once the
+/// thread's delegation was let go -: it may close it, the agent leaves as by its own act, asked in
+/// the agent's own context, and is deleted.
+#[tokio::test]
+async fn the_kernel_closes_a_thread_with_the_agent_it_owns_as_its_owner_would() {
+    let answering = ScriptedAgents(Script::Answers("ok".to_string()));
+    let world = World::with(&[], &[&answering], |_| {}).await;
+    let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
+    let bobs_helper = ActorId::Agent(world.agent("bobs-helper", world.bob, &shared).await);
+    let session = world.shared_session(&[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let bob = World::as_user(world.bob);
+    let line = ThreadOrigin {
+        thread: ThreadId::line(main.id()),
+        message: main.said_by(world.alice, ThreadId::line(main.id())).await,
+    };
+    let owning = ThreadSpec {
+        founders: vec![bobs_helper],
+        circle: Circle::Closed,
+        owns_founders: true,
+        ..ThreadSpec::new(line)
+    };
+    let bobs = session.open_thread(&bob, main.id(), owning).await.expect("bob founds it");
+
+    let kernel = World::system();
+    let (closed, asked) = world.asked(main.close_thread_by_procedure(&kernel, bobs)).await;
+    assert!(closed.expect("the kernel's to close"), "closed");
+    assert_eq!(
+        asked,
+        // The kernel is asked nothing; its leave is asked of the agent, as by its own act.
+        checks(&["bob as bobs-helper: LeaveSession(alice's) yes"]),
+        "{asked:#?}"
+    );
+    assert!(!session.session().takes_part(bobs_helper), "his agent let go");
+    let helper = bobs_helper.as_agent_id().expect("an agent");
+    let agents = world.entity_store::<Agent>();
+    assert!(agents.get_deleted(&World::system(), helper).await.is_ok(), "and deleted");
+}
+
 /// Issue 557: whoever reads a channel opens a thread in it (`OpenThread`), founded with their own
 /// agents - taken into the session and the channel without the right to change either, so that a
 /// participant who does not own the session can start a sub-agent - and never with another's. A

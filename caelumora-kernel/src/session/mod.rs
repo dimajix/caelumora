@@ -250,7 +250,7 @@ pub struct SessionLoop {
     start_rx: Mutex<mpsc::UnboundedReceiver<ChannelId>>,
     /// The events about its participants' names, subscribed to as the session is made, so that
     /// nothing of whom it takes in before it runs is missed; taken by `run`, which follows them.
-    /// Whether its agents exist the follower of the agents follows (`procedure::follower`, issue
+    /// Whether its agents exist the session follower follows (`procedure::follower`, issue
     /// 593); taking them into their controllers is the `ControllerManager`'s (issue 121).
     subscription: Mutex<EventSubscription>,
     /// What the participants it takes in are followed by on `subscription` (issue 590), from
@@ -430,9 +430,9 @@ impl SessionLoop {
     /// is stopped - which aborts this, and with it every channel (issue 593).
     ///
     /// Its channels follow the names of its participants: told of a participant renamed, and after
-    /// it lost events (issue 585). Whether its agents exist they follow by the follower of the
-    /// agents (`procedure::follower::AgentFollower`, issue 593), which changes no lifecycle of
-    /// theirs from here.
+    /// it lost events (issue 585). Whether its agents exist they follow by the session follower
+    /// (`procedure::follower::SessionFollower`, issue 593), which changes no lifecycle of theirs
+    /// from here.
     ///
     /// # Errors
     /// If it runs already, or a channel panicked, which ends it with every channel - logged by

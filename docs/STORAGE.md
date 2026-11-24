@@ -826,8 +826,8 @@ is the one writer of it and holds every change live already; taken over again on
 since, a join would list one let go after it (issue
 [590](../issues/590-a-session-lets-nobody-go.md)). A running session follows only whom it takes in,
 whether its participants are renamed, which decides whom a mention addresses; whether its agents are
-deleted or restored, which decides which actors run in its channels, the follower of the agents
-follows for every running session (`procedure::follower::AgentFollower`, see
+deleted or restored, which decides which actors run in its channels, the session follower follows
+for every running session (`procedure::follower::SessionFollower`, see
 [CHANNELS.md](CHANNELS.md)). The `ControllerManager` takes every announced change to an agent, a
 user, a workspace or a project into its live controller, once per instance - the place where changes
 made in other instances will arrive (see [Several instances](#several-instances)). An event carries

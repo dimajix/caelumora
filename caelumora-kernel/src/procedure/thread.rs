@@ -176,8 +176,9 @@ pub async fn open(
 /// Closes a thread of a channel on behalf of `context`, starting the session where it does not
 /// run, once nobody takes part in it (`ChannelLoop::close_thread`); holds it until `run` has
 /// closed it. A thread that owns agents (`Opening::owned`, issue 598) is closed with them: each let
-/// go from the session first - by its own act, as an agent of whom `context` acts for leaves -,
-/// since closing waits for nobody to take part, and deleted after. `false` if it is not open.
+/// go from the session first - by its own act, as an agent of whom `context` acts for leaves, or
+/// as the kernel's own context has anyone leave -, since closing waits for nobody to take part,
+/// and deleted after. `false` if it is not open.
 pub struct Close {
     context: SecurityContext,
     session: SessionId,
@@ -260,10 +261,12 @@ mod tests {
     use super::{Close, Open};
     use crate::channel::testing::settled;
     use crate::channel::{require_opening, ChannelError, ChannelLoop, ThreadSpec};
+    use crate::event::EventSubscription;
+    use crate::procedure::follower::SessionFollower;
     use crate::procedure::participant::LetGo;
     use crate::procedure::testing::{waits_for, Held};
     use crate::procedure::Key;
-    use crate::session::SessionError;
+    use crate::session::{SessionError, SessionLoop};
     use crate::testing::{Script, ScriptedAgent, ScriptedAgents, World};
     use anyhow::Error;
     use caelumora_api::actor::{agent_factory, Actor};
@@ -275,6 +278,7 @@ mod tests {
     use caelumora_domain::channel::{
         Channel, Circle, Delegation, ThreadId, ThreadOrigin, DELEGATION_LET_GO,
     };
+    use caelumora_domain::event::GlobalEvent;
     use caelumora_domain::history::{Attended, HistoryEntry};
     use caelumora_domain::message::MessageId;
     use caelumora_domain::store::StoreError;
@@ -635,13 +639,10 @@ mod tests {
         world.manager.stop(&alice, session.id()).await.unwrap();
     }
 
-    /// Issue 598: a giver leaving lets go its delegation into a thread that owns its recipient -
-    /// where nothing comes back to it any more -, announced as the channel records the leave; the
-    /// thread's agent stays until the thread is closed with it.
-    #[tokio::test]
-    async fn a_giver_leaving_lets_its_delegation_go() {
-        let answering = ScriptedAgents(Script::Answers("found it".to_string()));
-        let world = World::with(&[], &[&answering], |_| {}).await;
+    /// Bob's thread, owning his agent, delegated into by him and answered, and the session; then
+    /// bob leaves it, which lets the delegation go (issue 598). The thread, his agent, and whether
+    /// the channel announced it as it recorded his leave.
+    async fn left_by_its_giver(world: &World) -> (Arc<SessionLoop>, ThreadId, ActorId, bool) {
         let personality = world.personality("helper", Some(world.bob), &[]).await;
         let helper = ActorId::Agent(world.agent("bobs-helper", world.bob, &personality).await);
         let bob = World::as_user(world.bob);
@@ -660,21 +661,76 @@ mod tests {
         main.delegate(&bob, thread, helper, "look it up".to_string()).await.expect("delegated");
         let back = |e: &HistoryEntry| matches!(e, HistoryEntry::GivenToRead { recipient, .. } if *recipient == his);
         main.history_once(|entries| entries.iter().any(back)).await;
-        assert!(
-            main.delegation(thread).await.is_some_and(|held| !held.is_let_go()),
-            "its word due"
-        );
+        let due = main.delegation(thread).await.is_some_and(|held| !held.is_let_go());
+        assert!(due, "its word due");
 
         let mut events = world.kernel.event_bus().subscribe_all();
         session.leave(&bob, his).await.expect("bob leaves");
-        let let_go = |held: Option<Delegation>| held.as_ref().is_some_and(Delegation::is_let_go);
-        assert!(let_go(main.delegation(thread).await), "let go as its giver left");
-        let announced = events.drain().await.iter().any(|event| {
+        (session, thread, helper, announced(&mut events, thread).await)
+    }
+
+    /// Whether `events` announce the delegation into `thread` let go (issue 598).
+    async fn announced(events: &mut EventSubscription, thread: ThreadId) -> bool {
+        events.drain().await.iter().any(|event| {
             event.about::<Channel>().and_then(|(_, change)| change.data(DELEGATION_LET_GO))
                 == Some(thread)
-        });
+        })
+    }
+
+    /// Issue 598: a giver leaving lets go its delegation into a thread that owns its recipient -
+    /// where nothing comes back to it any more -, announced as the channel records the leave; the
+    /// session follower closes the thread with the agent it owns, in the kernel's name.
+    #[tokio::test]
+    async fn a_giver_leaving_lets_its_delegation_go_and_the_follower_closes_its_thread() {
+        let answering = ScriptedAgents(Script::Answers("found it".to_string()));
+        let world = World::with(&[], &[&answering], |_| {}).await;
+        let (session, thread, helper, announced) = left_by_its_giver(&world).await;
         assert!(announced, "announced as it was recorded");
-        assert!(main.channel().lists(helper), "its agent stays until the thread is closed");
+        let main = Arc::clone(&session.channels()[0]);
+        let closed = |e: &HistoryEntry| matches!(e, HistoryEntry::ThreadClosed { thread: t, .. } if *t == thread);
+        main.history_once(|entries| entries.iter().any(closed)).await;
+        assert!(!main.channel().lists(helper), "its agent let go");
+        let agent = helper.as_agent_id().expect("an agent");
+        let agents = world.entity_store::<Agent>();
+        assert!(agents.get_deleted(&World::system(), agent).await.is_ok(), "and deleted");
+        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    }
+
+    /// Issue 598: a delegation let go and not closed yet - nobody followed it - is kept let go, and
+    /// announced again as its channel starts again.
+    #[tokio::test]
+    async fn a_delegation_let_go_is_announced_again_as_its_channel_starts() {
+        let answering = ScriptedAgents(Script::Answers("found it".to_string()));
+        let world = World::with(&[], &[&answering], |_| {}).await.unfollowed();
+        let (session, thread, helper, _) = left_by_its_giver(&world).await;
+        let alice = World::as_user(world.alice);
+
+        let mut events = world.kernel.event_bus().subscribe_all();
+        world.manager.stop(&alice, session.id()).await.unwrap();
+        let session = world.manager.open(&alice, session.id()).await.unwrap();
+        assert!(announced(&mut events, thread).await, "announced again");
+        let main = Arc::clone(&session.channels()[0]);
+        let let_go = main.delegation(thread).await.as_ref().is_some_and(Delegation::is_let_go);
+        assert!(let_go, "kept let go");
+        assert!(main.channel().lists(helper), "its agent there until the thread is closed");
+        world.manager.stop(&alice, session.id()).await.unwrap();
+    }
+
+    /// Issue 598: a follower that lost events closes every thread of the running sessions whose
+    /// delegation was let go - here one let go before it followed anything.
+    #[tokio::test]
+    async fn a_follower_that_lost_events_closes_what_was_let_go() {
+        let answering = ScriptedAgents(Script::Answers("found it".to_string()));
+        let world = World::with(&[], &[&answering], |_| {}).await.unfollowed();
+        let (session, thread, helper, _) = left_by_its_giver(&world).await;
+        let main = Arc::clone(&session.channels()[0]);
+
+        let _followed = SessionFollower::spawn(&world.manager);
+        let agent = helper.as_agent_id().expect("an agent");
+        world.kernel.event_bus().publish_past_capacity(&GlobalEvent::created::<Agent>(&agent));
+        let closed = |e: &HistoryEntry| matches!(e, HistoryEntry::ThreadClosed { thread: t, .. } if *t == thread);
+        main.history_once(|entries| entries.iter().any(closed)).await;
+        assert!(!main.channel().lists(helper), "its agent let go");
         world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 

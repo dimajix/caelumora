@@ -1290,7 +1290,7 @@ mod tests {
     use crate::component::BUNDLE_REF_KIND;
     use crate::error::is_forbidden;
     use crate::kernel::Kernel;
-    use crate::procedure::follower::AgentFollower;
+    use crate::procedure::follower::SessionFollower;
     use crate::procedure::participant::Follow;
     use crate::procedure::testing::{waits_for, Held};
     use crate::procedure::{Compensation, Deferred, Key, Locks, Procedure, ProcedureError};
@@ -1712,7 +1712,7 @@ mod tests {
     async fn a_deleted_agent_rests_in_its_channels_keeps_its_name_and_comes_back_restored() {
         use caelumora_domain::channel::Participant;
         /// Waits until `holds` does, at most two seconds: a running channel
-        /// follows the agent as the follower of the agents learns of it.
+        /// follows the agent as the session follower learns of it.
         async fn until(holds: impl Fn() -> bool, what: &str) {
             let waited = async {
                 while !holds() {
@@ -1726,7 +1726,7 @@ mod tests {
         let kernel = test_kernel();
         let manager = SessionManager::new(Arc::clone(&kernel));
         // Followed as the programs follow them (issue 593).
-        let _followed = AgentFollower::spawn(&manager);
+        let _followed = SessionFollower::spawn(&manager);
         let agents = kernel.agent_manager();
         let (system, ctx) = (SecurityContext::system(), SecurityContext::default());
         let helper = stored_agent(

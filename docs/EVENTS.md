@@ -86,7 +86,7 @@ through the subscription's `Following`, which can be kept apart from its receive
 session, an agent or a user goes to its topic; one about a channel - and so about its participants -
 to the session's it lies in, which the bus reads from the event's address. Other kinds have no topic
 of their own. The kernel's own subscribers - the controllers, a running session, the
-`CommandReaper`, the follower of the agents - subscribe as the system (`subscribe_all`,
+`CommandReaper`, the session follower - subscribe as the system (`subscribe_all`,
 `subscribe_session`, …), which the bus does not ask about: they receive everything on their topics.
 
 All subscriptions are served by one dispatcher task, in the order the events were published, so that
@@ -109,10 +109,10 @@ what it keeps (issue 502) - a loss between instances will be the rule, not the e
 
 *   the `ControllerManager` reads every live agent, user, workspace and project controller again as
     stored (see [STORAGE.md](STORAGE.md#following-changes));
-*   the follower of the agents looks at the agents of every running session again
-    (`procedure::follower::AgentFollower`, issue 593), and a running session has its channels
-    build the handles of their participants anew from their actors - whom it takes in it follows
-    as it takes them in, which loses nothing - (see
+*   the session follower looks at the agents of every running session again, and at the
+    delegations let go in their channels (`procedure::follower::SessionFollower`, issues 593,
+    598), and a running session has its channels build the handles of their participants anew from
+    their actors - whom it takes in it follows as it takes them in, which loses nothing - (see
     [CHANNELS.md](CHANNELS.md)); its own document it does not read again, since a session runs in
     one instance and its controller is the one writer of it there, which holds every change of it
     live already;

@@ -122,6 +122,12 @@ impl ChannelLoop {
         }
     }
 
+    /// The threads not closed whose delegation was let go (issue 598,
+    /// `ChannelState::delegations_let_go`): what is still to be closed with the agent it owns.
+    pub(crate) async fn delegations_let_go(&self) -> Vec<ThreadId> {
+        self.state.lock().await.delegations_let_go()
+    }
+
     /// Whether `giver` may delegate into `thread` to `recipient` (`ThreadState::delegates_alike`):
     /// a thread opened that `run` has not recorded yet is delegated into by nobody.
     async fn delegated_alike(&self, thread: ThreadId, giver: ActorId, recipient: ActorId) -> bool {
@@ -187,8 +193,7 @@ impl ChannelLoop {
         for thread in delegated {
             self.start_delegate(thread).await;
         }
-        let let_go = self.state.lock().await.delegations_let_go();
-        for thread in let_go {
+        for thread in self.delegations_let_go().await {
             self.channel.announce_delegation_let_go(thread);
         }
     }

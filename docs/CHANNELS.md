@@ -272,12 +272,12 @@ thread, and their leave is recorded there; from then on what is sent into it is 
 is never closed.
 
 A thread may **own the agents it is founded with**, made for it alone, as its `ThreadSpec` asks
-(`owns_founders`, issue 598; a sub-agent's thread) - what its opener promises; the kernel refuses
-an agent that takes part in the session already (`AlreadyParticipant`): the opening keeps them
-(`Opening::owned`), and closing the thread closes it with them - each let go from the session
-first, by its own act, as an agent of whom the closer acts for leaves, then the thread closed, then
-each deleted. The channel's state keeps them also once the thread is closed, so that a closing that
-stopped half-way finishes as it is asked again.
+(`owns_founders`, issue 598; a sub-agent's thread) - what its opener promises; the kernel refuses an
+agent that takes part in the session already (`AlreadyParticipant`): the opening keeps them
+(`Opening::owned`), and closing the thread closes it with them - each let go from the session first,
+by its own act, as an agent of whom the closer acts for leaves or as the kernel has anyone leave,
+then the thread closed, then each deleted. The channel's state keeps them also once the thread is
+closed, so that a closing that stopped half-way finishes as it is asked again.
 
 A participant of the channel is **taken into a further thread** of it, and **let go from one
 thread** alone, staying in its others (issue 602): `procedure::participant::TakeIntoThread` - added
@@ -860,7 +860,7 @@ agent said and saw stays readable for whoever may read its context.
 Deleting an agent (`AgentManager::delete`) marks it and changes no channel: it rests in every
 channel it takes part in until it is restored. The channels follow its mark instead:
 
-*   the follower of the agents, told of the deletion (`procedure::follower::AgentFollower`, issue
+*   the session follower, told of the deletion (`procedure::follower::SessionFollower`, issue
     593) - which every program that runs sessions starts beside its `SessionManager`, the server
     program and the terminal -, has the agent's actor leave each channel of a running session that
     lists it, in the kernel's name, by a procedure that holds the agent there
@@ -1165,21 +1165,24 @@ let go meanwhile -, given as the channel records it, answered as the channel rec
 it (`Delegation::follow`), dropped with what came of it if that cannot reach the giver, gone from
 where the thread was opened (`Delegation::refused`), and dropped as the thread is closed.
 
-Once what came of its last brief is given back, the delegation waits for its **giver's word** on
-it (issue 598, `Delegation::word`): the channel follows the giver reading it, as the giver
-records what it was given (`MessageGiven`, `Delegation::follow_read`) - between its turns, never
-during one -, and takes the giver's first turn that ends after, in the thread the delegation was
-opened at, as the turn that read it: a brief delegated before that turn ends is the word *go on*;
-none is the word *let go* (`Delegation::follow_turn_end`). A turn given up decides nothing, nor
-does a thread quiet after a cancel, in which the giver is not asked to respond: the word stays due.
-The giver leaving the thread the delegation was opened at - alone or with the channel - lets it go
-too, since nothing comes back to it any more (`Delegation::follow_leave`). Only a delegation into a
-thread that owns its recipient is let go, since closing the thread ends the agent with it; no other
-is ever let go. A delegation let go takes no brief (`DelegationLetGo`); the channel announces it
-(`channel::DELEGATION_LET_GO`, with the thread) once stored, and again as it starts while the
-thread is not closed. So that a brief delegated in the turn that read the answer is recorded before
-that turn ends - `run` takes events before changes -, delegating returns only once `run` recorded
-the brief.
+Once what came of its last brief is given back, the delegation waits for its **giver's word** on it
+(issue 598, `Delegation::word`): the channel follows the giver reading it, as the giver records what
+it was given (`MessageGiven`, `Delegation::follow_read`) - between its turns, never during one -,
+and takes the giver's first turn that ends after, in the thread the delegation was opened at, as the
+turn that read it: a brief delegated before that turn ends is the word *go on*; none is the word
+*let go* (`Delegation::follow_turn_end`). A turn given up decides nothing, nor does a thread quiet
+after a cancel, in which the giver is not asked to respond: the word stays due. The giver leaving
+the thread the delegation was opened at - alone or with the channel - lets it go too, since nothing
+comes back to it any more (`Delegation::follow_leave`). Only a delegation into a thread that owns
+its recipient is let go, since closing the thread ends the agent with it; no other is ever let go. A
+delegation let go takes no brief (`DelegationLetGo`); the channel announces it
+(`channel::DELEGATION_LET_GO`, with the thread) once stored, and again as it starts while the thread
+is not closed, and the session follower closes the thread with the agent it owns, in the kernel's
+name (`procedure::follower::SessionFollower`, `thread::Close`) - as a consequence of what the giver
+did with its own sub-agent, which it might have ended itself; having lost events, it closes every
+thread of the running sessions whose delegation is let go. So that a brief delegated in the turn
+that read the answer is recorded before that turn ends - `run` takes events before changes -,
+delegating returns only once `run` recorded the brief.
 
 The channel knows nothing of what delegates: it offers the building blocks - opening a thread with
 its founders, delegating into it, closing it - and sub-agents are made of them, in a crate of their

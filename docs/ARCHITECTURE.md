@@ -493,28 +493,29 @@ opened, stopped, deleted, restored, purged or put into another project, its own 
 a shared one, a shared project deleted, restored or purged, someone taken into a session or let go
 from it, an agent's deletion or restoring followed in its channels, a channel created, deleted,
 restored, built again or reclassified, a thread opened or closed. An entry point - a REST handler,
-the terminal, a command run in a channel, a plugin's writer, the follower of the agents' deletion
-and restoring (`procedure::follower::AgentFollower`, which a program starts beside its
-`SessionManager`) - makes it, as what it asks for, and the kernel's `ProcedureExecutor` carries it
-out in a task of its own; who reaches the session from within it finds the executor there
-(`SessionLoop::procedures`). The procedures reach the running sessions by the `SessionManager`,
-which the kernel knows weakly, since it holds the kernel (`Kernel::sessions`, issue 601). The
-executor holds the kernel weakly as well, made with it, and hands it to the procedure it carries
-out: a procedure holds only what it was asked for, and reaches the services of the kernel as it is
-carried out. It locks what it finds from the top down, by a key that names the object's path
-(`Key`), each key's parents shared with it: exclusively what it changes, shared what has to stay as
-it is. An object it finds locked defers it: it lets go of everything, waits for that object and
-enumerates again, so that nothing waits while it holds anything and no order of locks is needed; who
-waits at an object admits nobody after them. Holding its objects, it checks the state it finds and
-the permissions, once, and carries the change out by the building blocks of the objects, which know
-nothing of locking - what holds them lies around them, in the executor -; how to undo each step it
-records, and the executor undoes it if a later step fails (`Compensation`). No procedure is carried
-out within another - it would wait for itself -, and the executor refuses it. A procedure that a
-channel's `run` carries a step out for holds its objects until `run` answers. The REST server, as it
-opens a session for a request, has its channels left out as it started built again by a procedure of
-its own (`procedure::channel::Start`). A plugin writes procedures of its own, of the kernel's
-building blocks, as the sub-agents' start is (issue 558), and carries out the kernel's, as their
-end closes the thread that owns the sub-agent (`procedure::thread::Close`, issue 598).
+the terminal, a command run in a channel, a plugin's writer, the session follower of an agent's
+deletion or restoring and of a delegation let go (`procedure::follower::SessionFollower`, which a
+program starts beside its `SessionManager`) - makes it, as what it asks for, and the kernel's
+`ProcedureExecutor` carries it out in a task of its own; who reaches the session from within it
+finds the executor there (`SessionLoop::procedures`). The procedures reach the running sessions by
+the `SessionManager`, which the kernel knows weakly, since it holds the kernel (`Kernel::sessions`,
+issue 601). The executor holds the kernel weakly as well, made with it, and hands it to the
+procedure it carries out: a procedure holds only what it was asked for, and reaches the services of
+the kernel as it is carried out. It locks what it finds from the top down, by a key that names the
+object's path (`Key`), each key's parents shared with it: exclusively what it changes, shared what
+has to stay as it is. An object it finds locked defers it: it lets go of everything, waits for that
+object and enumerates again, so that nothing waits while it holds anything and no order of locks is
+needed; who waits at an object admits nobody after them. Holding its objects, it checks the state it
+finds and the permissions, once, and carries the change out by the building blocks of the objects,
+which know nothing of locking - what holds them lies around them, in the executor -; how to undo
+each step it records, and the executor undoes it if a later step fails (`Compensation`). No
+procedure is carried out within another - it would wait for itself -, and the executor refuses it. A
+procedure that a channel's `run` carries a step out for holds its objects until `run` answers. The
+REST server, as it opens a session for a request, has its channels left out as it started built
+again by a procedure of its own (`procedure::channel::Start`). A plugin writes procedures of its
+own, of the kernel's building blocks, as the sub-agents' start is (issue 558), and carries out the
+kernel's, as their end closes the thread that owns the sub-agent (`procedure::thread::Close`, issue
+598).
 
 Beside the procedures, guards stay where no procedure reaches. The executor locks within one
 process: where several share the stores, a session is held against the others as well

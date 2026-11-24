@@ -217,7 +217,10 @@ themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name
     owner to decide by yet, see [Secrets](#secrets).
 *   Deleting an agent is its owner's. The channels it takes part in are not changed: it rests in
     them, and that its actors stop there - and start again once it is restored - is done in the
-    kernel's name, a consequence of the deletion, not a change of channels owned by others.
+    kernel's name, a consequence of the deletion, not a change of channels owned by others. A
+    sub-agent its agent left without a word is closed with its thread and deleted in the kernel's
+    name too (issue 598): a consequence of what its agent did with its own sub-agent, which it
+    might have ended itself.
 *   What lies in a session's or a channel's scope - personalities, session templates, component
     bundles, agents, workspaces, skills - is deleted and restored with it in the name of whoever
     deletes or restores it (issue 320), and so is what lies in a project's - artifacts - with the
@@ -299,8 +302,10 @@ lose theirs.
     [CHANNELS.md](CHANNELS.md#taking-someone-into-the-session)). Leaving needs no grant: who takes
     part leaves a channel or a session, or takes their own agent out of it, by their own act
     (`LeaveChannel`, `LeaveSession`, see [CHANNELS.md](CHANNELS.md#leaving-a-channel) and
-    [CHANNELS.md](CHANNELS.md#letting-someone-go-from-the-session)). Changing the attributes,
-    deleting and reclassifying stay the owner's.
+    [CHANNELS.md](CHANNELS.md#letting-someone-go-from-the-session)); the kernel's own context
+    may have anyone leave so, asked in their own context - as it closes a thread with the agent it
+    owns once its delegation was let go (issue 598). Changing the attributes, deleting and
+    reclassifying stay the owner's.
 *   **Subjects**, matched against the context's principal, and for what is read also against its
     caller:
     *   `Actor` - a user. Never an agent, the system or nobody: an agent acts with its owner's

@@ -52,10 +52,9 @@ impl Participation {
     }
 
     /// Nothing if `context` may do `action` for `resolved` by its own act - join a session or
-    /// channel (`JOIN`, issue 221), leave a channel (`LeaveChannel`, issue 562) or a session
-    /// (`LeaveSession`, issue 590): the participant is whom `context` acts for, or owned by them -
-    /// themselves, or their own agent (issue 341) - and `action` is permitted in the participant's
-    /// own context, an agent's by its owner.
+    /// channel (`JOIN`, issue 221), a thread (`GetChannel`, issue 602): the participant is whom
+    /// `context` acts for, or owned by them - themselves, or their own agent (issue 341) - and
+    /// `action` is permitted in the participant's own context, an agent's by its owner.
     ///
     /// # Errors
     /// `refusal` of what was refused - `action`, also for a participant that is not the caller's
@@ -67,7 +66,38 @@ impl Participation {
         action: ActionType<'_>,
         refusal: impl FnOnce(Refused) -> E + Send,
     ) -> Result<(), E> {
-        match own_context(resolved, context) {
+        self.require_in(own_context(resolved, context), action, refusal).await
+    }
+
+    /// Nothing if `context` may have `resolved` leave by its own act - a channel (`LeaveChannel`,
+    /// issue 562) or a session (`LeaveSession`, issue 590) -, asked as `require_own_act` asks it;
+    /// or if `context` is the kernel's own, which may have anyone leave so (issue 598: a thread
+    /// closed with the agents it owns, once its delegation was let go), `action` asked in the
+    /// participant's own context all the same.
+    ///
+    /// # Errors
+    /// As `require_own_act`.
+    pub(crate) async fn require_own_leave<E: Send>(
+        &self,
+        resolved: &ResolvedParticipant,
+        context: &SecurityContext,
+        action: ActionType<'_>,
+        refusal: impl FnOnce(Refused) -> E + Send,
+    ) -> Result<(), E> {
+        let own =
+            if context.is_system() { resolved.context() } else { own_context(resolved, context) };
+        self.require_in(own, action, refusal).await
+    }
+
+    /// Nothing if `action` is permitted in `own`, the participant's own context; `refusal` of it
+    /// if it is not, or if there is none.
+    async fn require_in<E: Send>(
+        &self,
+        own: Option<SecurityContext>,
+        action: ActionType<'_>,
+        refusal: impl FnOnce(Refused) -> E + Send,
+    ) -> Result<(), E> {
+        match own {
             Some(own) => self.policies.access_policy().require(&own, action, refusal).await,
             None => Err(refusal(action.refused())),
         }

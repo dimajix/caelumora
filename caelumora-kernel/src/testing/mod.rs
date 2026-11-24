@@ -34,7 +34,7 @@ use crate::controller::WorkspaceController;
 use crate::error::refusal;
 use crate::kernel::{Kernel, KernelBuilder, ParticipantRuntime};
 use crate::plugin::Plugin;
-use crate::procedure::follower::AgentFollower;
+use crate::procedure::follower::SessionFollower;
 use crate::project::ProjectError;
 use crate::session::testing::{shared_store, SharedLocks};
 use crate::session::{SessionError, SessionLoop, SessionManager};
@@ -353,8 +353,9 @@ pub struct World {
     pub store: Persistence,
     pub kernel: Arc<Kernel>,
     pub manager: Arc<SessionManager>,
-    /// Whether the agents of its sessions exist, followed as long as the world lasts (issue 593).
-    _agents_followed: AgentFollower,
+    /// What its running sessions are to follow - whether their agents exist, the delegations let
+    /// go - followed as long as the world lasts (issues 593, 598), unless it is `unfollowed`.
+    followed: Option<SessionFollower>,
     pub alice: UserId,
     pub bob: UserId,
     pub carol: UserId,
@@ -462,13 +463,13 @@ impl World {
         .build();
         memberships.bind(&kernel.entity_stores().groups);
         let manager = SessionManager::new(Arc::clone(&kernel));
-        let agents_followed = AgentFollower::spawn(&manager);
+        let followed = SessionFollower::spawn(&manager);
         let mut world = Self {
             access_policy: recorder,
             store,
             kernel,
             manager,
-            _agents_followed: agents_followed,
+            followed: Some(followed),
             alice: UserId::new(),
             bob: UserId::new(),
             carol: UserId::new(),
@@ -479,6 +480,14 @@ impl World {
         world.bob = world.user("bob").await;
         world.carol = world.user("carol").await;
         world
+    }
+
+    /// The world with its follower stopped (issue 598): what the session follower would carry
+    /// out stays undone - for a test of what is announced to it.
+    #[must_use]
+    pub fn unfollowed(mut self) -> Self {
+        self.followed = None;
+        self
     }
 
     /// The store of the kind `T` - a plugin's -, checked as the kernel checks it.
