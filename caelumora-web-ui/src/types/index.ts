@@ -271,6 +271,21 @@ export interface ChannelResponse {
    * and in the snapshot of its stream; absent where it does not run.
    */
   threads?: ChannelThread[];
+  /**
+   * What waits in it for you (issue 594), where channels are listed and where it is fetched alone:
+   * absent where it does not run, or you take no part in it. Fetched again on its
+   * `waiting_changed` naming you.
+   */
+  waiting?: Waiting;
+}
+
+/**
+ * What waits for you in a channel (issue 594): the approvals its agents' calls wait for, and the
+ * questions put to you, open.
+ */
+export interface Waiting {
+  approvals: number;
+  questions: number;
 }
 
 /** Whether who takes part in a thread may grow (issue 602): `closed` for a sub-agent's. */

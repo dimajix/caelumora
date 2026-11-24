@@ -179,7 +179,10 @@ Some rules hold across the endpoints:
     listed: what a participant's model calls used, a briefing, an artifact's places of publication.
     An access list is given to the owner alone. What is new in a channel to the user (`unread`) is
     given wherever channels are, listed or fetched: it is what a list is read for; what is new in
-    each of its threads wherever its threads are given.
+    each of its threads wherever its threads are given. What waits for the user in a channel
+    (`waiting`: approvals, questions put to them, issue 594) is given where channels are listed and
+    where one is fetched alone, not in the snapshot of its stream, which holds what waits itself;
+    a client fetches it again on the channel's `waiting_changed` naming the user.
 *   **What a client offers it reads from flags** (`can_change`, `can_retry`, `can_cancel`,
     `can_read_context`, ...) the views decide for the user, not from rules of its own.
 

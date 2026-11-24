@@ -71,6 +71,9 @@ bitflags::bitflags! {
         /// turns there and where it answers (issue 595), which reads the history of one that does
         /// not run.
         const THREADS = 1 << 8;
+        /// Of a channel: what waits in it for a viewing user (issue 594), read from their running
+        /// actor.
+        const WAITING = 1 << 9;
     }
 }
 
@@ -178,6 +181,10 @@ pub struct ChannelSnapshot {
     /// Its threads that are open, its line not among them (issue 595), read from the running
     /// channel - with `Detail::THREADS`; none in a channel that does not run.
     pub threads: Vec<ThreadSnapshot>,
+    /// What waits in it for the viewer (issue 594) - with `Detail::WAITING`, for a user taking
+    /// part in a running channel; `None` without it, for any other viewer, or where the channel
+    /// does not run: its agents ask again as it runs.
+    pub waiting: Option<Waiting>,
 }
 
 /// An open thread of a channel as the viewer sees it (issue 595): whoever reads the channel reads
@@ -211,6 +218,17 @@ pub struct Unread {
 impl Unread {
     /// How far the messages are counted: one more than a client shows.
     pub const CAP: usize = 100;
+}
+
+/// What waits for a user in a channel (issue 594): the approvals its agents' calls wait for and the
+/// questions put to them, open - as their running actor keeps them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Waiting {
+    /// The approvals asked of the users that have neither ended nor been answered by them.
+    pub approvals: usize,
+    /// The requests of questions put to them that are open: each of one call, which may ask
+    /// several questions.
+    pub questions: usize,
 }
 
 /// The notes one agent published in a channel.

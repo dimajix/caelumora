@@ -67,7 +67,12 @@ async fn global_snapshot(views: &Views) -> Option<GlobalSnapshot> {
     let mut described = Vec::with_capacity(sessions.len());
     for session in sessions {
         described.push(
-            session.snapshot(Detail::CHANNELS | Detail::PARTICIPANTS | Detail::UNREAD).await.into(),
+            session
+                .snapshot(
+                    Detail::CHANNELS | Detail::PARTICIPANTS | Detail::UNREAD | Detail::WAITING,
+                )
+                .await
+                .into(),
         );
     }
     Some(GlobalSnapshot { sessions: described })

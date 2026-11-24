@@ -1,6 +1,6 @@
 # 594 — A user is told of what concerns them in no one way
 
-**Status:** in progress
+**Status:** done
 **Type:** question
 **Priority:** medium
 **Area:** User interaction
@@ -208,3 +208,14 @@ Each step a commit of its own, reviewed before the next.
   maintainer asked: what a view shows of another thread is what *addresses* the viewer, not what
   mentions them (issue 602), and the rule every channel delivers by says whom an event *goes to*,
   where it said whom it concerns.
+- **2026-11-24** — Step 2b done: the `UserActor` keeps what waits for its user (`waiting`) and
+  announces `waiting_changed` as it changes; a channel's snapshot gives it (`Waiting`,
+  `Detail::WAITING`), the REST API where channels are listed and where one is fetched alone; the
+  web UI marks the channels where something waits in the session list and notifies where more
+  waits than before. `Waiting::questions` counts the requests of questions, each of one call. Two
+  rare cases are documented, not built: an approval asked before the user joined is not asked of
+  them again, so it gives no mark; one they answered and an agent restarted in the running channel
+  asks anew waits for them again. Not checked in a browser: no model server ran to raise an
+  approval.
+- **2026-11-24** — Done, as the maintainer accepted step 2b; what is left open is taken up in a
+  follow-up issue.

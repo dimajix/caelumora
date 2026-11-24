@@ -87,14 +87,20 @@ pub async fn channel_response(
 ) -> Result<ChannelResponse, ApiError> {
     Ok(channel_view(state, user, session_id, channel_id)
         .await?
-        .snapshot(Detail::PARTICIPANTS | Detail::BRIEFING | Detail::UNREAD | Detail::THREADS)
+        .snapshot(
+            Detail::PARTICIPANTS
+                | Detail::BRIEFING
+                | Detail::UNREAD
+                | Detail::THREADS
+                | Detail::WAITING,
+        )
         .await
         .into())
 }
 
-/// Session `session_id` as `user` sees it now, with its channels and their
-/// participants, the briefings (issue 245) and what is new to the user in each
-/// (issue 404) - what `GET` of one session and every change of one answer.
+/// Session `session_id` as `user` sees it now, with its channels and their participants, the
+/// briefings (issue 245), what is new to the user in each (issue 404) and what waits for them there
+/// (issue 594) - what `GET` of one session and every change of one answer.
 pub async fn session_response(
     state: &Arc<AppState>,
     user: &AuthenticatedUser,
@@ -102,7 +108,13 @@ pub async fn session_response(
 ) -> Result<SessionSnapshot, ApiError> {
     let session = views(state, user).session(session_id).await?;
     Ok(session
-        .snapshot(Detail::CHANNELS | Detail::PARTICIPANTS | Detail::BRIEFING | Detail::UNREAD)
+        .snapshot(
+            Detail::CHANNELS
+                | Detail::PARTICIPANTS
+                | Detail::BRIEFING
+                | Detail::UNREAD
+                | Detail::WAITING,
+        )
         .await
         .into())
 }

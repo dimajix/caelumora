@@ -495,6 +495,28 @@ their positions in the history order them as the user sees them.
     and is cleared for it, which is who reads the message in the history. A frontend counts on from
     what it listed; of another thread only what addresses the user (issue 557).
 
+### What waits for a user
+
+What waits for a user in a channel (issue 594) - the approvals its agents' calls wait for, and the
+questions put to them that are open - is kept by their actor (`UserActor::waiting`), which is given
+what is delivered to them: the questions shown to them, as it keeps them to be answered, and the
+approvals the approver asks, from the request to its end - decided, withdrawn - or to the user's
+answer, by their hand or their rule, whether the approver counts it or not; one asked anew by an
+agent that resumed its turn is kept once. Two rare cases tell less than the chat: an approval asked
+before the user joined, which the approver does not ask of them again, and one the user answered
+and an agent restarted in the running channel asks anew, which waits for them again though their
+answer still counts.
+
+*   **Given by the views.** A channel's snapshot gives it to a user taking part (`Waiting`,
+    `Detail::WAITING`), read from their running actor - the approvals only where they are shown
+    them (`shows_approvals`), as the approvals pending are -; nothing where the channel does not
+    run, where no agent waits for anyone.
+*   **Announced as it changes.** As what waits for the user changes, once their actor took in or
+    sent what changed it, the actor announces it on the event bus (`channel::WAITING_CHANGED`,
+    `ChannelController::announce_waiting_changed`), naming the user and nothing of what waits; their
+    frontend reads what waits now. An approval asked anew, or questions put to another, announce
+    nothing.
+
 ## Acting in a channel
 
 Whoever writes or approves does so in their own name. `ChannelLoop::user_actor(UserId)` returns

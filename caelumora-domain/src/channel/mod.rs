@@ -85,6 +85,12 @@ pub const AGENT_STATE_CHANGED: &str = "agent_state_changed";
 /// history -, once the message is stored.
 pub const SAID: &str = "said";
 
+/// What waits for a user in the channel changed (issue 594): an approval or questions requested,
+/// ended or answered - the user's `ActorId` in the change's data, nothing of what waits: each
+/// reader reads their own (`Detail::WAITING`). Published with the channel's attributes once the
+/// user's actor took in or sent what changed it.
+pub const WAITING_CHANGED: &str = "waiting_changed";
+
 /// What `SAID` announces (issues 404, 557): the message as it was said, and the thread it was said
 /// in - by which a frontend tells one of the line from one of another thread that mentions another
 /// user.

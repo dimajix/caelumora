@@ -27,6 +27,7 @@ use caelumora_domain::mention::{handle_of, is_group_handle};
 use caelumora_domain::message::{Message, MessageId, MessageRole};
 use caelumora_domain::question::{QuestionError, QuestionId, QuestionRequest, Response};
 use caelumora_domain::session::SessionId;
+use caelumora_domain::snapshot::Waiting;
 use caelumora_domain::tool::{ToolCall, ToolCallResult};
 use caelumora_domain::value::name::Name;
 use caelumora_domain::work::TurnId;
@@ -76,6 +77,10 @@ pub struct UserActor {
     /// and come back only where an agent asks them anew (issue 580). Each with the thread it was
     /// asked in (issue 602), where it is answered: its context is that thread's.
     open_questions: sync::Mutex<Vec<(QuestionRequest, ThreadId)>>,
+    /// The approvals the approver asked of the users that wait (issue 594), in the order they were
+    /// first asked: until they end - decided, withdrawn - or this user answers them, by their hand
+    /// or their rule. Asked anew by an agent that resumed its turn, one is kept once.
+    open_approvals: sync::Mutex<Vec<ApprovalId>>,
 }
 
 /// The channel as a user follows it (issues 104, 220, 386): what their
@@ -183,6 +188,7 @@ impl UserActor {
             ended: CancellationToken::new(),
             run: sync::Mutex::new(Run::Before),
             open_questions: sync::Mutex::new(Vec::new()),
+            open_approvals: sync::Mutex::new(Vec::new()),
         })
     }
 
@@ -224,6 +230,34 @@ impl UserActor {
         let open = self.open_questions.lock().unwrap_or_else(PoisonError::into_inner);
         let asked = open.iter().map(|(request, _)| request);
         asked.filter(|request| request.questions.is_asked(self.id())).cloned().collect()
+    }
+
+    /// What waits for this user in the channel (issue 594): the approvals asked of the users that
+    /// have neither ended nor been answered by them, and the questions put to them that are open,
+    /// as `questions_to_answer` gives them.
+    pub fn waiting(&self) -> Waiting {
+        let approvals = self.open_approvals.lock().unwrap_or_else(PoisonError::into_inner).len();
+        let open = self.open_questions.lock().unwrap_or_else(PoisonError::into_inner);
+        let questions = open.iter().filter(|(request, _)| request.questions.is_asked(self.id()));
+        Waiting { approvals, questions: questions.count() }
+    }
+
+    /// Forgets the approval `id` as waiting for this user (issue 594): it ended, or they answered.
+    fn close_approval(&self, id: ApprovalId) {
+        let mut open = self.open_approvals.lock().unwrap_or_else(PoisonError::into_inner);
+        open.retain(|open| *open != id);
+    }
+
+    /// Announces that what waits for this user changed (issue 594), where it differs from
+    /// `announced`, what was announced last in the run, which it becomes: once the actor took in or
+    /// sent what changed it - an approval or questions asked or ended, an answer of the user's, a
+    /// message of theirs declining questions.
+    fn announce_waiting(&self, announced: &mut Waiting) {
+        let waiting = self.waiting();
+        if *announced != waiting {
+            *announced = waiting;
+            self.channel.announce_waiting_changed(self.id());
+        }
     }
 
     /// Answers the questions `id` put to this user with `responses`, one per question (issue 165) -
@@ -829,10 +863,11 @@ impl UserActor {
             .await
     }
 
-    /// Hands `maybe_event` to whoever watches, and answers a request for
-    /// approval that a rule of the user's answers (issue 13): sent as the
-    /// user's own answer would be, and shown to the user as theirs. `true`
-    /// once the actor is to end - its inbox closed, or the channel is gone.
+    /// Hands `maybe_event` to whoever watches, and answers a request for approval that a rule of
+    /// the user's answers (issue 13): sent as the user's own answer would be, and shown to the user
+    /// as theirs. Keeps what waits for the user: the questions shown to them, and the approvals the
+    /// approver asks, until they end (issue 594). `true` once the actor is to end - its inbox
+    /// closed, or the channel is gone.
     async fn handle_actor_envelope(
         &self,
         maybe_event: Option<Envelope>,
@@ -841,7 +876,26 @@ impl UserActor {
         let Some(event) = maybe_event else { return true };
         debug!("UserActor {} received {}", self.id(), event.describe());
         let answer = match &event.event {
-            ActorEvent::ApprovalRequested(request) => self.answer_by_rule(&event, request).await,
+            ActorEvent::ApprovalRequested(request) => {
+                if matches!(event.context.sender_id, ActorId::Approver(_)) {
+                    let mut open =
+                        self.open_approvals.lock().unwrap_or_else(PoisonError::into_inner);
+                    if !open.contains(&request.id) {
+                        open.push(request.id);
+                    }
+                }
+                self.answer_by_rule(&event, request).await
+            }
+            ActorEvent::ApprovalGranted(verdict)
+            | ActorEvent::ApprovalDenied(verdict)
+            | ActorEvent::ApprovalTimedOut(verdict) => {
+                self.close_approval(verdict.id);
+                None
+            }
+            ActorEvent::ApprovalRequestWithdrawn { id } => {
+                self.close_approval(*id);
+                None
+            }
             ActorEvent::QuestionRequested(request) => {
                 // Asked anew by an agent that resumed its turn: kept where it was first asked.
                 let asked = (request.clone(), event.context.thread_id);
@@ -873,13 +927,17 @@ impl UserActor {
     /// wake the channel and to nudge an agent (issue 278), which are not said to anyone, and
     /// answers to questions, which are for the tool asking alone (issue 165): their closing tells
     /// the user's frontends that they were answered. Shown here rather than when it is queued, so
-    /// that it falls within the run it is said in (issue 386).
+    /// that it falls within the run it is said in (issue 386). An answer of theirs to an approval
+    /// is the end of its waiting for them (issue 594).
     ///
     /// `false` once the channel's inbox is gone - the only way the
     /// in-memory transport fails - and with it the channel: the actor then
     /// ends (issue 79).
     async fn forward(&self, envelope: Envelope, tx: &dyn EventSender) -> bool {
         debug!(span_id = %envelope.context.span_id, "UserActor {} sends {}", self.id(), envelope.event.kind());
+        if let ActorEvent::ApprovalAnswered { id, .. } = &envelope.event {
+            self.close_approval(*id);
+        }
         if !matches!(
             envelope.event,
             ActorEvent::WakeupRequested
@@ -990,6 +1048,8 @@ impl Actor for UserActor {
         }
 
         info!("UserActor {} is starting", self.id());
+        // What waits for the user as it was announced last (issue 594): nothing as the run begins.
+        let mut announced = Waiting::default();
         // Until the channel closes this actor's inbox - the user left, or
         // the channel stopped - or the actor is told to stop.
         loop {
@@ -1002,6 +1062,7 @@ impl Actor for UserActor {
                 }
                 _ = self.ended.cancelled() => break,
             }
+            self.announce_waiting(&mut announced);
         }
         info!("UserActor {} has finished", self.id());
         Ok(())
@@ -1020,9 +1081,9 @@ impl UserActor {
     }
 
     /// Takes `envelope` in as if the channel had routed it to this actor: shown to whoever follows
-    /// it, a question kept as open. What the actor would send for it - the answer of a rule of the
-    /// user's to an approval - goes nowhere, and the actor takes the channel for gone; so answers
-    /// whether the actor would end.
+    /// it, a question or an approval of the approver kept as open. What the actor would send for
+    /// it - the answer of a rule of the user's to an approval - goes nowhere, and the actor takes
+    /// the channel for gone; so answers whether the actor would end.
     pub async fn take_in_as_routed(&self, envelope: Envelope) -> bool {
         self.handle_actor_envelope(Some(envelope), &testing::nowhere()).await
     }
@@ -1045,14 +1106,16 @@ mod tests {
     use super::*;
     use crate::actor::manager::OUTBOX_CAPACITY;
     use crate::actor::user::testing::nowhere;
-    use crate::kernel::ChannelRuntime;
+    use crate::kernel::{ChannelRuntime, Kernel};
     use crate::session::testing::test_kernel;
     use crate::transport::memory::{InMemoryEventReceiver, InMemoryEventSender};
     use caelumora_domain::actor::{EventContext, Rejection};
     use caelumora_domain::channel::testing::make_channel;
+    use caelumora_domain::event::GlobalEvent;
     use caelumora_domain::question::testing::make_question_request;
     use caelumora_domain::session::testing::bare_session;
     use caelumora_domain::user::testing::make_user;
+    use caelumora_domain::user::UserId;
     use caelumora_store::testing::record_users;
     use std::iter;
     use std::time::Duration;
@@ -1061,7 +1124,11 @@ mod tests {
     /// A user's actor, with the channel it is in - to be kept while the
     /// actor is used: the actor's runtime holds it weakly.
     async fn user_actor() -> (UserActor, Arc<ChannelLoop>) {
-        let kernel = test_kernel();
+        user_actor_of(test_kernel()).await
+    }
+
+    /// A user's actor of `kernel`, as `user_actor`.
+    async fn user_actor_of(kernel: Arc<Kernel>) -> (UserActor, Arc<ChannelLoop>) {
         let session_id = SessionId::new();
         let channel = make_channel(session_id, "main");
         let user = make_user("alice");
@@ -1339,6 +1406,106 @@ mod tests {
         assert!(!actor.handle_actor_envelope(Some(asked), &nowhere()).await);
         let ids: Vec<QuestionId> = actor.questions_to_answer().iter().map(|q| q.id).collect();
         assert_eq!(ids, [request.id], "asked anew");
+    }
+
+    /// Issue 594: what waits for the user - the approvals the approver asks until they end or the
+    /// user answers them, the questions put to them until they close or the user answers or
+    /// declines them - is announced as it changes, naming the user, and only then: not for an
+    /// approval asked anew, nor for questions put to another.
+    #[tokio::test]
+    async fn what_waits_for_the_user_is_announced_as_it_changes() {
+        use caelumora_domain::approval::testing::make_approval_request;
+        use caelumora_domain::approval::{ApprovalVerdict, ApproverId};
+        use caelumora_domain::channel::{Channel, WAITING_CHANGED};
+        let kernel = test_kernel();
+        let mut announced = kernel.event_bus().subscribe_all();
+        let (actor, _channel) = user_actor_of(Arc::clone(&kernel)).await;
+        let actor = Arc::new(actor);
+        let (inbox, rx) = mpsc::channel(10);
+        let (output, _channel_inbox) = mpsc::channel(100);
+        let running = tokio::spawn({
+            let actor = Arc::clone(&actor);
+            async move {
+                actor
+                    .run(
+                        Box::new(InMemoryEventReceiver::new(rx)),
+                        Box::new(InMemoryEventSender::new(output)),
+                    )
+                    .await
+            }
+        });
+        let changed_for = |event: &GlobalEvent| {
+            event.about::<Channel>().and_then(|(_, change)| change.data::<ActorId>(WAITING_CHANGED))
+        };
+        let mut next_waiting = async || {
+            time::timeout(Duration::from_secs(5), async {
+                loop {
+                    let event = announced.recv().await.expect("the bus runs");
+                    if let Some(user) = changed_for(&event) {
+                        return user;
+                    }
+                }
+            })
+            .await
+            .expect("announced")
+        };
+        let approver = ActorId::Approver(ApproverId::new());
+        let from = |sender, event| Envelope { event, ..envelope_from(sender) };
+        let agent = AgentId::new();
+        let request = make_approval_request(SessionId::new(), ChannelId::new(), agent);
+        let asked = from(approver, ActorEvent::ApprovalRequested(request.clone()));
+        let waits = |approvals, questions| Waiting { approvals, questions };
+
+        inbox.send(asked.clone()).await.unwrap();
+        assert_eq!(next_waiting().await, actor.id(), "naming the user");
+        assert_eq!(actor.waiting(), waits(1, 0), "the approval asked");
+        inbox.send(asked).await.unwrap();
+        let (questions, put_to_them) = asked_of(actor.id());
+        let (_, put_to_another) = asked_of(ActorId::User(UserId::new()));
+        inbox.send(put_to_another).await.unwrap();
+        inbox.send(put_to_them).await.unwrap();
+        next_waiting().await;
+        assert_eq!(actor.waiting(), waits(1, 1), "asked anew, and put to another: unchanged");
+
+        actor.send_approval(request.id, true).await.unwrap();
+        next_waiting().await;
+        assert_eq!(actor.waiting(), waits(0, 1), "answered by the user");
+        let decided = make_approval_request(SessionId::new(), ChannelId::new(), agent);
+        inbox.send(from(approver, ActorEvent::ApprovalRequested(decided.clone()))).await.unwrap();
+        next_waiting().await;
+        let verdict = ActorEvent::ApprovalGranted(ApprovalVerdict::new(decided.id, agent));
+        inbox.send(from(approver, verdict)).await.unwrap();
+        next_waiting().await;
+        assert_eq!(actor.waiting(), waits(0, 1), "decided");
+        let closed = ActorEvent::QuestionClosed { id: questions.id, shown_to: None };
+        inbox.send(from(ActorId::Agent(agent), closed)).await.unwrap();
+        next_waiting().await;
+        assert_eq!(actor.waiting(), waits(0, 0), "the questions closed");
+
+        let withdrawn = make_approval_request(SessionId::new(), ChannelId::new(), agent);
+        inbox.send(from(approver, ActorEvent::ApprovalRequested(withdrawn.clone()))).await.unwrap();
+        next_waiting().await;
+        let withdrawal = ActorEvent::ApprovalRequestWithdrawn { id: withdrawn.id };
+        inbox.send(from(approver, withdrawal)).await.unwrap();
+        next_waiting().await;
+        assert_eq!(actor.waiting(), waits(0, 0), "withdrawn");
+        let (answered, asked) = asked_of(actor.id());
+        inbox.send(asked).await.unwrap();
+        next_waiting().await;
+        let responses = vec![Response::Text { text: "Kaya".to_string() }];
+        actor.answer_questions(answered.id, Some(responses)).await.unwrap();
+        next_waiting().await;
+        assert_eq!(actor.waiting(), waits(0, 0), "answered");
+        let (_, asked) = asked_of(actor.id());
+        inbox.send(asked).await.unwrap();
+        next_waiting().await;
+        actor.send_message(None, Some("rather not".to_string()), None, Vec::new()).await.unwrap();
+        next_waiting().await;
+        assert_eq!(actor.waiting(), waits(0, 0), "declined by a message");
+        let more = announced.drain().await;
+        assert!(more.iter().all(|event| changed_for(event).is_none()), "nothing more announced");
+        actor.stop();
+        running.await.unwrap().unwrap();
     }
 
     #[tokio::test]

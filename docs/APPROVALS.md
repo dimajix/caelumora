@@ -244,7 +244,9 @@ the record of the answers, nothing raw.
     at all (`AnswerQuestion`) the channel decides as it admits the answer. Which questions are still
     the user's to answer - open, put to them, and not answered or declined by them yet - is the
     actor's to tell (`UserActor::questions_to_answer`): it forgets those answered as the answer is
-    sent, so that they are not offered again until they close. An answer the channel rejects does
+    sent, so that they are not offered again until they close; with the approvals asked of the
+    users, they are what waits for the user there (`UserActor::waiting`, issue 594, see
+    [CHANNELS.md](CHANNELS.md#what-waits-for-a-user)). An answer the channel rejects does
     not bring them back: it is rejected for a standing reason, the user's right to answer there, and
     asking again would only be rejected again (issue 580). A frontend in the kernel's process, as
     the terminal is, offers those to be answered, rather than keeping a list beside it; a client of
