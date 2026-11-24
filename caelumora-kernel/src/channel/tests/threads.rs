@@ -7,9 +7,10 @@ use crate::testing::shown;
 use caelumora_domain::actor::Rejection;
 use caelumora_domain::channel::{Delegation, ThreadOrigin};
 use caelumora_domain::history::HistoryEntry;
-use caelumora_domain::message::MessageId;
+use caelumora_domain::message::{Message, MessageId};
 use std::collections::VecDeque;
 use std::time::Duration;
+use tokio::sync::broadcast;
 use tokio::time;
 
 /// A thread of `channel` at a message of its line that is not in its history, opened on behalf of
@@ -167,8 +168,8 @@ async fn a_thread_someone_came_into_since_closing_it_was_asked_stays_open() {
     running.abort();
 }
 
-/// Issue 602: a group handle addresses everyone but mentions nobody by name: said in a thread, it
-/// draws in whoever said it alone, and nobody is told of anyone not brought in.
+/// Issue 602: a group handle mentions nobody by name: said in a thread, it draws in whoever said it
+/// alone, and nobody is told of anyone not brought in.
 #[tokio::test]
 async fn a_group_handle_draws_nobody_into_a_thread() {
     let Stuck { channel, context, agent, helper, mut events, running } =
@@ -181,12 +182,29 @@ async fn a_group_handle_draws_nobody_into_a_thread() {
 
     let word = "@all, a word";
     actor.send_message(Some(thread), Some(word.to_string()), None, Vec::new()).await.unwrap();
-    let said = time::timeout(Duration::from_secs(5), async {
+    let said = shown_saying(&mut events, word).await;
+    // What the moderator tells of it is recorded before the channel lets others see it.
+    let told = channel.history_entries().await;
+    assert!(
+        !told.iter().any(|entry| matches!(entry, HistoryEntry::NotDrawnIn { .. })),
+        "nobody named, nobody told of"
+    );
+    assert!(said.mentions.is_empty(), "nobody by name");
+    // The helper takes part in the line alone, and a group handle asks nothing of who says it.
+    assert!(said.addressees.is_empty(), "nobody addressed (issue 594): {:?}", said.addressees);
+    assert!(channel.runs_in(hers, thread), "who said it takes part");
+    assert!(!channel.runs_in(helper_id, thread), "the helper is not drawn in");
+    running.abort();
+}
+
+/// The message saying `text` that `events` show next - at most five seconds, after which the test
+/// fails - as it was said, or as it was modified to say it.
+async fn shown_saying(events: &mut broadcast::Receiver<Envelope>, text: &str) -> Message {
+    time::timeout(Duration::from_secs(5), async {
         loop {
-            let envelope = events.recv().await.expect("open");
-            match envelope.event {
-                ActorEvent::CompleteMessageGenerated(said)
-                    if said.content.as_deref() == Some(word) =>
+            match events.recv().await.expect("open").event {
+                ActorEvent::CompleteMessageGenerated(said) | ActorEvent::MessageModified(said)
+                    if said.content.as_deref() == Some(text) =>
                 {
                     break said;
                 }
@@ -195,16 +213,36 @@ async fn a_group_handle_draws_nobody_into_a_thread() {
         }
     })
     .await
-    .expect("said");
-    // What the moderator tells of it is recorded before the channel lets others see it.
-    let told = channel.history_entries().await;
-    assert!(
-        !told.iter().any(|entry| matches!(entry, HistoryEntry::NotDrawnIn { .. })),
-        "nobody named, nobody told of"
-    );
-    assert!(said.mentions.is_empty(), "nobody by name");
-    assert_eq!(said.addressees.len(), 2, "but everyone addressed: {:?}", said.addressees);
-    assert!(channel.runs_in(hers, thread), "who said it takes part");
-    assert!(!channel.runs_in(helper_id, thread), "the helper is not drawn in");
+    .expect("said")
+}
+
+/// Issue 594: a group handle said in a thread addresses who takes part there alone, but whoever
+/// says it - not the helper, which takes part in the line -, also as the message is modified, which
+/// happens in the whole channel; said in the line, it addresses the helper there.
+#[tokio::test]
+async fn a_group_handle_addresses_who_takes_part_in_the_thread_it_is_said_in() {
+    let Stuck { channel, context, agent, helper, mut events, running } =
+        start(scripted_channel(Script::Answers("Here.".to_string())).await).await;
+    let helper_id = ActorId::Agent(agent);
+    answered(&mut events, agent).await;
+    settled(&helper, ActorState::Idle).await;
+    let thread = aside(&channel, &context).await;
+    let actor = channel.user_actor(alice_of(&context)).unwrap();
+    let say = |thread, text: &str| actor.send_message(thread, Some(text.into()), None, Vec::new());
+
+    say(Some(thread), "@all, a word").await.unwrap();
+    let said = shown_saying(&mut events, "@all, a word").await;
+    assert!(said.addressees.is_empty(), "nobody else takes part: {:?}", said.addressees);
+
+    actor
+        .modify_message(said.id, Some("@all, a word more".into()), None, Vec::new())
+        .await
+        .unwrap();
+    let modified = shown_saying(&mut events, "@all, a word more").await;
+    assert!(modified.addressees.is_empty(), "where it was said: {:?}", modified.addressees);
+
+    say(None, "@all, in the line").await.unwrap();
+    let in_line = shown_saying(&mut events, "@all, in the line").await;
+    assert_eq!(in_line.addressees, [helper_id], "who takes part in the line, but alice");
     running.abort();
 }

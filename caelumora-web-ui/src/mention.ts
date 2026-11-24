@@ -65,7 +65,8 @@ export const GROUP_HANDLES = ['all', 'channel'] as const;
 /**
  * The handles of the participants a message addresses, i.e. the mentions to
  * highlight - and the group handles, if it addresses anyone taking part: they
- * address everyone. As `MentionDirectory::mentioned_spans` decides it.
+ * address everyone taking part in its thread (issue 594). As
+ * `MentionDirectory::mentioned_spans` decides it.
  */
 export function mentionedHandles(message: Message, participants: ChannelParticipant[]): Set<string> {
   const keys = new Set((message.addressees ?? []).map(actorKey));

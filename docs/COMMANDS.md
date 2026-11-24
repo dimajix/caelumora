@@ -262,7 +262,8 @@ external agent alike.
     not tell apart, or one that a line could not tell from a command of the session, keep the
     agent from starting.
 *   **Always addressed.** A command of an agent names its agent - `/compact @bob`; `@all`, or
-    `@channel`, as for a mention, names every agent of the channel that carries it out. Without a
+    `@channel`, as for a mention, names every agent that carries it out and takes part in the
+    thread the command is issued in (issue 602), as a handle names only such an agent. Without a
     handle, or with one that names no such agent, it is refused with the handles to choose from.
 *   **Seen and asked for.** `ShowAgentCommand` and `ExecuteAgentCommand` carry the command and the
     attributes of the agent and of the channel. Under the ownership policy they are granted to

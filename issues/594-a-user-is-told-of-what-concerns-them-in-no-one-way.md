@@ -166,3 +166,11 @@ Each step a commit of its own, reviewed before the next.
   (*Decision*): `@all` in a thread addresses who takes part in it; what concerns a user is one
   predicate of the domain, `Envelope::concerns`; how it is told is each frontend's; 572 stays
   apart. The steps planned (*Plan*).
+- **2026-11-23** — Step 1 done: a group handle is resolved against who takes part in the thread
+  the message is said in (`MentionDirectory::resolve` given them, `ChannelLoop::taking_part_in`),
+  of a modification the thread the message was said in; a tool's questions to `@all` still go to
+  every user of the channel (`MentionDirectory::lookup`). Decided by the maintainer in its review:
+  a group handle never addresses the message's sender (`Message::resolve_mentions`), so that
+  whom it addresses does not depend on whether the message draws its sender into the thread
+  first; and a modification resolves against who takes part in the thread as it is modified, as
+  its names are resolved anew then.

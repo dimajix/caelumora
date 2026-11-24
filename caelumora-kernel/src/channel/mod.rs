@@ -706,6 +706,20 @@ impl ChannelLoop {
         actors.get(&actor_id).is_some_and(|actor| actor.takes_part_in(thread))
     }
 
+    /// Who takes part in `thread` now (issue 602): the participants whose actors run there, in no
+    /// particular order - not its internal actors (issue 420), which take no part. Whom a group
+    /// handle said there addresses (`MentionDirectory::resolve`, issue 594).
+    pub(crate) fn taking_part_in(&self, thread: ThreadId) -> Vec<ActorId> {
+        let channel = self.channel();
+        self.actors
+            .load()
+            .values()
+            .filter(|running| running.takes_part_in(thread))
+            .map(|running| running.actor.id())
+            .filter(|id| !channel.is_internal(*id))
+            .collect()
+    }
+
     /// The actor of `actor_id` if it is an agent of this channel - whom a
     /// request to answer again or to carry out a command may name.
     fn agent_actor(&self, actor_id: ActorId) -> Option<Arc<dyn Actor>> {

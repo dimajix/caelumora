@@ -77,7 +77,7 @@ impl ChannelLoop {
     /// The message `id` as it stands, and the thread it was said in (issue 602), or `None` if it
     /// was never said here - read from the store as `message` reads it, a store that cannot be
     /// read logged and the message not found: whom a request to answer it again goes to, and
-    /// where.
+    /// where; where a modification of it resolves its mentions (issue 594).
     pub(crate) async fn said_in(&self, id: MessageId) -> Option<(Message, ThreadId)> {
         match self.history_store.said(self.id, &Reader::Channel, id).await {
             Ok(said) => {

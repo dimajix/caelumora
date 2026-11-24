@@ -502,8 +502,8 @@ impl ChannelLoop {
     }
 
     /// The handles of the participants that run in the channel, by which it resolves the
-    /// mentions of a message as it enters (issue 29) - everyone for `@all` or `@channel` (issue
-    /// 401).
+    /// mentions of a message as it enters (issue 29) - for `@all` or `@channel` those taking part
+    /// in the message's thread (issues 401, 594, `taking_part_in`).
     pub fn mentions(&self) -> Arc<MentionDirectory> {
         self.mentions.load_full()
     }
@@ -529,7 +529,7 @@ mod tests {
     use caelumora_domain::actor::Envelope;
     use caelumora_domain::agent::{Personality, PersonalityKind};
     use caelumora_domain::chain::Position;
-    use caelumora_domain::channel::{Channel, ChannelId, HistoryAccess, JOINED, LEFT};
+    use caelumora_domain::channel::{Channel, ChannelId, HistoryAccess, ThreadId, JOINED, LEFT};
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::history::{HistoryEntry, Reader};
     use caelumora_domain::security::{Grant, Subject};
@@ -569,18 +569,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn all_and_channel_mention_every_participant_of_the_moment() {
+    async fn all_and_channel_mention_every_participant_of_the_line_of_the_moment() {
         let (channel, alice, sleepers) = channel_with_sleepers(&["Sassy", "All"]).await;
         let everyone: HashSet<ActorId> =
             [ActorId::User(alice), sleepers[0].id(), sleepers[1].id()].into();
 
         for text in ["@all, what do you think?", "@channel?"] {
-            let (named, addressed) = channel.mentions().resolve(text);
+            let line = channel.taking_part_in(ThreadId::line(channel.id));
+            let (named, addressed) = channel.mentions().resolve(text, &line);
             assert_eq!(addressed.into_iter().collect::<HashSet<_>>(), everyone, "{text}");
             assert!(named.is_empty(), "{text}: nobody by name");
         }
         assert_eq!(
-            channel.mentions().resolve("@sassy").0,
+            channel.mentions().resolve("@sassy", &[]).0,
             [sleepers[0].id()],
             "a handle still names one"
         );
@@ -594,13 +595,13 @@ mod tests {
         let (channel, _, sleepers) = channel_with_sleepers(&["Sassy"]).await;
         let sassy = sleepers[0].id();
         channel.participant_renamed(sassy, &Name::new("Saucy").unwrap());
-        assert_eq!(channel.mentions().resolve("@saucy").0, [sassy], "by the name announced");
-        assert!(channel.mentions().resolve("@sassy").0.is_empty(), "not by the old one");
+        assert_eq!(channel.mentions().resolve("@saucy", &[]).0, [sassy], "by the name announced");
+        assert!(channel.mentions().resolve("@sassy", &[]).0.is_empty(), "not by the old one");
 
         channel.participant_renamed(ActorId::User(UserId::new()), &Name::new("Sassy").unwrap());
-        assert_eq!(channel.mentions().resolve("@saucy").0, [sassy], "nobody taking part");
+        assert_eq!(channel.mentions().resolve("@saucy", &[]).0, [sassy], "nobody taking part");
         channel.rebuild_mentions();
-        assert_eq!(channel.mentions().resolve("@sassy").0, [sassy], "by what its actor tells");
+        assert_eq!(channel.mentions().resolve("@sassy", &[]).0, [sassy], "by what its actor tells");
     }
 
     /// Issue 593: who lets a participant go waits until `run` answers that its old actor has

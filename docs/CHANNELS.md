@@ -1556,18 +1556,24 @@ participant's name transliterated to ASCII and lowercased, other characters coll
 (`caelumora_domain::mention`): "Zoë" is `@zoe`, and `@Zoë` addresses her too. Unknown handles stay
 plain text, and text in backticks is ignored.
 
-`@all` and its synonym `@channel` address everyone at once: every user and agent taking part, those
-whose name yields no handle included. They are group handles (`GROUP_HANDLES`), not names: a
-participant whose handle is `all` or `channel` is among those they address, but cannot be
+`@all` and its synonym `@channel` address everyone at once: every user and agent taking part in the
+thread the message is said in, those whose name yields no handle included - in a sub-agent's
+thread, not the users of the line -, but whoever says it, whom it asks nothing of (issue 594); by
+name, a sender addresses themselves as anyone. They are group handles (`GROUP_HANDLES`), not names:
+a participant whose handle is `all` or `channel` is among those they address, but cannot be
 mentioned alone by it, and the channel warns of the handle as of one shared by several.
 
 The channel resolves mentions once, as a message enters it, and stores the resolved ids with the
 message (`Message::resolve_mentions`) in two lists (issue 602): whom it mentions by name
 (`mentions`), and everyone it addresses (`addressees`) - those, and everyone a group handle
-addressed, the participants of that moment for `@all`. A mention by name draws its participant
-into the thread (see [Its threads](#its-threads)); whom a message addresses is whom the moderator
-asks and whom it mentions as the frontends show it. Nothing downstream parses the text again, so a
-later rename, or a participant who joins later, cannot change whom a past message addressed.
+addressed, who takes part in the message's thread at that moment for `@all`
+(`ChannelLoop::taking_part_in`): of a modification, which happens in the whole channel, who takes
+part in the thread the message was said in as it is modified - nobody in a thread closed since,
+whoever came in since included -, as its names are resolved anew then. A mention by name reaches
+its participant wherever they take part, and draws them into the thread (see
+[Its threads](#its-threads)); whom a message addresses is whom the moderator asks and whom it
+mentions as the frontends show it. Nothing downstream parses the text again, so a later rename, or
+a participant who joins later, cannot change whom a past message addressed.
 It resolves them by the handles of its participants as they are named now (`ChannelLoop::mentions`),
 built anew as one joins or leaves, and as one is renamed: the session follows the announcements of
 its participants' renames and tells its channels the new name - and after it lost events, has them
@@ -1597,4 +1603,5 @@ agents that greet each other with `@` keep asking the next one to answer.
 An `@all` asks every agent but the author, whoever wrote it, and needs no permission of its own: it
 asks nothing that mentioning each participant would not. What it fans out to is bounded by the same
 limit, as under `broadcast_policy`. An agent's question to `@all` (`ask_user`) is put to every user
-of the channel.
+of the channel, in whichever thread it is asked, as it is answered from any
+(`MentionDirectory::lookup`).

@@ -296,6 +296,7 @@ impl UserActor {
         attachments: Vec<ContentId>,
     ) -> Result<SpanId> {
         let channel_loop = self.channel_loop()?;
+        let thread = self.in_thread(thread);
         let classification = classification.unwrap_or_else(|| channel_loop.classification());
         let attachments = self.participant_runtime.attachment_manager().named(
             self.id,
@@ -314,7 +315,7 @@ impl UserActor {
             ..Message::new(classification)
         };
         // Resolved as the channel will, for the actor shows its own message before (issue 220).
-        msg.resolve_mentions(&channel_loop.mentions());
+        msg.resolve_mentions(&channel_loop.mentions(), &channel_loop.taking_part_in(thread));
         // All stem from one user action: one span. A message instead of an
         // answer declines every question put to the user (issue 165), each in its thread -
         // before it, so that the agent asking goes on and then hears it.
@@ -326,7 +327,6 @@ impl UserActor {
             let declined = ActorEvent::QuestionDeclined { id, agent_id };
             self.send(self.envelope(declined, span_id, asked_in)).await?;
         }
-        let thread = self.in_thread(thread);
         self.send(self.envelope(ActorEvent::WakeupRequested, span_id, thread)).await?;
         let said = ActorEvent::CompleteMessageGenerated(msg);
         self.send(self.envelope(said, span_id, thread)).await?;
@@ -390,7 +390,8 @@ impl UserActor {
         attachments: Vec<ContentId>,
     ) -> Result<SpanId> {
         let channel_loop = self.channel_loop()?;
-        let original = self.message_of(&channel_loop, message).await?;
+        let not_found = ChannelError::MessageNotFound { message, channel: self.channel_id };
+        let (original, thread) = channel_loop.said_in(message).await.ok_or(not_found)?;
         if original.sender_id != self.id {
             let refused = ActionType::ModifyMessage {
                 author: original.sender_id,
@@ -413,8 +414,9 @@ impl UserActor {
         )?;
         let mut modified =
             Message { content, attachments, classification, timestamp: Utc::now(), ..original };
-        // Resolved as the channel will, for the actor shows its own message before (issue 220).
-        modified.resolve_mentions(&channel_loop.mentions());
+        // Resolved as the channel will, where it was said, for the actor shows its own message
+        // before (issue 220).
+        modified.resolve_mentions(&channel_loop.mentions(), &channel_loop.taking_part_in(thread));
         let span_id = SpanId::new();
         self.send(self.in_line(ActorEvent::MessageModified(modified), span_id)).await?;
         Ok(span_id)
@@ -549,20 +551,6 @@ impl UserActor {
         self.participant_runtime
             .channel_loop()
             .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))
-    }
-
-    /// The message `id` of `channel` as it stands: what a modification is made of, and whom a
-    /// request to answer it again goes to. Whether it can be changed, or answered again, the
-    /// channel decides as it admits what is sent (issue 567).
-    ///
-    /// # Errors
-    /// `ChannelError::MessageNotFound` if the channel has no such message.
-    async fn message_of(&self, channel: &ChannelLoop, id: MessageId) -> Result<Message> {
-        let message = channel
-            .message(id)
-            .await
-            .ok_or(ChannelError::MessageNotFound { message: id, channel: self.channel_id })?;
-        Ok(message)
     }
 
     /// Hands `envelope` to `run`, which shows it and forwards it into the
