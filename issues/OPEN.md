@@ -10,6 +10,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 |---|---|---|---|---|
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | low | bug | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
 | [588](588-a-person-s-call-is-released-without-its-result.md) | open | low | bug | A message carrying a person's call (issue 587) is reclassified and fitted into a lowered channel by its own classification alone, while its tool results keep theirs, so whoever is given the message is labelled below what it read, or loses more than the result. |
+| [603](603-what-waits-for-a-user-is-told-less-than-the-chat-shows-in-rare-cases.md) | open | low | bug | What issue 594 left open: an approval asked before a user joined, or one asked again after they answered it, or pending in a channel that does not run, is marked in the session list otherwise than the chat shows it; a prompt and the word "mentioned" still say what `@all` and an address meant before; two cases are not tested, and the mark has not been seen in a browser. |
 
 ## Sessions and channels
 
