@@ -615,18 +615,18 @@ impl Views {
         }
     }
 
-    /// Whom an entry of an access list may name the viewer by (issues 293,
-    /// 308, 221): themselves, everyone if they are a user, the roles they
-    /// hold and the teams they belong to - not those they only own -, as the
-    /// policy resolves an entry. What a kind lists as shared with them by
-    /// name asks the store for these.
+    /// Whom an entry of an access list may name the viewer by (issues 293, 308, 221): themselves,
+    /// everyone if they are a user, their owner's roles and the teams they belong to - not those
+    /// they only own -, as the policy resolves an entry. What a kind lists as shared with them by
+    /// name asks the store for these; for a viewer limited to roles, an entry for one of the
+    /// owner's roles names more than the policy admits, which the store decides as it lists
+    /// (issue 605).
     ///
     /// # Errors
     /// What the store reports.
     pub async fn subjects(&self) -> StoreResult<Vec<Subject>> {
         let context = self.viewer.context();
         let principal = context.principal_id;
-        let roles = context.roles.iter().copied().filter(|role| context.has_role(*role));
         let teams = self
             .teams()
             .await?
@@ -637,7 +637,7 @@ impl Views {
         let everyone = matches!(principal, ActorId::User(_)).then_some(Subject::Everyone);
         Ok(iter::once(Subject::Actor(principal))
             .chain(everyone)
-            .chain(roles.map(Subject::Role))
+            .chain(context.roles.iter().copied().map(Subject::Role))
             .chain(teams)
             .collect())
     }

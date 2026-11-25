@@ -26,12 +26,12 @@ use std::fmt::Debug;
 ///   the agent, or whoever asked whoever asked it, and the agent itself when
 ///   nobody did. For the record, never for rights.
 ///
-/// - `roles` are the owner's roles, and `limiting_roles` those the caller is
-///   limited to - an agent's personality's (issue 179) -, set where
-///   the context is built (issue 304): what a decision needs to know of the
-///   subject is in the context, not looked up while it is made. A role
-///   counts if the owner holds it and the limit, if any, names it
-///   (`has_role`); a clearance holds if both clear (see CONFIDENTIALITY.md).
+/// - `roles` are the owner's roles, and `limiting_roles` those the caller is limited to - an
+///   agent's personality's (issue 179) -, set where the context is built (issue 304): what a
+///   decision needs to know of the subject is in the context, not looked up while it is made. A
+///   limit is asked beside the owner's roles (issue 605): what roles decide - an entry of an
+///   access list for a role (`Admission`), a clearance (`cleared_for`) - is allowed only if the
+///   owner's roles allow it and the limit's do as well, held by the owner or not.
 ///
 /// An empty context names nobody and has no rights.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -101,25 +101,11 @@ impl SecurityContext {
         Self { roles, limiting_roles, ..self }
     }
 
-    /// Whether `role` counts for the context: the owner holds it, and the
-    /// caller's limit, if any, names it.
-    pub fn has_role(&self, role: RoleId) -> bool {
-        self.roles.contains(&role)
-            && self.limiting_roles.as_ref().is_none_or(|limit| limit.contains(&role))
-    }
-
-    /// The roles that count for the context: those of the owner that
-    /// `has_role` accepts.
-    pub fn counting_roles(&self) -> Vec<RoleId> {
-        self.roles.iter().copied().filter(|role| self.has_role(*role)).collect()
-    }
-
     /// Whether an agent of this context's owner, limited by `limiting_roles`, is limited at least
     /// as this context is (issue 597): where this context is limited, every role `limiting_roles`
-    /// names is named by its limit too - held by the owner or not. So it counts no role this
-    /// context does not (`has_role`), and is cleared for nothing it is not: a limit clears by
-    /// itself, beside the owner's roles (`ConfidentialityQuestions::cleared_for`), and more roles
-    /// never clear less.
+    /// names is named by its limit too - held by the owner or not. A limit is asked beside the
+    /// owner's roles (issue 605), and more roles never allow less, so it is admitted and cleared
+    /// for nothing this context is not.
     pub fn covers_limit(&self, limiting_roles: Option<&[RoleId]>) -> bool {
         match (&self.limiting_roles, limiting_roles) {
             (None, _) => true,
@@ -194,8 +180,8 @@ mod tests {
     }
 
     /// Issue 597: a limit is covered where the context is not limited, or where its limit names
-    /// every role the other names - one the owner does not hold too, since a limit clears by
-    /// itself.
+    /// every role the other names - one the owner does not hold too, since a limit is asked
+    /// beside the owner's roles (issue 605).
     #[test]
     fn a_context_covers_a_limit_that_names_no_role_its_own_does_not() {
         let (staff, admin, other) = (RoleId::new(), RoleId::new(), RoleId::new());

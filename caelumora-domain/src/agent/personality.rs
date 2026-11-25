@@ -209,9 +209,9 @@ pub struct Personality {
     /// What kind of agent it makes: `internal` unless named.
     #[serde(default)]
     pub kind: PersonalityKind,
-    /// The roles its agents are limited to (issue 179); see
-    /// [`Personality::limiting_roles`]. Not their roles: an agent is
-    /// cleared by its owner's, these can only narrow them.
+    /// The roles its agents are limited to (issue 179); see [`Personality::limiting_roles`]. Not
+    /// their roles: an agent acts with its owner's, and these are asked beside them, so they only
+    /// narrow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub roles: Option<Vec<RoleId>>,
     /// What the personality is, for whoever chooses one: a catalogue line.
@@ -254,13 +254,13 @@ pub struct Personality {
 }
 
 impl Personality {
-    /// The roles that limit what its agents are cleared for, besides their
-    /// owner's (issue 179): an agent joins a channel only if its owner is
-    /// cleared for it and, where this is `Some`, these roles are too. An
-    /// internal personality that names none limits nothing; an external
-    /// one that names none is limited to no roles - what is `public` - since
-    /// what its agents are given leaves the system. Like every clearance,
-    /// it counts only where roles are configured.
+    /// The roles that limit its agents, besides their owner's (issues 179, 605): where this is
+    /// `Some`, what roles decide - an entry of an access list for a role, a clearance - is allowed
+    /// an agent only if its owner's roles allow it and these do as well, held by the owner or not.
+    /// An agent joins a channel only if its owner is cleared for it and these roles are too. An
+    /// internal personality that names none limits nothing; an external one that names none is
+    /// limited to no roles - what is `public`, and no entry for a role - since what its agents are
+    /// given leaves the system. A clearance counts only where roles are configured.
     pub fn limiting_roles(&self) -> Option<&[RoleId]> {
         match (&self.roles, self.kind) {
             (Some(roles), _) => Some(roles),

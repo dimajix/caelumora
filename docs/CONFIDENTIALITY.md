@@ -210,10 +210,13 @@ cleaning up, deleting with a scope - reaches what it acts on.
 
 A personality may name `roles` its agents are limited to: an agent is cleared only if its owner is
 *and* those roles are. They narrow the owner's clearance and never widen it - whoever may write a
-personality cannot clear anyone through it. A personality that names none limits nothing, except an
-**external** one: what is given to an external agent leaves the system, so naming none limits it to
-no roles, which see only what is public (`Personality::limiting_roles`). The same limit holds back
-an agent run here whose model or tools are outside the system.
+personality cannot clear anyone through it. A limit is a ceiling, not a set of roles the owner must
+hold: an owner cleared higher is cleared up to what the limit's roles clear, whether they hold
+those roles or not - as it is asked beside the owner's roles for the entries of an access list
+too (see [SECURITY.md](SECURITY.md#access-lists)). A personality that names none limits nothing,
+except an **external** one: what is given to an external agent leaves the system, so naming none
+limits it to no roles, which see only what is public (`Personality::limiting_roles`). The same
+limit holds back an agent run here whose model or tools are outside the system.
 
 An external agent, once let into a channel, is given everything said in it, as a cleared person
 hears everything; that it may receive it was decided at the door. What it answers is classified as

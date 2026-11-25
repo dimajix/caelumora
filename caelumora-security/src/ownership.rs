@@ -152,9 +152,9 @@ impl OwnershipPolicy {
         Self::granting(context, needed, &[context.principal_id, context.caller_id])
     }
 
-    /// What is the system's, what one of `actors` owns, or what an entry of
-    /// its access list grants `needed` - to one of them, by the roles that
-    /// count for the context, and, if one of them is a user, to everyone.
+    /// What is the system's, what one of `actors` owns, or what an entry of its access list grants
+    /// `needed` - to one of them, by the owner's roles and the caller's limit (issue 605), and, if
+    /// one of them is a user, to everyone.
     fn granting(context: &SecurityContext, needed: Grant, actors: &[ActorId]) -> Admission {
         let actors = Self::named(actors);
         Admission {
@@ -162,7 +162,8 @@ impl OwnershipPolicy {
             actors,
             systems: true,
             grant: Some(needed),
-            roles: context.counting_roles(),
+            roles: context.roles.clone(),
+            limiting_roles: context.limiting_roles.clone(),
             deleted_groups: false,
         }
     }
@@ -789,6 +790,7 @@ mod tests {
             systems: true,
             grant: Some(Grant::Read),
             roles: vec![role],
+            limiting_roles: None,
             everyone: true,
             deleted_groups: false,
         };
@@ -877,8 +879,8 @@ mod tests {
         let (hr, staff) = (RoleId::new(), RoleId::new());
         let agent = ActorId::Agent(AgentId::new());
         let hers = SecurityAttributes::owned_by(alice).granting(Subject::Role(hr), Grant::Read);
-        // Bob holds hr; his agent is limited to staff, so of his roles only
-        // that counts for it - as its context says (issue 304).
+        // Bob holds hr; his agent is limited to staff, which is asked beside his roles (issue
+        // 605) - and no entry names staff.
         let access_policy = OwnershipPolicy::new();
         let his_context = context(bob).with_roles(vec![hr, staff], None);
         let his_agents =
@@ -901,6 +903,26 @@ mod tests {
         assert!(
             access_policy.check(&his_agents, ActionType::get(SKILL, &his)).await,
             "what he is granted as a person, his agent is too"
+        );
+        // Issue 605: the limit is asked beside his roles - an entry for one of his and one for
+        // one of the limit's admit together, though he does not hold the limit's.
+        let accountant = RoleId::new();
+        let for_accountants =
+            context(bob).next(agent, bob, bob).with_roles(vec![hr], Some(vec![accountant]));
+        let both = hers.clone().granting(Subject::Role(accountant), Grant::Read);
+        assert!(
+            access_policy.check(&for_accountants, ActionType::get(SKILL, &both)).await,
+            "his role and his agent's limit, each by an entry"
+        );
+        assert!(
+            !access_policy.check(&for_accountants, ActionType::get(SKILL, &hers)).await,
+            "not his role alone"
+        );
+        let theirs =
+            SecurityAttributes::owned_by(alice).granting(Subject::Role(accountant), Grant::Read);
+        assert!(
+            !access_policy.check(&for_accountants, ActionType::get(SKILL, &theirs)).await,
+            "nor the limit's alone, which he does not hold"
         );
     }
 

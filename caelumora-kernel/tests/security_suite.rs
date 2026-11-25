@@ -1500,6 +1500,46 @@ async fn who_is_not_cleared_for_the_channel_is_not_taken_in() {
     world.manager.stop(&alice, session.id()).await.unwrap();
 }
 
+/// Issue 605: an agent whose personality limits it to a role its owner does not hold reads, in
+/// the context its controller gives it, what an entry for its owner's role and one for its limit's
+/// role grant together - the limit asked beside the owner's roles -, and not what only one of
+/// them grants.
+#[tokio::test]
+async fn an_agent_reads_by_its_owners_role_and_its_limit_together() {
+    let world = World::new().await;
+    let accountant = RoleId::new();
+    let personalities = &world.kernel.entity_stores().personalities;
+    let mut accounting = Personality {
+        roles: Some(vec![accountant]),
+        ..world.personality("accounting", Some(world.alice), &[]).await
+    };
+    personalities.update(&World::as_user(world.alice), &mut accounting).await.unwrap();
+    let helper = world.agent("accounting-helper", world.alice, &accounting).await;
+    let controller = world.kernel.controller_manager().agent_controller(helper).await.unwrap();
+    let as_agent = controller.security_context(
+        SessionId::default(),
+        ChannelId::default(),
+        accounting.limiting_roles(),
+    );
+
+    for (name, roles, readable) in [
+        ("both", vec![*STAFF, accountant], true),
+        ("staff", vec![*STAFF], false),
+        ("accounts", vec![accountant], false),
+    ] {
+        let mut shared = world.personality(name, Some(world.bob), &[]).await;
+        shared.security_attributes = roles.into_iter().fold(
+            shared.security_attributes,
+            |attributes: SecurityAttributes, role| {
+                attributes.granting(Subject::Role(role), Grant::Read)
+            },
+        );
+        personalities.update(&World::as_user(world.bob), &mut shared).await.unwrap();
+        let read = personalities.get(&as_agent, shared.id).await;
+        assert_eq!(read.is_ok(), readable, "{name}: {read:?}");
+    }
+}
+
 /// Searching whom to take in is for whoever may change the session: the
 /// search tells who exists. It shows who is found with whether they take
 /// part, and why they cannot be taken in - coarsely, never which clearance

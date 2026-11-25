@@ -24,14 +24,14 @@ Security is a context that travels with every operation, and explicit checks aga
 *   **`AccessPolicy`** authorizes actions: `check(context, action)`. For a verb on entities it may
     also give an **`Admission`** (`admission(context, kind, verb)`, issue
     [332](../issues/332-policy-as-a-predicate.md)): which entities it admits by their attributes
-    alone - the actors an owner or an entry has to name, what an entry has to grant, the roles that
-    count, whether what the system owns and an entry for everyone admit. A policy that gives one
-    decides `check` on entities by it, so that what a store narrows a list by and the decision on
-    one entity cannot come apart; one that gives none (`None`, the default) narrows nothing up
-    front. One question asked of many contexts at once - the event bus asks every subscriber
-    whether it receives an event - is `check_each(contexts, action)`: context by context by
-    default; the ownership policy decides a verb on entities for all of them over memberships read
-    once for the question (issue [503](../issues/503-bus-asks-every-stream.md)).
+    alone - the actors an owner or an entry has to name, what an entry has to grant, the owner's
+    roles and the caller's limit, whether what the system owns and an entry for everyone admit. A
+    policy that gives one decides `check` on entities by it, so that what a store narrows a list by
+    and the decision on one entity cannot come apart; one that gives none (`None`, the default)
+    narrows nothing up front. One question asked of many contexts at once - the event bus asks
+    every subscriber whether it receives an event - is `check_each(contexts, action)`: context by
+    context by default; the ownership policy decides a verb on entities for all of them over
+    memberships read once for the question (issue [503](../issues/503-bus-asks-every-stream.md)).
 *   **`ActionType`** enumerates every securable action. An action on a stored entity carries the
     entity's `SecurityAttributes`, not the entity itself, and is asked alike for every kind (issue
     [323](../issues/323-kinds-enumerated-in-the-core.md)): `ActionType::Entity`, by the entity's
@@ -311,9 +311,15 @@ lose theirs.
     *   `Actor` - a user. Never an agent, the system or nobody: an agent acts with its owner's
         rights, and an entry for it would let it reach what the person responsible for it may not.
         The stores refuse such an entry.
-    *   `Role` - as the context carries it. The roles that count for a user are their own; for an
-        agent its owner's, narrowed by its personality's limiting roles wherever a role is matched -
-        the one way an agent may do less than its owner.
+    *   `Role` - as the context carries it: a user's own roles; an agent's owner's, and its
+        personality's limiting roles besides - the one way an agent may do less than its owner. A
+        limit is asked beside the owner's roles, as for a clearance (issue
+        [605](../issues/605-a-personality-s-limit-means-two-things.md)): an entry covering the
+        grant has to name one of the owner's roles, and one - the same entry or another - a role
+        of the limit, which the owner need not hold. So an entry for a role admits an agent at
+        most where it admits its owner, and at most where it would admit a holder of its limit's
+        roles; an entry for the owner, a group of theirs or everyone, and owning, admit it as they
+        admit its owner.
     *   `Group` - a team, or the participants of a session or a channel. A member counts wherever
         they act, not only in that place, and only while the group is there: a deleted group
         grants nothing - except that its members are told of a deletion (`HearDeleted`), since
@@ -442,8 +448,8 @@ started it, acting for that owner, bounded by its personality and the channel, a
 to it carries the initiator of the chain that delegated. It is started only of a personality
 limited at least as the starting agent is - where that agent is limited, every role the
 personality names is named by its limit too (`SecurityContext::covers_limit`, issue 597) -, so that
-it is cleared for nothing the starting agent is not: a check as it is started, not a chain of
-rights - a personality widened later is not followed. Its tools and approvals are its
+it is admitted and cleared for nothing the starting agent is not: a check as it is started, not a
+chain of rights - a personality widened later is not followed. Its tools and approvals are its
 personality's; which personalities it may be of, the starting agent's component lists, a bound
 only the agent side checks.
 

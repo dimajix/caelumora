@@ -131,9 +131,8 @@ mod tests {
         assert_eq!(stores.agents.get(&ctx, agent.id).await.unwrap().name.as_str(), "new_name");
     }
 
-    /// Issue 304: an agent acts with its owner's roles as they are now - a
-    /// role given or taken reaches it with the owner's controller - limited
-    /// to those its personality names.
+    /// Issue 304: an agent acts with its owner's roles as they are now - a role given or taken
+    /// reaches it with the owner's controller - and its personality's limit beside them.
     #[tokio::test]
     async fn an_agent_acts_with_its_owners_roles_as_they_are_now_and_its_limit() {
         use caelumora_domain::event::GlobalEvent;
@@ -172,9 +171,6 @@ mod tests {
         ));
         let context = controller.security_context(session, channel, personality.limiting_roles());
         assert_eq!(context.roles, [staff, hr], "her roles as they are now");
-        assert!(
-            context.has_role(staff) && !context.has_role(hr),
-            "but only those its personality names count"
-        );
+        assert_eq!(context.limiting_roles, Some(vec![staff]), "limited by its personality still");
     }
 }

@@ -120,12 +120,15 @@ over one pool.
     each entry of the access list (`read`, `write`, `join`), the subject by its id alone - everyone
     by the largest UUID, what the system owns by the nil one -, written from the document's
     `SecurityAttributes` in the transaction that writes it and removed with it. A list is narrowed
-    by them: the admission becomes a semi-join over the entries of the actors, their roles and
-    everyone, and over those of the groups an actor belongs to, found in `entity_group` by
+    by them: the admission becomes a semi-join over the entries of the actors, the owner's roles
+    and everyone, and over those of the groups an actor belongs to, found in `entity_group` by
     containment of the members in its bodies (`Filter::with_member`), a deleted group only where the
     admission counts it. Ids of different subjects that met would only let more through, which the
-    store decides again. Laying a kind out in a form of its own - the memberships of the groups in a
-    table - is issue [460](../issues/460-kinds-kept-in-one-form-in-postgres.md).
+    store decides again; so does a caller's limit, which the semi-join leaves out - an entry for a
+    role of the limit, besides one for the owner's, is asked by the store alone (issue
+    [605](../issues/605-a-personality-s-limit-means-two-things.md)). Laying a kind out in a form of
+    its own - the memberships of the groups in a table - is issue
+    [460](../issues/460-kinds-kept-in-one-form-in-postgres.md).
 *   **Tables made in code.** The table of a kind is made when the backend is opened at start, or
     when a kind opened later is first used, under a lock of the kind, and entered in
     `kinds(name, table_name, schema_version)`; one of a form this program does not know is refused.

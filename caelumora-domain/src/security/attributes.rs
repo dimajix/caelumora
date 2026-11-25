@@ -119,8 +119,8 @@ impl AclEntry {
 pub enum Subject {
     /// A user.
     Actor(ActorId),
-    /// Whoever holds the role - an agent its owner's roles, narrowed by its
-    /// personality's limiting roles.
+    /// Whoever holds the role - an agent by its owner's roles, its personality's limiting roles
+    /// asked beside them (issue 605).
     Role(RoleId),
     /// The members of a group (issues 286, 304) - a team, or the current
     /// participants of a session or a channel -, as the policy learns from

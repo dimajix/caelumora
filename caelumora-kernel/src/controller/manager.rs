@@ -853,7 +853,7 @@ mod tests {
 
         let hers = manager.owner_context(ActorId::User(alice.id), session, channel).await.unwrap();
         assert_eq!(hers.principal_id, ActorId::User(alice.id));
-        assert!(hers.has_role(staff), "her roles");
+        assert_eq!(hers.roles, [staff], "her roles");
         assert_eq!((hers.session_id, hers.channel_id), (session, channel));
         let gone =
             manager.owner_context(ActorId::User(UserId::new()), session, channel).await.unwrap();

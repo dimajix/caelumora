@@ -55,12 +55,13 @@ fn relation(grant: Grant) -> &'static str {
     }
 }
 
-/// An admission as a condition of SQL on the id of a document: that one of
-/// its access entries admits it - the owner's, an entry for an actor, a
-/// role or everyone, or one for a group an actor belongs to, found in the
-/// table of the groups by the members its documents list (`Filter::with_member`).
-/// It holds for every document `Admission::admits` admits, and for more only
-/// where ids of different subjects met by chance.
+/// An admission as a condition of SQL on the id of a document: that one of its access entries
+/// admits it - the owner's, an entry for an actor, a role or everyone, or one for a group an actor
+/// belongs to, found in the table of the groups by the members its documents list
+/// (`Filter::with_member`). It holds for every document `Admission::admits` admits, and for more
+/// where ids of different subjects met by chance, and where a caller is limited: an entry for one
+/// of the owner's roles admits here without one for a role of the limit, which the store asks as
+/// it judges every document again (issue 605).
 #[derive(Debug)]
 pub(crate) struct Admitted {
     pub(crate) sql: String,

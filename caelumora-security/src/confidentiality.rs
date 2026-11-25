@@ -552,6 +552,24 @@ mod tests {
         assert!(rules.require_cleared_for(&hers, &secret, || ()).is_ok());
     }
 
+    /// Issue 605: a limit is a ceiling - its roles clear beside the owner's, held by the owner
+    /// or not, so an owner cleared higher is cleared up to the limit's roles.
+    #[test]
+    fn a_limit_clears_up_to_its_roles_whether_the_owner_holds_them_or_not() {
+        let (head, staff) = (RoleId::new(), RoleId::new());
+        let roles = Roles::new([
+            (head, "head".to_string(), vec![Clearance { level: Confidential, compartment: None }]),
+            (staff, "staff".to_string(), vec![Clearance { level: Internal, compartment: None }]),
+        ])
+        .unwrap();
+        let rules = ConfidentialityRules::new(organisation()).with_roles(roles);
+        let owner = ActorId::User(UserId::new());
+        let context = SecurityContext::new(owner, Default::default(), Default::default());
+        let agents = context.with_roles(vec![head], Some(vec![staff]));
+        assert!(rules.cleared_for(&agents, &classified(Internal, &[])), "up to the limit's");
+        assert!(!rules.cleared_for(&agents, &classified(Confidential, &[])), "not above it");
+    }
+
     /// Issue 341: a caller is cleared by its owner, who answers for it -
     /// whoever it acts for lends no clearance, not even the system. Only the
     /// system itself is cleared for everything (issue 477).

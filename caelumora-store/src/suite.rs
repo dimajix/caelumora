@@ -2375,8 +2375,9 @@ pub fn admitting_policy() -> (Arc<StoreMemberships>, Arc<dyn AccessPolicy>) {
 /// the storage narrows it by the policy's admission first: of folders owned
 /// by a user, an agent, the system and nobody, with an entry for a user, a role, a
 /// group - one that was deleted too, one with an agent - and everyone, of
-/// every grant; listed by users, by an agent as its owner and as itself, by
-/// a role, by nobody; of what is there and what was deleted, in pages
+/// every grant, and with entries for two roles; listed by users, by an agent as its owner and as
+/// itself, by a role, by an agent limited to none or to a role its owner does not hold (issue
+/// 605), by nobody; of what is there and what was deleted, in pages
 /// smaller than a scan. `stores` and `folders` ask `access_policy`, made by
 /// `admitting_policy` with `memberships`.
 pub async fn lists_admit_what_check_decides(
@@ -2390,7 +2391,8 @@ pub async fn lists_admit_what_check_decides(
     let (alice, bob) = (UserId::new(), UserId::new());
     let (hers, his) = (ActorId::User(alice), ActorId::User(bob));
     let agent = ActorId::Agent(AgentId::new());
-    let role = RoleId::new();
+    // A role and one of a limit, which the owner need not hold (issue 605).
+    let (role, limit) = (RoleId::new(), RoleId::new());
     let group = |name: &str, member: ActorId| Group {
         members: vec![member],
         ..Group::team(scoped(name), alice)
@@ -2417,6 +2419,7 @@ pub async fn lists_admit_what_check_decides(
     let subjects = [
         Subject::Actor(his),
         Subject::Role(role),
+        Subject::Role(limit),
         Subject::Group(team.id),
         Subject::Group(gone.id),
         Subject::Group(place.id),
@@ -2429,6 +2432,11 @@ pub async fn lists_admit_what_check_decides(
             for grant in Grant::ALL {
                 made.push(SecurityAttributes::owned_by(owner).granting(subject, grant));
             }
+        }
+        // Two entries that admit a limited caller together.
+        for grant in Grant::ALL {
+            let both = SecurityAttributes::owned_by(owner).granting(Subject::Role(role), grant);
+            made.push(both.granting(Subject::Role(limit), grant));
         }
     }
     // Deleted by two deletions, every other one by each.
@@ -2454,6 +2462,9 @@ pub async fn lists_admit_what_check_decides(
         SecurityContext::new(his, SessionId::new(), ChannelId::new())
             .next(agent, his, his)
             .with_roles(vec![role], Some(Vec::new())),
+        SecurityContext::new(his, SessionId::new(), ChannelId::new())
+            .next(agent, his, his)
+            .with_roles(vec![role], Some(vec![limit])),
         SecurityContext::default(),
     ];
     for context in &contexts {
@@ -2462,18 +2473,7 @@ pub async fn lists_admit_what_check_decides(
             (Presence::Deleted, Verb::ReadDeleted, &deleted),
             (Presence::DeletedWith(one.id), Verb::ReadDeleted, &with_one),
         ] {
-            let mut readable = Vec::new();
-            for folder in stored {
-                if access_policy
-                    .check(
-                        context,
-                        ActionType::entity(Folder::KIND, verb, &folder.security_attributes),
-                    )
-                    .await
-                {
-                    readable.push(folder.id);
-                }
-            }
+            let readable = checked(access_policy, context, verb, stored).await;
             let listed: Vec<FolderId> = all_folders(folders, context, presence)
                 .await
                 .iter()
@@ -2485,6 +2485,24 @@ pub async fn lists_admit_what_check_decides(
             );
         }
     }
+}
+
+/// The ids of the folders of `stored` that `access_policy` lets `context` do `verb` with, asked
+/// one by one.
+async fn checked(
+    access_policy: &dyn AccessPolicy,
+    context: &SecurityContext,
+    verb: Verb,
+    stored: &[Folder],
+) -> Vec<FolderId> {
+    let mut readable = Vec::new();
+    for folder in stored {
+        let action = ActionType::entity(Folder::KIND, verb, &folder.security_attributes);
+        if access_policy.check(context, action).await {
+            readable.push(folder.id);
+        }
+    }
+    readable
 }
 
 /// Every folder of `presence` that `context` lists, in pages of a few.

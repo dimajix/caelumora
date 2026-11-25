@@ -592,6 +592,7 @@ async fn a_scan_hands_out_what_its_admission_admits() {
         systems: true,
         grant: Some(Grant::Read),
         roles: vec![role],
+        limiting_roles: None,
         everyone: true,
         deleted_groups: false,
     };
@@ -605,6 +606,11 @@ async fn a_scan_hands_out_what_its_admission_admits() {
         scanned(Admission { deleted_groups: true, ..reading.clone() }).await,
         at(&[0, 1, 3, 4, 5, 6, 8]),
         "a deleted group only where it is to count"
+    );
+    assert_eq!(
+        scanned(Admission { limiting_roles: Some(Vec::new()), ..reading.clone() }).await,
+        at(&[0, 1, 3, 4, 5, 8]),
+        "a limit left to the store, which judges every document again (issue 605)"
     );
     assert_eq!(
         scanned(Admission { actors: vec![his], ..Admission::default() }).await,

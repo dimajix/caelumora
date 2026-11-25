@@ -27,9 +27,12 @@ pub struct Admission {
     /// What an entry of the access list must cover to admit; `None` where
     /// owning alone does.
     pub grant: Option<Grant>,
-    /// The roles an entry may name: those that count for the context
-    /// (`SecurityContext::counting_roles`).
+    /// The roles an entry may name: the owner's (`SecurityContext::roles`).
     pub roles: Vec<RoleId>,
+    /// The roles the caller is limited to, if any (`SecurityContext::limiting_roles`): where
+    /// set, an entry covering the grant has to name one of them as well - the same entry as for
+    /// `roles`, or another (issue 605).
+    pub limiting_roles: Option<Vec<RoleId>>,
     /// Whether an entry for everyone admits.
     pub everyone: bool,
     /// Whether an entry for a group admits the members it had when it was
@@ -66,19 +69,30 @@ impl Admission {
         self.admits_without_groups(attributes) || self.groups_named(attributes).next().is_some()
     }
 
-    /// Whether the owner of an entity with `attributes`, or an entry of its
-    /// list naming no group, admits it.
+    /// Whether the owner of an entity with `attributes`, or entries of its list naming no group,
+    /// admit it.
     fn admits_without_groups(&self, attributes: &SecurityAttributes) -> bool {
         let systems = self.systems && attributes.owner_id == ActorId::System;
         if self.actors.contains(&attributes.owner_id) || systems {
             return true;
         }
-        self.covering(attributes).any(|subject| match subject {
+        let named = self.covering(attributes).any(|subject| match subject {
             Subject::Actor(actor) => self.actors.contains(&actor),
-            Subject::Role(role) => self.roles.contains(&role),
             Subject::Everyone => self.everyone,
-            Subject::Group(_) => false,
-        })
+            Subject::Role(_) | Subject::Group(_) => false,
+        });
+        named || self.admits_by_roles(attributes)
+    }
+
+    /// Whether the entries of `attributes` covering the grant name one of the owner's roles and,
+    /// where the caller is limited, one of the limit's - each asked by itself, so that two entries
+    /// may admit together (issue 605).
+    fn admits_by_roles(&self, attributes: &SecurityAttributes) -> bool {
+        let names_one_of = |roles: &[RoleId]| {
+            self.covering(attributes)
+                .any(|subject| matches!(subject, Subject::Role(role) if roles.contains(&role)))
+        };
+        names_one_of(&self.roles) && self.limiting_roles.as_deref().is_none_or(names_one_of)
     }
 
     /// The groups the entries of `attributes` covering the grant name.
@@ -148,7 +162,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_entry_admits_by_a_role_that_counts_everyone_and_a_group() {
+    async fn an_entry_admits_by_a_role_of_the_owner_everyone_and_a_group() {
         let (alice, bob) = (user(), user());
         let role = RoleId::new();
         let by_role =
@@ -156,9 +170,9 @@ mod tests {
         let none = Known::default();
         assert!(
             Admission { roles: vec![role], ..reading(vec![bob]) }.admits(&by_role, &none).await,
-            "a role that counts"
+            "a role of the owner"
         );
-        assert!(!reading(vec![bob]).admits(&by_role, &none).await, "not one that does not");
+        assert!(!reading(vec![bob]).admits(&by_role, &none).await, "not one they do not hold");
         let open = SecurityAttributes::owned_by(alice).granting(Subject::Everyone, Grant::Read);
         assert!(
             Admission { everyone: true, ..reading(vec![bob]) }.admits(&open, &none).await,
@@ -175,6 +189,32 @@ mod tests {
             "a member of the group named"
         );
         assert!(!reading(vec![user()]).admits(&shared_with, &known).await, "not who is no member");
+    }
+
+    /// Issue 605: a limit is asked beside the owner's roles - an entry has to name one of each,
+    /// the same entry or another, and the owner need not hold a role of the limit.
+    #[tokio::test]
+    async fn a_limited_caller_is_admitted_by_a_role_of_its_owner_and_one_of_its_limit() {
+        let (alice, bob) = (user(), user());
+        let (head, accountant) = (RoleId::new(), RoleId::new());
+        let none = Known::default();
+        let limited = Admission {
+            roles: vec![head],
+            limiting_roles: Some(vec![accountant]),
+            ..reading(vec![bob])
+        };
+        let granting = |roles: &[RoleId]| {
+            roles.iter().fold(SecurityAttributes::owned_by(alice), |attributes, role| {
+                attributes.granting(Subject::Role(*role), Grant::Read)
+            })
+        };
+        assert!(limited.admits(&granting(&[head, accountant]), &none).await, "two entries");
+        assert!(!limited.admits(&granting(&[head]), &none).await, "not the owner's role alone");
+        assert!(!limited.admits(&granting(&[accountant]), &none).await, "nor the limit's alone");
+        let unlimited = Admission { limiting_roles: None, ..limited.clone() };
+        assert!(unlimited.admits(&granting(&[head]), &none).await, "unlimited, the owner's");
+        let shared_with_bob = granting(&[]).granting(Subject::Actor(bob), Grant::Read);
+        assert!(limited.admits(&shared_with_bob, &none).await, "the limit asks no roles of others");
     }
 
     #[test]
