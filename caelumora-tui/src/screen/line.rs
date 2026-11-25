@@ -8,10 +8,10 @@ use super::words::{
     question_rows, to_decide, what_is_asked, Called, EXPLICIT,
 };
 use super::{Screen, Typed};
+use crate::activity::Activity;
 use crate::asking::{Asked, Asking};
 use crate::printed::{Printed, Said, Saying};
 use crate::typeable::Typeable;
-use crate::under_way::UnderWay;
 use async_trait::async_trait;
 use caelumora_domain::approval::ApprovalRequest;
 use caelumora_domain::question::QuestionRequest;
@@ -90,8 +90,9 @@ impl Screen for LineScreen {
     }
 
     /// Nothing: an answer is told once as it begins (`Printed::Answering`), and no more until it
-    /// says something, so that a screen reader reads what is said, not where an agent stands.
-    fn show_under_way(&mut self, _under_way: &[UnderWay]) {}
+    /// says something, so that a screen reader reads what is said, not where an agent stands - and
+    /// nothing of what is at work elsewhere, which does not concern the user (issue 572).
+    fn show_activity(&mut self, _activity: &Activity) {}
 
     /// Writes what is asked once, as it is shown, with its choices numbered and how to answer.
     fn ask(&mut self, asked: Option<&Asked>) {

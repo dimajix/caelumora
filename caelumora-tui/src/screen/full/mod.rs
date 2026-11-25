@@ -13,10 +13,10 @@ mod selection;
 mod styled;
 
 use super::{Screen, Typed};
+use crate::activity::Activity;
 use crate::asking::Asked;
 use crate::printed::Printed;
 use crate::typeable::Typeable;
-use crate::under_way::UnderWay;
 use async_trait::async_trait;
 use choosing::{Choosing, Taken};
 use clipboard::Clipboard;
@@ -97,8 +97,8 @@ pub(crate) struct FullScreen {
 struct Window {
     /// What was printed, and what streams after it.
     scrollback: Scrollback,
-    /// The answers under way in the channel talked in.
-    under_way: Vec<UnderWay>,
+    /// What is at work in the channels followed (issue 572).
+    activity: Activity,
     /// What is asked of the user, as it is chosen among; told on the rule only, where it is put
     /// aside.
     choosing: Option<Choosing>,
@@ -186,8 +186,8 @@ impl Screen for FullScreen {
         self.changed = true;
     }
 
-    fn show_under_way(&mut self, under_way: &[UnderWay]) {
-        self.window.show_under_way(under_way);
+    fn show_activity(&mut self, activity: &Activity) {
+        self.window.show_activity(activity);
         self.changed = true;
     }
 
@@ -218,7 +218,7 @@ impl Screen for FullScreen {
                 },
                 _ = self.frames.tick() => {
                     // The status line tells for how long an answer is under way.
-                    self.changed |= !self.window.under_way.is_empty();
+                    self.changed |= !self.window.activity.here.is_empty();
                 }
             }
         }
@@ -245,11 +245,12 @@ impl Window {
         self.typeable = typeable;
     }
 
-    /// Shows the answers `under_way`: what they streamed after what was printed, and where they
-    /// stand in the status line.
-    fn show_under_way(&mut self, under_way: &[UnderWay]) {
-        self.scrollback.set_live(live_lines(under_way));
-        self.under_way = under_way.to_vec();
+    /// Shows what is at work, `activity`: what the answers of the thread followed streamed after
+    /// what was printed, and in the status line where they stand and where else agents are at work
+    /// or something waits for the user (issue 572).
+    fn show_activity(&mut self, activity: &Activity) {
+        self.scrollback.set_live(live_lines(&activity.here));
+        self.activity = activity.clone();
     }
 
     /// Shows what is asked, `asked` - waiting only where it is put aside -, chosen among anew where
@@ -395,7 +396,8 @@ impl Window {
         let area = frame.area();
         let (rows, cursor) = self.input.rows(PROMPT, area.width);
         let input_rows = u16::try_from(rows.len()).unwrap_or(u16::MAX).min(INPUT_ROWS);
-        let status_rows = u16::from(!self.under_way.is_empty());
+        let at_work = !self.activity.here.is_empty() || !self.activity.elsewhere.is_empty();
+        let status_rows = u16::from(at_work);
         let asked_rows = self.choosing.as_ref().map_or(0, |choosing| choosing.height(area.width));
         let asked_rows = u16::try_from(asked_rows).unwrap_or(u16::MAX).min(area.height / 2);
         // What is left beside the line typed, the rule, what is asked, the status line and a row of
@@ -422,7 +424,7 @@ impl Window {
         if let Some(choosing) = &self.choosing {
             frame.render_widget(Paragraph::new(choosing.rows()).wrap(Wrap { trim: false }), asking);
         }
-        frame.render_widget(status_line(&self.under_way, now), status);
+        frame.render_widget(status_line(&self.activity, now, status.width), status);
         frame.render_widget(Paragraph::new(candidates), offered);
         let waits = self.choosing.as_ref().and_then(Choosing::waiting);
         frame.render_widget(rule_line(self.scrollback.below(), waits, rule), rule);
@@ -490,12 +492,14 @@ fn rule_line(below: usize, waits: Option<String>, area: Rect) -> Line<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::activity::Elsewhere;
     use crate::asking::Asking;
+    use crate::under_way::UnderWay;
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::approval::testing::make_approval_request;
     use caelumora_domain::approval::ApprovalRequest;
-    use caelumora_domain::channel::ChannelId;
+    use caelumora_domain::channel::{ChannelId, ThreadId};
     use caelumora_domain::command::ParameterKind;
     use caelumora_domain::question::testing::make_question_request;
     use caelumora_domain::question::{Choice, Question, QuestionRequest, Questions};
@@ -601,8 +605,9 @@ mod tests {
         let mut window = Window::default();
         window.print(&Printed::Notice("Talking in main now".to_string()));
         let agent = ActorId::Agent(AgentId::new());
-        let answer = UnderWay::began(agent, "helper".to_string(), TurnId::new(), None);
-        window.show_under_way(&[answer]);
+        let thread = ThreadId::line(ChannelId::new());
+        let answer = UnderWay::began(agent, "helper".to_string(), thread, TurnId::new(), None);
+        window.show_activity(&Activity { here: vec![answer], elsewhere: Vec::new() });
         for c in "hi".chars() {
             window.take_key(&key(KeyCode::Char(c)), 5);
         }
@@ -612,6 +617,13 @@ mod tests {
         assert_eq!(rows[4], "─".repeat(30));
         assert_eq!(rows[5], "> hi");
         assert_eq!(cursor, Position::new(4, 5));
+
+        // Nothing under way here, an agent at work elsewhere: the status line tells so alone.
+        let side = Name::new("side").unwrap();
+        let elsewhere = Elsewhere { channel: side, at_work: vec!["coder".into()], waits: false };
+        window.show_activity(&Activity { here: Vec::new(), elsewhere: vec![elsewhere] });
+        let (rows, _) = drawn(&mut window, 30, 6);
+        assert_eq!(rows[3], "[side] coder", "{rows:?}");
     }
 
     /// A line typed is answered as it ends, and shown as sent; scrolled up, the rule tells how

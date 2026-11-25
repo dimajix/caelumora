@@ -14,10 +14,10 @@ mod words;
 pub(crate) use full::FullScreen;
 pub(crate) use line::LineScreen;
 
+use crate::activity::Activity;
 use crate::asking::Asked;
 use crate::printed::Printed;
 use crate::typeable::Typeable;
-use crate::under_way::UnderWay;
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -28,8 +28,8 @@ pub(crate) trait Screen: Send {
     /// Shows `printed`, after what was shown before.
     fn print(&mut self, printed: Vec<Printed>);
 
-    /// Shows the answers under way in the channel talked in, `under_way`, as they stand now.
-    fn show_under_way(&mut self, under_way: &[UnderWay]);
+    /// Shows what is at work in the channels followed, `activity`, as it stands now (issue 572).
+    fn show_activity(&mut self, activity: &Activity);
 
     /// Shows what is asked of the user now, `asked` - as waiting only, where it is put aside
     /// (issue 571).

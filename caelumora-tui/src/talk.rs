@@ -11,6 +11,7 @@
 //! session ends it alike. How it ended, which the channel answers the user alone, may be told
 //! before the call it made, which the channel tells everyone.
 
+use crate::activity::Activity;
 use crate::asking::{Asked, Asking, Offered};
 use crate::channels::{Channels, Happened};
 use crate::commands::{commands, terminal_help, TerminalCommand};
@@ -19,7 +20,6 @@ use crate::id_prefix::beginning_with;
 use crate::printed::{ErrorKind, Printed};
 use crate::sessions::{listing, Opening, Sessions, SessionsError};
 use crate::typeable::{read_input, Typeable};
-use crate::under_way::UnderWay;
 use anyhow::Result;
 use caelumora_api::command::{check_arguments, CommandError, CommandSet};
 use caelumora_domain::actor::ActorEvent;
@@ -343,9 +343,9 @@ impl Talk {
         channel.is_some_and(|f| f.is_to_answer(request.id))
     }
 
-    /// The answers under way in the channel talked in (`Channels::under_way`).
-    pub(crate) fn under_way(&self) -> &[UnderWay] {
-        self.channels.under_way()
+    /// What is at work in the channels followed (`Channels::activity`).
+    pub(crate) fn activity(&self) -> Activity {
+        self.channels.activity()
     }
 
     /// Does what the user typed, `input`, read as the terminal reads it (`read_input`), and answers

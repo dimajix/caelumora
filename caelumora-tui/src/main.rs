@@ -3,6 +3,7 @@
 //! directory continued or resumed -, in one at a time (issue 561); or it is asked what a
 //! definition's file is to its store (`id`).
 
+mod activity;
 mod asking;
 mod channels;
 mod commands;
@@ -345,7 +346,7 @@ async fn talk(
         "Chat Session Started (Type '/exit' to stop, '/help' for the commands)".to_string();
     screen.print(vec![Printed::Notice(started)]);
     // What is under way and asked as the channels were followed, before anything happens in them.
-    screen.show_under_way(talk.under_way());
+    screen.show_activity(&talk.activity());
     screen.ask(talk.asked());
     screen.offer(talk.typeable());
     loop {
@@ -389,7 +390,7 @@ async fn talk(
         };
         screen.print(printed);
         // Another channel may be talked in now, something else asked, and other things typed.
-        screen.show_under_way(talk.under_way());
+        screen.show_activity(&talk.activity());
         screen.ask(talk.asked());
         screen.offer(talk.typeable());
     }

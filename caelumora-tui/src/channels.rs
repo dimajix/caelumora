@@ -1,6 +1,7 @@
 //! The channels of a session the terminal follows for the user, and the one they talk in (issue
 //! 561).
 
+use crate::activity::{Activity, Elsewhere};
 use crate::followed::Followed;
 use crate::printed::Printed;
 use crate::typeable::Typeable;
@@ -114,10 +115,35 @@ impl Channels {
         self.followed(self.talked_in?)
     }
 
-    /// The answers under way in the channel talked in, in the order they began; none if it talks
-    /// in none.
-    pub(crate) fn under_way(&self) -> &[UnderWay] {
-        self.talked_in().map(Followed::under_way).unwrap_or_default()
+    /// What is at work in the channels followed, and where something waits for the user (issue
+    /// 572): the answers under way in the thread followed of the channel talked in, in the order
+    /// they began; of every channel, in their order, who is at work outside the thread followed,
+    /// and of every other whether something waits for the user.
+    pub(crate) fn activity(&self) -> Activity {
+        let mut activity = Activity::default();
+        for followed in &self.followed {
+            let talked_in = self.talked_in == Some(followed.channel_id());
+            let is_here = |answer: &UnderWay| talked_in && answer.thread == followed.thread();
+            let (here, there): (Vec<_>, Vec<_>) =
+                followed.under_way().iter().cloned().partition(is_here);
+            if talked_in {
+                activity.here = here;
+            }
+            // An agent at work in several threads is one at work.
+            let mut at_work = Vec::new();
+            let mut agents = Vec::new();
+            for answer in there {
+                if !agents.contains(&answer.agent) {
+                    agents.push(answer.agent);
+                    at_work.push(answer.name);
+                }
+            }
+            let waits = !talked_in && followed.waits_for_user();
+            if waits || !at_work.is_empty() {
+                activity.elsewhere.push(Elsewhere { channel: followed.name(), at_work, waits });
+            }
+        }
+        activity
     }
 
     /// The channel talked in, to change; `None` once it ended.
@@ -400,14 +426,15 @@ mod tests {
         an_agent_in, answered, approval, approval_waiting_in, from, message,
     };
     use crate::screen::testing::lines;
-    use caelumora_domain::actor::ActorEvent;
+    use caelumora_domain::actor::{ActorEvent, Envelope, EventContext};
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::approval::ApprovalRuleId;
-    use caelumora_domain::channel::{HistoryAccess, AGENT_STATE_CHANGED, LEFT};
+    use caelumora_domain::channel::{HistoryAccess, ThreadId, AGENT_STATE_CHANGED, LEFT};
     use caelumora_domain::message::Message;
     use caelumora_domain::question::testing::make_question_request;
     use caelumora_domain::session::SessionId;
     use caelumora_domain::user::UserId;
+    use caelumora_domain::work::TurnId;
     use caelumora_kernel::channel::ChannelLoop;
     use caelumora_kernel::kernel::Kernel;
     use caelumora_kernel::session::testing::{
@@ -576,6 +603,57 @@ mod tests {
         let approval_line = format!("Approval requested, id {}:", id.0);
         assert!(switched.contains(&approval_line), "what waits there: {switched:?}");
         assert_eq!(channels.talked_in().map(|f| f.channel_id()), Some(side.id()));
+    }
+
+    /// Issue 572: what is at work is the answers under way in the thread followed of the channel
+    /// talked in; of every channel, who is at work outside it - in another thread of the channel
+    /// talked in too -; of another channel, whether something waits for the user there - not of
+    /// the channel talked in, which asks it itself.
+    #[tokio::test]
+    async fn what_is_at_work_is_told_of_the_thread_followed_and_marked_of_the_others() {
+        let (mut channels, session_loop, _, _) = followed().await;
+        let first = channels.talked_in().expect("talked in").channel_id();
+        let main = session_loop.channel(first).expect("the first channel");
+        let side = named(&session_loop, "side");
+        let activity = channels.activity();
+        assert!(activity.here.is_empty() && activity.elsewhere.is_empty(), "nothing at work");
+
+        let started = |channel: &ChannelLoop, agent, thread_id| {
+            let envelope =
+                from(channel, agent, ActorEvent::ResponseStarted { turn_id: TurnId::new() });
+            let envelope =
+                Envelope { context: EventContext { thread_id, ..envelope.context }, ..envelope };
+            Happened::Shown(channel.id(), Ok(Shown::Envelope(envelope)))
+        };
+        let helper = ActorId::Agent(AgentId::new());
+        let sub = ActorId::Agent(AgentId::new());
+        let coder_id = AgentId::new();
+        let coder = ActorId::Agent(coder_id);
+        channels.take_in(started(&main, helper, ThreadId::line(main.id()))).await;
+        channels.take_in(started(&main, sub, ThreadId::new())).await;
+        channels.take_in(started(&main, sub, ThreadId::new())).await;
+        channels.take_in(started(&side, coder, ThreadId::line(side.id()))).await;
+        let request =
+            ActorEvent::ApprovalRequested { request: approval(&side, coder_id), to: None };
+        channels.take_in(envelope_shown(&side, coder, request)).await;
+        let request =
+            ActorEvent::ApprovalRequested { request: approval(&main, coder_id), to: None };
+        channels.take_in(envelope_shown(&main, coder, request)).await;
+
+        let activity = channels.activity();
+        let here: Vec<_> = activity.here.iter().map(|answer| answer.agent).collect();
+        assert_eq!(here, [helper]);
+        let at_work = |channel: &ChannelLoop, agent: ActorId, waits| Elsewhere {
+            channel: channel.name(),
+            at_work: vec![agent.to_string()],
+            waits,
+        };
+        assert_eq!(
+            activity.elsewhere,
+            [at_work(&main, sub, false), at_work(&side, coder, true)],
+            "in the order of the channels, the one talked in for its other threads, an agent at \
+             work in two of them once"
+        );
     }
 
     /// The end of an approval told of another channel is told as well, marked with its name:

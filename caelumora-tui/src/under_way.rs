@@ -2,6 +2,7 @@
 //! shows (issue 569).
 
 use caelumora_domain::actor::{ActorId, ActorState};
+use caelumora_domain::channel::ThreadId;
 use caelumora_domain::message::Message;
 use caelumora_domain::work::TurnId;
 use std::time::Instant;
@@ -15,6 +16,8 @@ pub(crate) struct UnderWay {
     pub(crate) agent: ActorId,
     /// Its name, as the channel shows it.
     pub(crate) name: String,
+    /// The thread it answers in (issue 572).
+    pub(crate) thread: ThreadId,
     /// The turn it answers in.
     pub(crate) turn: TurnId,
     /// Where the agent stands in it, as the channel showed last; `None` until it shows it.
@@ -29,15 +32,26 @@ pub(crate) struct UnderWay {
 }
 
 impl UnderWay {
-    /// The answer `agent`, named `name`, began in `turn` just now, in the state `state` if known.
+    /// The answer `agent`, named `name`, began in `turn` of `thread` just now, in the state `state`
+    /// if known.
     pub(crate) fn began(
         agent: ActorId,
         name: String,
+        thread: ThreadId,
         turn: TurnId,
         state: Option<ActorState>,
     ) -> Self {
         let since = Instant::now();
-        Self { agent, name, turn, state, since, reasoning: String::new(), content: String::new() }
+        Self {
+            agent,
+            name,
+            thread,
+            turn,
+            state,
+            since,
+            reasoning: String::new(),
+            content: String::new(),
+        }
     }
 
     /// Takes in what `partial` streamed of the message being written: the next of its reasoning

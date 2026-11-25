@@ -89,9 +89,10 @@ pub(crate) struct Followed {
     /// The last answer of an agent shown, which `/retry` asks it to give again (issue 234) unless
     /// one of the two below is known.
     last_answer: Option<MessageId>,
-    /// The answers under way, in the order they began - those the terminal learnt of as it caught
-    /// up after those it knew -: what the screen shows as such, and of which `/retry` asks for the
-    /// last first (issue 235).
+    /// The answers under way in every thread of the channel, in the order they began - those the
+    /// terminal learnt of as it caught up after those it knew -: what the screen shows as such,
+    /// with what they streamed of the thread followed alone (issue 572), and of which `/retry`
+    /// asks for the last of the thread followed first (issue 235).
     under_way: Vec<UnderWay>,
     /// The calls presented `quiet` whose results are yet to come, by id, with the agent that made
     /// them and what would be printed of them - shown live or printed from the history -, so that
@@ -181,7 +182,7 @@ impl Followed {
     /// The answers under way are read anew as well, from the running channel
     /// (`read_under_way`): one whose end was missed is under way no more, one whose start was
     /// missed is, and those known keep what they streamed. Nothing is printed of them; the screen
-    /// shows them (`Screen::show_under_way`).
+    /// shows them (`Screen::show_activity`).
     pub(crate) async fn catch_up(&mut self) -> Vec<Printed> {
         let mut printed = Vec::new();
         // A thread followed whose closing was missed - the watch lagged - is left for the line.
@@ -224,24 +225,23 @@ impl Followed {
 
     /// Follows `thread` of the channel from now on (issue 595) - its line, or a thread open -,
     /// called `called`, and answers what tells so: what was said in it so far and that it is
-    /// followed, as talking in a channel tells. The last answer, a turn given up and the answers
-    /// under way are read anew, of that thread.
+    /// followed, as talking in a channel tells. The last answer and a turn given up are read anew,
+    /// of that thread; the answers under way are kept of every thread already.
     pub(crate) async fn follow(&mut self, thread: ThreadId, called: &str) -> Vec<Printed> {
         self.switch_to(thread);
-        self.under_way = self.read_under_way().await.unwrap_or_default();
         let mut printed = self.history().await;
         printed.push(Printed::Notice(format!("Following {called} of {} now", self.name())));
         printed
     }
 
     /// Follows `thread` from now on, what was known of the thread followed before let go: the last
-    /// answer and a turn given up that `/retry` asks for, the answers under way, the messages
-    /// printed from its history (issue 595).
+    /// answer and a turn given up that `/retry` asks for, what the answers under way streamed, the
+    /// messages printed from its history (issue 595).
     fn switch_to(&mut self, thread: ThreadId) {
         self.thread = thread;
         self.last_answer = None;
         self.given_up = None;
-        self.under_way.clear();
+        self.under_way.iter_mut().for_each(UnderWay::complete);
         self.from_history.clear();
     }
 
@@ -431,18 +431,6 @@ impl Followed {
         self.shown_message(message, Saying::Complete)
     }
 
-    /// Takes in `envelope`, of a thread not followed, which the terminal prints nothing of (issues
-    /// 557, 595): an answer under way read before it ended (`catch_up`) ends with its turn all the
-    /// same.
-    fn take_in_of_another_thread(&mut self, envelope: &Envelope) {
-        if matches!(
-            envelope.event,
-            ActorEvent::TurnFinished { .. } | ActorEvent::TurnGivenUp { .. }
-        ) {
-            self.end_under_way(envelope.context.sender_id);
-        }
-    }
-
     /// What shows again what waits for the user in the channel: the approvals pending and the open
     /// questions put to them that are known - one asked since, which the channel has yet to show,
     /// is shown as it shows it, and not twice.
@@ -454,10 +442,10 @@ impl Followed {
     }
 
     /// Takes in what the channel showed: keeps what the user's commands and what is printed later
-    /// need of it, and answers what the terminal prints of it - of what was sent in the user's
-    /// name, what `take_in_own` prints; of another thread, only what the view of the thread
-    /// followed shows of it (`shows`, issues 557, 595). The thread followed closed, the user
-    /// follows the line again.
+    /// need of it - the answers under way of every thread (`keep_under_way`) -, and answers what
+    /// the terminal prints of it - of what was sent in the user's name, what `take_in_own` prints;
+    /// of another thread, only what the view of the thread followed shows of it (`shows`, issues
+    /// 557, 595). The thread followed closed, the user follows the line again.
     pub(crate) fn take_in(&mut self, envelope: &Envelope) -> Vec<Printed> {
         let mut printed = Vec::new();
         if let ActorEvent::ThreadClosed { thread } = envelope.event {
@@ -465,12 +453,47 @@ impl Followed {
                 printed.push(self.back_to_the_line());
             }
         }
+        self.keep_under_way(envelope);
         if !self.shows(envelope) {
-            self.take_in_of_another_thread(envelope);
             return printed;
         }
         printed.extend(self.taken_in(envelope));
         printed
+    }
+
+    /// Keeps the answers under way of every thread of the channel by `envelope` (issue 572): one
+    /// begun takes the place of the agent's answer in its thread, an answer ends with its turn, and
+    /// where an agent stands is that of its answer in the thread of the turn it runs, where it
+    /// says it - or, said in the line, outside a turn, the agent's own, that of all its answers.
+    fn keep_under_way(&mut self, envelope: &Envelope) {
+        let agent = envelope.context.sender_id;
+        let thread = envelope.context.thread_id;
+        match &envelope.event {
+            ActorEvent::ResponseStarted { turn_id } if matches!(agent, ActorId::Agent(_)) => {
+                let replaced =
+                    self.under_way.iter().find(|a| (a.agent, a.thread) == (agent, thread));
+                if let Some(turn) = replaced.map(|answer| answer.turn) {
+                    self.end_under_way(agent, turn);
+                }
+                let name = envelope.context.sender_name.clone();
+                self.under_way.push(UnderWay::began(agent, name, thread, *turn_id, None));
+            }
+            // Where the agent stands in its answer (issue 243).
+            ActorEvent::StateChanged(state) => {
+                let in_line = thread == self.line();
+                let its = |answer: &&mut UnderWay| {
+                    answer.agent == agent && (in_line || answer.thread == thread)
+                };
+                for answer in self.under_way.iter_mut().filter(its) {
+                    answer.state = Some(*state);
+                }
+            }
+            // Its answer has ended, said or not.
+            ActorEvent::TurnFinished { turn_id, .. } | ActorEvent::TurnGivenUp { turn_id, .. } => {
+                self.end_under_way(agent, *turn_id);
+            }
+            _ => {}
+        }
     }
 
     /// Whether the view of the thread followed shows `envelope` (issue 595): the line's view
@@ -495,19 +518,11 @@ impl Followed {
         }
         let is_agent = matches!(sender_id, ActorId::Agent(_));
         match &envelope.event {
-            ActorEvent::ResponseStarted { turn_id } if is_agent => {
-                self.end_under_way(sender_id);
-                let name = envelope.context.sender_name.clone();
-                self.under_way.push(UnderWay::began(sender_id, name.clone(), *turn_id, None));
-                vec![Printed::Answering { sender: name }]
+            // Kept as under way (`keep_under_way`).
+            ActorEvent::ResponseStarted { .. } if is_agent => {
+                vec![Printed::Answering { sender: envelope.context.sender_name.clone() }]
             }
-            // Where the agent stands in its answer (issue 243).
-            ActorEvent::StateChanged(state) => {
-                if let Some(answer) = self.answer_of(sender_id) {
-                    answer.state = Some(*state);
-                }
-                Vec::new()
-            }
+            ActorEvent::StateChanged(_) | ActorEvent::TurnFinished { .. } => Vec::new(),
             // What streams of the message being written, shown as the answer under way until the
             // message is complete.
             ActorEvent::PartialMessageGenerated(partial)
@@ -515,11 +530,6 @@ impl Followed {
                 if let Some(answer) = self.answer_of(sender_id) {
                     answer.stream(partial);
                 }
-                Vec::new()
-            }
-            // Its answer has ended, said or not.
-            ActorEvent::TurnFinished { .. } => {
-                self.end_under_way(sender_id);
                 Vec::new()
             }
             ActorEvent::CompleteMessageGenerated(message) => {
@@ -533,7 +543,6 @@ impl Followed {
                 self.shown_message(message, Saying::Step)
             }
             ActorEvent::TurnGivenUp { turn_id, reason } => {
-                self.end_under_way(sender_id);
                 self.given_up =
                     (is_agent && reason.may_be_answered_again()).then_some((sender_id, *turn_id));
                 vec![given_up(&envelope.context.sender_name, reason)]
@@ -593,9 +602,15 @@ impl Followed {
         }
     }
 
-    /// The answers under way in the channel, in the order they began.
+    /// The answers under way in every thread of the channel, in the order they began; what they
+    /// streamed of the thread followed alone (issue 572).
     pub(crate) fn under_way(&self) -> &[UnderWay] {
         &self.under_way
+    }
+
+    /// Whether an approval pending for the user or questions put to them wait here (issue 572).
+    pub(crate) fn waits_for_user(&self) -> bool {
+        !self.pending_approvals.is_empty() || !self.questions_to_answer().is_empty()
     }
 
     /// Whether approval `id` is known as pending - read as what waits (`catch_up`), or shown
@@ -644,7 +659,8 @@ impl Followed {
     /// # Errors
     /// As `UserActor::request_retry_of_turn` and `UserActor::request_retry`.
     pub(crate) async fn retry(&self, actor: &UserActor) -> Result<bool> {
-        let under_way = self.under_way.last().map(|answer| (answer.agent, answer.turn));
+        let here = self.under_way.iter().rev().find(|answer| answer.thread == self.thread);
+        let under_way = here.map(|answer| (answer.agent, answer.turn));
         match (under_way.or(self.given_up), self.last_answer) {
             (Some((agent, turn)), _) => actor.request_retry_of_turn(agent, turn).await?,
             (None, Some(answer)) => actor.request_retry(answer).await?,
@@ -729,22 +745,26 @@ impl Followed {
         self.actor().map(|actor| actor.questions_to_answer()).unwrap_or_default()
     }
 
-    /// The answer under way of `agent`, if it gives one.
+    /// The answer under way of `agent` in the thread followed, if it gives one.
     fn answer_of(&mut self, agent: ActorId) -> Option<&mut UnderWay> {
-        self.under_way.iter_mut().find(|answer| answer.agent == agent)
+        let thread = self.thread;
+        self.under_way.iter_mut().find(|answer| (answer.agent, answer.thread) == (agent, thread))
     }
 
-    /// The answers under way in the thread followed as its running channel tells them: those known
-    /// that still are, in the order they began and with what they streamed, then those not known,
-    /// in the order of the participants, as begun now; `None` if the channel cannot be read.
+    /// The answers under way in every thread of the channel as its running channel tells them:
+    /// those known that still are, in the order they began and with what they streamed, then those
+    /// not known, in the order of the participants and of their threads, as begun now; `None` if
+    /// the channel cannot be read.
     async fn read_under_way(&self) -> Option<Vec<UnderWay>> {
         let view = self.view().await.ok()?;
         let mut running = Vec::new();
         for participant in view.participants().await {
             let snapshot = participant.snapshot(Detail::THREADS).await;
-            if let Some(&turn) = snapshot.turns_under_way.get(&self.thread) {
-                let name = snapshot.name.unwrap_or_else(|| snapshot.id.to_string());
-                running.push(UnderWay::began(snapshot.id, name, turn, snapshot.state));
+            let name = snapshot.name.unwrap_or_else(|| snapshot.id.to_string());
+            for (&thread, &turn) in &snapshot.turns_under_way {
+                let answer =
+                    UnderWay::began(snapshot.id, name.clone(), thread, turn, snapshot.state);
+                running.push(answer);
             }
         }
         let is_known = |answer: &UnderWay| {
@@ -760,10 +780,10 @@ impl Followed {
         Some(under_way)
     }
 
-    /// Ends the answer under way of `agent`, if it gives one, and forgets its quiet calls, whose
-    /// results will not come any more.
-    fn end_under_way(&mut self, agent: ActorId) {
-        self.under_way.retain(|answer| answer.agent != agent);
+    /// Ends the answer under way of `agent` in `turn`, if it gives one, and forgets the agent's
+    /// quiet calls, whose results will not come any more.
+    fn end_under_way(&mut self, agent: ActorId, turn: TurnId) {
+        self.under_way.retain(|answer| (answer.agent, answer.turn) != (agent, turn));
         self.quiet_calls.retain(|_, (by, _)| *by != agent);
     }
 
@@ -1327,12 +1347,13 @@ mod tests {
             ActorEvent::ApprovalRequested { request: approval(&channel, agent_id), to: None };
         assert!(followed.concerns_user(&in_other(request.clone())));
         assert_eq!(followed.take_in(&in_other(request)).len(), 1, "its call waits");
-        // An answer under way read as the channel was caught up with ends with its turn.
+        // An answer begun in another thread ends with its turn there.
         let turn_id = TurnId::new();
-        followed.under_way.push(UnderWay::began(agent, "sub".to_string(), turn_id, None));
+        assert!(followed.take_in(&in_other(ActorEvent::ResponseStarted { turn_id })).is_empty());
+        assert_eq!(followed.under_way().len(), 1, "kept, though nothing is printed of it");
         let finished = ActorEvent::TurnFinished { turn_id, messages: Vec::new() };
         assert!(followed.take_in(&in_other(finished)).is_empty());
-        assert!(followed.under_way().is_empty(), "ended, though in another thread");
+        assert!(followed.under_way().is_empty(), "ended, in another thread");
 
         let origin =
             ThreadOrigin { thread: ThreadId::line(channel.id()), message: MessageId::new() };
@@ -1789,6 +1810,68 @@ mod tests {
         assert!(answer.content.is_empty() && answer.reasoning.is_empty(), "complete");
     }
 
+    /// Issue 572: the answers under way of every thread are kept, each with its thread and what it
+    /// streamed of the thread followed alone; one begun takes the place of the agent's answer in
+    /// its thread, and an answer ends with its turn, not with another of its agent; where an agent
+    /// stands is that of its answer in the thread it says it in, or, said in the line, of all.
+    #[tokio::test]
+    async fn the_answers_under_way_of_every_thread_are_kept_each_ending_with_its_turn() {
+        let (mut followed, channel, _) = followed().await;
+        let agent = ActorId::Agent(AgentId::new());
+        let line = ThreadId::line(channel.id());
+        let aside = ThreadId::new();
+        let in_thread = |thread_id, event| {
+            let envelope = from(&channel, agent, event);
+            Envelope { context: EventContext { thread_id, ..envelope.context }, ..envelope }
+        };
+        let here = TurnId::new();
+        let there = TurnId::new();
+        followed.take_in(&in_thread(line, ActorEvent::ResponseStarted { turn_id: here }));
+        let started = in_thread(aside, ActorEvent::ResponseStarted { turn_id: there });
+        assert!(followed.take_in(&started).is_empty(), "nothing printed of another thread");
+        let kept = |followed: &Followed| {
+            let answers = followed.under_way().iter();
+            answers.map(|a| (a.thread, a.turn, a.content.clone())).collect::<Vec<_>>()
+        };
+        for (thread, text) in [(line, "here"), (aside, "there")] {
+            let partial = ActorEvent::PartialMessageGenerated(message(agent, text));
+            followed.take_in(&in_thread(thread, partial));
+        }
+        assert_eq!(
+            kept(&followed),
+            [(line, here, "here".to_string()), (aside, there, String::new())],
+            "what streams of the thread followed alone"
+        );
+
+        followed.follow(aside, "a thread").await;
+        assert_eq!(kept(&followed)[0].2, "", "what streamed of the thread left forgotten");
+        let state = |followed: &Followed| {
+            followed.under_way().iter().map(|answer| answer.state).collect::<Vec<_>>()
+        };
+        let running = ActorEvent::StateChanged(ActorState::ExecutingTools);
+        followed.take_in(&in_thread(aside, running));
+        assert_eq!(state(&followed), [None, Some(ActorState::ExecutingTools)], "its turn's");
+        let waiting = ActorEvent::StateChanged(ActorState::WaitingForUser);
+        followed.take_in(&in_thread(line, waiting));
+        assert_eq!(
+            state(&followed),
+            [Some(ActorState::WaitingForUser); 2],
+            "said in the line, which the view of the thread followed does not show: the agent's own"
+        );
+
+        let anew = TurnId::new();
+        followed.take_in(&in_thread(aside, ActorEvent::ResponseStarted { turn_id: anew }));
+        assert_eq!(
+            kept(&followed),
+            [(line, here, String::new()), (aside, anew, String::new())],
+            "begun anew, in place of the one before in its thread"
+        );
+        let reason = GivenUpReason::Failed { message: "unreachable".to_string() };
+        let given_up = ActorEvent::TurnGivenUp { turn_id: here, reason };
+        followed.take_in(&in_thread(line, given_up));
+        assert_eq!(kept(&followed), [(aside, anew, String::new())], "the other turn runs on");
+    }
+
     /// Catching up reads the answers under way anew from the running channel: one whose end was
     /// missed is under way no more (issue 569).
     #[tokio::test]
@@ -1942,6 +2025,13 @@ mod tests {
         followed.take_in(&from(&channel, agent, said));
         let error = refused(followed.retry(&actor).await.unwrap_err());
         assert!(matches!(error, ChannelError::MessageNotFound { .. }), "the last answer: {error}");
+        // A turn under way in another thread is not the thread followed's to ask for (issue 572).
+        let aside = from(&channel, agent, ActorEvent::ResponseStarted { turn_id: TurnId::new() });
+        let thread_id = ThreadId::new();
+        followed
+            .take_in(&Envelope { context: EventContext { thread_id, ..aside.context }, ..aside });
+        let error = refused(followed.retry(&actor).await.unwrap_err());
+        assert!(matches!(error, ChannelError::MessageNotFound { .. }), "passed over: {error}");
 
         // A turn is asked for again as it is - whether it can be the channel's to decide as it
         // admits the request (issue 567) -, a message is looked at first.

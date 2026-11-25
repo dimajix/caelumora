@@ -1,8 +1,9 @@
-//! How the full-screen terminal draws what it prints and the answers under way: in lines styled
-//! by what they tell (issue 569).
+//! How the full-screen terminal draws what it prints and what is at work: in lines styled by
+//! what they tell (issues 569, 572).
 
 use super::call::{ending_line, ShownCall};
 use super::PROMPT;
+use crate::activity::{Activity, Elsewhere};
 use crate::printed::{Printed, Said, Saying, Words};
 use crate::screen::words::{
     attachment, error_word, how_to_answer, how_to_approve, missed, question_rows, to_decide,
@@ -129,12 +130,15 @@ pub(super) fn live_lines(under_way: &[UnderWay]) -> Vec<Line<'static>> {
     lines
 }
 
-/// The status line of the answers `under_way` at `now`: who answers, where they stand, and for
-/// how long; empty where none is.
-pub(super) fn status_line(under_way: &[UnderWay], now: Instant) -> Line<'static> {
+/// The status line of what is at work, `activity`, at `now`, in `width` columns: of each answer
+/// under way in the thread followed, who answers, where they stand, and for how long; then of each
+/// channel where agents are at work elsewhere or something waits for the user, a mark (issue
+/// 572) - or, where the marks do not fit, how many are at work elsewhere and whether something
+/// waits there; empty where nothing is.
+pub(super) fn status_line(activity: &Activity, now: Instant, width: u16) -> Line<'static> {
     let mut spans = Vec::new();
-    for (index, answer) in under_way.iter().enumerate() {
-        if index > 0 {
+    for answer in &activity.here {
+        if !spans.is_empty() {
             spans.push(Span::raw("  "));
         }
         let elapsed = now.saturating_duration_since(answer.since);
@@ -147,7 +151,51 @@ pub(super) fn status_line(under_way: &[UnderWay], now: Instant) -> Line<'static>
         let state = state_words(answer.state);
         spans.push(Span::styled(format!(" {state} · {}s", elapsed.as_secs()), Style::new().dim()));
     }
+    let marks: Vec<Vec<Span<'static>>> = activity.elsewhere.iter().map(elsewhere_mark).collect();
+    // Each mark after two spaces, as each answer is - but the first, where no answer leads.
+    let needed: usize = marks.iter().map(|mark| Line::from(mark.clone()).width() + 2).sum();
+    let needed = if spans.is_empty() { needed.saturating_sub(2) } else { needed };
+    let fits = Line::from(spans.clone()).width() + needed <= usize::from(width);
+    let marks = if fits { marks } else { vec![summed_up(&activity.elsewhere)] };
+    for mark in marks.into_iter().filter(|mark| !mark.is_empty()) {
+        if !spans.is_empty() {
+            spans.push(Span::raw("  "));
+        }
+        spans.extend(mark);
+    }
     Line::from(spans)
+}
+
+/// The mark of a channel where agents are at work elsewhere or something waits for the user,
+/// `elsewhere`: its name, who is at work there - how many, where they are several -, and that
+/// something waits.
+fn elsewhere_mark(elsewhere: &Elsewhere) -> Vec<Span<'static>> {
+    let mut spans = vec![Span::styled(format!("[{}]", elsewhere.channel), Style::new().dim())];
+    match elsewhere.at_work.as_slice() {
+        [] => {}
+        [agent] => spans.push(Span::raw(format!(" {agent}"))),
+        several => spans.push(Span::raw(format!(" {} at work", several.len()))),
+    }
+    if elsewhere.waits {
+        let lead = if elsewhere.at_work.is_empty() { " " } else { " · " };
+        spans.push(Span::styled(format!("{lead}waits for you"), Style::new().yellow()));
+    }
+    spans
+}
+
+/// The marks of the channels `elsewhere` summed up, where they do not fit: how many agents are at
+/// work elsewhere, and whether something waits for the user there.
+fn summed_up(elsewhere: &[Elsewhere]) -> Vec<Span<'static>> {
+    let at_work: usize = elsewhere.iter().map(|elsewhere| elsewhere.at_work.len()).sum();
+    let mut spans = Vec::new();
+    if at_work > 0 {
+        spans.push(Span::styled(format!("+{at_work} at work elsewhere"), Style::new().dim()));
+    }
+    if elsewhere.iter().any(|elsewhere| elsewhere.waits) {
+        let lead = if spans.is_empty() { "" } else { " · " };
+        spans.push(Span::styled(format!("{lead}waits for you elsewhere"), Style::new().yellow()));
+    }
+    spans
 }
 
 /// The words that tell where an agent stands in its answer, `state`.
@@ -280,7 +328,7 @@ mod tests {
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::approval::testing::make_approval_request;
-    use caelumora_domain::channel::ChannelId;
+    use caelumora_domain::channel::{ChannelId, ThreadId};
     use caelumora_domain::session::SessionId;
     use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolResultStatus};
@@ -381,18 +429,13 @@ mod tests {
     /// streamed nothing is not drawn.
     #[test]
     fn what_answers_under_way_streamed_is_drawn() {
-        let mut helper = UnderWay::began(
-            ActorId::Agent(AgentId::new()),
-            "helper".to_string(),
-            TurnId::new(),
-            None,
-        );
-        let quiet = UnderWay::began(
-            ActorId::Agent(AgentId::new()),
-            "quiet".to_string(),
-            TurnId::new(),
-            None,
-        );
+        let thread = ThreadId::new();
+        let began = |name: &str| {
+            let agent = ActorId::Agent(AgentId::new());
+            UnderWay::began(agent, name.to_string(), thread, TurnId::new(), None)
+        };
+        let mut helper = began("helper");
+        let quiet = began("quiet");
         helper.reasoning = "hm".to_string();
         helper.content = "one\ntwo".to_string();
         assert_eq!(
@@ -401,17 +444,52 @@ mod tests {
         );
     }
 
-    /// The status line tells who answers, where they stand and for how long.
+    /// The status line tells who answers, where they stand and for how long; then, where else
+    /// agents are at work or something waits for the user, by a mark of each channel - or, where
+    /// the marks do not fit, summed up (issue 572).
     #[test]
-    fn the_status_line_tells_who_answers_where_and_how_long() {
+    fn the_status_line_tells_who_answers_where_and_how_long_and_marks_the_others() {
         let now = Instant::now();
         let since = now.checked_sub(Duration::from_secs(12)).unwrap_or(now);
         let agent = ActorId::Agent(AgentId::new());
         let state = Some(ActorState::ExecutingTools);
-        let answer = UnderWay::began(agent, "helper".to_string(), TurnId::new(), state);
-        let line = status_line(&[UnderWay { since, ..answer }], now).to_string();
-        assert!(line.ends_with("helper is running tools · 12s"), "{line}");
-        assert!(status_line(&[], now).to_string().is_empty());
+        let (thread, turn) = (ThreadId::new(), TurnId::new());
+        let answer = UnderWay::began(agent, "helper".to_string(), thread, turn, state);
+        let here = vec![UnderWay { since, ..answer }];
+        let line = |activity: &Activity, width| status_line(activity, now, width).to_string();
+        let alone = Activity { here: here.clone(), elsewhere: Vec::new() };
+        assert!(
+            line(&alone, 80).ends_with("helper is running tools · 12s"),
+            "{}",
+            line(&alone, 80)
+        );
+        assert!(line(&Activity::default(), 80).is_empty());
+
+        let mark = |channel: &str, at_work: &[&str], waits| Elsewhere {
+            channel: Name::new(channel).unwrap(),
+            at_work: at_work.iter().map(|agent| agent.to_string()).collect(),
+            waits,
+        };
+        let elsewhere = vec![
+            mark("side", &["coder"], false),
+            mark("ops", &["a", "b"], true),
+            mark("hr", &[], true),
+        ];
+        let marked = Activity { here, elsewhere };
+        let told = line(&marked, 200);
+        assert!(
+            told.ends_with(
+                "12s  [side] coder  [ops] 2 at work · waits for you  [hr] waits for you"
+            ),
+            "{told}"
+        );
+        let summed = line(&marked, 60);
+        assert!(
+            summed.ends_with("12s  +3 at work elsewhere · waits for you elsewhere"),
+            "{summed}"
+        );
+        let only = Activity { here: Vec::new(), elsewhere: vec![mark("side", &["coder"], false)] };
+        assert_eq!(line(&only, 80), "[side] coder", "no answer here, the mark alone");
     }
 
     /// The parts of words are told apart by whether they mention a participant, empty ones left
