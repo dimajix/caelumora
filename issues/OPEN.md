@@ -71,7 +71,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
 | [556](556-what-an-id-lies-in-is-found-by-searching.md) | open | medium | question | The stores, the state stores and the storages of content are told an entity by its id alone, so a backend whose layout follows what encloses an entity - `home` of issue 554 - has to search for it; the events answered the same question with `Address`, and whether an access path derived from an id should serve both is open. |
-| [601](601-the-session-manager-holds-the-kernel.md) | in progress | medium | refactoring | Every manager of the kernel is built by the `KernelBuilder` from its parts and held by the `Kernel`, but the `SessionManager` - and the `ProjectManager` made from it - is built outside, by the server program, the terminal and the tests, and holds the whole `Kernel`, which it hands to every session, channel and actor; so nothing can reach the `SessionManager` from the kernel, and the kernel holding it would be a cycle. |
 
 ## Integrations
 

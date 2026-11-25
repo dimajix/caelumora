@@ -1,6 +1,6 @@
 # 601 — The session manager holds the kernel, instead of the kernel holding it
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** medium
 **Area:** Code structure
@@ -294,3 +294,4 @@ Documents: CODING-GUIDELINES.md, *Sessions in tests*, names `Kernel::create_sess
   rule that puts it in the nearest `testing` module above the type; the views' test helper
   `stored` takes the kernel, and the views' tests the manager no longer; REST-SERVER.md and the
   module docs of the views no longer name the manager or `SessionManager::views`.
+- **2026-11-25** — Step 4 accepted by the maintainer and committed. Done.
