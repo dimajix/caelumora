@@ -22,7 +22,6 @@ use caelumora_domain::tool::{
     ToolCall, ToolCallResult, ToolCallState, ToolCallStatus, ToolResultStatus,
 };
 use caelumora_domain::turn::TurnState;
-use chrono::Utc;
 use std::mem;
 
 /// The tool calls of the current step of a turn, of the agent the turn's
@@ -330,7 +329,6 @@ impl<'t> ToolCalls<'t> {
             role: MessageRole::Tool,
             tool_results,
             content: None,
-            timestamp: Utc::now(),
             internal,
             turn_id: Some(self.turn.work.turn_id),
             ..Message::new(self.turn.work.label())
@@ -360,6 +358,7 @@ mod tests {
     use caelumora_domain::question::{Addressee, Question, Questions};
     use caelumora_domain::tool::testing::{make_tool_call, make_tool_description};
     use caelumora_domain::user::UserId;
+    use chrono::Utc;
 
     fn call(name: &str) -> ToolCall {
         ToolCall {

@@ -19,7 +19,6 @@ use caelumora_agents::turn::Turn;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_domain::message::{estimated_tokens, Message, MessageId};
-use chrono::Utc;
 use std::sync::Arc;
 
 /// Carries out the compactions of an agent's context, with its strategy and the restorers of its
@@ -84,7 +83,6 @@ impl Compactor {
             sender_id: agent,
             sender_name: turn.agent_name().to_string(),
             content: Some(replacement.text),
-            timestamp: Utc::now(),
             prompt_tokens: replacement.call.prompt_tokens,
             completion_tokens: replacement.call.completion_tokens,
             context_size: replacement.call.context_size,
@@ -98,7 +96,6 @@ impl Compactor {
                 sender_id: giver.sender_id,
                 sender_name: giver.sender_name.clone(),
                 content: Some(again.text.clone()),
-                timestamp: Utc::now(),
                 // Given in the turn, as `Turn::give` gives.
                 turn_id: Some(turn.turn_id()),
                 ..Message::new(

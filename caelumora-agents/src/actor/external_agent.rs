@@ -783,7 +783,6 @@ impl ExternalAgentActor {
             id: MessageId::new(),
             sender_id: self.id(),
             sender_name: self.name().to_string(),
-            timestamp: Utc::now(),
             turn_id,
             ..Message::new(classification)
         }

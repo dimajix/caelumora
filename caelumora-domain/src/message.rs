@@ -550,7 +550,6 @@ pub mod testing {
             sender_name: "tester".to_string(),
             role: MessageRole::User,
             content: Some("hello".to_string()),
-            timestamp: Utc::now(),
             ..Message::new(Classification::CHANNEL_DEFAULT)
         }
     }

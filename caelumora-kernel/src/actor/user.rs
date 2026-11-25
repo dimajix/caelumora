@@ -357,7 +357,6 @@ impl UserActor {
             id: MessageId::new(),
             sender_id: self.id(),
             sender_name: self.name().to_string(),
-            timestamp: Utc::now(),
             ..Message::new(classification)
         };
         // Resolved as the channel will, for the actor shows its own message before (issue 220).
@@ -404,7 +403,6 @@ impl UserActor {
             id: MessageId::new(),
             sender_id: self.id(),
             sender_name: self.name().to_string(),
-            timestamp: Utc::now(),
             ..Message::new(channel_loop.classification())
         };
         let said = ActorEvent::CompleteMessageGenerated(msg);

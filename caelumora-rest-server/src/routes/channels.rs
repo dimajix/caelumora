@@ -1087,7 +1087,7 @@ mod tests {
         );
         let refused = Refused { subject: "command", action: "ExecuteCommand(/x)".to_string() };
         assert_eq!(
-            status(CommandError::Forbidden { name: "x".to_string(), refused: refused.clone() }),
+            status(CommandError::Forbidden { command: "x".to_string(), refused: refused.clone() }),
             StatusCode::FORBIDDEN
         );
         assert_eq!(

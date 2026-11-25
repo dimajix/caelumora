@@ -32,7 +32,6 @@ use caelumora_domain::question::Answers;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::store::StoreError;
 use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolPresentation, ToolVisibility};
-use chrono::Utc;
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -307,7 +306,6 @@ impl Tool for LoadSkillTool {
             content: Some(
                 self.skills.given(&skill).map_err(|e| ToolError::ExecutionFailed(e.to_string()))?,
             ),
-            timestamp: Utc::now(),
             ..Message::new(skill.classification.clone())
         };
         let knowledge =

@@ -18,7 +18,6 @@ use caelumora_domain::message::{Message, MessageId, MessageRole};
 use caelumora_domain::turn::GivenUpReason;
 use caelumora_domain::value::name::Name;
 use caelumora_domain::work::TurnId;
-use chrono::Utc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
@@ -159,7 +158,6 @@ impl ScriptedAgent {
             id: MessageId::new(),
             sender_id: self.id,
             sender_name: self.name().to_string(),
-            timestamp: Utc::now(),
             turn_id: Some(turn_id),
             ..Message::new(self.runtime.channel_classification())
         }

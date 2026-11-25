@@ -46,7 +46,6 @@ use caelumora_domain::remote::RemoteEndpoint;
 use caelumora_domain::tool::{ToolCall, ToolDescription, ToolParameters};
 use caelumora_kernel::backend::Backends;
 use caelumora_model::LanguageModelProvider;
-use chrono::Utc;
 use dashmap::DashMap;
 use futures::stream::{BoxStream, StreamExt};
 use futures::Stream;
@@ -839,7 +838,6 @@ where
                                 sender_name: sender_name.clone(),
                                 role: MessageRole::Assistant,
                                 reasoning: Some(thinking),
-                                timestamp: Utc::now(),
                                 ..unlabelled_message()
                             };
                             yield Ok(MessageEvent::Partial(partial_message));
@@ -853,7 +851,6 @@ where
                                 sender_name: sender_name.clone(),
                                 role: MessageRole::Assistant,
                                 content: Some(msg.content),
-                                timestamp: Utc::now(),
                                 ..unlabelled_message()
                             };
                             yield Ok(MessageEvent::Partial(partial_message));
@@ -868,7 +865,6 @@ where
                             content: if full_content.is_empty() { None } else { Some(full_content.clone()) },
                             reasoning: if full_reasoning.is_empty() { None } else { Some(full_reasoning.clone()) },
                             tool_calls: all_tool_calls.clone(),
-                            timestamp: Utc::now(),
                             ..unlabelled_message()
                         };
                         // Fill in usage metrics from Ollama if available
@@ -1010,6 +1006,7 @@ mod tests {
     use caelumora_domain::message::{Message, MessageRole};
     use caelumora_domain::tool::testing::{make_tool_call, make_tool_description};
     use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolPresentation, ToolResultStatus};
+    use chrono::Utc;
     use futures::stream as futures_stream;
     use serde_json::json;
     use std::io::Error;

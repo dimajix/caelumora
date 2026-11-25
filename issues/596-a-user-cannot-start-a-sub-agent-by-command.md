@@ -130,3 +130,10 @@ Two findings in the code around the command, planned by the maintainer as a step
   of sub-agents is to be corrected, refused or failed is one exhaustive match
   (`SubAgentError::class`, `ErrorClass`), which the tool and the command translate, in place of
   `is_correctable` and a second match beside it. Done.
+- **2026-11-25** — Two findings of the review of step 2, in the code around it, made a step 3 by
+  the maintainer, and implemented: `CommandError::Forbidden` named the command `name`, where every
+  other variant names it `command` - renamed; the time of a message set twice - `timestamp:
+  Utc::now()` beside `..Message::new(…)` or `..unlabelled_message()`, which set it already -, as
+  `/skill` did, in twelve more places - dropped, with the imports of `Utc` that only they used, and
+  `chrono` a dev-dependency of `caelumora-compaction` and `caelumora-model-ollama`, whose tests
+  alone use it now.

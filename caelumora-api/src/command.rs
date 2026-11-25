@@ -22,9 +22,9 @@ pub enum CommandError {
     /// commands cannot be found by trying names.
     #[error("Unknown command /{0}. Type /help for the list of commands.")]
     Unknown(String),
-    #[error("You are not permitted to run /{name}.")]
+    #[error("You are not permitted to run /{command}.")]
     Forbidden {
-        name: String,
+        command: String,
         #[source]
         refused: Refused,
     },

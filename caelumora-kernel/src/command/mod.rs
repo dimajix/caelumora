@@ -263,7 +263,7 @@ impl CommandExecutor {
             .require(
                 &issuer,
                 ActionType::ExecuteCommand { command: description, channel: &channel },
-                |refused| CommandError::Forbidden { name: name(), refused },
+                |refused| CommandError::Forbidden { command: name(), refused },
             )
             .await?;
         check_arguments(description, args)?;
@@ -336,7 +336,7 @@ pub(crate) fn named_participants(
 /// `user_message` allows (`Failed`).
 pub(crate) fn command_error(command: &str, error: &Error) -> CommandError {
     if let Some(refused) = refusal(error) {
-        return CommandError::Forbidden { name: command.to_string(), refused: refused.clone() };
+        return CommandError::Forbidden { command: command.to_string(), refused: refused.clone() };
     }
     if let Some(taken @ StoreError::NameTaken { .. }) = error.downcast_ref() {
         return CommandError::InvalidArguments {
