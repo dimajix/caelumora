@@ -1,6 +1,6 @@
 # 581 — The notes of an agent that left a channel are no longer read there
 
-**Status:** open
+**Status:** done
 **Type:** question
 **Priority:** medium
 **Area:** Context and knowledge
@@ -51,6 +51,26 @@ issues says whether this is meant.
   MEMORY.md.
 - A test holds it, for an agent that left and for one deleted.
 
+## Decision
+
+Decided by the maintainer on 2026-11-25: **notes go with their author.** What a channel's board
+shows stays the notes of the agents taking part in it. One that leaves, is removed or is deleted
+takes its notes off the board, and gets them back when it returns or is restored; purged, they go
+with its state. The reasons:
+
+- Notes live in the agent's `AgentChannelState`, not in the channel
+  ([19](19-memory-tiers.md), principles 2 and 3: "the active public chains of all agents in it").
+- Only the author changes or revokes a note; one that no longer takes part has no actor in the
+  channel, so a note it left would stand there unrevocable.
+- Keeping them would need the views to reach the state of a deleted agent, and would still lose
+  them when it is purged: the notes of an agent that left, of one deleted and of one purged would
+  be read in three ways, where now all three are not read.
+- What they were written after stays in the history; what the agent noted stays in its state.
+
+Notes that belong to the channel and stay on its board when their author leaves are wanted as a
+kind of their own, [606](606-no-notes-belong-to-the-channel.md). `nothing_released` counts the same
+notes as before.
+
 ## History
 
 **2026-11-15** - Opened from a finding while working on
@@ -60,3 +80,7 @@ participants taking part alone.
 **2026-11-17** - One more case: a sub-agent of
 [558](558-no-agent-hands-a-task-to-a-sub-agent.md#decision) is deleted when its work is ended, so
 what it noted in the channel falls off the board with it. Not a precondition of 558.
+
+**2026-11-25** - Decided by the maintainer (*Decision*): notes go with their author. Documented in
+MEMORY.md and CHANNELS.md, held by a test in `view/mod.rs` for an agent that left and for one
+deleted and restored; channel notes opened as [606](606-no-notes-belong-to-the-channel.md).

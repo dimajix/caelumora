@@ -2260,6 +2260,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_agent_that_no_longer_takes_part_takes_its_notes_off_the_board() {
+        use caelumora_domain::channel::FormerParticipant;
+        use caelumora_domain::ledger::Change;
+        use caelumora_domain::message::MessageId;
+        use caelumora_domain::note::{NoteId, NoteOrigin};
+
+        let (kernel, manager) = owned_kernel(Default::default());
+        let stores = kernel.entity_stores();
+        let alice = make_user("alice");
+        let owner = ActorId::User(alice.id);
+        let leaver = stored_agent(stores, "Leaver", make_personality("leaver"), owner).await;
+        let rester = stored_agent(stores, "Rester", make_personality("rester"), owner).await;
+        let mut session = make_session("hers", alice.id);
+        session.participants = record_users(kernel.entity_stores(), &[&alice]).await;
+        session.participants.extend([Participant::Agent(leaver.id), Participant::Agent(rester.id)]);
+        // The leaver left; the rester takes part until it is deleted, and then rests here.
+        let mut channel = main_channel(&session);
+        channel.participants.retain(|p| p.actor_id() != ActorId::Agent(leaver.id));
+        channel.former = vec![FormerParticipant {
+            participant: Participant::Agent(leaver.id),
+            left: Removal::now(owner),
+        }];
+        let session = stored(&manager, session, slice::from_mut(&mut channel)).await;
+        for (agent, text) in
+            [(leaver.id, "noted before it left"), (rester.id, "noted by the rester")]
+        {
+            let mut state = AgentChannelState::default();
+            state.notes.push(
+                Change::Add {
+                    id: NoteId(1),
+                    text: text.to_string(),
+                    classification: Classification::CHANNEL_DEFAULT,
+                },
+                NoteOrigin::default(),
+                MessageId::default(),
+            );
+            kernel
+                .state_store()
+                .put_agent_channel_state(agent, channel.id, &mut state)
+                .await
+                .unwrap();
+        }
+        let board = || async {
+            let channel =
+                manager.views(as_user(alice.id)).channel(session.id, channel.id).await.unwrap();
+            let notes = channel.notes().await.unwrap();
+            notes.into_iter().map(|published| published.agent).collect::<Vec<_>>()
+        };
+
+        assert_eq!(board().await, [ActorId::Agent(rester.id)], "the leaver took its notes along");
+        let for_alice =
+            manager.views(as_user(alice.id)).channel(session.id, channel.id).await.unwrap();
+        let kept = for_alice.participant(ActorId::Agent(leaver.id)).await.unwrap();
+        let kept = kept.notes().await.unwrap().expect("an agent");
+        assert_eq!(kept.notes[0].text, "noted before it left", "kept in its own state");
+
+        let system = SecurityContext::system();
+        assert!(stores.agents.delete(&system, rester.id, &Removal::now(owner)).await.unwrap());
+        assert_eq!(board().await, [], "resting, the rester took its notes along too");
+        stores.agents.restore(&system, rester.id).await.unwrap();
+        assert_eq!(board().await, [ActorId::Agent(rester.id)], "and brings them back restored");
+    }
+
+    #[tokio::test]
     async fn the_approvals_a_channel_waits_for_are_read_from_its_agents_turns() {
         use caelumora_domain::tool::ToolCallState;
 

@@ -68,6 +68,12 @@ published in the channel.
     the channel's snapshot and read them again when the global stream announces a change (see
     [WEB-UI.md](WEB-UI.md#participants-moderator-and-notes)); `/channel notes` shows them (see
     [COMMANDS.md](COMMANDS.md)).
+*   **Taken along.** Only the agents taking part in a channel are read there: the notes of one that
+    leaves, is removed or is deleted - resting in the channel - are no longer read as the
+    channel's. They are kept in its state and read again when it returns or is restored; purged,
+    they go with its state
+    ([581](../issues/581-the-notes-of-an-agent-that-left-fall-off-the-board.md)). Its notes are
+    what it holds while it takes part, and only it could revoke them.
 
 ## Private notes
 
