@@ -14,12 +14,10 @@ mod notes;
 mod rename;
 mod summary;
 
-use crate::command::{command_error, ChannelCommand, CommandContext};
+use crate::command::ChannelCommand;
 use crate::component::ComponentRegistry;
-use crate::view::ChannelView;
-use caelumora_api::command::{CommandError, CommandProvider, CommandResult};
+use caelumora_api::command::CommandProvider;
 use caelumora_api::component::{ComponentFacets, ComponentKind};
-use caelumora_api::reader::ViewError;
 use caelumora_domain::command::CHANNEL_GROUP_KIND;
 use std::sync::Arc;
 
@@ -39,45 +37,6 @@ fn commands() -> Vec<Arc<dyn ChannelCommand>> {
         Arc::new(summary::SummaryCommand::new()),
         Arc::new(briefing::BriefingCommand::new()),
     ]
-}
-
-/// The channel the command `command` is issued in, or the one of the session `args` names
-/// (`channel_named`), as the issuer reads it.
-///
-/// # Errors
-/// As `CommandContext::channel_view` and `channel_named`.
-async fn this_or_named(
-    command: &str,
-    args: &str,
-    context: &CommandContext<'_>,
-) -> CommandResult<ChannelView> {
-    match args.trim() {
-        "" => context.channel_view(command).await,
-        wanted => channel_named(command, wanted, context).await,
-    }
-}
-
-/// The channel of the session `wanted` names as the issuer reads it, for the command `command`: by
-/// its whole name, which is the only one of the session (`SessionView::channel_named`), a channel
-/// they may not read named as one that does not exist.
-///
-/// # Errors
-/// `CommandError::InvalidArguments` if the session has no channel of that name the issuer may
-/// read; `CommandError::Failed` if the session cannot be read.
-async fn channel_named(
-    command: &str,
-    wanted: &str,
-    context: &CommandContext<'_>,
-) -> CommandResult<ChannelView> {
-    let session = context.session_view(command).await?;
-    match session.channel_named(wanted).await {
-        Ok(channel) => Ok(channel),
-        Err(e @ ViewError::NoChannelNamed(_)) => Err(CommandError::InvalidArguments {
-            command: command.to_string(),
-            reason: e.to_string(),
-        }),
-        Err(e) => Err(command_error(command, &e.into())),
-    }
 }
 
 /// Registers the kind `channel` with `registry`.

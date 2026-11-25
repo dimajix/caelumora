@@ -364,3 +364,13 @@ questions*) and agreed the interfaces; work begun on the branch `issue-607-notes
 **2026-11-25** - Step 1 done: the snapshot no longer carries notes. Planning step 2, decision 3 was
 revised and a step added before the kernel's part: a session's components are named so
 (*Decisions on the open questions*).
+
+**2026-11-25** - Step 3 done: `AgentMember` became `KeptBehind<T>` for the kinds that
+`KeepsBehind` - `Agent` and `Channel` -, registered by `KernelBuilder::keeps_behind` and called by
+the `AgentManager` and by `SessionManager::purge_channel`; `ChannelView::may_read_entry`,
+`nothing_released`, `command_error` and `CommandContext::channel_view_or_named` are public. Two
+departures from the plan, agreed with the maintainer: the trait of the kinds is named `KeepsBehind`,
+not `Holder`, which names the holder of a scope already; and it is not sealed - a sealed supertrait
+takes an exception of the lints (`unreachable_pub`, `private_bounds`), and the orphan rule already
+keeps a plugin from making another of the kernel's kinds one: what it may make one is a type of its
+own, behind which nothing would be removed.

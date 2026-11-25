@@ -14,7 +14,8 @@
 //! `ChannelLoop::follow_agent`), a channel that starts leaves it out, and
 //! the views show it as a former participant, removed as its mark says.
 
-use super::{store_error, AgentError, AgentMember, AgentResult, AgentSpec};
+use super::{store_error, AgentError, AgentResult, AgentSpec};
+use crate::behind::KeptBehind;
 use crate::event::EventBus;
 use crate::lifecycle::Lifecycle;
 use crate::scoped::{found_or_made, ScopeHolders, ScopeMember};
@@ -39,7 +40,7 @@ pub struct AgentManager {
     holders: Arc<ScopeHolders>,
     states: Arc<dyn StateStore>,
     /// What the plugins keep behind an agent, removed after its state as it is purged.
-    agent_members: Vec<Arc<dyn AgentMember>>,
+    kept_behind: Vec<Arc<dyn KeptBehind<Agent>>>,
     access_policy: Arc<dyn AccessPolicy>,
 }
 
@@ -54,7 +55,7 @@ impl AgentManager {
         stores: &EntityStores,
         holders: Arc<ScopeHolders>,
         states: Arc<dyn StateStore>,
-        agent_members: Vec<Arc<dyn AgentMember>>,
+        kept_behind: Vec<Arc<dyn KeptBehind<Agent>>>,
         events: Arc<EventBus>,
         access_policy: Arc<dyn AccessPolicy>,
     ) -> Self {
@@ -63,7 +64,7 @@ impl AgentManager {
             personalities: Arc::clone(&stores.personalities),
             holders,
             states,
-            agent_members,
+            kept_behind,
             access_policy,
         }
     }
@@ -192,7 +193,7 @@ impl AgentManager {
     }
 
     /// Removes the deleted agent `id` for good on behalf of `context` (issue 164), its states in
-    /// every channel and what the plugins keep behind it (`AgentMember`, issue 518)
+    /// every channel and what the plugins keep behind it (`KeptBehind`, issue 518)
     /// first, in the order of every purge of what has something behind it (`purge_behind`). Only
     /// what was deleted is purged; the store asks `Purge`. What cannot be removed leaves the agent
     /// deleted, its purge begun, so that the next purge tries again. Announces nothing, as no purge
@@ -225,14 +226,14 @@ impl ScopeMember for AgentManager {
     }
 
     /// Removes the states of `agent` in every channel, and then what the plugins keep behind it
-    /// (`AgentMember`), once its purge is begun; the first that fails ends it.
+    /// (`KeptBehind`), once its purge is begun; the first that fails ends it.
     ///
     /// # Errors
     /// Whatever the state store or a plugin reports.
     async fn remove_behind(&self, agent: &Agent) -> StoreResult<()> {
         self.states.delete_agent_channel_states(agent.id).await?;
-        for member in &self.agent_members {
-            member.remove_behind(agent).await?;
+        for member in &self.kept_behind {
+            member.remove_behind(agent.id).await?;
         }
         Ok(())
     }

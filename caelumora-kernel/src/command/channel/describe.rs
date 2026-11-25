@@ -1,6 +1,5 @@
 //! The built-in `/channel describe` command (issue 560).
 
-use super::this_or_named;
 use crate::command::{ChannelCommand, CommandContext};
 use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandResult};
@@ -37,14 +36,15 @@ impl Command for DescribeCommand {
 #[async_trait]
 impl ChannelCommand for DescribeCommand {
     /// Runs `/channel describe` with `args`: the channel the command was issued in, or the one of
-    /// the session `args` names (`this_or_named`) - with its summary, briefing, classification and
-    /// language, its own or else its session's. Only the issuer is answered.
+    /// the session `args` names (`CommandContext::channel_view_or_named`) - with its summary,
+    /// briefing, classification and language, its own or else its session's. Only the issuer is
+    /// answered.
     async fn execute(
         &self,
         args: &str,
         context: &CommandContext<'_>,
     ) -> CommandResult<CommandOutput> {
-        let channel = this_or_named(DESCRIBE_COMMAND_NAME, args, context).await?;
+        let channel = context.channel_view_or_named(DESCRIBE_COMMAND_NAME, args).await?;
         let said = |text: Option<&str>| text.unwrap_or("nothing said").to_string();
         let language = match (channel.language(), channel.effective_language()) {
             (Some(own), _) => own.as_str().to_string(),

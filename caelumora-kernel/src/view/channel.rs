@@ -217,14 +217,14 @@ impl ChannelView {
     /// Whether the viewer may read an entry of the channel classified
     /// `classification`: every one if it reads the channel as a whole, else
     /// those released to where it reads from.
-    pub(super) fn may_read_entry(&self, classification: &Classification) -> bool {
+    pub fn may_read_entry(&self, classification: &Classification) -> bool {
         self.reading.admits(classification, self.views().confidentiality().compartments())
     }
 
     /// What a read of a channel read entry by entry answers when nothing
     /// could be read: that there is no such channel, so that nothing can be
     /// probed.
-    fn nothing_released(&self) -> ViewError {
+    pub fn nothing_released(&self) -> ViewError {
         ViewError::NoChannelNamed(self.channel.name.to_string())
     }
 

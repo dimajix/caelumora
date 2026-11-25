@@ -20,7 +20,7 @@ use caelumora_domain::agent::{Agent, AgentId};
 use caelumora_domain::event::{Announcing, GlobalEvent};
 use caelumora_domain::message::MessageId;
 use caelumora_domain::store::{StoreError, StoreResult, StoreResultExt, Stored};
-use caelumora_kernel::agent::AgentMember;
+use caelumora_kernel::behind::KeptBehind;
 use caelumora_kernel::event::EventBus;
 use caelumora_kernel::lifecycle::Lifecycle;
 use caelumora_security::SecurityContext;
@@ -183,10 +183,10 @@ impl MemoryManager {
 
 /// An agent's memory goes with it: removed, in the kernel's name, when the agent is purged.
 #[async_trait]
-impl AgentMember for MemoryManager {
-    async fn remove_behind(&self, agent: &Agent) -> StoreResult<()> {
-        self.agents.lock().await.remove(&agent.id);
-        self.memories.purge_for_good(AgentMemoryId::of(agent.id)).await?;
+impl KeptBehind<Agent> for MemoryManager {
+    async fn remove_behind(&self, agent: AgentId) -> StoreResult<()> {
+        self.agents.lock().await.remove(&agent);
+        self.memories.purge_for_good(AgentMemoryId::of(agent)).await?;
         Ok(())
     }
 }

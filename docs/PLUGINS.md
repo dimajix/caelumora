@@ -88,10 +88,11 @@ it registers, a plugin
     puts it into a scope only by the holders of scopes (`scope_holders`, a `ScopeHolders`): asked
     before it writes (`require`) and once it has written (`keep_made`, `restore`), so that
     nothing is left in the scope of a holder deleted meanwhile (issue 458);
-*   makes what it keeps behind an agent go with it (`agent_member`, an `AgentMember`): removed
-    when the agent is purged, after the kernel's own state of it - by the `AgentManager`,
-    whether the agent is purged alone or with its scope -, for good by the `Lifecycle` of its kind
-    (`purge_for_good`), as the agent's memory goes;
+*   makes what it keeps behind an agent or a channel go with it (`keeps_behind`, a `KeptBehind` of
+    the kind, which `KeepsBehind`): removed when the entity is purged, after the kernel's own state
+    of it - an agent's by the `AgentManager`, whether the agent is purged alone or with its scope, a
+    channel's by the `SessionManager` as its session is purged -, for good by the `Lifecycle` of
+    its kind (`purge_for_good`), as the agent's memory goes;
 *   claims its section of the configuration (`config::<C>(name)`), read as `C`, under `plugins`, and
     of the seed files (`seed_section`, a `SeedSection`), at their top level - the seed holds what
     the plugins keep, and no library claims a section of it, so that it has nothing to keep apart;
@@ -102,8 +103,10 @@ the `access_policy` and `confidentiality` policies, its manager as a `service`, 
 `deleted_of`, by which it lists what of its kind was deleted, as every kind is listed, and
 `scope_snapshot`, by which it answers where something of its kind lies, as every kind answers it.
 What a channel's view lists of its kind - the artifacts published in it, say - is an extension trait
-on `ChannelView`, which opens its `views` and how its viewer reads it (`reading`): whether the
-viewer reads the channel stays the channel's to decide (issue 328). What lies in a project is listed
+on `ChannelView`, which opens its `views`, how its viewer reads it (`reading`), whether an entry of
+a channel read entry by entry may be read (`may_read_entry`) and what such a read answers when
+nothing may (`nothing_released`): whether the viewer reads the channel stays the channel's to
+decide (issue 328). What lies in a project is listed
 the same way, by an extension trait on `ProjectView` (issue 467). What an agent's work does with its
 kind - loads a skill, publishes an artifact - the plugin offers as its extensions, a reader and a
 writer (see
@@ -257,7 +260,10 @@ plugin or a library depends on:
     and `FixedTools`, `ToolOutput`, `ToolError` and `ToolResult`, `ApprovalMode`, and the `Turn` a
     call is made in;
     for an external agent `ExternalAgent`, `OutboundMessage` and `Said`, `ExternalEvent`,
-    `ExternalStream`, `ExternalAgentError` and `ExternalAgentResult`.
+    `ExternalStream`, `ExternalAgentError` and `ExternalAgentResult`; for a user command of a
+    session, which only a plugin brings, `CommandProvider<dyn ChannelCommand>`, the
+    `CommandContext` it runs in - the channel a command's argument names, or its own
+    (`channel_view_or_named`) - and `command_error`, by which what failed is told its issuer.
 *   **If it talks to a remote system:** its errors described as the kernel's are -
     `caelumora_api::error::describe_request_error`, `describe_chain` (issue 326) -, what it reads
     of its remote side kept for a time (`caelumora_api::cache::ExpiringCache`), and the `Secrets`
@@ -271,7 +277,7 @@ rather than reached around (issue 325).
 
 ## Errors: a plugin answers the kernel in the kernel's types
 
-Where the kernel calls a plugin - a facet of its component, a `ScopeMember`, an `AgentMember` - the
+Where the kernel calls a plugin - a facet of its component, a `ScopeMember`, a `KeptBehind` - the
 plugin answers with an error type of the kernel, never with one of its own inside an `anyhow` (issue
 336). The kernel decides what a person is told of an error by the types it knows -
 `caelumora_kernel::error::user_message` for the user of a command and the TUI, and
@@ -299,7 +305,8 @@ answers - deciding there what may be shown, what is a refusal and what is a fail
     view's and the store's errors, judged as those are;
 *   a `ScopeMember` answers `StoreResult` for what lies behind an entity (`remove_behind`) - a
     workspace's place, an artifact's content -, which is its storage too: a failure to remove it is
-    a `StoreError::Backend`; an `AgentMember` answers so for what it keeps behind an agent;
+    a `StoreError::Backend`; a `KeptBehind` answers so for what it keeps behind an agent or a
+    channel;
 *   a responder policy answers `moderator::Undecided` when it could not choose, in words for the
     log alone, without anything that was said.
 

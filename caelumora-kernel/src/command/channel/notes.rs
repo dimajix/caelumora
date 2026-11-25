@@ -1,7 +1,6 @@
 //! The built-in `/channel notes` command (issue 574): what the agents noted in a channel, read as
 //! the channel's, as a notice board is read.
 
-use super::this_or_named;
 use crate::command::{command_error, ChannelCommand, CommandContext};
 use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandResult};
@@ -41,9 +40,9 @@ impl Command for NotesCommand {
 #[async_trait]
 impl ChannelCommand for NotesCommand {
     /// Runs `/channel notes` with `args`: of the channel the command was issued in, or of the one
-    /// of the session `args` names (`this_or_named`), the notes its agents published
-    /// (`ChannelView::notes`), by their authors, each note with its number. A user reads a channel
-    /// whole or not at all, so none is left out. Only the issuer is answered.
+    /// of the session `args` names (`CommandContext::channel_view_or_named`), the notes its agents
+    /// published (`ChannelView::notes`), by their authors, each note with its number. A user reads
+    /// a channel whole or not at all, so none is left out. Only the issuer is answered.
     ///
     /// # Errors
     /// `CommandError::InvalidArguments` if the session has no channel of that name the issuer may
@@ -53,7 +52,7 @@ impl ChannelCommand for NotesCommand {
         args: &str,
         context: &CommandContext<'_>,
     ) -> CommandResult<CommandOutput> {
-        let channel = this_or_named(NOTES_COMMAND_NAME, args, context).await?;
+        let channel = context.channel_view_or_named(NOTES_COMMAND_NAME, args).await?;
         let published =
             channel.notes().await.map_err(|e| command_error(NOTES_COMMAND_NAME, &e.into()))?;
         let mut text = String::new();

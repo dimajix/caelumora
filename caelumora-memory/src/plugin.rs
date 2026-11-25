@@ -9,6 +9,7 @@ use crate::memory::{AgentMemory, MemoryChange};
 use crate::view::{MemoryUse, RecalledMemory};
 use crate::MEMORY;
 use anyhow::Result;
+use caelumora_domain::agent::Agent;
 use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_kernel::plugin::Plugin;
 use std::sync::Arc;
@@ -25,7 +26,7 @@ impl Plugin for MemoryPlugin {
     fn register(&self, kernel: &mut KernelBuilder) -> Result<()> {
         let memories = kernel.entity_store::<AgentMemory>()?;
         let manager = Arc::new(MemoryManager::new(&memories, Arc::clone(kernel.event_bus())));
-        kernel.agent_member(Arc::clone(&manager));
+        kernel.keeps_behind::<Agent>(Arc::<MemoryManager>::clone(&manager));
         let reading = Arc::clone(&manager);
         kernel.extend_readers::<dyn MemoryReader, _, _>(move |session| {
             let manager = Arc::clone(&reading);

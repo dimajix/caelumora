@@ -1,10 +1,7 @@
 //! An agent as the kernel works with it, apart from the actor that runs it in a channel
-//! (`crate::actor::agent`, `crate::actor::external_agent`):
-//!
-//! - `manager`: the one owner of agents' lifecycle - deleting, restoring
-//!   and purging them;
-//! - `AgentMember`: what a plugin keeps behind an agent, which the manager
-//!   removes as it purges the agent.
+//! (`crate::actor::agent`, `crate::actor::external_agent`): `manager`, the one owner of agents'
+//! lifecycle - making, deleting, restoring and purging them -, with what a caller asks for of a new
+//! one (`spec`) and how it fails (`AgentError`).
 
 mod manager;
 mod spec;
@@ -12,9 +9,8 @@ mod spec;
 pub use manager::AgentManager;
 pub use spec::AgentSpec;
 
-use async_trait::async_trait;
-use caelumora_domain::agent::{Agent, AgentId};
-use caelumora_domain::store::{StoreError, StoreResult};
+use caelumora_domain::agent::AgentId;
+use caelumora_domain::store::StoreError;
 use caelumora_domain::value::name::Name;
 use caelumora_domain::value::ValueError;
 
@@ -43,20 +39,6 @@ pub enum AgentError {
 }
 
 pub type AgentResult<T> = Result<T, AgentError>;
-
-/// What a plugin keeps behind an agent (`KernelBuilder::agent_member`, issue 518): removed when
-/// the agent is purged, after the kernel's own state of it, as `ScopeMember::remove_behind` removes
-/// what lies behind an entity of a scope.
-#[async_trait]
-pub trait AgentMember: Send + Sync {
-    /// Removes what is kept behind `agent`, whose purge is begun: `AgentManager` gives it the agent
-    /// between `EntityStore::begin_purge` and `EntityStore::purge`, so that if it fails, the agent
-    /// stays deleted and is purged when it is purged again. Nothing to remove is not an error.
-    ///
-    /// # Errors
-    /// Whatever its store reports; as `StoreError::Backend` a failure of what else it keeps.
-    async fn remove_behind(&self, agent: &Agent) -> StoreResult<()>;
-}
 
 /// `error` of the store about agent `id`: not found is one case with not
 /// readable.

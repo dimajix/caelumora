@@ -1,6 +1,5 @@
 //! The built-in `/channel delete` command (issue 560).
 
-use super::channel_named;
 use crate::command::{command_error, ChannelCommand, CommandContext};
 use crate::procedure::channel::Delete;
 use async_trait::async_trait;
@@ -39,12 +38,12 @@ impl Command for DeleteCommand {
 
 #[async_trait]
 impl ChannelCommand for DeleteCommand {
-    /// Runs `/channel delete` with `args`: the channel of the session named (`channel_named`) -
-    /// also the one the command is issued in - is deleted with its history
-    /// (`procedure::channel::Delete`, which asks `DeleteChannel` and `UpdateSession`). The command
-    /// runs in the issuer's call, not in the channel, so its answer reaches the issuer also when
-    /// the channel it is issued in ends. Only the issuer is answered: the session tells everyone
-    /// that the channel is gone.
+    /// Runs `/channel delete` with `args`: the channel of the session named
+    /// (`CommandContext::channel_named`) - also the one the command is issued in - is deleted with
+    /// its history (`procedure::channel::Delete`, which asks `DeleteChannel` and `UpdateSession`).
+    /// The command runs in the issuer's call, not in the channel, so its answer reaches the issuer
+    /// also when the channel it is issued in ends. Only the issuer is answered: the session tells
+    /// everyone that the channel is gone.
     async fn execute(
         &self,
         args: &str,
@@ -55,7 +54,7 @@ impl ChannelCommand for DeleteCommand {
             reason,
         };
         let wanted = args.trim();
-        let channel = channel_named(DELETE_COMMAND_NAME, wanted, context).await?;
+        let channel = context.channel_named(DELETE_COMMAND_NAME, wanted).await?;
         let (issuer, id) = (context.issuer.security_context(), channel.id());
         let deleted = context
             .carry_out(|session| Delete::new(&issuer, session, id))

@@ -4,6 +4,7 @@
 //! purge them (`procedure::session`, issue 593).
 
 use super::{store_error, SessionError, SessionLoop};
+use crate::behind::KeptBehind;
 use crate::channel::Ending;
 use crate::event::EventBus;
 use crate::group::GroupManager;
@@ -50,6 +51,8 @@ pub(crate) struct SessionManager {
     events: Arc<EventBus>,
     /// What purges the group of the participants of a channel with it (issue 348).
     groups: Arc<GroupManager>,
+    /// What the plugins keep behind a channel, removed as it is purged (issue 607).
+    kept_behind: Vec<Arc<dyn KeptBehind<Channel>>>,
     /// The lifecycles of what it is the manager of, by which its sessions and their channels are
     /// made, deleted, restored and purged - by it, or by the procedures through it -, each change
     /// but a purge announced as it is stored (issue 593).
@@ -95,7 +98,7 @@ impl SessionManager {
     /// The session manager of the kernel `kernel` - made with it, which holds it -, of the
     /// sessions and channels in `stores`, held against the other processes that share them by
     /// `locks`, if any do, asked by `policies` and announced on `events`, with the groups of their
-    /// participants purged by `groups`.
+    /// participants purged by `groups` and what the plugins keep behind a channel by `kept_behind`.
     pub(crate) fn new(
         kernel: Weak<Kernel>,
         stores: &EntityStores,
@@ -103,6 +106,7 @@ impl SessionManager {
         policies: &Policies,
         events: Arc<EventBus>,
         groups: Arc<GroupManager>,
+        kept_behind: Vec<Arc<dyn KeptBehind<Channel>>>,
     ) -> Self {
         let publisher: Arc<dyn EventPublisher> = Arc::<EventBus>::clone(&events);
         Self {
@@ -113,6 +117,7 @@ impl SessionManager {
             policies: policies.clone(),
             events,
             groups,
+            kept_behind,
             session_lifecycle: Lifecycle::new(&stores.sessions, Arc::clone(&publisher)),
             channel_lifecycle: Lifecycle::new(&stores.channels, publisher),
             kernel,
@@ -257,14 +262,19 @@ impl SessionManager {
         removed
     }
 
-    /// Removes the document of channel `id` for good, with the group of its participants, in the
-    /// kernel's name - marked deleted first if it is not: a channel of a session being purged,
-    /// which is hidden with the session, or one whose creation failed -, since only what was
-    /// deleted is purged (issue 164). Announces nothing. `false` if there was none.
+    /// Removes the document of channel `id` for good, with what the plugins keep behind it
+    /// (`KeptBehind`, issue 607) and the group of its participants, in the kernel's name - marked
+    /// deleted first if it is not: a channel of a session being purged, which is hidden with the
+    /// session, or one whose creation failed -, since only what was deleted is purged (issue 164).
+    /// What the plugins keep goes first, the first that fails ending it, so that the next purge
+    /// finds the channel again. Announces nothing. `false` if there was none.
     ///
     /// # Errors
-    /// Whatever the store reports.
+    /// Whatever the store or a plugin reports.
     pub(crate) async fn purge_channel(&self, id: ChannelId) -> StoreResult<bool> {
+        for member in &self.kept_behind {
+            member.remove_behind(id).await?;
+        }
         self.groups.purge_participants(GroupId::of_channel(id)).await?;
         self.channel_lifecycle.purge_for_good(id).await
     }

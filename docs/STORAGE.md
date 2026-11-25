@@ -764,8 +764,8 @@ it keeps.
 Deleting a session or a channel keeps its state, hidden with it; purging removes the state too, with
 its histories. The entity store and the state store may be different stores, so a purge deletes the
 state explicitly - a channel's with that of every agent and user in it, an agent's in every channel,
-with what plugins keep behind it, its memory (`AgentMember`). It is never a side effect of the
-`EntityStore`.
+each with what plugins keep behind it (`KeptBehind`), an agent's memory say. It is never a side
+effect of the `EntityStore`.
 
 ## Controllers
 

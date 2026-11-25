@@ -35,6 +35,7 @@ use caelumora_api::command::{
     check_arguments, Command, CommandError, CommandProvider, CommandResult, CommandSet,
 };
 use caelumora_api::component::{ComponentImpl, ComponentResult};
+use caelumora_api::reader::ViewError;
 use caelumora_domain::actor::SpanId;
 use caelumora_domain::channel::ThreadId;
 use caelumora_domain::command::{CommandDescription, CommandOutput, CommandVisibility};
@@ -150,6 +151,49 @@ impl CommandContext<'_> {
             .channel(self.channel.session_id(), self.channel.id())
             .await
             .map_err(|e| command_error(command, &e.into()))
+    }
+
+    /// The channel the command `command` runs in, or the one of the session `args` names by its
+    /// whole name, as the issuer reads it: for a command whose argument names a channel, its own if
+    /// none is named. A channel the issuer may not read is named as one that does not exist.
+    ///
+    /// # Errors
+    /// `CommandError::InvalidArguments` if the session has no channel of that name the issuer may
+    /// read; `CommandError::Failed` if the channel belongs to no session, or the session or the
+    /// channel cannot be read.
+    pub async fn channel_view_or_named(
+        &self,
+        command: &str,
+        args: &str,
+    ) -> CommandResult<ChannelView> {
+        match args.trim() {
+            "" => self.channel_view(command).await,
+            wanted => self.channel_named(command, wanted).await,
+        }
+    }
+
+    /// The channel of the session `wanted` names as the issuer reads it, for the command
+    /// `command`: by its whole name, which is the only one of the session
+    /// (`SessionView::channel_named`), a channel they may not read named as one that does not
+    /// exist.
+    ///
+    /// # Errors
+    /// `CommandError::InvalidArguments` if the session has no channel of that name the issuer may
+    /// read; `CommandError::Failed` if the session cannot be read.
+    pub(crate) async fn channel_named(
+        &self,
+        command: &str,
+        wanted: &str,
+    ) -> CommandResult<ChannelView> {
+        let session = self.session_view(command).await?;
+        match session.channel_named(wanted).await {
+            Ok(channel) => Ok(channel),
+            Err(e @ ViewError::NoChannelNamed(_)) => Err(CommandError::InvalidArguments {
+                command: command.to_string(),
+                reason: e.to_string(),
+            }),
+            Err(e) => Err(command_error(command, &e.into())),
+        }
     }
 }
 
@@ -334,7 +378,7 @@ pub(crate) fn named_participants(
 /// command refused (`Forbidden`), a name another has taken an argument that does not fit
 /// (`InvalidArguments`); anything else is a failure, logged, and described only as far as
 /// `user_message` allows (`Failed`).
-pub(crate) fn command_error(command: &str, error: &Error) -> CommandError {
+pub fn command_error(command: &str, error: &Error) -> CommandError {
     if let Some(refused) = refusal(error) {
         return CommandError::Forbidden { command: command.to_string(), refused: refused.clone() };
     }

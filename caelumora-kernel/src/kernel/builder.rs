@@ -7,9 +7,10 @@ use super::places::WorkPlaces;
 use super::Kernel;
 use crate::actor::ActorManager;
 use crate::actor::AgentKinds;
-use crate::agent::{AgentManager, AgentMember};
+use crate::agent::AgentManager;
 use crate::attachment::AttachmentManager;
 use crate::backend::{Backends, NamedBackends};
+use crate::behind::{KeepsBehind, KeptBehind};
 use crate::channel::{ChannelLoop, Participation};
 use crate::command::CommandExecutor;
 use crate::component::{ComponentRegistry, Origin};
@@ -36,7 +37,9 @@ use caelumora_api::library::Library;
 use caelumora_api::places::StorePlacesReader;
 use caelumora_api::staging::Committing;
 use caelumora_api::workspace::{WorkspaceReader, WorkspaceWriter};
+use caelumora_domain::agent::Agent;
 use caelumora_domain::approval::ApprovalRule;
+use caelumora_domain::channel::Channel;
 use caelumora_domain::component::ComponentConfig;
 use caelumora_domain::config::{AppConfig, BackendConfig};
 use caelumora_domain::prompt_catalogue::{
@@ -93,9 +96,9 @@ pub struct KernelBuilder {
     backend_services: Services,
     attachments: Arc<AttachmentManager>,
     groups: Arc<GroupManager>,
-    /// What the plugins keep behind an agent (issue 518), which its manager - made with the kernel,
-    /// once they registered - removes as it purges an agent.
-    agent_members: Vec<Arc<dyn AgentMember>>,
+    /// What the plugins keep behind an agent or a channel (issues 518, 607), which the manager
+    /// that purges it - made with the kernel, once they registered - removes with it.
+    kept_behind: Vec<ErasedArc>,
     /// The plugins' members of a scope, gone through after the kernel's.
     scope_members: Vec<Arc<dyn ScopedKind>>,
     scope_holders: Arc<ScopeHolders>,
@@ -315,7 +318,7 @@ impl KernelBuilder {
             backend_services,
             attachments,
             groups,
-            agent_members: Vec::new(),
+            kept_behind: Vec::new(),
             scope_members: Vec::new(),
             scope_holders,
             services,
@@ -609,10 +612,15 @@ impl KernelBuilder {
         self.scope_members.push(member);
     }
 
-    /// Makes what `member` keeps behind an agent go with it (issue 518): removed when the agent is
-    /// purged, after the kernel's own state of it.
-    pub fn agent_member<M: AgentMember + 'static>(&mut self, member: Arc<M>) {
-        self.agent_members.push(member);
+    /// Makes what `member` keeps behind the entities of kind `T` go with them (issues 518, 607):
+    /// removed when one is purged, after the kernel's own state of it.
+    pub fn keeps_behind<T: KeepsBehind>(&mut self, member: Arc<dyn KeptBehind<T>>) {
+        self.kept_behind.push(ErasedArc::of(member));
+    }
+
+    /// What the plugins keep behind the entities of kind `T`, in the order they registered it.
+    fn kept_behind<T: KeepsBehind>(&self) -> Vec<Arc<dyn KeptBehind<T>>> {
+        self.kept_behind.iter().filter_map(ErasedArc::get::<dyn KeptBehind<T>>).cloned().collect()
     }
 
     /// Claims the section `name` of the plugins in the configuration (`plugins`) and reads it as
@@ -701,11 +709,12 @@ impl KernelBuilder {
             &self.entity_stores,
             Arc::clone(&self.scope_holders),
             self.persistence.state_store(),
-            mem::take(&mut self.agent_members),
+            self.kept_behind::<Agent>(),
             Arc::clone(&self.event_bus),
             Arc::clone(self.policies.access_policy()),
         ));
         self.provide(Arc::clone(&agents))?;
+        let behind_channels = self.kept_behind::<Channel>();
         let kernel_members: [Arc<dyn ScopedKind>; 5] = [
             Arc::new(Unowned::new(&self.entity_stores.personalities)),
             Arc::new(Unowned::new(&self.entity_stores.session_templates)),
@@ -729,6 +738,7 @@ impl KernelBuilder {
                 &self.policies,
                 Arc::clone(&self.event_bus),
                 Arc::clone(&self.groups),
+                behind_channels,
             ));
             Kernel {
                 policies: self.policies,
@@ -1180,7 +1190,7 @@ mod tests {
     /// purge tries again.
     #[tokio::test]
     async fn what_a_plugin_keeps_behind_an_agent_goes_when_the_agent_is_purged() {
-        use crate::agent::AgentMember;
+        use crate::behind::KeptBehind;
         use caelumora_domain::actor::ActorId;
         use caelumora_domain::agent::testing::make_personality;
         use caelumora_domain::agent::{Agent, AgentChannelState, AgentId};
@@ -1203,17 +1213,16 @@ mod tests {
             failing: AtomicBool,
         }
         #[async_trait::async_trait]
-        impl AgentMember for Kept {
-            async fn remove_behind(&self, agent: &Agent) -> StoreResult<()> {
+        impl KeptBehind<Agent> for Kept {
+            async fn remove_behind(&self, agent: AgentId) -> StoreResult<()> {
                 if self.failing.load(Ordering::SeqCst) {
                     return Err(StoreError::Backend("not now".to_string()));
                 }
-                let state =
-                    self.state_store.get_agent_channel_state(agent.id, self.channel).await?;
+                let state = self.state_store.get_agent_channel_state(agent, self.channel).await?;
                 self.removed
                     .lock()
                     .unwrap()
-                    .push((agent.id, state.turn(ThreadId::default()).is_none()));
+                    .push((agent, state.turn(ThreadId::default()).is_none()));
                 Ok(())
             }
         }
@@ -1224,7 +1233,7 @@ mod tests {
                 "keeps"
             }
             fn register(&self, kernel: &mut KernelBuilder) -> Result<()> {
-                kernel.agent_member(Arc::clone(&self.0));
+                kernel.keeps_behind::<Agent>(Arc::<Kept>::clone(&self.0));
                 Ok(())
             }
         }

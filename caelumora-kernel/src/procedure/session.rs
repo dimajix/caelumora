@@ -899,12 +899,13 @@ pub(crate) async fn purge(
 
 /// Removes what lies behind `session` once its purge is begun, in the kernel's name: the state of
 /// its channels, those it lists and those deleted from it before, the content of their attachments
-/// (issue 282) and then their documents; what lay in its scope and in its channels' (issue 178),
-/// the group of its participants (issue 348), and its own project with what lies in its scope
-/// (issue 467). What a purge that failed before removed already is passed over.
+/// (issue 282), what the plugins keep behind them (`KeptBehind`, issue 607) and then their
+/// documents; what lay in its scope and in its channels' (issue 178), the group of its participants
+/// (issue 348), and its own project with what lies in its scope (issue 467). What a purge that
+/// failed before removed already is passed over.
 ///
 /// # Errors
-/// Whatever the stores report.
+/// Whatever the stores or a plugin report.
 async fn remove_behind(
     kernel: &Kernel,
     sessions: &SessionManager,
@@ -2145,6 +2146,80 @@ mod tests {
             "also those deleted from it before"
         );
         assert!(states.get_channel_state(side).await.is_err(), "with their state");
+    }
+
+    /// Issue 607: what a plugin keeps behind a channel goes when the channel is purged with its
+    /// session - also a channel deleted from it before -, after the channel's state; where it
+    /// cannot be removed, the session stays deleted, and the next purge tries again.
+    #[tokio::test]
+    async fn what_a_plugin_keeps_behind_a_channel_goes_when_its_session_is_purged() {
+        use crate::behind::KeptBehind;
+        use crate::kernel::KernelBuilder;
+        use crate::plugin::Plugin;
+        use caelumora_domain::store::{StoreError, StoreResult};
+        use caelumora_store::StateStore;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Mutex;
+
+        /// Records the channels whose purge reached it, and whether their state was gone by then;
+        /// fails while `failing` is set.
+        struct Kept {
+            states: Arc<MemoryStore>,
+            removed: Mutex<Vec<(ChannelId, bool)>>,
+            failing: AtomicBool,
+        }
+        #[async_trait]
+        impl KeptBehind<Channel> for Kept {
+            async fn remove_behind(&self, channel: ChannelId) -> StoreResult<()> {
+                if self.failing.load(Ordering::SeqCst) {
+                    return Err(StoreError::Backend("not now".to_string()));
+                }
+                let gone = self.states.get_channel_state(channel).await.is_err();
+                self.removed.lock().unwrap().push((channel, gone));
+                Ok(())
+            }
+        }
+        /// Keeps `Kept` behind every channel.
+        struct Keeps(Arc<Kept>);
+        impl Plugin for Keeps {
+            fn name(&self) -> &'static str {
+                "keeps"
+            }
+            fn register(&self, kernel: &mut KernelBuilder) -> Result<()> {
+                kernel.keeps_behind::<Channel>(Arc::<Kept>::clone(&self.0));
+                Ok(())
+            }
+        }
+
+        let (entities, states) = (Arc::new(MemoryStore::new()), Arc::new(MemoryStore::new()));
+        let kept = Arc::new(Kept {
+            states: Arc::clone(&states),
+            removed: Mutex::new(Vec::new()),
+            failing: AtomicBool::new(true),
+        });
+        let plugin = Keeps(Arc::clone(&kept));
+        let store = Persistence::new(entities, Arc::<MemoryStore>::clone(&states)).unwrap();
+        let kernel = TestKernel { store, plugins: vec![&plugin], ..Default::default() }.build();
+        let ctx = SecurityContext::default();
+        let session = make_session("kept", UserId::new());
+        let (id, main) = (session.id, session.channels[0]);
+        let opened = create(&kernel, &ctx, session).await.unwrap();
+        let side = opened.create_channel(&ctx, spec("side", vec![])).await.unwrap().id();
+        assert!(opened.delete_channel(&ctx, side).await.unwrap(), "deleted before");
+        assert!(kernel.delete_session(&ctx, id).await.unwrap());
+
+        kernel.purge_session(&ctx, id).await.expect_err("what it keeps cannot be removed");
+        assert!(kept.removed.lock().unwrap().is_empty(), "nothing removed");
+        let stores = kernel.entity_stores();
+        assert!(stores.sessions.get_deleted(&ctx, id).await.is_ok(), "the session stays deleted");
+
+        kept.failing.store(false, Ordering::SeqCst);
+        assert!(kernel.purge_session(&ctx, id).await.expect("purged the second time"));
+        let mut removed = kept.removed.lock().unwrap().clone();
+        removed.sort();
+        let mut expected = vec![(main, true), (side, true)];
+        expected.sort();
+        assert_eq!(removed, expected, "of both channels, after their state");
     }
 
     /// Issue 467: a session is made with a project of its own, read by its

@@ -2,6 +2,7 @@ pub mod actor;
 pub mod agent;
 pub mod attachment;
 pub mod backend;
+pub mod behind;
 pub mod channel;
 pub mod command;
 pub mod component;
