@@ -1,6 +1,6 @@
 # 605 — A personality's limit means one thing for roles and another for clearances
 
-**Status:** in progress
+**Status:** done
 **Type:** question
 **Priority:** medium
 **Area:** Identity and access management
@@ -153,3 +153,4 @@ stored data changes.
   suite (`lists_admit_what_check_decides`, a limit naming a role the owner does not hold, documents
   with two entries), the Postgres store and the security suite. SECURITY.md, CONFIDENTIALITY.md,
   STORAGE.md and the doc comments updated.
+- **2026-11-25** — Accepted by the maintainer as implemented. Done.

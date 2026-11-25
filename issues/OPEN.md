@@ -29,7 +29,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [27](27-ldap-user-backend.md) | open | medium | feature | Where identities are managed in a directory, the system has no way to authenticate against it or read its groups. |
 | [559](559-labels-of-what-an-agent-writes-are-its-word.md) | open | medium | question | The kernel bounds what the agent side writes only by the place it writes to; below that, the labels of its messages, of the content it keeps and of what it stages are the word of a library that is trusted for nothing, so that a misbehaving one can put what it read under a lower label. |
 | [604](604-the-personalities-of-sub-agents-are-the-agent-side-s-word.md) | open | medium | feature | Which personalities an agent may start a sub-agent of is listed on its component `subagents`, but only the tool checks the list, on the agent side, which is trusted for nothing; the kernel's writer starts an agent of any internal personality its owner finds, as long as the limits of issue 597 hold. |
-| [605](605-a-personality-s-limit-means-two-things.md) | in progress | medium | question | The roles a personality limits its agents to narrow the owner's roles where a role is matched - only those the owner holds and the limit names count - but bound the clearance as a ceiling of their own, which clears beside the owner's roles whether the owner holds them or not; one concept has two meanings, and a rule built on one of them misses the other. |
 
 ## Audit
 
