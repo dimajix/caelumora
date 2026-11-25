@@ -113,7 +113,7 @@ pub(super) async fn session_of(
     session.participants =
         iter::once(Participant::User(user)).chain(others.iter().cloned()).collect();
     let ids = (session.id, session.channels[0]);
-    create(state.kernel.session_manager(), &SecurityContext::system(), session).await.unwrap();
+    create(&state.kernel, &SecurityContext::system(), session).await.unwrap();
     ids
 }
 

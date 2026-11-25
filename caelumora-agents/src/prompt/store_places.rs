@@ -171,8 +171,7 @@ mod tests {
             ..session
         };
         let as_owner = SecurityContext::new(owned_by, Default::default(), Default::default());
-        let session_loop =
-            kernel.session_manager().create(&as_owner, session, vec![channel]).await.unwrap();
+        let session_loop = kernel.create_session(&as_owner, session, vec![channel]).await.unwrap();
 
         let provider = StorePlacesComponent::new(PromptPosition::Start, testing::prompts());
         let mut state = AgentChannelState::default();

@@ -2845,8 +2845,7 @@ async fn approving(strategy: ApprovalStrategy, with_bob: bool) -> Approving {
     let mut session = make_session("approving", alice);
     session.participants = record_users(kernel.entity_stores(), &[&bob]).await;
     session.participants.extend([Participant::User(alice), Participant::Agent(agent)]);
-    let manager = kernel.session_manager();
-    let session = create(manager, &context, session).await.expect("the session starts");
+    let session = create(&kernel, &context, session).await.expect("the session starts");
     let mut taking_part = vec![ActorId::User(alice), ActorId::Agent(agent)];
     if with_bob {
         taking_part.push(ActorId::User(bob.id));

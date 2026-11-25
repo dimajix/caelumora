@@ -1119,7 +1119,7 @@ mod tests {
         let cookie = login(&api, "alice").await;
         let alice = user_id(&api, &cookie).await;
         let (session_id, channel_id) = session_of(state, alice, &[]).await;
-        state.kernel.session_manager().stop(&SecurityContext::system(), session_id).await.unwrap();
+        state.kernel.stop_session(&SecurityContext::system(), session_id).await.unwrap();
         (api, cookie, session_id, channel_id)
     }
 
@@ -1226,7 +1226,7 @@ mod tests {
         );
 
         // Seen at the stop, which only a stream following the actor sees.
-        state.kernel.session_manager().stop(&SecurityContext::system(), session).await.unwrap();
+        state.kernel.stop_session(&SecurityContext::system(), session).await.unwrap();
         read_until(&mut stream, &mut read, |read| snapshots(read) == 3).await;
         assert!(
             read.rsplit("event: snapshot").next().is_some_and(|last| last.contains("hello there")),
@@ -1234,14 +1234,9 @@ mod tests {
         );
         assert!(!runs(&state, session, channel).await, "the stream does not start it again");
 
-        state.kernel.session_manager().open(&SecurityContext::system(), session).await.unwrap();
+        state.kernel.open_session(&SecurityContext::system(), session).await.unwrap();
         read_until(&mut stream, &mut read, |read| snapshots(read) == 4).await;
-        assert!(state
-            .kernel
-            .session_manager()
-            .delete(&SecurityContext::system(), session)
-            .await
-            .unwrap());
+        assert!(state.kernel.delete_session(&SecurityContext::system(), session).await.unwrap());
         let ended =
             time::timeout(Duration::from_secs(5), async { while stream.next().await.is_some() {} })
                 .await;
@@ -1254,12 +1249,12 @@ mod tests {
     async fn a_stream_ends_at_a_shutdown_with_the_channels_state_as_it_stopped() {
         let state = state();
         let (api, cookie, session, channel) = stopped_session_of_alice(&state).await;
-        state.kernel.session_manager().open(&SecurityContext::system(), session).await.unwrap();
+        state.kernel.open_session(&SecurityContext::system(), session).await.unwrap();
         let mut stream = follow(&api, &cookie, session, channel, true).await;
         let mut read = String::new();
         read_until(&mut stream, &mut read, |read| read.contains("event: snapshot")).await;
 
-        state.kernel.session_manager().shutdown().await;
+        state.kernel.shut_down_sessions().await;
         state.shutdown.cancel();
         let ended = time::timeout(Duration::from_secs(5), async {
             while let Some(chunk) = stream.next().await {
@@ -1285,9 +1280,9 @@ mod tests {
         let mut read = String::new();
         read_until(&mut stream, &mut read, |read| read.contains("retry:")).await;
 
-        state.kernel.session_manager().open(&SecurityContext::system(), session).await.unwrap();
+        state.kernel.open_session(&SecurityContext::system(), session).await.unwrap();
         read_until(&mut stream, &mut read, |read| read.contains("event: started")).await;
-        state.kernel.session_manager().stop(&SecurityContext::system(), session).await.unwrap();
+        state.kernel.stop_session(&SecurityContext::system(), session).await.unwrap();
         read_until(&mut stream, &mut read, |read| read.contains("event: stopped")).await;
         assert!(!read.contains("event: snapshot"), "{read}");
     }
@@ -1331,7 +1326,7 @@ mod tests {
             !carrying["items"].as_array().unwrap().iter().any(|item| item["said"].is_object()),
             "words alone carry nothing: {carrying}"
         );
-        state.kernel.session_manager().stop(&SecurityContext::system(), session).await.unwrap();
+        state.kernel.stop_session(&SecurityContext::system(), session).await.unwrap();
     }
 
     /// Issue 557: a page of the channel's history is what the view of its line shows the user -
@@ -1397,7 +1392,7 @@ mod tests {
         let helper = stored_agent(stores, "helper", make_personality("plain"), alice).await;
         let (session, channel) =
             session_of(&state, alice.as_user_id().unwrap(), &[Participant::Agent(helper.id)]).await;
-        state.kernel.session_manager().stop(&SecurityContext::system(), session).await.unwrap();
+        state.kernel.stop_session(&SecurityContext::system(), session).await.unwrap();
         let in_line = |sender, event| {
             let context = EventContext::new(session, channel, sender, "someone");
             Recorded::of(&Envelope::new(context, event), sender, Audience::Everybody).unwrap()
@@ -1480,7 +1475,7 @@ mod tests {
             (StatusCode::BAD_REQUEST, json!("invalid_path")),
             "a bare UUID names no actor"
         );
-        state.kernel.session_manager().stop(&SecurityContext::system(), session_id).await.unwrap();
+        state.kernel.stop_session(&SecurityContext::system(), session_id).await.unwrap();
     }
 
     /// Issue 602: a participant of the channel is taken into a further thread of it and let go
@@ -1498,7 +1493,7 @@ mod tests {
         let alice = ActorId::User(alice_id);
         let (session_id, channel_id) = session_of(&state, alice_id, &[]).await;
         let system = SecurityContext::system();
-        let session = state.kernel.session_manager().open(&system, session_id).await.unwrap();
+        let session = state.kernel.open_session(&system, session_id).await.unwrap();
         let line = ThreadId::line(channel_id);
         let origin = ThreadOrigin { thread: line, message: MessageId::new() };
         let thread =
@@ -1553,7 +1548,7 @@ mod tests {
             (StatusCode::NOT_FOUND, json!("thread_not_found"))
         );
 
-        state.kernel.session_manager().stop(&system, session_id).await.unwrap();
+        state.kernel.stop_session(&system, session_id).await.unwrap();
     }
 
     /// Issue 602: a message is said in the thread the request names, and a command issued there -
@@ -1570,7 +1565,7 @@ mod tests {
         let bob = user_id(&api, &bobs).await;
         let (session_id, channel_id) = session_of(&state, alice, &[Participant::User(bob)]).await;
         let system = SecurityContext::system();
-        let session = state.kernel.session_manager().open(&system, session_id).await.unwrap();
+        let session = state.kernel.open_session(&system, session_id).await.unwrap();
         let origin = ThreadOrigin { thread: ThreadId::line(channel_id), message: MessageId::new() };
         let thread =
             session.open_thread(&system, channel_id, ThreadSpec::new(origin)).await.unwrap();
@@ -1603,7 +1598,7 @@ mod tests {
             (StatusCode::BAD_REQUEST, json!("invalid_command_arguments")),
             "bob takes no part in the thread"
         );
-        state.kernel.session_manager().stop(&system, session_id).await.unwrap();
+        state.kernel.stop_session(&system, session_id).await.unwrap();
     }
 
     /// Issue 595: a user opens a thread at a message of the line, with an agent of theirs new to
@@ -1646,7 +1641,7 @@ mod tests {
             (status, refused["code"].clone()),
             (StatusCode::NOT_FOUND, json!("message_not_found"))
         );
-        state.kernel.session_manager().stop(&SecurityContext::system(), session_id).await.unwrap();
+        state.kernel.stop_session(&SecurityContext::system(), session_id).await.unwrap();
     }
 
     /// Issue 594: what waits for a user in a channel - here questions put to them - is given where
@@ -1660,7 +1655,7 @@ mod tests {
         let alice = user_id(&api, &cookie).await;
         let (session_id, channel_id) = session_of(&state, alice, &[]).await;
         let system = SecurityContext::system();
-        let session = state.kernel.session_manager().open(&system, session_id).await.unwrap();
+        let session = state.kernel.open_session(&system, session_id).await.unwrap();
         let channel = session.channel(channel_id).expect("the channel runs");
         let actor = channel.user_actor(alice).expect("her actor runs");
         let alice_id = ActorId::User(alice);
@@ -1680,7 +1675,7 @@ mod tests {
         let session_uri = format!("/sessions/{}", session_id.0);
         let (_, with_session) = send(&api, &cookie, Method::GET, &session_uri, None).await;
         assert_eq!(with_session["channels"][0]["waiting"], waits, "listed with its session");
-        state.kernel.session_manager().stop(&system, session_id).await.unwrap();
+        state.kernel.stop_session(&system, session_id).await.unwrap();
     }
 
     /// Issue 595: what others say in a thread is new to a user there, given with the thread as
@@ -1723,7 +1718,7 @@ mod tests {
             (StatusCode::NOT_FOUND, json!("message_not_found")),
             "a message of the line is not the thread's"
         );
-        state.kernel.session_manager().stop(&SecurityContext::system(), session_id).await.unwrap();
+        state.kernel.stop_session(&SecurityContext::system(), session_id).await.unwrap();
     }
 
     /// Who takes no part in a channel cannot follow it, whether it runs or
@@ -1737,7 +1732,7 @@ mod tests {
         for _ in [false, true] {
             let (status, _) = send(&api, &bob, Method::GET, &uri, None).await;
             assert_eq!(status, StatusCode::FORBIDDEN);
-            state.kernel.session_manager().open(&SecurityContext::system(), session).await.unwrap();
+            state.kernel.open_session(&SecurityContext::system(), session).await.unwrap();
         }
     }
 

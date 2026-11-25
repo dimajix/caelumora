@@ -163,7 +163,7 @@ async fn an_agent_whose_context_fills_up_compacts_it_on_its_own_before_its_next_
         Some(4),
         "the summary's call counts as used"
     );
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 #[tokio::test]
@@ -187,7 +187,7 @@ async fn a_compaction_that_fails_ends_the_turn() {
             .any(|m| m.content.as_deref() == Some("Hi.")),
         "the transcript as it was"
     );
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 #[tokio::test]
@@ -206,7 +206,7 @@ async fn an_agent_whose_personality_does_not_list_compaction_does_not_compact() 
             .any(|m| m.content.as_deref() == Some("Hi.")),
         "nothing replaced"
     );
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// Compacting a shared agent's context is its owners' (issue 16, `owners_only` as for approving
@@ -217,7 +217,7 @@ async fn an_agent_whose_personality_does_not_list_compaction_does_not_compact() 
 async fn only_an_agents_owner_compacts_its_context() {
     let world = world(vec![Message::new(Classification::PUBLIC)]).await;
     let (session, main, _) = helper_with(&world, vec![compaction()]).await;
-    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    world.kernel.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
 
     let (refused, asked) = world
         .asked(main.user_actor(world.bob).unwrap().execute_command(None, "compact @helper"))
@@ -242,5 +242,5 @@ async fn only_an_agents_owner_compacts_its_context() {
         matches!(shown(&mut hers, "CommandFailed").await, ActorEvent::CommandFailed { ref reason, .. } if reason.contains("nothing to compact")),
         "carried out for her by the agent, which has nothing to compact yet"
     );
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }

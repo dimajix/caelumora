@@ -214,7 +214,7 @@ async fn the_catalogue_lists_what_may_be_loaded_and_load_skill_gives_its_text_as
     )
     .await;
     assert!(matches!(absent, Err(ToolError::InvalidParameter(_))), "the model's to correct");
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 #[tokio::test]
@@ -299,7 +299,7 @@ async fn an_agent_writes_a_skill_of_its_owners_classified_as_what_it_saw_and_rai
         "the new steps, classified as what was seen"
     );
     assert_eq!(created_id, serde_json::json!(deploy.id), "the skill it made");
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 #[tokio::test]
@@ -419,7 +419,7 @@ async fn the_skills_given_are_given_again_where_they_may_still_be_loaded() {
         "as it is now; not the deleted one"
     );
     drop(turn);
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// Issue 541: a skill that stands in the agent's transcript as it is is not given again - not by
@@ -469,7 +469,7 @@ async fn a_skill_that_stands_given_as_it_is_is_not_given_again() {
         .filter(|node| node.entry.knowledge().is_some())
         .count();
     assert_eq!(given, 2, "as it was, once, and as it is now");
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// Issue 413: the `compaction` component asks the agent's `skills` for what it can give again - the
@@ -568,7 +568,7 @@ async fn a_compaction_gives_again_the_skills_given_in_the_part_it_replaces_that_
         ["[Skill: release-notes]\n1. Collect.\n", "Fine."],
         "after the summary, the skill still needed alone: {texts:?}"
     );
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 // --- The views -------------------------------------------------------------
@@ -702,7 +702,7 @@ async fn an_agent_lists_the_skills_its_owners_roles_clear_it_for_as_they_are_at_
     let after = call(provider.as_ref(), &mut turn, LIST_SKILLS_TOOL_NAME, json!({})).await.unwrap();
     assert_eq!(listed(after), 0, "not any more, at the next call");
     drop(turn);
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// Issue 516: what a work reads of skills is handed out where it reads, what it writes by only
@@ -719,7 +719,7 @@ async fn a_skills_writer_is_handed_out_where_the_work_acts_its_reader_where_it_r
     assert!(turn.writer::<dyn SkillWriter>().await.is_some(), "written where it acts");
     assert!(turn.writer::<dyn SkillReader>().await.is_none(), "a reader is no writer");
     drop(turn);
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 // --- The seed --------------------------------------------------------------
@@ -781,7 +781,7 @@ async fn with_a_skilled_agent() -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, A
         .expect("hers to make");
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
-    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    world.kernel.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let his = main.user_actor(world.bob).expect("he takes part").watch();
     (world, session, main, helper, his)
 }
@@ -842,7 +842,7 @@ async fn an_agent_loads_a_skill_for_its_owner_whoever_asked() {
         "nothing of the text in the channel's history"
     );
     assert!(items_of(&history).iter().any(|item| matches!(item, HistoryEntry::CommandExecuted { command, issuer, .. } if command == "skill" && *issuer == ActorId::User(world.bob))), "but the command");
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// A skill classified above the channel (issue 22) may not flow into it:
@@ -876,7 +876,7 @@ async fn a_skill_classified_above_the_channel_is_neither_listed_nor_loaded() {
         unreachable!()
     };
     assert!(reason.contains("no skill named \"secret-plan\""), "as absent: {reason}");
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// A session of alice and bob with alice's `helper`, whose model calls the
@@ -939,7 +939,7 @@ async fn with_a_writing_agent(
     store(&world).update(&World::as_user(world.bob), &mut shared).await.expect("shared with alice");
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
-    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    world.kernel.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     (world, session, main)
 }
 
@@ -982,7 +982,7 @@ async fn an_agents_skill_belongs_to_its_owner_and_lies_in_the_session() {
         deploy.classification.surely_flows_to(&main.classification()),
         "classified as what the turn saw, never above the channel"
     );
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// A skill shared with the agent's owner is loaded, not changed: changing a
@@ -1003,7 +1003,7 @@ async fn an_agent_changes_only_skills_of_its_owners() {
         .await
         .unwrap();
     assert_eq!(review.body.as_str(), "Read it twice.", "unchanged");
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// A skill of a session's scope (issue 178) goes with the session: deleted
@@ -1028,7 +1028,7 @@ async fn a_skill_of_a_sessions_scope_is_deleted_and_restored_with_it() {
     let id = session.id();
     drop(session);
 
-    world.manager.delete(&alice, id).await.expect("hers to delete");
+    world.kernel.delete_session(&alice, id).await.expect("hers to delete");
     assert!(store(&world).get(&World::system(), made.id).await.is_err(), "deleted with it");
     // Nothing is put into the scope of a deleted session (issue 458).
     let in_session = Scope::SessionScope { session_id: id };
@@ -1038,7 +1038,7 @@ async fn a_skill_of_a_sessions_scope_is_deleted_and_restored_with_it() {
     assert!(matches!(refused, Err(SkillError::Store(StoreError::NotFound { .. }))), "{refused:?}");
     let refused = manager(&world).restore(&alice, made.id).await;
     assert!(matches!(refused, Err(SkillError::NotFound(_))), "{refused:?}");
-    world.manager.restore(&alice, id).await.expect("hers to restore");
+    world.kernel.restore_session(&alice, id).await.expect("hers to restore");
     assert!(store(&world).get(&World::system(), made.id).await.is_ok(), "restored with it");
 }
 

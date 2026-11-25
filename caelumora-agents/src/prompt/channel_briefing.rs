@@ -246,11 +246,8 @@ mod tests {
             channels: vec![channel.id],
             ..session
         };
-        let session_loop = kernel
-            .session_manager()
-            .create(&as_owner, session.clone(), vec![channel.clone()])
-            .await
-            .unwrap();
+        let session_loop =
+            kernel.create_session(&as_owner, session.clone(), vec![channel.clone()]).await.unwrap();
         let mut state = AgentChannelState::default();
         state.begin_turn(
             ThreadId::line(channel.id),

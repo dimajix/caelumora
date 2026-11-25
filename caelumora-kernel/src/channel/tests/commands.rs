@@ -566,7 +566,7 @@ async fn participant_add_and_agent_create_refuse_what_they_cannot_use() {
             "/{command} {args}: {error}"
         );
     }
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// The commands of the groups refuse what they cannot use (issue 560) before they change anything:
@@ -616,7 +616,7 @@ async fn the_commands_of_the_groups_refuse_what_they_cannot_use() {
     let in_main = world.participants(world.alice, session.id(), session.channels()[0].id()).await;
     assert_eq!(in_main.len(), 2, "nobody was removed");
     assert_eq!(session.channels().len(), 1, "no channel was made");
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// `/agent create` names the agent after the personality, unless the last `as` names it - so
@@ -639,7 +639,7 @@ async fn agent_create_names_the_agent_after_the_personality_or_after_the_last_as
     assert!(plain.starts_with("Made the agent plain of plain"), "{plain}");
     let bob = made("Writer as Editor as Bob").await;
     assert!(bob.starts_with("Made the agent Bob of Writer as Editor"), "{bob}");
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// `/agent create` finds a personality from the channel, the innermost first, and makes an agent
@@ -665,7 +665,7 @@ async fn agent_create_makes_the_agent_of_a_personality_of_the_channel_in_the_cha
     let scout = agents.into_iter().find(|agent| agent.name.name == "scout").unwrap();
     assert_eq!(scout.personality_id, own.id, "the channel's, nearer than the global one");
     assert_eq!(scout.name.scope, in_main, "in the channel's scope");
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// `/agent usage` tells each agent taking part how full its context is and what its calls used,
@@ -721,13 +721,13 @@ async fn agent_usage_tells_the_context_and_the_calls_of_each_agent_and_their_tot
     );
     let one = alice.execute_command(None, "agent usage @scout").await.unwrap().output.unwrap();
     assert_eq!(one, "scout (@scout): no calls counted", "the one named alone, without a total");
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 
     let without = world.shared_session(&[], &[]).await;
     let alice = without.channels()[0].user_actor(world.alice).unwrap();
     let none = alice.execute_command(None, "agent usage").await.unwrap().output.unwrap();
     assert_eq!(none, "No agent takes part in this channel.", "nothing to add up");
-    world.manager.stop(&World::as_user(world.alice), without.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), without.id()).await.unwrap();
 }
 
 /// `/channel notes` shows what the agents noted in the channel, by their authors - one that noted
@@ -763,11 +763,11 @@ async fn channel_notes_shows_what_the_agents_noted_by_their_authors() {
     session.create_channel(&World::as_user(world.alice), side).await.expect("hers to make");
     let other = alice.execute_command(None, "channel notes side").await.unwrap().output.unwrap();
     assert_eq!(other, "Nothing is noted in side.", "another channel named, not this one");
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 
     let without = world.shared_session(&[], &[]).await;
     let alice = without.channels()[0].user_actor(world.alice).unwrap();
     let none = alice.execute_command(None, "channel notes").await.unwrap().output.unwrap();
     assert_eq!(none, "Nothing is noted in main.");
-    world.manager.stop(&World::as_user(world.alice), without.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), without.id()).await.unwrap();
 }

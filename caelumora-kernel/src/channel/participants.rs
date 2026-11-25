@@ -655,7 +655,6 @@ mod tests {
         .unwrap();
         let ids = roles.clone();
         let kernel = owned_kernel(ConfidentialityRules::new(compartments).with_roles(roles));
-        let manager = kernel.session_manager();
         let user = |name: &str, roles: &[&str]| User {
             roles: ids.ids_of(roles).unwrap(),
             ..make_user(name)
@@ -670,7 +669,7 @@ mod tests {
         session.security_attributes =
             session.security_attributes.clone().granting(Subject::Actor(bob_id), Grant::Read);
         session.participants = record_users(kernel.entity_stores(), &[&alice, &bob]).await;
-        let session = create(manager, &alice_ctx, session).await.unwrap();
+        let session = create(&kernel, &alice_ctx, session).await.unwrap();
 
         let hr_confidential =
             Classification::new(Confidentiality::Confidential, [Compartment::new("hr")]).unwrap();
@@ -745,7 +744,7 @@ mod tests {
             .map(|c| c.id())
             .collect();
         assert!(!listed.contains(&hr.id()) && listed.contains(&team.id()), "listed without it");
-        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+        kernel.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     /// How often `participant` joined `channel` by its history, once the first join is recorded and
@@ -775,8 +774,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn two_who_add_one_participant_at_once_take_them_in_once() {
         let kernel = test_kernel();
-        let manager = kernel.session_manager();
-        let (session, ctx, other) = running_session_of_a_user(manager).await;
+        let (session, ctx, other) = running_session_of_a_user(&kernel).await;
         let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
         let add = || {
             let (channel, ctx) = (Arc::clone(&channel), ctx.clone());
@@ -799,15 +797,14 @@ mod tests {
         );
         assert!(channel.channel().lists(other), "listed");
         assert_eq!(joins_recorded(&channel, other).await, 1, "one actor joined, not two");
-        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+        kernel.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     #[tokio::test]
     async fn a_participant_added_later_sees_the_history_granted_and_is_announced() {
         use crate::channel::ChannelError;
         let kernel = test_kernel();
-        let manager = kernel.session_manager();
-        let (session, ctx, other) = running_session_of_a_user(manager).await;
+        let (session, ctx, other) = running_session_of_a_user(&kernel).await;
         let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
         let owner = match ctx.initiator_id {
             ActorId::User(id) => id,
@@ -906,15 +903,14 @@ mod tests {
             channel.add_participant(&ctx, stranger, HistoryAccess::All).await.expect_err("nobody");
         let unknown = outside.downcast_ref::<StoreError>();
         assert!(matches!(unknown, Some(StoreError::NotFound { .. })), "read first: {outside}");
-        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+        kernel.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     #[tokio::test]
     async fn who_joins_or_leaves_is_recorded_where_it_happened_and_shown_also_to_who_made_it() {
         use caelumora_domain::actor::ActorEvent;
         let kernel = test_kernel();
-        let manager = kernel.session_manager();
-        let (session, ctx, other) = running_session_of_a_user(manager).await;
+        let (session, ctx, other) = running_session_of_a_user(&kernel).await;
         let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
         let writer = channel
             .user_actor(ctx.initiator_id.as_user_id().unwrap())
@@ -985,15 +981,14 @@ mod tests {
         assert!(
             matches!(told.event, ActorEvent::ParticipantLeft { participant, ref name, .. } if participant == other && name == "other")
         );
-        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+        kernel.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     #[tokio::test]
     async fn a_users_followers_are_told_their_actor_ended_when_they_leave_or_the_channel_is_deleted(
     ) {
         let kernel = test_kernel();
-        let manager = kernel.session_manager();
-        let (session, ctx, other) = running_session_of_a_user(manager).await;
+        let (session, ctx, other) = running_session_of_a_user(&kernel).await;
         let owner = ctx.initiator_id.as_user_id().unwrap();
 
         // Leaving ends it.
@@ -1010,7 +1005,7 @@ mod tests {
         // So does deleting the channel, for everybody.
         assert!(session.delete_channel(&ctx, channel.id()).await.expect("deleted"));
         assert!(ended(&mut mine, Duration::from_secs(5)).await, "a deleted channel runs no actor");
-        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+        kernel.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -1020,8 +1015,7 @@ mod tests {
         use caelumora_domain::channel::InternalActor;
         use caelumora_domain::template::InternalActorTemplate;
         let kernel = test_kernel();
-        let manager = kernel.session_manager();
-        let (session, ctx, other) = running_session_of_a_user(manager).await;
+        let (session, ctx, other) = running_session_of_a_user(&kernel).await;
         let with_approver = ChannelSpec {
             internal_actors: vec![InternalActorTemplate::Approver {
                 strategy: ApprovalStrategy::Any,
@@ -1070,13 +1064,12 @@ mod tests {
         assert!(channel.user_actor(other.as_user_id().unwrap()).is_some(), "with a new actor");
         let stored = kernel.entity_stores().channels.get(&ctx, channel.id()).await.unwrap();
         assert!(stored.former.is_empty(), "and no longer a former participant");
-        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+        kernel.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     #[tokio::test]
     async fn only_who_may_change_a_channel_adds_or_removes_its_participants() {
         let kernel = owned_kernel(Default::default());
-        let manager = kernel.session_manager();
         let (alice, bob, carol) = (make_user("alice"), make_user("bob"), make_user("carol"));
         let alice_id = ActorId::User(alice.id);
         let bob_id = ActorId::User(bob.id);
@@ -1089,7 +1082,7 @@ mod tests {
             .clone()
             .granting(Subject::Actor(bob_id), Grant::Read)
             .granting(Subject::Actor(carol_id), Grant::Read);
-        let running = create(manager, &as_user(alice_id), session).await.unwrap();
+        let running = create(&kernel, &as_user(alice_id), session).await.unwrap();
         let channel =
             running.create_channel(&as_user(alice_id), spec("side", vec![bob_id])).await.unwrap();
 
@@ -1114,7 +1107,7 @@ mod tests {
             channel.participants().iter().any(|m| m.id == carol_id)
                 && !channel.participants().iter().any(|m| m.id == bob_id)
         );
-        manager.stop(&SecurityContext::system(), running.id()).await.unwrap();
+        kernel.stop_session(&SecurityContext::system(), running.id()).await.unwrap();
     }
 
     /// Who takes part leaves by their own act, without the right to change the channel (issue
@@ -1124,7 +1117,6 @@ mod tests {
     #[tokio::test]
     async fn who_takes_part_leaves_by_their_own_act_and_takes_nobody_else_out() {
         let kernel = owned_kernel(Default::default());
-        let manager = kernel.session_manager();
         let (alice, bob, carol) = (make_user("alice"), make_user("bob"), make_user("carol"));
         let alice_id = ActorId::User(alice.id);
         let bob_id = ActorId::User(bob.id);
@@ -1137,7 +1129,7 @@ mod tests {
             .clone()
             .granting(Subject::Actor(bob_id), Grant::Read)
             .granting(Subject::Actor(carol_id), Grant::Read);
-        let running = create(manager, &as_user(alice_id), session).await.unwrap();
+        let running = create(&kernel, &as_user(alice_id), session).await.unwrap();
         let channel = running
             .create_channel(&as_user(alice_id), spec("side", vec![bob_id, carol_id]))
             .await
@@ -1189,7 +1181,7 @@ mod tests {
             }
         });
         heard.await.expect("the empty channel ran on, and her actor in it (issue 593)");
-        manager.stop(&SecurityContext::system(), running.id()).await.unwrap();
+        kernel.stop_session(&SecurityContext::system(), running.id()).await.unwrap();
     }
 
     /// Leaving is what a policy refuses as it refuses everything (issue 562): asked as
@@ -1229,7 +1221,7 @@ mod tests {
         let after = main.channel();
         assert!(!after.lists(scout), "taken back out");
         assert!(after.former.is_empty(), "made no former participant");
-        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+        world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 
     /// How an agent is taken into a channel again while its range of attendance is still open
@@ -1289,7 +1281,7 @@ mod tests {
             assert_eq!(joins_recorded(founded, actor).await, 1, "a founder");
             let founding = founded.attendance(actor).await[0].range.start;
             assert!(founding > Position::START, "after the users' joins, so that a move shows");
-            world.manager.stop(&alice, session.id()).await.unwrap();
+            world.kernel.stop_session(&alice, session.id()).await.unwrap();
             let personalities = &world.kernel.entity_stores().personalities;
             match again {
                 Again::Added | Again::Followed => {
@@ -1301,7 +1293,7 @@ mod tests {
                 }
             }
 
-            let session = world.manager.open(&alice, session.id()).await.unwrap();
+            let session = world.kernel.open_session(&alice, session.id()).await.unwrap();
             let main = Arc::clone(&session.channels()[0]);
             assert!(!main.participant_ids().contains(&actor), "{again:?}: left out as it starts");
             assert!(main.channel().lists(actor), "{again:?}: listed still");
@@ -1339,7 +1331,7 @@ mod tests {
                     if at.range.start == founding && at.range.end == until),
                 "{again:?}: one range, from its founding to where it left: {ranges:?}"
             );
-            world.manager.stop(&alice, session.id()).await.unwrap();
+            world.kernel.stop_session(&alice, session.id()).await.unwrap();
         }
     }
 
@@ -1398,7 +1390,7 @@ mod tests {
         .expect("an answer, and its turn's end after it");
         main.add_participant(&alice, ActorId::Agent(second), HistoryAccess::None).await.unwrap();
         given_nothing_before_its_join(&main, ActorId::Agent(second), "after a turn ended").await;
-        world.manager.stop(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
     }
 
     /// Issue 568: a grant counts messages alone - joins and other events are none -, so that one
@@ -1407,8 +1399,7 @@ mod tests {
     #[tokio::test]
     async fn a_grant_begins_at_the_oldest_message_it_grants() {
         let kernel = test_kernel();
-        let manager = kernel.session_manager();
-        let (session, ctx, other) = running_session_of_a_user(manager).await;
+        let (session, ctx, other) = running_session_of_a_user(&kernel).await;
         let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
         let ActorId::User(owner) = ctx.initiator_id else { unreachable!() };
         let writer = channel.user_actor(owner).expect("the creator takes part");
@@ -1431,7 +1422,7 @@ mod tests {
             visible.iter().any(|e| matches!(e, HistoryEntry::HistoryShared { .. })),
             "what it was given is recorded, since it lies before its join: {visible:?}"
         );
-        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+        kernel.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     /// Scripted agents that answer, until the flag it holds is set: then none can start.
@@ -1488,8 +1479,8 @@ mod tests {
         let mut withdrawn = Personality { security_attributes: attributes_withdrawn, ..shared };
         personalities.update(&bob, &mut withdrawn).await.unwrap();
         let alice = World::as_user(world.alice);
-        world.manager.stop(&alice, session.id()).await.unwrap();
-        let session = world.manager.open(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
+        let session = world.kernel.open_session(&alice, session.id()).await.unwrap();
         let main = Arc::clone(&session.channels()[0]);
         assert!(main.actor(helper).is_none(), "left out as it started");
         let attributes_given = attributes(Some(world.bob), &[world.alice]);
@@ -1508,7 +1499,7 @@ mod tests {
         let page = history.page(main.id(), &Reader::Channel, Position::START, None, 1000, None);
         let left = |entry: &&HistoryEntry| matches!(entry, HistoryEntry::ParticipantLeft { participant, .. } if *participant == helper);
         assert_eq!(page.await.unwrap().entries().filter(left).count(), 0, "no leave recorded");
-        world.manager.stop(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
     }
 
     /// Issue 590: a participant left out as the channel started - its personality withdrawn, its
@@ -1541,8 +1532,8 @@ mod tests {
         let personalities = &world.kernel.entity_stores().personalities;
         personalities.update(&World::as_user(world.bob), &mut withdrawn).await.unwrap();
         let alice = World::as_user(world.alice);
-        world.manager.stop(&alice, session.id()).await.unwrap();
-        let session = world.manager.open(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
+        let session = world.kernel.open_session(&alice, session.id()).await.unwrap();
         let main = Arc::clone(&session.channels()[0]);
         assert!(main.actor(helper).is_none(), "left out as it started");
         assert!(open().await, "taking part in its history all the same");
@@ -1563,11 +1554,11 @@ mod tests {
             page.entries().filter(left).count()
         };
         assert_eq!(leaves().await, 1, "once");
-        world.manager.stop(&alice, session.id()).await.unwrap();
-        world.manager.open(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
+        world.kernel.open_session(&alice, session.id()).await.unwrap();
         // Time for its run to record what it would.
         time::sleep(Duration::from_millis(100)).await;
         assert_eq!(leaves().await, 1, "and not again as the channel starts again");
-        world.manager.stop(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
     }
 }

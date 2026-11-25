@@ -808,6 +808,6 @@ mod tests {
             read.knowledge
         );
         drop(turn);
-        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+        world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 }

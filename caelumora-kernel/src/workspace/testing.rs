@@ -58,7 +58,7 @@ impl WithWorkspace {
 }
 
 /// A session of a stored user with the channel "main" of the user and an agent, the workspace
-/// "docs" of the user attached, made as the kernel makes a session (`SessionManager::create`, issue
+/// "docs" of the user attached, made as the kernel makes a session (`Kernel::create_session`, issue
 /// 486) and running, with the commands run in the workspace (`/workspace run`) beside those of
 /// every deployment.
 pub async fn session_with_workspace() -> WithWorkspace {
@@ -112,7 +112,7 @@ pub async fn session_with_workspace() -> WithWorkspace {
         channels: vec![channel.id],
         ..session
     };
-    let session = kernel.session_manager().create(&as_owner, session, vec![channel]).await.unwrap();
+    let session = kernel.create_session(&as_owner, session, vec![channel]).await.unwrap();
     let context = SecurityContext::new(
         ActorId::User(owner),
         session.id(),

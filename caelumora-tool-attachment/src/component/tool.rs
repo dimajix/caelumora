@@ -576,7 +576,7 @@ mod tests {
             "{refused:?}"
         );
         drop(turn);
-        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+        world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 
     /// Issue 547: what a tool gave is read and copied by its number in the step after the call,
@@ -613,7 +613,7 @@ mod tests {
             .unwrap();
         assert_eq!(copied.value["path"], "attachments/page.txt");
         drop(turn);
-        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+        world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -793,7 +793,7 @@ mod tests {
             .collect();
         assert_eq!(offered, [VIEW_ATTACHMENT, READ_ATTACHMENT, COPY_ATTACHMENT, ATTACH]);
         drop(seeing);
-        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+        world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 
     /// M5 of the security suite: an agent reaches an attachment it heard (issue 282) through the
@@ -858,6 +858,6 @@ mod tests {
             "copying: the writer handed out, what writing into the workspace asks, then reading it"
         );
         drop(turn);
-        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+        world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 }

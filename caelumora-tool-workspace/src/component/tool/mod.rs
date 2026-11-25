@@ -256,7 +256,7 @@ mod tests {
             .collect();
         assert_eq!(asked, expected, "found usable, then read, as reading is asked");
         drop(turn);
-        world.manager.stop(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
     }
 
     /// Issue 290: offered where the channel uses the workspace - every tool,

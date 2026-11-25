@@ -1169,7 +1169,7 @@ mod tests {
 
     /// A running session of a user in `kernel`, with the context of its owner.
     async fn running(kernel: &Kernel) -> (Arc<SessionLoop>, SecurityContext) {
-        let (session_loop, ctx, _) = running_session_of_a_user(kernel.session_manager()).await;
+        let (session_loop, ctx, _) = running_session_of_a_user(kernel).await;
         (session_loop, ctx)
     }
 
@@ -1658,8 +1658,7 @@ mod tests {
     #[tokio::test]
     async fn an_approval_answered_is_pending_for_the_user_no_more_until_it_ends() {
         let kernel = test_kernel();
-        let manager = kernel.session_manager();
-        let (session_loop, ctx, _) = running_session_of_a_user(manager).await;
+        let (session_loop, ctx, _) = running_session_of_a_user(&kernel).await;
         let channel = session_loop.channels().into_iter().next().expect("the main channel");
         let agent_id = an_agent_in(&kernel, &session_loop, &ctx, channel.id()).await;
         let agent = ActorId::Agent(agent_id);
@@ -1691,8 +1690,7 @@ mod tests {
     #[tokio::test]
     async fn an_approval_answered_stays_so_where_the_answer_is_refused_or_given_by_a_rule() {
         let kernel = test_kernel();
-        let manager = kernel.session_manager();
-        let (session_loop, ctx, _) = running_session_of_a_user(manager).await;
+        let (session_loop, ctx, _) = running_session_of_a_user(&kernel).await;
         let channel = session_loop.channels().into_iter().next().expect("the main channel");
         let agent_id = an_agent_in(&kernel, &session_loop, &ctx, channel.id()).await;
         let me = ctx.caller_id;
@@ -2063,8 +2061,7 @@ mod tests {
     #[tokio::test]
     async fn what_was_said_so_far_is_printed_once_as_the_user_begins_to_talk() {
         let kernel = test_kernel();
-        let manager = kernel.session_manager();
-        let (session_loop, owner, other) = running_session_of_a_user(manager).await;
+        let (session_loop, owner, other) = running_session_of_a_user(&kernel).await;
         let side = spec("side", vec![owner.caller_id, other]);
         let channel = session_loop.create_channel(&owner, side).await.expect("the owner makes it");
         let views = kernel.views(Viewer::new(owner));
@@ -2214,8 +2211,7 @@ mod tests {
     #[tokio::test]
     async fn following_ends_where_the_user_no_longer_takes_part() {
         let kernel = owned_kernel(ConfidentialityRules::default());
-        let manager = kernel.session_manager();
-        let (session_loop, owner, other) = running_session_of_a_user(manager).await;
+        let (session_loop, owner, other) = running_session_of_a_user(&kernel).await;
         let theirs = SecurityContext::new(other, session_loop.id(), Default::default());
         let views = kernel.views(Viewer::new(theirs.clone()));
         let side = |name| spec(name, vec![owner.caller_id, other]);
@@ -2250,8 +2246,7 @@ mod tests {
     #[tokio::test]
     async fn following_a_channel_outlives_a_run_of_the_users_actor() {
         let kernel = owned_kernel(ConfidentialityRules::default());
-        let manager = kernel.session_manager();
-        let (session_loop, owner, other) = running_session_of_a_user(manager).await;
+        let (session_loop, owner, other) = running_session_of_a_user(&kernel).await;
         let theirs = SecurityContext::new(other, session_loop.id(), Default::default());
         let views = kernel.views(Viewer::new(theirs.clone()));
         let spec = spec("again", vec![owner.caller_id, other]);

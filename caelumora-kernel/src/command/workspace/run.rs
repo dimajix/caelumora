@@ -270,7 +270,7 @@ mod tests {
         session.update_workspace(&alice, Some(docs.id), None).await.unwrap();
         let shell = actor.execute_command(None, "workspace run ls").await.expect_err("no shell");
         assert_eq!(reason(shell), "the workspace's storage runs no commands");
-        world.manager.stop(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
     }
 
     #[test]

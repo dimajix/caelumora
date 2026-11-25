@@ -95,8 +95,7 @@ mod tests {
         // Kept by the store (issue 250): in another session the name is
         // free, which the store suite says.
         let kernel = test_kernel();
-        let manager = kernel.session_manager();
-        let (session, ctx, _) = running_session_of_a_user(manager).await;
+        let (session, ctx, _) = running_session_of_a_user(&kernel).await;
         let side = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
 
         let refused =
@@ -110,7 +109,7 @@ mod tests {
         );
         side.controller().update_name(&ctx, "Side").await.expect("its own name, written otherwise");
         assert_eq!(side.name().as_str(), "Side");
-        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+        kernel.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -125,7 +124,6 @@ mod tests {
         ])
         .unwrap();
         let kernel = owned_kernel(ConfidentialityRules::new(compartments));
-        let manager = kernel.session_manager();
         let (alice, bob) = (make_user("alice"), make_user("bob"));
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
@@ -134,7 +132,7 @@ mod tests {
         session.security_attributes =
             session.security_attributes.clone().granting(Subject::Actor(bob_id), Grant::Read);
         session.participants = record_users(kernel.entity_stores(), &[&alice, &bob]).await;
-        let session = create(manager, &alice_ctx, session).await.unwrap();
+        let session = create(&kernel, &alice_ctx, session).await.unwrap();
 
         let classified = |level, compartments: &[&str]| {
             Classification::new(level, compartments.iter().map(|c| Compartment::new(*c))).unwrap()
@@ -209,7 +207,7 @@ mod tests {
             |id| history.iter().find(|m| m.id == id).map(|m| m.classification.clone()).unwrap();
         assert_eq!(classification_of(bobs), released, "what was released stays released");
         assert_eq!(classification_of(alices), lowered, "the rest is released with the channel");
-        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+        kernel.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -218,14 +216,13 @@ mod tests {
 
         let kernel = owned_kernel(Default::default());
 
-        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let users = (make_user("alice"), make_user("bob"));
         let (alice, bob) = (ActorId::User(users.0.id), ActorId::User(users.1.id));
         let as_user = |actor| SecurityContext::new(actor, Default::default(), Default::default());
         let mut session = make_session("hers", users.0.id);
         session.participants = record_users(kernel.entity_stores(), &[&users.0, &users.1]).await;
-        let running = create(manager, &as_user(alice), session).await.unwrap();
+        let running = create(&kernel, &as_user(alice), session).await.unwrap();
         let main = running.channel_named("main").unwrap();
 
         let refused = main
@@ -243,7 +240,7 @@ mod tests {
             "lobby",
             "stored, not only in memory"
         );
-        manager.stop(&SecurityContext::system(), running.id()).await.unwrap();
+        kernel.stop_session(&SecurityContext::system(), running.id()).await.unwrap();
     }
 
     /// Waits until `channel`'s history holds `count` messages.

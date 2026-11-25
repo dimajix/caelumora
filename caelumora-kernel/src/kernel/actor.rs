@@ -183,6 +183,6 @@ mod tests {
         assert_eq!(context.roles, [*STAFF], "with her roles");
         world.take_roles(world.alice).await;
         assert!(runtime.acting_for(bob).roles.is_empty(), "not any more, at the next call");
-        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+        world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 }

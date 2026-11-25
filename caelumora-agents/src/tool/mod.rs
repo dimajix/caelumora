@@ -2236,7 +2236,7 @@ mod tests {
         let [other] = other.files.as_slice() else { panic!("one file: {:?}", other.files) };
         assert_eq!(other.media_type, "application/pdf", "kept, whatever it is, as its bytes say");
         assert_eq!(files(), before + 1);
-        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+        world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 
     #[tokio::test]

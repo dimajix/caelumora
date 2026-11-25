@@ -522,5 +522,5 @@ async fn the_tools_are_discovered_in_the_name_of_whoever_acts() {
         ["alice as helper, asked by bob: ReadSecret yes"],
         "with alice's credential, asked by bob"
     );
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }

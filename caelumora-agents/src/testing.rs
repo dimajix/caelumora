@@ -192,7 +192,7 @@ pub async fn asked_for_a_call(
             .expect("the call reached the workspace");
         })
         .await;
-    world.manager.stop(&alice, session.id()).await.unwrap();
+    world.kernel.stop_session(&alice, session.id()).await.unwrap();
     asked
 }
 

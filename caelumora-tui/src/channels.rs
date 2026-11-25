@@ -452,8 +452,7 @@ mod tests {
     /// other user, and `theirs` of the other user alone.
     async fn followed() -> (Channels, Arc<SessionLoop>, SecurityContext, ActorId) {
         let kernel = test_kernel();
-        let manager = kernel.session_manager();
-        let (session_loop, owner, other) = running_session_of_a_user(manager).await;
+        let (session_loop, owner, other) = running_session_of_a_user(&kernel).await;
         let side = spec("side", vec![owner.caller_id, other]);
         session_loop.create_channel(&owner, side).await.expect("the owner creates it");
         let theirs = SecurityContext::new(other, session_loop.id(), Default::default());
@@ -470,8 +469,7 @@ mod tests {
     /// channel alone, with the session, the owner's context and the kernel.
     async fn alone() -> (Channels, Arc<SessionLoop>, SecurityContext, Arc<Kernel>) {
         let kernel = test_kernel();
-        let manager = kernel.session_manager();
-        let (session_loop, owner, _) = running_session_of_a_user(manager).await;
+        let (session_loop, owner, _) = running_session_of_a_user(&kernel).await;
         let views = kernel.views(Viewer::new(owner.clone()));
         let channels =
             Channels::new(Arc::clone(&session_loop), views, Arc::clone(kernel.event_bus()))
@@ -722,8 +720,7 @@ mod tests {
     #[tokio::test]
     async fn the_opening_tells_what_waits_in_the_others() {
         let kernel = test_kernel();
-        let manager = kernel.session_manager();
-        let (session_loop, owner, _) = running_session_of_a_user(manager).await;
+        let (session_loop, owner, _) = running_session_of_a_user(&kernel).await;
         let side = spec("side", vec![owner.caller_id]);
         let side = session_loop.create_channel(&owner, side).await.expect("the owner creates it");
         let agent_id = an_agent_in(&kernel, &session_loop, &owner, side.id()).await;
@@ -748,8 +745,7 @@ mod tests {
     #[tokio::test]
     async fn what_was_missed_in_another_channel_is_caught_up() {
         let kernel = test_kernel();
-        let manager = kernel.session_manager();
-        let (session_loop, owner, _) = running_session_of_a_user(manager).await;
+        let (session_loop, owner, _) = running_session_of_a_user(&kernel).await;
         let side = spec("side", vec![owner.caller_id]);
         let side = session_loop.create_channel(&owner, side).await.expect("the owner creates it");
         let agent_id = an_agent_in(&kernel, &session_loop, &owner, side.id()).await;
@@ -870,8 +866,7 @@ mod tests {
     #[tokio::test]
     async fn a_channel_the_user_is_added_to_meanwhile_is_followed() {
         let kernel = owned_kernel(ConfidentialityRules::default());
-        let manager = kernel.session_manager();
-        let (session_loop, owner, other) = running_session_of_a_user(manager).await;
+        let (session_loop, owner, other) = running_session_of_a_user(&kernel).await;
         let side = spec("side", vec![owner.caller_id, other]);
         session_loop.create_channel(&owner, side).await.expect("the owner creates it");
         let late = spec("late", vec![owner.caller_id]);
@@ -899,8 +894,7 @@ mod tests {
     #[tokio::test]
     async fn what_waits_in_a_channel_joined_meanwhile_is_told() {
         let kernel = test_kernel();
-        let manager = kernel.session_manager();
-        let (session_loop, owner, other) = running_session_of_a_user(manager).await;
+        let (session_loop, owner, other) = running_session_of_a_user(&kernel).await;
         let late = spec("late", vec![owner.caller_id]);
         let late = session_loop.create_channel(&owner, late).await.expect("the owner creates it");
         let agent_id = an_agent_in(&kernel, &session_loop, &owner, late.id()).await;

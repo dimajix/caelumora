@@ -1256,7 +1256,7 @@ mod tests {
         let held = Held::key(&executor, Key::Participant(id, bob), true).await;
         let removing = LetGo::removed(&alice, id, bob, None);
         waits_for(held, &executor, removing).await.expect("let go from the session as well");
-        world.manager.stop(&alice, id).await.unwrap();
+        world.kernel.stop_session(&alice, id).await.unwrap();
     }
 
     /// Taking someone into a running session holds it shared, as opening it does; one it starts
@@ -1273,11 +1273,11 @@ mod tests {
         executor.run(adding).await.expect("taken in beside it");
         held.release().await;
 
-        world.manager.stop(&alice, id).await.unwrap();
+        world.kernel.stop_session(&alice, id).await.unwrap();
         let held = Held::key(&executor, Key::Session(id), false).await;
         let adding = TakeIn::added(&alice, id, ActorId::User(world.carol), None);
         waits_for(held, &executor, adding).await.expect("started and taken in once it is let go");
-        world.manager.stop(&alice, id).await.unwrap();
+        world.kernel.stop_session(&alice, id).await.unwrap();
     }
 
     /// Following an agent holds its part in every running session - also one that does not list
@@ -1302,8 +1302,8 @@ mod tests {
 
         let held = Held::key(&executor, Key::Participant(with, agent), true).await;
         waits_for(held, &executor, Follow::session(with)).await.unwrap();
-        world.manager.stop(&alice, with).await.unwrap();
-        world.manager.stop(&alice, without).await.unwrap();
+        world.kernel.stop_session(&alice, with).await.unwrap();
+        world.kernel.stop_session(&alice, without).await.unwrap();
     }
 
     fn as_user(user: &User) -> SecurityContext {
@@ -1317,13 +1317,12 @@ mod tests {
     #[tokio::test]
     async fn whoever_may_change_the_session_takes_a_user_into_it_and_a_channel_at_once() {
         let kernel = owned_kernel(Default::default());
-        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let (alice, bob, carol) = (make_user("alice"), make_user("bob"), make_user("carol"));
         let mut session = make_session("hers", alice.id);
         session.participants = record_users(stores, &[&alice, &carol]).await;
         record_users(stores, &[&bob]).await;
-        let session = create(manager, &as_user(&alice), session).await.unwrap();
+        let session = create(&kernel, &as_user(&alice), session).await.unwrap();
         let main = Arc::clone(&session.channels()[0]);
         let bob_id = ActorId::User(bob.id);
         assert!(
@@ -1387,7 +1386,7 @@ mod tests {
             ),
             "{approver}"
         );
-        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+        kernel.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     /// Alice's session with carol in its channel "main" and in two that do not run once it is
@@ -1411,7 +1410,7 @@ mod tests {
         let held = Held::key(&executor, Key::Channel(session.id(), unavailable), false).await;
         let starting = Start::left_out(session.id());
         waits_for(held, &executor, starting).await.expect("built again once it is let go");
-        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+        world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 
     async fn out_of_service(world: &World) -> OutOfService {
@@ -1444,8 +1443,8 @@ mod tests {
         let unshared = attributes(Some(world.bob), &[]);
         let mut withdrawn = ComponentBundle { security_attributes: unshared, ..shared };
         bundles.update(&bobs, &mut withdrawn).await.expect("bob withdraws it");
-        world.manager.stop(&alice, session.id()).await.unwrap();
-        let session = world.manager.open(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
+        let session = world.kernel.open_session(&alice, session.id()).await.unwrap();
         assert!(session.channel(unavailable).is_none(), "does not run");
         OutOfService { session, unavailable, deleted, withdrawn }
     }
@@ -1513,7 +1512,7 @@ mod tests {
             matches!(again.downcast_ref(), Some(SessionError::NotAParticipant { .. })),
             "{again}"
         );
-        world.manager.stop(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
     }
 
     /// Issue 590: a channel that did not run as someone was let go from its session records their
@@ -1532,7 +1531,7 @@ mod tests {
         let mut shared = ComponentBundle { security_attributes: reshared, ..withdrawn };
         let bundles = &world.kernel.entity_stores().component_bundles;
         bundles.update(&World::as_user(world.bob), &mut shared).await.expect("shared again");
-        let session = world.manager.open(&alice, session.id()).await.unwrap();
+        let session = world.kernel.open_session(&alice, session.id()).await.unwrap();
         assert!(session.channel(unavailable).is_some(), "runs again");
         session.restore_channel(&alice, deleted).await.expect("restored");
 
@@ -1554,7 +1553,7 @@ mod tests {
                 .collect();
             assert_eq!(left, [ActorId::System], "once, in the kernel's name");
         }
-        world.manager.stop(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
     }
 
     /// Issue 590: one an owner takes into the session and a channel, whose actor cannot start -
@@ -1587,7 +1586,7 @@ mod tests {
             matches!(update, Some(SessionUpdateEvent::ParticipantLeft(id)) if id == helper)
         };
         assert!(events.drain().await.iter().any(left), "announced");
-        world.manager.stop(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
     }
 
     /// Issue 590: a session hears none of its own announcements - its controller holds every
@@ -1608,7 +1607,7 @@ mod tests {
         time::sleep(Duration::from_millis(100)).await;
 
         assert!(!session.session().takes_part(bob), "still let go");
-        world.manager.stop(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
     }
 
     /// Issue 590: one let go from the session whom a channel failed to let go - nothing rolls them
@@ -1634,13 +1633,12 @@ mod tests {
             matches!(again.downcast_ref(), Some(SessionError::NotAParticipant { .. })),
             "{again}"
         );
-        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+        world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 
     #[tokio::test]
     async fn whom_the_access_list_lets_join_takes_themselves_in_and_uses_up_an_invitation() {
         let kernel = owned_kernel(Default::default());
-        let manager = kernel.session_manager();
         let (alice, bob, carol) = (make_user("alice"), make_user("bob"), make_user("carol"));
         let (bob_id, carol_id) = (ActorId::User(bob.id), ActorId::User(carol.id));
         let invited = |mut attributes: SecurityAttributes| {
@@ -1655,7 +1653,8 @@ mod tests {
             security_attributes: invited(main_channel(&session).security_attributes),
             ..main_channel(&session)
         };
-        let session = manager.create(&as_user(&alice), session, vec![channel]).await.unwrap();
+        let session =
+            kernel.create_session(&as_user(&alice), session, vec![channel]).await.unwrap();
         let main = Arc::clone(&session.channels()[0]);
 
         let uninvited = session
@@ -1680,7 +1679,7 @@ mod tests {
             !session.session().security_attributes.acl.contains(&AclEntry::invitation(bob_id)),
             "his invitation is used up"
         );
-        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+        kernel.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     /// Deletes `agent` and waits until its actor stopped in `channel`: the
@@ -1705,7 +1704,6 @@ mod tests {
     #[tokio::test]
     async fn an_agent_taken_in_later_is_followed_as_one_taken_in_from_the_start() {
         let kernel = test_kernel();
-        let manager = kernel.session_manager();
         // Followed as the programs follow them (issue 593).
         let _followed = SessionFollower::spawn(&kernel);
         let helper = stored_agent(
@@ -1716,7 +1714,7 @@ mod tests {
         )
         .await;
         let actor = ActorId::Agent(helper.id);
-        let (session, ctx, _) = running_session_of_a_user(manager).await;
+        let (session, ctx, _) = running_session_of_a_user(&kernel).await;
         let main = Arc::clone(&session.channels()[0]);
         let mut events = kernel.event_bus().subscribe_all();
         // Running, with the participants it had as it started.
@@ -1736,6 +1734,6 @@ mod tests {
         time::sleep(Duration::from_millis(50)).await;
 
         deleted_stops_in(&kernel, &ctx, helper.id, &main).await;
-        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+        kernel.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 }

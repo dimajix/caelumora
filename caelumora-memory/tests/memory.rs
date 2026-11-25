@@ -67,7 +67,7 @@ async fn with_a_rememberer(world: &World) -> (Arc<SessionLoop>, AgentId) {
         .unwrap();
     let helper = world.agent("helper", world.alice, &remembering).await;
     let session = world.shared_session(&[helper], &[]).await;
-    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    world.kernel.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     (session, helper)
 }
 
@@ -122,7 +122,7 @@ async fn what_an_agent_remembers_is_committed_in_its_owners_name_where_it_reads(
         helpers.contains(&&"alice as helper, asked by bob: GetSession(alice's) yes".to_string()),
         "its session reached as the agent reaches it: {asked:?}"
     );
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// `/memory` (issue 574) shows an agent's memory to its owner alone: bob, who asked it to remember,
@@ -177,7 +177,7 @@ async fn an_agents_memory_is_shown_by_command_to_its_owner_alone() {
         ],
         "asked of her, then read in its name"
     );
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// An agent's memory is its owner's, kept apart from the agent (issue 518): it goes with the agent
@@ -187,7 +187,7 @@ async fn an_agents_memory_goes_with_it_when_it_is_purged() {
     let world = world_remembering("bob likes tea").await;
     let (session, helper) = with_a_rememberer(&world).await;
     ask_to_remember(&world, &session, helper).await;
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 
     let alice = World::as_user(world.alice);
     let agents = world.kernel.agent_manager();

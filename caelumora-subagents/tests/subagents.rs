@@ -237,7 +237,7 @@ async fn an_agent_starts_a_sub_agent_asks_it_again_as_it_reads_its_answer_and_le
     let elsewhere = ThreadId::new();
     let refused = writer.ask(elsewhere, "Hello?".to_string()).await.unwrap_err();
     assert!(matches!(refused, SubAgentError::NoSubAgent(_)), "{refused}");
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// Issue 558: the agent of a participant who does not own the session starts a sub-agent - made by
@@ -296,7 +296,7 @@ async fn an_agent_of_one_who_does_not_own_the_session_starts_a_sub_agent() {
         !asked.iter().any(|line| line.contains(": Update")),
         "ended without changing the session or the channel in bob's name: {asked:?}"
     );
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// Issue 558: the personality of a sub-agent is found as the kernel finds one by name from the
@@ -336,7 +336,7 @@ async fn a_personality_is_found_from_the_channel_innermost_first() {
     let stored = agents.get(&World::system(), sub_agent.expect("started")).await.unwrap();
     assert_eq!(stored.personality_id, inner.id, "the channel's researcher, not the global one");
 
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// Issue 593: starting a sub-agent is one procedure, undone if a step fails - here opening its
@@ -363,7 +363,7 @@ async fn a_start_that_fails_leaves_no_agent() {
     let nowhere = ThreadOrigin { thread: ThreadId::new(), message: MessageId::new() };
     writer.start("researcher", nowhere, "Find it.".to_string()).await.expect_err("not open");
     assert_eq!(agents().await, before, "the agent it made is deleted again");
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// Issue 558: starting a sub-agent asks for approval only where the component is configured so;
@@ -404,7 +404,7 @@ async fn a_sub_agent_starts_none_of_its_own_by_default() {
     let origin = ThreadOrigin { thread, message: MessageId::new() };
     let refused = theirs.start("researcher", origin, "And you?".to_string()).await;
     assert!(matches!(refused, Err(SubAgentError::TooDeep(1))), "{refused:?}");
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// Issue 597: sub-agents are started within the limits of the plugin's section of the
@@ -444,7 +444,7 @@ async fn sub_agents_are_started_within_the_limits_the_operator_set() {
 
     firsts.end(second).await.expect("ended");
     led.start("researcher", line, brief()).await.expect("room for another");
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// Issue 597: a sub-agent let go - left without a word in the turn that read its answer (issue
@@ -499,7 +499,7 @@ async fn a_sub_agent_let_go_counts_no_more() {
     led.start("researcher", line, "Find more.".to_string())
         .await
         .expect("the one let go not counted");
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// Issue 597: a sub-agent is cleared no wider than the agent that starts it - of a lead limited to
@@ -534,7 +534,7 @@ async fn a_sub_agent_is_cleared_no_wider_than_the_agent_that_starts_it() {
         assert!(matches!(refused, Err(SubAgentError::ClearedWider(_))), "{wider}: {refused:?}");
     }
     writer.start("staff", line, "Find it.".to_string()).await.expect("limited as the lead");
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// A session of alice's with a lead of hers, that starts sub-agents of "researcher" and "researcher
@@ -617,7 +617,7 @@ async fn an_owner_has_an_agent_start_a_sub_agent_by_command() {
     for told in ["researcher", "Find it.", &thread.to_string()] {
         assert!(content.contains(told), "{told}: {content}");
     }
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// Issue 596: `/subagent` is for the agent's owners alone - bob, who may write in the channel,
@@ -629,7 +629,7 @@ async fn a_sub_agent_is_started_by_command_by_an_owner_on_a_listed_personality_a
     // A lead that does not answer: a command wakes nobody.
     let world = world(Vec::new()).await;
     let (session, main, lead_id) = commanded_lead(&world).await;
-    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    world.kernel.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
 
     let bob = main.user_actor(world.bob).unwrap();
     let line = format!("{SUBAGENT_COMMAND_NAME} @lead researcher Find it.");
@@ -668,7 +668,7 @@ async fn a_sub_agent_is_started_by_command_by_an_owner_on_a_listed_personality_a
     let transcript = state.unwrap().transcript;
     let given = transcript.messages(ThreadId::line(main.id()));
     assert!(given.iter().all(|m| m.sender_id != ActorId::User(world.alice)), "{given:?}");
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// Issue 596: what the writer refuses a start by `/subagent` - here a depth the operator allows
@@ -690,5 +690,5 @@ async fn a_start_by_command_refused_is_answered_as_a_refusal() {
         reason: SubAgentError::TooDeep(0).to_string(),
     };
     assert_eq!(reason, refused.to_string(), "a refusal, not a failure");
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }

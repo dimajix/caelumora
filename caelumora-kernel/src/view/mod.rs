@@ -19,7 +19,7 @@
 //! else entry by entry - only what was released to it - and a channel it
 //! may not read at all is one that does not exist. Its root is its own
 //! session, reached through its situation (`Situation::session`); a
-//! frontend's root is [`SessionManager::views`].
+//! frontend's root is [`Kernel::views`](crate::kernel::Kernel::views).
 //!
 //! The agent side is handed readers of the views (`reader`, issue 516): what of them an agent's
 //! work reads - never a view, through which it would reach the policies, the managers and the
@@ -1088,13 +1088,8 @@ mod tests {
     /// `session` with `channels`, stored as the kernel stores a brand-new one (`persist`), the
     /// participants of each channel joined as its founders (`founded`): the session as stored, and
     /// `channels` then as stored, too.
-    async fn stored(
-        manager: &SessionManager,
-        session: Session,
-        channels: &mut [Channel],
-    ) -> Session {
-        let kernel = manager.kernel().unwrap();
-        let session = persist(manager, &SecurityContext::system(), session, channels).await;
+    async fn stored(kernel: &Kernel, session: Session, channels: &mut [Channel]) -> Session {
+        let session = persist(kernel, &SecurityContext::system(), session, channels).await;
         for channel in channels.iter() {
             kernel
                 .state_store()
@@ -1136,7 +1131,6 @@ mod tests {
 
         let kernel = owned_kernel(Default::default());
 
-        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let alice = make_user("alice");
         let remote =
@@ -1145,7 +1139,7 @@ mod tests {
         session.participants = record_users(kernel.entity_stores(), &[&alice]).await;
         session.participants.push(Participant::Agent(remote.id));
         let mut channel = main_channel(&session);
-        let session = stored(manager, session, slice::from_mut(&mut channel)).await;
+        let session = stored(&kernel, session, slice::from_mut(&mut channel)).await;
 
         let said = |t: &str| Message {
             id: MessageId::new(),
@@ -1249,7 +1243,7 @@ mod tests {
         session.participants.push(Participant::Agent(helper.id));
         let main = main_channel(&session);
         let running =
-            manager.create(as_user(alice.id).context(), session, vec![main]).await.unwrap();
+            kernel.create_session(as_user(alice.id).context(), session, vec![main]).await.unwrap();
         // Alice's alone: bob takes part in the session, not in this channel.
         let hers = running
             .create_channel(as_user(alice.id).context(), ChannelSpec::new("private"))
@@ -1357,7 +1351,7 @@ mod tests {
             }
         };
         check("running").await;
-        assert!(manager.stop(&SecurityContext::system(), id).await.unwrap(), "it ran");
+        assert!(kernel.stop_session(&SecurityContext::system(), id).await.unwrap(), "it ran");
         check("stopped").await;
         assert!(manager.running(id).is_none(), "reaching a session does not start it");
     }
@@ -1367,8 +1361,7 @@ mod tests {
     #[tokio::test]
     async fn a_channel_is_reached_by_its_session_and_its_id() {
         let kernel = owned_kernel(Default::default());
-        let manager = kernel.session_manager();
-        let (session_loop, owner, _) = running_session_of_a_user(manager).await;
+        let (session_loop, owner, _) = running_session_of_a_user(&kernel).await;
         let session = session_loop.id();
         let main = session_loop.channels()[0].id();
         let views = kernel.views(Viewer::new(owner));
@@ -1390,8 +1383,7 @@ mod tests {
         use caelumora_domain::question::testing::make_question_request;
         use caelumora_domain::snapshot::Waiting;
         let kernel = owned_kernel(Default::default());
-        let manager = kernel.session_manager();
-        let (session_loop, owner, other) = running_session_of_a_user(manager).await;
+        let (session_loop, owner, other) = running_session_of_a_user(&kernel).await;
         let (session, channel) = (session_loop.id(), Arc::clone(&session_loop.channels()[0]));
         let ActorId::User(user) = owner.caller_id else { unreachable!("a user") };
         let actor = channel.user_actor(user).expect("the owner's actor runs");
@@ -1425,8 +1417,7 @@ mod tests {
     #[tokio::test]
     async fn a_user_follows_a_channel_as_it_stands_once_the_watch_began() {
         let kernel = owned_kernel(Default::default());
-        let manager = kernel.session_manager();
-        let (session_loop, owner, _) = running_session_of_a_user(manager).await;
+        let (session_loop, owner, _) = running_session_of_a_user(&kernel).await;
         let session = session_loop.id();
         let views = kernel.views(Viewer::new(owner.clone()));
         let side = spec("side", vec![owner.caller_id]);
@@ -1442,11 +1433,11 @@ mod tests {
         // The session stopped since the view read it: read from the store, as it stands.
         let main = session_loop.channels()[0].id();
         let main_before = views.channel(session, main).await.expect("the owner reads it");
-        manager.stop(&owner, session).await.expect("the owner stops it");
+        kernel.stop_session(&owner, session).await.expect("the owner stops it");
         assert!(main_before.user_follow().await.unwrap().is_some(), "still listed, stopped");
 
         // Deleted since: not the loop the view reached, which still lists them.
-        manager.delete(&owner, session).await.expect("the owner deletes it");
+        kernel.delete_session(&owner, session).await.expect("the owner deletes it");
         assert!(main_before.user_follow().await.unwrap().is_none(), "not followed: it is gone");
     }
 
@@ -1456,8 +1447,7 @@ mod tests {
     #[tokio::test]
     async fn a_channel_lists_the_viewer_while_they_take_part_in_it() {
         let kernel = owned_kernel(Default::default());
-        let manager = kernel.session_manager();
-        let (session_loop, owner, other) = running_session_of_a_user(manager).await;
+        let (session_loop, owner, other) = running_session_of_a_user(&kernel).await;
         let session = session_loop.id();
         let views = kernel.views(Viewer::new(owner.clone()));
         let side = spec("side", vec![owner.caller_id, other]);
@@ -1480,7 +1470,6 @@ mod tests {
 
         let kernel = owned_kernel(Default::default());
 
-        let manager = kernel.session_manager();
         let alice = make_user("Alice Example");
         let gone = UserId::new();
         let mut session = make_session("s", alice.id);
@@ -1488,7 +1477,7 @@ mod tests {
         let mut channel = main_channel(&session);
         channel.participants.push(Participant::User(gone));
         channel.internal_actors.push(InternalActor::Approver(Approver::new(ApprovalStrategy::Any)));
-        let session = stored(manager, session, slice::from_mut(&mut channel)).await;
+        let session = stored(&kernel, session, slice::from_mut(&mut channel)).await;
 
         let view = kernel
             .views(as_user(alice.id))
@@ -1537,13 +1526,12 @@ mod tests {
         let leaving: HashSet<ActorId> =
             snapshot.participants.iter().filter(|p| p.can_leave).map(|p| p.id).collect();
         assert_eq!(leaving, HashSet::from([ActorId::User(world.bob), ActorId::Agent(scout)]));
-        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+        world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 
     #[tokio::test]
     async fn what_a_place_is_for_is_shown_its_briefing_only_where_asked_for() {
         let kernel = owned_kernel(Default::default());
-        let manager = kernel.session_manager();
         let alice = make_user("alice");
         let mut session = make_session("hers", alice.id);
         session.participants = record_users(kernel.entity_stores(), &[&alice]).await;
@@ -1554,7 +1542,7 @@ mod tests {
         let mut channel = main_channel(&session);
         (channel.summary, channel.briefing) =
             (Some(Summary::new("Planning").unwrap()), Some(Briefing::new("Be brief.").unwrap()));
-        let session = stored(manager, session, slice::from_mut(&mut channel)).await;
+        let session = stored(&kernel, session, slice::from_mut(&mut channel)).await;
 
         let view = kernel.views(as_user(alice.id)).session(session.id).await.unwrap();
         let listed = view.snapshot(Detail::CHANNELS).await;
@@ -1586,7 +1574,6 @@ mod tests {
 
         let kernel = owned_kernel(Default::default());
 
-        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let system = SecurityContext::system();
         let (alice, bob, carol) = (make_user("alice"), make_user("bob"), make_user("carol"));
@@ -1614,7 +1601,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let session = stored(manager, session, slice::from_mut(&mut channel)).await;
+        let session = stored(&kernel, session, slice::from_mut(&mut channel)).await;
 
         let for_bob = kernel.views(as_user(bob.id)).channel(session.id, channel.id).await.unwrap();
         let plain = for_bob.snapshot(Detail::PARTICIPANTS).await;
@@ -1679,7 +1666,6 @@ mod tests {
 
         let kernel = owned_kernel(Default::default());
 
-        let manager = kernel.session_manager();
         let alice = make_user("alice");
         let bob = make_user("bob");
         let carol = make_user("carol");
@@ -1692,7 +1678,7 @@ mod tests {
             .participants
             .retain(|participant| participant.actor_id() != ActorId::User(carol.id));
         let session =
-            persist(manager, &SecurityContext::system(), session, slice::from_mut(&mut channel))
+            persist(&kernel, &SecurityContext::system(), session, slice::from_mut(&mut channel))
                 .await;
 
         let said = |by: &User, text: &str| Message {
@@ -1865,7 +1851,6 @@ mod tests {
 
         let kernel = owned_kernel(Default::default());
 
-        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let (alice, bob) = (make_user("alice"), make_user("bob"));
         let helper = an_agent_of(stores, ActorId::User(alice.id)).await;
@@ -1874,7 +1859,7 @@ mod tests {
         session.participants.push(Participant::Agent(helper.id));
         let mut channel = main_channel(&session);
         let session =
-            persist(manager, &SecurityContext::system(), session, slice::from_mut(&mut channel))
+            persist(&kernel, &SecurityContext::system(), session, slice::from_mut(&mut channel))
                 .await;
 
         // What was said, of which bob - who joined later - sees the end only.
@@ -2049,7 +2034,6 @@ mod tests {
 
         let kernel = owned_kernel(Default::default());
 
-        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let (alice, bob) = (make_user("alice"), make_user("bob"));
         let helper = an_agent_of(stores, ActorId::User(bob.id)).await;
@@ -2070,7 +2054,7 @@ mod tests {
             ..template.clone()
         };
         session.channels = vec![team.id, hers.id];
-        let session = stored(manager, session, &mut [team.clone(), hers.clone()]).await;
+        let session = stored(&kernel, session, &mut [team.clone(), hers.clone()]).await;
         // Classified as team is: the flow rule alone would let team read it all.
         let mut state = kernel.state_store().get_channel_state(hers.id).await.unwrap();
         state.history.extend(
@@ -2148,7 +2132,6 @@ mod tests {
 
         let kernel = owned_kernel(Default::default());
 
-        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let (alice, bob) = (make_user("alice"), make_user("bob"));
         let helper = an_agent_of(stores, ActorId::User(alice.id)).await;
@@ -2164,7 +2147,7 @@ mod tests {
         };
         let (zeta, quiet, alpha) = (channel_of("zeta"), channel_of("quiet"), channel_of("alpha"));
         let session =
-            stored(manager, session, &mut [zeta.clone(), quiet.clone(), alpha.clone()]).await;
+            stored(&kernel, session, &mut [zeta.clone(), quiet.clone(), alpha.clone()]).await;
         for (channel, text) in [(&zeta, "noted in zeta"), (&alpha, "noted in alpha")] {
             let mut state = AgentChannelState::default();
             state.private_notes.push(
@@ -2217,7 +2200,6 @@ mod tests {
 
         let kernel = owned_kernel(Default::default());
 
-        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let alice = make_user("alice");
         let helper = an_agent_of(stores, ActorId::User(alice.id)).await;
@@ -2226,7 +2208,7 @@ mod tests {
         session.participants.push(Participant::Agent(helper.id));
         let mut channel = main_channel(&session);
         let system = SecurityContext::system();
-        let session = stored(manager, session, slice::from_mut(&mut channel)).await;
+        let session = stored(&kernel, session, slice::from_mut(&mut channel)).await;
         // What it kept while it ran: the same state, whatever its kind was
         // (issue 206).
         let mut kept = AgentChannelState::default();
@@ -2289,7 +2271,6 @@ mod tests {
 
         let kernel = owned_kernel(Default::default());
 
-        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let alice = make_user("alice");
         let owner = ActorId::User(alice.id);
@@ -2305,7 +2286,7 @@ mod tests {
             participant: Participant::Agent(leaver.id),
             left: Removal::now(owner),
         }];
-        let session = stored(manager, session, slice::from_mut(&mut channel)).await;
+        let session = stored(&kernel, session, slice::from_mut(&mut channel)).await;
         for (agent, text) in
             [(leaver.id, "noted before it left"), (rester.id, "noted by the rester")]
         {
@@ -2360,7 +2341,7 @@ mod tests {
         session.participants = record_users(kernel.entity_stores(), &[&alice]).await;
         session.participants.push(Participant::Agent(helper.id));
         let mut channel = main_channel(&session);
-        let session = stored(manager, session, slice::from_mut(&mut channel)).await;
+        let session = stored(&kernel, session, slice::from_mut(&mut channel)).await;
 
         // The agent's turn waits for one call, the other was approved.
         let calls = vec![make_tool_call("delete")];
@@ -2398,7 +2379,6 @@ mod tests {
 
         let kernel = owned_kernel(Default::default());
 
-        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let alice = make_user("alice");
         let helper = an_agent_of(stores, ActorId::User(alice.id)).await;
@@ -2406,7 +2386,7 @@ mod tests {
         session.participants = record_users(kernel.entity_stores(), &[&alice]).await;
         session.participants.push(Participant::Agent(helper.id));
         let mut channel = main_channel(&session);
-        let session = stored(manager, session, slice::from_mut(&mut channel)).await;
+        let session = stored(&kernel, session, slice::from_mut(&mut channel)).await;
         // What the agent's call used, what it noted, and a call its turn
         // waits to have approved.
         let answer = Message {
@@ -2499,7 +2479,6 @@ mod tests {
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
         let kernel = owned_kernel(ConfidentialityRules::new(compartments));
-        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let alice = make_user("alice");
         let helper = an_agent_of(stores, ActorId::User(alice.id)).await;
@@ -2521,7 +2500,7 @@ mod tests {
         let secret = channel_of("secret", classified(Confidentiality::Confidential, &[]));
         let hr = channel_of("hr", classified(Confidentiality::Internal, &["hr"]));
         let session = stored(
-            manager,
+            &kernel,
             session,
             &mut [public.clone(), team.clone(), secret.clone(), hr.clone()],
         )
@@ -2729,7 +2708,6 @@ mod tests {
 
         let kernel = owned_kernel(Default::default());
 
-        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let alice = make_user("alice");
         let helper = an_agent_of(stores, ActorId::User(alice.id)).await;
@@ -2743,7 +2721,7 @@ mod tests {
             name: Name::new("deleted").unwrap(),
             ..channel.clone()
         };
-        let session = stored(manager, session, &mut [channel.clone(), deleted.clone()]).await;
+        let session = stored(&kernel, session, &mut [channel.clone(), deleted.clone()]).await;
         let mut state = kernel.state_store().get_channel_state(channel.id).await.unwrap();
         state.history.extend(
             &EventContext::new(channel.session_id, channel.id, ActorId::None, String::new()),
@@ -2833,7 +2811,6 @@ mod tests {
         )])
         .unwrap();
         let kernel = owned_kernel(ConfidentialityRules::default().with_roles(roles));
-        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let alice = make_user("alice");
         let mut session = make_session("hers", alice.id);
@@ -2851,7 +2828,7 @@ mod tests {
             ..main.clone()
         };
         let session =
-            stored(manager, session, &mut [main.clone(), internal.clone(), secret.clone()]).await;
+            stored(&kernel, session, &mut [main.clone(), internal.clone(), secret.clone()]).await;
         stores
             .channels
             .delete(&SecurityContext::system(), internal.id, &Removal::now(ActorId::System))
@@ -2881,14 +2858,13 @@ mod tests {
     #[tokio::test]
     async fn what_was_deleted_is_shown_to_its_owner_with_what_they_may_do_about_it() {
         let kernel = owned_kernel(Default::default());
-        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let (alice, bob) = (make_user("alice"), make_user("bob"));
         let mut session = make_session("hers", alice.id);
         session.participants = record_users(kernel.entity_stores(), &[&alice, &bob]).await;
         let channel = main_channel(&session);
         let side = like(&channel, "side");
-        let session = stored(manager, session, &mut [channel.clone(), side.clone()]).await;
+        let session = stored(&kernel, session, &mut [channel.clone(), side.clone()]).await;
         let alice_ctx = as_user(alice.id).context().clone();
         stores
             .channels
@@ -2938,7 +2914,6 @@ mod tests {
 
         let kernel = owned_kernel(Default::default());
 
-        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let (alice, bob) = (make_user("alice"), make_user("bob"));
         let helper = an_agent_of(stores, ActorId::User(alice.id)).await;
@@ -2955,7 +2930,7 @@ mod tests {
             FormerParticipant { participant: Participant::User(bob.id), left: removed.clone() },
             FormerParticipant { participant: Participant::Agent(helper.id), left: removed.clone() },
         ];
-        let session = stored(manager, session, slice::from_mut(&mut channel)).await;
+        let session = stored(&kernel, session, slice::from_mut(&mut channel)).await;
 
         let reached = kernel
             .views(as_user(alice.id))
@@ -2996,7 +2971,6 @@ mod tests {
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
         let kernel = owned_kernel(ConfidentialityRules::new(compartments));
-        let manager = kernel.session_manager();
 
         let (alice, bob) = (make_user("alice"), make_user("bob"));
         let alice_id = ActorId::User(alice.id);
@@ -3008,7 +2982,7 @@ mod tests {
         session.security_attributes =
             session.security_attributes.clone().granting(Subject::Actor(bob_id), Grant::Read);
         session.participants = record_users(kernel.entity_stores(), &[&alice, &bob]).await;
-        let session = create(manager, &alice_ctx, session).await.unwrap();
+        let session = create(&kernel, &alice_ctx, session).await.unwrap();
 
         let classified = |level, compartments: &[&str]| {
             Classification::new(level, compartments.iter().map(|c| Compartment::new(*c))).unwrap()
@@ -3085,7 +3059,7 @@ mod tests {
             ),
             "{refused}"
         );
-        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+        kernel.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     /// The session of `channel` as `actor` reads it from there, at the channel's classification,
@@ -3104,7 +3078,6 @@ mod tests {
 
         let kernel = owned_kernel(Default::default());
 
-        let manager = kernel.session_manager();
         let (alice, carol) = (make_user("alice"), make_user("carol"));
         let (alice_id, carol_id) = (ActorId::User(alice.id), ActorId::User(carol.id));
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
@@ -3112,10 +3085,10 @@ mod tests {
         let mut hers = make_session("hers", alice.id);
         hers.participants = record_users(kernel.entity_stores(), &[&alice]).await;
         hers.privacy = PrivacyConfig::SameOwner;
-        let hers = create(manager, &alice_ctx, hers).await.unwrap();
+        let hers = create(&kernel, &alice_ctx, hers).await.unwrap();
         let theirs = make_session("theirs", carol.id);
         persist(
-            manager,
+            &kernel,
             &SecurityContext::new(carol_id, Default::default(), Default::default()),
             theirs.clone(),
             &mut [main_channel(&theirs)],
@@ -3140,7 +3113,7 @@ mod tests {
             "even a session the reader may not read"
         );
         assert!(session.privacy_of(SessionId::new()).await.unwrap().is_none(), "one that is gone");
-        manager.stop(&SecurityContext::system(), hers.id()).await.unwrap();
+        kernel.stop_session(&SecurityContext::system(), hers.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -3155,13 +3128,12 @@ mod tests {
         ])
         .unwrap();
         let kernel = owned_kernel(ConfidentialityRules::new(compartments));
-        let manager = kernel.session_manager();
         let alice = make_user("alice");
         let alice_id = ActorId::User(alice.id);
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
         let mut session = make_session("hers", alice.id);
         session.participants = record_users(kernel.entity_stores(), &[&alice]).await;
-        let session = create(manager, &alice_ctx, session).await.unwrap();
+        let session = create(&kernel, &alice_ctx, session).await.unwrap();
 
         let classified = |level, compartments: &[&str]| {
             Classification::new(level, compartments.iter().map(|c| Compartment::new(*c))).unwrap()
@@ -3241,7 +3213,7 @@ mod tests {
             matches!(nothing, Err(ViewError::NoChannelNamed(_))),
             "nothing was released to a general channel"
         );
-        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+        kernel.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -3256,7 +3228,6 @@ mod tests {
             ..Default::default()
         }
         .build();
-        let manager = kernel.session_manager();
         let system = SecurityContext::system();
 
         let alice = make_user("alice");
@@ -3275,7 +3246,7 @@ mod tests {
         let mut session = make_session("thinking", UserId::new());
         session.participants = participants;
         session.participants.push(Participant::Agent(thinker.id));
-        let session = create(manager, &alice_ctx, session).await.unwrap();
+        let session = create(&kernel, &alice_ctx, session).await.unwrap();
         let channel = session
             .create_channel(&alice_ctx, spec("talk", vec![ActorId::User(alice.id), agent]))
             .await
@@ -3336,6 +3307,6 @@ mod tests {
         channel.cancel_actor(&alice_ctx, agent).await.unwrap();
         ended.await;
         assert_eq!(under_way().await, (BTreeMap::new(), None), "over once it ended");
-        manager.stop(&system, session.id()).await.unwrap();
+        kernel.stop_session(&system, session.id()).await.unwrap();
     }
 }

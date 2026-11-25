@@ -322,7 +322,7 @@ mod tests {
         let found = tool.execute(&sought("coffee"), None, &mut turn).await.unwrap();
         assert_eq!(found.value["messages"].as_array().map(Vec::len), Some(0), "or not at all");
         drop(turn);
-        world.manager.stop(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
     }
 
     /// Issue 538: what `read_history` read it gives with its output, for the executor to record:
@@ -347,6 +347,6 @@ mod tests {
             read.knowledge
         );
         drop(turn);
-        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+        world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 }

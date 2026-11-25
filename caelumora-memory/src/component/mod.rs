@@ -181,7 +181,7 @@ mod tests {
     use caelumora_kernel::session::testing::{
         detached_participant_in, owned, participant_runtime_in, spec,
     };
-    use caelumora_kernel::session::{ChannelSpec, SessionLoop, SessionManager};
+    use caelumora_kernel::session::{ChannelSpec, SessionLoop};
     use caelumora_kernel::testing::TestKernel;
     use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
     use caelumora_security::{Policies, SecurityContext};
@@ -260,7 +260,7 @@ mod tests {
     }
 
     /// The sessions of a test, as a turn reaches them: made as the kernel makes a session
-    /// (`SessionManager::create`, issue 486) and running, with every channel a turn works in,
+    /// (`Kernel::create_session`, issue 486) and running, with every channel a turn works in,
     /// through which it reaches its session and reads its privacy from its loop. Each is changed,
     /// deleted and restored by its owner.
     struct Sessions {
@@ -268,7 +268,6 @@ mod tests {
         stores: EntityStores,
         /// The agents' memories, read as the kernel's system.
         memories: Arc<dyn EntityStore<AgentMemory>>,
-        manager: Arc<SessionManager>,
         loops: HashMap<SessionId, Arc<SessionLoop>>,
         /// How many were made, for their names.
         made: usize,
@@ -294,9 +293,8 @@ mod tests {
                 libraries: vec![&AgentsLibrary, &MemoryLibrary],
                 ..Default::default()
             });
-            let manager = Arc::clone(kernel.session_manager());
             let stores = kernel.entity_stores().clone();
-            Self { kernel, stores, memories, manager, loops: HashMap::new(), made: 0 }
+            Self { kernel, stores, memories, loops: HashMap::new(), made: 0 }
         }
 
         /// What `agent` remembers now, as it is stored.
@@ -327,7 +325,8 @@ mod tests {
                 ..session
             };
             let channels = vec![main_channel(&session)];
-            let running = self.manager.create(&as_user(owner), session, channels).await.unwrap();
+            let running =
+                self.kernel.create_session(&as_user(owner), session, channels).await.unwrap();
             self.loops.insert(running.id(), Arc::clone(&running));
             running.id()
         }
@@ -356,13 +355,13 @@ mod tests {
         /// Deletes session `id`: there is none such for whoever looks it up.
         async fn delete(&mut self, id: SessionId) {
             let session = self.loops.remove(&id).expect("a running session of the test");
-            assert!(self.manager.delete(&owner_of(&session), id).await.unwrap());
+            assert!(self.kernel.delete_session(&owner_of(&session), id).await.unwrap());
         }
 
         /// Restores the deleted session `id` of `owner` and runs it again.
         async fn restore(&mut self, id: SessionId, owner: UserId) {
-            self.manager.restore(&as_user(owner), id).await.unwrap();
-            let running = self.manager.open(&as_user(owner), id).await.unwrap();
+            self.kernel.restore_session(&as_user(owner), id).await.unwrap();
+            let running = self.kernel.open_session(&as_user(owner), id).await.unwrap();
             self.loops.insert(id, running);
         }
 

@@ -1366,7 +1366,7 @@ mod tests {
         executor.run(Open::new(&alice, id)).await.expect("opened beside it");
         held.release().await;
 
-        world.manager.stop(&alice, id).await.unwrap();
+        world.kernel.stop_session(&alice, id).await.unwrap();
         let held = Held::key(&executor, Key::Session(id), false).await;
         let opening = Open::new(&alice, id);
         waits_for(held, &executor, opening).await.expect("started once it is let go");
@@ -1381,7 +1381,7 @@ mod tests {
         let alice = World::as_user(world.alice);
         let id = world.shared_session(&[], &[]).await.id();
         let project = project_of_alice(&world).await;
-        world.manager.update_project(&alice, id, Some(project)).await.unwrap();
+        world.kernel.move_session(&alice, id, Some(project)).await.unwrap();
 
         let held = Held::key(&executor, Key::Project(project), true).await;
         let deleting = Delete::new(&alice, id);
@@ -1391,7 +1391,7 @@ mod tests {
         let restoring = Restore::new(&alice, id);
         waits_for(held, &executor, restoring).await.expect("restored once it is let go");
 
-        world.manager.delete(&alice, id).await.unwrap();
+        world.kernel.delete_session(&alice, id).await.unwrap();
         let held = Held::key(&executor, Key::Project(project), true).await;
         let purging = Purge::new(&World::system(), id);
         assert!(waits_for(held, &executor, purging).await.unwrap(), "purged once let go");
@@ -1422,9 +1422,9 @@ mod tests {
         let session_id = session.id;
         let channel_id = session.channels[0];
 
-        create(manager, &ctx, session).await.unwrap();
+        create(&kernel, &ctx, session).await.unwrap();
 
-        // The manager emits these synchronously, in order, before returning.
+        // Creating it announces these synchronously, in order, before it returns.
         let events = rx.drain().await;
         let created = events
             .iter()
@@ -1451,7 +1451,7 @@ mod tests {
         assert!(kernel.entity_stores().sessions.get(&ctx, session_id).await.is_ok());
         assert!(manager.running(session_id).is_some());
 
-        manager.stop(&SecurityContext::system(), session_id).await.unwrap();
+        kernel.stop_session(&SecurityContext::system(), session_id).await.unwrap();
     }
 
     /// Deleting a session announces it deleted as it is marked, then stopped as it stops - whoever
@@ -1465,11 +1465,11 @@ mod tests {
         let session = make_session("s2", UserId::new());
         let session_id = session.id;
         let channel_id = session.channels[0];
-        create(manager, &ctx, session).await.unwrap();
+        create(&kernel, &ctx, session).await.unwrap();
 
         // Subscribe after creation so we only observe the deletion events.
         let mut rx = kernel.event_bus().subscribe_all();
-        assert!(manager.delete(&ctx, session_id).await.unwrap());
+        assert!(kernel.delete_session(&ctx, session_id).await.unwrap());
 
         let events = rx.drain().await;
         let stopped = events.iter().position(|e| matches!(e.about::<Session>(), Some((id, EntityChange::Custom { name: session::STOPPED, .. })) if id == session_id));
@@ -1494,7 +1494,6 @@ mod tests {
     #[tokio::test]
     async fn stopping_a_session_announces_its_channels_stopped_then_itself() {
         let kernel = test_kernel();
-        let manager = kernel.session_manager();
         let session = make_session("s3", UserId::new());
         let session_id = session.id;
         let channel_id = session.channels[0];
@@ -1503,13 +1502,13 @@ mod tests {
             matches!(event.about::<Channel>(), Some(((s, c), EntityChange::Custom { name, .. }))
                 if s == session_id && c == channel_id && *name == wanted)
         };
-        create(manager, &SecurityContext::default(), session).await.unwrap();
+        create(&kernel, &SecurityContext::default(), session).await.unwrap();
         let started = time::timeout(Duration::from_secs(5), async {
             while !rx.recv().await.is_some_and(|event| is_channel(&event, channel::STARTED)) {}
         });
         started.await.expect("its channel is started");
 
-        manager.stop(&SecurityContext::system(), session_id).await.unwrap();
+        kernel.stop_session(&SecurityContext::system(), session_id).await.unwrap();
 
         let events = rx.drain().await;
         let ch_stopped = events.iter().position(|e| is_channel(e, channel::STOPPED));
@@ -1524,17 +1523,16 @@ mod tests {
     #[tokio::test]
     async fn opening_a_stored_session_emits_started_but_not_created() {
         let kernel = test_kernel();
-        let manager = kernel.session_manager();
         let ctx = SecurityContext::default();
 
         // Persist a session directly, without going through `create`.
         let session = make_session("s3", UserId::new());
         let session_id = session.id;
         let mut channels = [main_channel(&session)];
-        persist(manager, &ctx, session, &mut channels).await;
+        persist(&kernel, &ctx, session, &mut channels).await;
 
         let mut rx = kernel.event_bus().subscribe_all();
-        manager.open(&ctx, session_id).await.unwrap();
+        kernel.open_session(&ctx, session_id).await.unwrap();
 
         let events = rx.drain().await;
         assert!(
@@ -1549,24 +1547,23 @@ mod tests {
             events
         );
 
-        manager.stop(&SecurityContext::system(), session_id).await.unwrap();
+        kernel.stop_session(&SecurityContext::system(), session_id).await.unwrap();
     }
 
     #[tokio::test]
     async fn a_session_asked_for_at_the_same_time_starts_once() {
         let kernel = test_kernel();
-        let manager = kernel.session_manager();
         let ctx = SecurityContext::default();
         let session = make_session("concurrent", UserId::new());
         let session_id = session.id;
         let mut channels = [main_channel(&session)];
-        persist(manager, &ctx, session, &mut channels).await;
+        persist(&kernel, &ctx, session, &mut channels).await;
 
         let mut rx = kernel.event_bus().subscribe_all();
         let (first, second, third) = tokio::join!(
-            manager.open(&ctx, session_id),
-            manager.open(&ctx, session_id),
-            manager.open(&ctx, session_id),
+            kernel.open_session(&ctx, session_id),
+            kernel.open_session(&ctx, session_id),
+            kernel.open_session(&ctx, session_id),
         );
         let (first, second, third) = (first.unwrap(), second.unwrap(), third.unwrap());
         assert!(
@@ -1576,7 +1573,7 @@ mod tests {
 
         let started = rx.drain().await.into_iter().filter(|e| matches!(e.about::<Session>(), Some((id, EntityChange::Custom { name: session::STARTED, .. })) if id == session_id)).count();
         assert_eq!(started, 1, "the session started once");
-        manager.stop(&SecurityContext::system(), session_id).await.unwrap();
+        kernel.stop_session(&SecurityContext::system(), session_id).await.unwrap();
     }
 
     #[tokio::test]
@@ -1612,7 +1609,7 @@ mod tests {
         let session = make_session("stopped", UserId::new());
         let session_id = session.id;
         let mut channels = [main_channel(&session)];
-        let session = persist(manager, &ctx, session, &mut channels).await;
+        let session = persist(&kernel, &ctx, session, &mut channels).await;
 
         // A start under way holds the session ...
         let go = Arc::new(Semaphore::new(0));
@@ -1624,8 +1621,8 @@ mod tests {
         });
         time::sleep(Duration::from_millis(50)).await;
         let stopping = tokio::spawn({
-            let manager = Arc::clone(manager);
-            async move { manager.stop(&SecurityContext::system(), session_id).await.unwrap() }
+            let (kernel, system) = (Arc::clone(&kernel), SecurityContext::system());
+            async move { kernel.stop_session(&system, session_id).await.unwrap() }
         });
         time::sleep(Duration::from_millis(50)).await;
         assert!(!stopping.is_finished(), "the stop waits for the start");
@@ -1714,7 +1711,6 @@ mod tests {
                 .unwrap_or_else(|_| panic!("{what}"));
         }
         let kernel = test_kernel();
-        let manager = kernel.session_manager();
         // Followed as the programs follow them (issue 593).
         let _followed = SessionFollower::spawn(&kernel);
         let agents = kernel.agent_manager();
@@ -1731,12 +1727,12 @@ mod tests {
         // In a running session's channel, and in a stopped one's.
         let mut running = make_session("running", UserId::new());
         running.participants = vec![Participant::Agent(helper.id)];
-        let running = create(manager, &ctx, running).await.unwrap();
+        let running = create(&kernel, &ctx, running).await.unwrap();
         let talk = running.create_channel(&ctx, spec("talk", vec![actor])).await.unwrap();
         let mut stopped = make_session("stopped", UserId::new());
         stopped.participants = vec![Participant::Agent(helper.id)];
         let mut channels = [main_channel(&stopped)];
-        let stopped = persist(manager, &system, stopped, &mut channels).await;
+        let stopped = persist(&kernel, &system, stopped, &mut channels).await;
 
         assert!(agents.delete(&ctx, helper.id).await.expect("deleted"));
         until(
@@ -1774,7 +1770,7 @@ mod tests {
         );
 
         // A session that starts meanwhile leaves it out.
-        let opened = manager.open(&ctx, stopped.id).await.unwrap();
+        let opened = kernel.open_session(&ctx, stopped.id).await.unwrap();
         let main = opened.channel(stopped.channels[0]).unwrap();
         assert!(!main.participant_ids().contains(&actor), "not run where it rests");
 
@@ -1821,15 +1817,14 @@ mod tests {
         let purged = reached.participant(actor).await.unwrap();
         assert!(purged.former() && purged.left().is_none(), "former, without when");
         assert!(!agents.delete(&ctx, helper.id).await.unwrap(), "nothing to delete");
-        manager.stop(&system, running.id()).await.unwrap();
-        manager.stop(&system, opened.id()).await.unwrap();
+        kernel.stop_session(&system, running.id()).await.unwrap();
+        kernel.stop_session(&system, opened.id()).await.unwrap();
     }
 
     #[tokio::test]
     async fn an_agent_deleted_unheard_of_is_found_out_as_the_session_is_followed_again() {
         use caelumora_domain::channel::Participant;
         let kernel = test_kernel();
-        let manager = kernel.session_manager();
         let (system, ctx) = (SecurityContext::system(), SecurityContext::default());
         let helper = stored_agent(
             kernel.entity_stores(),
@@ -1841,7 +1836,7 @@ mod tests {
         let actor = ActorId::Agent(helper.id);
         let mut session = make_session("running", UserId::new());
         session.participants = vec![Participant::Agent(helper.id)];
-        let session = create(manager, &ctx, session).await.unwrap();
+        let session = create(&kernel, &ctx, session).await.unwrap();
         let talk = session.create_channel(&ctx, spec("talk", vec![actor])).await.unwrap();
 
         // Deleted with nothing announced, as if the session lost the event.
@@ -1865,7 +1860,7 @@ mod tests {
         assert!(talk.participant_ids().contains(&actor), "and starts it again");
         let announced = rx.drain().await;
         assert!(announced.iter().any(|e| matches!(e.about::<Channel>(), Some(((_, c), change)) if c == talk.id() && change.data::<ActorId>(channel::JOINED) == Some(ActorId::Agent(helper.id)))), "as a join: {announced:?}");
-        manager.stop(&system, session.id()).await.unwrap();
+        kernel.stop_session(&system, session.id()).await.unwrap();
     }
 
     /// The template "pairing", stored: one channel "main" for its "user", moderated by a broadcast
@@ -1892,7 +1887,6 @@ mod tests {
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn a_session_is_created_from_a_template_for_its_owner() {
         let kernel = test_kernel();
-        let manager = kernel.session_manager();
         let (owner, template) = pairing(&kernel).await;
         let hers =
             SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
@@ -1900,8 +1894,8 @@ mod tests {
         profile.preferred_language = Some(Language::new("de").unwrap());
         kernel.entity_stores().user_profiles.create(&hers, &mut profile).await.unwrap();
 
-        let session = manager
-            .create_from_template(&hers, template.id, SessionSpec::default())
+        let session = kernel
+            .create_session_from_template(&hers, template.id, SessionSpec::default())
             .await
             .expect("created and started");
         assert_eq!(session.name(), "pairing", "named after the template unless named");
@@ -1922,10 +1916,10 @@ mod tests {
             stored.internal_actors.iter().all(|internal| main.actor(internal.actor_id()).is_some()),
             "and its actor runs"
         );
-        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+        kernel.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
 
-        let missing = manager
-            .create_from_template(&hers, SessionTemplateId::new(), SessionSpec::default())
+        let missing = kernel
+            .create_session_from_template(&hers, SessionTemplateId::new(), SessionSpec::default())
             .await
             .expect_err("no such template");
         assert!(
@@ -1935,8 +1929,12 @@ mod tests {
             ),
             "{missing}"
         );
-        let not_a_user = manager
-            .create_from_template(&SecurityContext::system(), template.id, SessionSpec::default())
+        let not_a_user = kernel
+            .create_session_from_template(
+                &SecurityContext::system(),
+                template.id,
+                SessionSpec::default(),
+            )
             .await
             .expect_err("the system owns no session");
         assert!(
@@ -1947,8 +1945,8 @@ mod tests {
             "{not_a_user}"
         );
 
-        let asked = manager
-            .create_from_template(
+        let asked = kernel
+            .create_session_from_template(
                 &hers,
                 template.id,
                 SessionSpec {
@@ -1970,8 +1968,8 @@ mod tests {
             Some(Language::new("fr").unwrap()),
             "stored, not only in memory"
         );
-        let no_tag = manager
-            .create_from_template(
+        let no_tag = kernel
+            .create_session_from_template(
                 &hers,
                 template.id,
                 SessionSpec {
@@ -1983,8 +1981,8 @@ mod tests {
             .await
             .expect_err("no language tag");
         assert!(no_tag.downcast_ref::<ValueError>().is_some(), "{no_tag}");
-        let zoned = manager
-            .create_from_template(
+        let zoned = kernel
+            .create_session_from_template(
                 &hers,
                 template.id,
                 SessionSpec {
@@ -2000,8 +1998,8 @@ mod tests {
             Some(TimeZone::new("Europe/Berlin").unwrap()),
             "issue 424"
         );
-        let no_zone = manager
-            .create_from_template(
+        let no_zone = kernel
+            .create_session_from_template(
                 &hers,
                 template.id,
                 SessionSpec {
@@ -2036,8 +2034,8 @@ mod tests {
             .create(&SecurityContext::system(), &mut broken)
             .await
             .unwrap();
-        let refused = manager
-            .create_from_template(&hers, broken.id, SessionSpec::default())
+        let refused = kernel
+            .create_session_from_template(&hers, broken.id, SessionSpec::default())
             .await
             .expect_err("a bundle she cannot read");
         let Some(&SessionError::ChannelUnavailable { session, .. }) =
@@ -2059,7 +2057,6 @@ mod tests {
     async fn a_session_whose_workspace_cannot_be_shared_is_not_made() {
         let (kernel, passing) = failing_kernel(Workspace::KIND);
         let stores = kernel.entity_stores().clone();
-        let manager = kernel.session_manager();
         let (owner, template) = pairing(&kernel).await;
         let hers =
             SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
@@ -2073,8 +2070,8 @@ mod tests {
         stores.workspaces.create(&system, &mut docs).await.unwrap();
 
         passing.store(0, Ordering::SeqCst);
-        manager
-            .create_from_template(
+        kernel
+            .create_session_from_template(
                 &hers,
                 template.id,
                 SessionSpec {
@@ -2097,31 +2094,30 @@ mod tests {
         let (entities, states) = (Arc::new(MemoryStore::new()), Arc::new(MemoryStore::new()));
         let store = Persistence::new(entities, Arc::<MemoryStore>::clone(&states)).unwrap();
         let kernel = TestKernel { store, ..Default::default() }.build();
-        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let ctx = SecurityContext::default();
         let session = make_session("two-stores", UserId::new());
         let (id, channel_id) = (session.id, session.channels[0]);
-        create(manager, &ctx, session).await.unwrap();
+        create(&kernel, &ctx, session).await.unwrap();
         assert!(
             states.get_channel_state(channel_id).await.is_ok(),
             "the channel keeps its state in the state store"
         );
 
-        assert!(manager.delete(&ctx, id).await.unwrap());
+        assert!(kernel.delete_session(&ctx, id).await.unwrap());
         assert!(stores.sessions.get(&ctx, id).await.is_err(), "not there");
         assert!(
             states.get_channel_state(channel_id).await.is_ok(),
             "but kept, with its channels' state (issue 164)"
         );
-        manager.restore(&ctx, id).await.expect("restored");
-        manager.open(&ctx, id).await.expect("and opened as any stored session");
-        assert!(manager.restore(&ctx, id).await.is_err(), "not deleted");
-        assert!(!manager.purge(&ctx, id).await.unwrap(), "only what was deleted is purged");
+        kernel.restore_session(&ctx, id).await.expect("restored");
+        kernel.open_session(&ctx, id).await.expect("and opened as any stored session");
+        assert!(kernel.restore_session(&ctx, id).await.is_err(), "not deleted");
+        assert!(!kernel.purge_session(&ctx, id).await.unwrap(), "only what was deleted is purged");
 
         // A channel deleted from it before goes with it, too.
-        let side = manager
-            .open(&ctx, id)
+        let side = kernel
+            .open_session(&ctx, id)
             .await
             .unwrap()
             .create_channel(&ctx, spec("side", vec![]))
@@ -2129,12 +2125,12 @@ mod tests {
             .unwrap()
             .id();
         assert!(
-            manager.open(&ctx, id).await.unwrap().delete_channel(&ctx, side).await.unwrap(),
+            kernel.open_session(&ctx, id).await.unwrap().delete_channel(&ctx, side).await.unwrap(),
             "deleted"
         );
         assert!(states.get_channel_state(side).await.is_ok(), "kept with the deleted channel");
-        assert!(manager.delete(&ctx, id).await.unwrap());
-        assert!(manager.purge(&ctx, id).await.expect("purged"));
+        assert!(kernel.delete_session(&ctx, id).await.unwrap());
+        assert!(kernel.purge_session(&ctx, id).await.expect("purged"));
         assert!(stores.sessions.get_deleted(&ctx, id).await.is_err(), "nothing left to restore");
         assert!(
             states.get_channel_state(channel_id).await.is_err(),
@@ -2161,12 +2157,11 @@ mod tests {
         let kernel = test_kernel();
         let stores = kernel.entity_stores().clone();
         let mut events = kernel.event_bus().subscribe_all();
-        let manager = kernel.session_manager();
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
         let owner = UserId::new();
         let session = make_session("with-results", owner);
         let id = session.id;
-        let project = create(manager, &ctx, session).await.unwrap().session().project;
+        let project = create(&kernel, &ctx, session).await.unwrap().session().project;
 
         let own = stores.projects.get(&system, project).await.expect("made with it");
         assert_eq!(
@@ -2194,7 +2189,7 @@ mod tests {
         );
         stores.component_bundles.create(&system, &mut bundle).await.unwrap();
 
-        assert!(manager.delete(&ctx, id).await.unwrap());
+        assert!(kernel.delete_session(&ctx, id).await.unwrap());
         assert!(stores.projects.get(&system, project).await.is_err(), "deleted with it");
         assert!(stores.groups.get(&system, members).await.is_err(), "its group too");
         assert!(
@@ -2210,7 +2205,7 @@ mod tests {
             "announced"
         );
 
-        manager.restore(&ctx, id).await.unwrap();
+        kernel.restore_session(&ctx, id).await.unwrap();
         assert!(stores.projects.get(&system, project).await.is_ok(), "restored with it");
         assert!(stores.groups.get(&system, members).await.is_ok(), "its group too");
         assert!(
@@ -2226,8 +2221,8 @@ mod tests {
             "announced"
         );
 
-        assert!(manager.delete(&ctx, id).await.unwrap());
-        assert!(manager.purge(&ctx, id).await.unwrap());
+        assert!(kernel.delete_session(&ctx, id).await.unwrap());
+        assert!(kernel.purge_session(&ctx, id).await.unwrap());
         assert!(stores.projects.get_deleted(&system, project).await.is_err(), "purged with it");
         assert!(stores.groups.get_deleted(&system, members).await.is_err(), "its group too");
         assert!(
@@ -2245,11 +2240,10 @@ mod tests {
     async fn a_session_keeps_its_groups_and_its_project_all_or_none() {
         let (kernel, passing) = failing_kernel(Project::KIND);
         let stores = kernel.entity_stores().clone();
-        let manager = kernel.session_manager();
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
         let session = make_session("kept", UserId::new());
         let id = session.id;
-        let project = create(manager, &ctx, session).await.unwrap().session().project;
+        let project = create(&kernel, &ctx, session).await.unwrap().session().project;
         let groups_there = async || {
             let session = stores.groups.get(&system, GroupId::of_session(id)).await;
             let project = stores.groups.get(&system, GroupId::of_project(project)).await;
@@ -2257,7 +2251,7 @@ mod tests {
         };
 
         passing.store(0, Ordering::SeqCst);
-        manager.delete(&ctx, id).await.expect_err("its project cannot go");
+        kernel.delete_session(&ctx, id).await.expect_err("its project cannot go");
         assert!(stores.sessions.get(&system, id).await.is_ok(), "the session is kept");
         assert!(stores.projects.get(&system, project).await.is_ok(), "with its project");
         assert_eq!(
@@ -2272,11 +2266,11 @@ mod tests {
             SecurityAttributes::systems(),
         );
         stores.component_bundles.create(&system, &mut bundle).await.unwrap();
-        assert!(manager.delete(&ctx, id).await.expect("deleted now"));
+        assert!(kernel.delete_session(&ctx, id).await.expect("deleted now"));
         assert_eq!(groups_there().await, (false, false));
         let mark = stores.sessions.get_deleted(&system, id).await.unwrap().removal;
         passing.store(0, Ordering::SeqCst);
-        manager.restore(&ctx, id).await.expect_err("its project cannot come back");
+        kernel.restore_session(&ctx, id).await.expect_err("its project cannot come back");
         assert!(stores.sessions.get(&system, id).await.is_err(), "the session stays deleted");
         assert_eq!(
             groups_there().await,
@@ -2291,7 +2285,7 @@ mod tests {
         );
 
         passing.store(usize::MAX, Ordering::SeqCst);
-        manager.restore(&ctx, id).await.expect("restored when tried again");
+        kernel.restore_session(&ctx, id).await.expect("restored when tried again");
         assert_eq!(groups_there().await, (true, true), "with its groups");
         assert!(stores.projects.get(&system, project).await.is_ok(), "its project");
         assert!(
@@ -2306,11 +2300,10 @@ mod tests {
     async fn a_session_that_cannot_be_put_into_a_project_leaves_it_unshared() {
         let (kernel, passing) = failing_kernel(Session::KIND);
         let stores = kernel.entity_stores().clone();
-        let manager = kernel.session_manager();
         let owner = UserId::new();
         let ctx =
             SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
-        let session = create(manager, &ctx, make_session("moving", owner)).await.unwrap();
+        let session = create(&kernel, &ctx, make_session("moving", owner)).await.unwrap();
         let own = session.session().project;
         let project = kernel
             .project_manager()
@@ -2319,8 +2312,8 @@ mod tests {
             .unwrap();
 
         passing.store(0, Ordering::SeqCst);
-        manager
-            .update_project(&ctx, session.id(), Some(project.id))
+        kernel
+            .move_session(&ctx, session.id(), Some(project.id))
             .await
             .expect_err("the session cannot be stored");
         assert_eq!(session.session().project, own, "it lies where it lay");
@@ -2346,25 +2339,24 @@ mod tests {
     async fn a_session_that_cannot_be_taken_into_a_new_own_leaves_none_behind() {
         let (kernel, passing) = failing_kernel(Session::KIND);
         let mut events = kernel.event_bus().subscribe_all();
-        let manager = kernel.session_manager();
         let owner = UserId::new();
         let ctx =
             SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
-        let session = create(manager, &ctx, make_session("moving", owner)).await.unwrap();
+        let session = create(&kernel, &ctx, make_session("moving", owner)).await.unwrap();
         let project = kernel
             .project_manager()
             .create(&ctx, ProjectSpec::new("report", Scope::UserScope { user_id: owner }))
             .await
             .unwrap();
-        manager.update_project(&ctx, session.id(), Some(project.id)).await.unwrap();
+        kernel.move_session(&ctx, session.id(), Some(project.id)).await.unwrap();
         // Its own gone, as lifting it takes it out of the session's scope.
         let own = kernel.project_manager().load_own(session.id()).await.unwrap().expect("its own");
         kernel.project_manager().purge_own(own.id).await.unwrap();
 
         events.drain().await;
         passing.store(0, Ordering::SeqCst);
-        manager
-            .update_project(&ctx, session.id(), None)
+        kernel
+            .move_session(&ctx, session.id(), None)
             .await
             .expect_err("the session cannot be stored");
         assert_eq!(session.session().project, project.id, "it lies where it lay");
@@ -2389,7 +2381,6 @@ mod tests {
     #[tokio::test]
     async fn a_session_another_process_holds_is_left_to_it() {
         let (kernel, locks) = shared_kernel();
-        let manager = kernel.session_manager();
         let ctx = SecurityContext::default();
         let session = make_session("shared", UserId::new());
         let id = session.id;
@@ -2398,24 +2389,24 @@ mod tests {
             matches!(error.downcast_ref(), Some(SessionError::RunsElsewhere(it)) if *it == id)
         };
 
-        create(manager, &ctx, session).await.unwrap();
+        create(&kernel, &ctx, session).await.unwrap();
         assert!(locks.holds(id), "held while it runs here");
-        assert!(manager.stop(&ctx, id).await.unwrap());
+        assert!(kernel.stop_session(&ctx, id).await.unwrap());
         assert!(!locks.holds(id), "let go as it stops");
 
         locks.elsewhere.lock().unwrap().insert(id);
-        assert!(runs_elsewhere(manager.open(&ctx, id).await.map(|_| ())), "not started");
-        assert!(runs_elsewhere(manager.delete(&ctx, id).await.map(|_| ())), "not deleted");
+        assert!(runs_elsewhere(kernel.open_session(&ctx, id).await.map(|_| ())), "not started");
+        assert!(runs_elsewhere(kernel.delete_session(&ctx, id).await.map(|_| ())), "not deleted");
         locks.elsewhere.lock().unwrap().remove(&id);
-        manager.open(&ctx, id).await.expect("started once let go");
-        assert!(manager.delete(&ctx, id).await.unwrap(), "deleted while it runs here");
+        kernel.open_session(&ctx, id).await.expect("started once let go");
+        assert!(kernel.delete_session(&ctx, id).await.unwrap(), "deleted while it runs here");
         assert!(!locks.holds(id), "stopped with it");
 
         locks.elsewhere.lock().unwrap().insert(id);
-        assert!(runs_elsewhere(manager.restore(&ctx, id).await.map(|_| ())), "not restored");
-        assert!(runs_elsewhere(manager.purge(&ctx, id).await.map(|_| ())), "not purged");
+        assert!(runs_elsewhere(kernel.restore_session(&ctx, id).await.map(|_| ())), "not restored");
+        assert!(runs_elsewhere(kernel.purge_session(&ctx, id).await.map(|_| ())), "not purged");
         locks.elsewhere.lock().unwrap().remove(&id);
-        assert!(manager.purge(&ctx, id).await.unwrap());
+        assert!(kernel.purge_session(&ctx, id).await.unwrap());
         assert_eq!(*locks.forgotten.lock().unwrap(), vec![id], "nothing of it stays");
         assert!(!locks.holds(id), "and nothing holds it");
     }
@@ -2428,15 +2419,14 @@ mod tests {
         let (kernel, passing) = failing_kernel(Channel::KIND);
         let stores = kernel.entity_stores().clone();
         let states = Arc::clone(kernel.state_store());
-        let manager = kernel.session_manager();
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
         let session = make_session("purged", UserId::new());
         let (id, channel_id) = (session.id, session.channels[0]);
-        create(manager, &ctx, session).await.unwrap();
-        assert!(manager.delete(&ctx, id).await.unwrap());
+        create(&kernel, &ctx, session).await.unwrap();
+        assert!(kernel.delete_session(&ctx, id).await.unwrap());
 
         passing.store(0, Ordering::SeqCst);
-        manager.purge(&ctx, id).await.expect_err("its channel cannot be marked");
+        kernel.purge_session(&ctx, id).await.expect_err("its channel cannot be marked");
         let left = stores.sessions.get_deleted(&system, id).await.expect("the session is left");
         assert!(left.entity.purging(), "its purge begun");
         assert!(stores.channels.get(&system, channel_id).await.is_ok(), "with its channel");
@@ -2444,10 +2434,10 @@ mod tests {
             states.get_channel_state(channel_id).await.is_err(),
             "whose state went before its document"
         );
-        assert!(manager.restore(&ctx, id).await.is_err(), "not to be restored");
+        assert!(kernel.restore_session(&ctx, id).await.is_err(), "not to be restored");
 
         passing.store(usize::MAX, Ordering::SeqCst);
-        assert!(manager.purge(&ctx, id).await.expect("purged when tried again"));
+        assert!(kernel.purge_session(&ctx, id).await.expect("purged when tried again"));
         assert!(stores.sessions.get_deleted(&system, id).await.is_err(), "the session is gone");
         assert!(stores.channels.get(&system, channel_id).await.is_err(), "and its channel");
     }
@@ -2475,13 +2465,13 @@ mod tests {
             .await
             .unwrap();
 
-        world.manager.stop(&alice, session.id()).await.unwrap();
-        assert!(world.manager.delete(&alice, session.id()).await.unwrap());
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
+        assert!(world.kernel.delete_session(&alice, session.id()).await.unwrap());
         assert!(
             attachments.content_of(&uploaded).await.is_ok(),
             "kept while the session can be restored"
         );
-        assert!(world.manager.purge(&system, session.id()).await.unwrap());
+        assert!(world.kernel.purge_session(&system, session.id()).await.unwrap());
         assert!(
             matches!(attachments.content_of(&uploaded).await, Err(AttachmentError::NotFound(_))),
             "gone with its channel's state"
@@ -2499,11 +2489,10 @@ mod tests {
         let bundles = Arc::clone(&kernel.entity_stores().component_bundles);
         let agents = Arc::clone(&kernel.entity_stores().agents);
         let stores = kernel.entity_stores().clone();
-        let manager = kernel.session_manager();
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
         let session = make_session("scoped", UserId::new());
         let id = session.id;
-        let running = create(manager, &ctx, session).await.unwrap();
+        let running = create(&kernel, &ctx, session).await.unwrap();
         let side = running.create_channel(&ctx, spec("side", vec![])).await.unwrap().id();
 
         let mut personality = Personality {
@@ -2554,7 +2543,7 @@ mod tests {
         running.restore_channel(&ctx, side).await.unwrap();
         assert!(present(&sides).await, "and comes back with it");
 
-        assert!(manager.delete(&ctx, id).await.unwrap());
+        assert!(kernel.delete_session(&ctx, id).await.unwrap());
         assert!(
             !present(&sessions).await && !present(&sides).await,
             "the session's and its channels' go with it"
@@ -2582,7 +2571,7 @@ mod tests {
             "all with the session's mark: {marks:?}"
         );
 
-        manager.restore(&ctx, id).await.unwrap();
+        kernel.restore_session(&ctx, id).await.unwrap();
         assert!(present(&sessions).await && present(&sides).await, "back with it");
         assert!(personalities.get(&system, personality.id).await.is_ok());
         assert!(bundles.get(&system, bundle.id).await.is_ok());
@@ -2590,15 +2579,15 @@ mod tests {
 
         // A name taken meanwhile (issue 250): that one stays deleted, the
         // others come back.
-        assert!(manager.delete(&ctx, id).await.unwrap());
+        assert!(kernel.delete_session(&ctx, id).await.unwrap());
         let mut taker = agent_in("Aside", Scope::ChannelScope { session_id: id, channel_id: side });
         agents.create(&system, &mut taker).await.unwrap();
-        manager.restore(&ctx, id).await.unwrap();
+        kernel.restore_session(&ctx, id).await.unwrap();
         assert!(!present(&sides).await, "the one whose name is taken stays deleted");
         assert!(present(&sessions).await && present(&taker).await, "the others are back");
 
-        assert!(manager.delete(&ctx, id).await.unwrap());
-        assert!(manager.purge(&ctx, id).await.unwrap());
+        assert!(kernel.delete_session(&ctx, id).await.unwrap());
+        assert!(kernel.purge_session(&ctx, id).await.unwrap());
         for agent in [&sessions, &sides, &earlier, &taker] {
             assert!(
                 agents.get_deleted(&system, agent.id).await.is_err(),
@@ -2620,11 +2609,10 @@ mod tests {
         let agents = Arc::clone(&kernel.entity_stores().agents);
         let states = Arc::clone(kernel.state_store());
         let mut events = kernel.event_bus().subscribe_all();
-        let manager = kernel.session_manager();
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
         let session = make_session("scoped", UserId::new());
         let id = session.id;
-        create(manager, &ctx, session).await.unwrap();
+        create(&kernel, &ctx, session).await.unwrap();
         let agent_in = |scope| {
             Agent::new(
                 ScopedName::new("helper", scope).unwrap(),
@@ -2645,7 +2633,7 @@ mod tests {
             states.put_agent_channel_state(agent.id, elsewhere, &mut state).await.unwrap();
         }
 
-        assert!(manager.delete(&ctx, id).await.unwrap());
+        assert!(kernel.delete_session(&ctx, id).await.unwrap());
         assert!(
             events
                 .drain()
@@ -2654,7 +2642,7 @@ mod tests {
                 .any(|e| e.about::<Agent>() == Some((sessions.id, &EntityChange::Deleted))),
             "the session's agent is announced as it goes"
         );
-        manager.restore(&ctx, id).await.unwrap();
+        kernel.restore_session(&ctx, id).await.unwrap();
         assert!(
             events
                 .drain()
@@ -2664,8 +2652,8 @@ mod tests {
             "and as it comes back"
         );
 
-        assert!(manager.delete(&ctx, id).await.unwrap());
-        assert!(manager.purge(&ctx, id).await.unwrap());
+        assert!(kernel.delete_session(&ctx, id).await.unwrap());
+        assert!(kernel.purge_session(&ctx, id).await.unwrap());
         let working = |agent: AgentId| {
             let states = Arc::clone(&states);
             async move {
@@ -2694,36 +2682,42 @@ mod tests {
             .clone()
             .granting(Subject::Actor(ActorId::User(bob)), Grant::Read);
         let id = session.id;
-        create(manager, &as_user(alice), session).await.expect("alice creates her own session");
+        create(&kernel, &as_user(alice), session).await.expect("alice creates her own session");
 
-        let refused = manager.open(&as_user(carol), id).await.expect_err("carol may not see it");
+        let refused =
+            kernel.open_session(&as_user(carol), id).await.expect_err("carol may not see it");
         assert!(
             matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::NotFound(_))),
             "not refused - absent: {refused}"
         );
-        manager.open(&as_user(bob), id).await.expect("a contributor opens it");
+        kernel.open_session(&as_user(bob), id).await.expect("a contributor opens it");
 
-        let refused =
-            manager.delete(&as_user(bob), id).await.expect_err("a contributor may not delete it");
+        let refused = kernel
+            .delete_session(&as_user(bob), id)
+            .await
+            .expect_err("a contributor may not delete it");
         assert!(is_forbidden(&refused), "{refused}");
         assert!(
             manager.running(id).is_some(),
             "a refused deletion must not stop the session on the way"
         );
 
-        let refused = manager.stop(&as_user(carol), id).await.expect_err("carol may not see it");
+        let refused =
+            kernel.stop_session(&as_user(carol), id).await.expect_err("carol may not see it");
         assert!(
             matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::NotFound(_))),
             "not refused - absent: {refused}"
         );
-        let refused =
-            manager.stop(&as_user(bob), id).await.expect_err("a contributor may not stop it");
+        let refused = kernel
+            .stop_session(&as_user(bob), id)
+            .await
+            .expect_err("a contributor may not stop it");
         assert!(is_forbidden(&refused), "{refused}");
         assert!(manager.running(id).is_some(), "it runs on");
-        assert!(manager.stop(&as_user(alice), id).await.unwrap(), "the owner stops it");
-        assert!(!manager.stop(&as_user(alice), id).await.unwrap(), "stopped already");
+        assert!(kernel.stop_session(&as_user(alice), id).await.unwrap(), "the owner stops it");
+        assert!(!kernel.stop_session(&as_user(alice), id).await.unwrap(), "stopped already");
 
-        assert!(manager.delete(&as_user(alice), id).await.expect("the owner deletes it"));
+        assert!(kernel.delete_session(&as_user(alice), id).await.expect("the owner deletes it"));
         assert!(!manager.running(id).is_some());
     }
 
@@ -2742,7 +2736,6 @@ mod tests {
             ..Default::default()
         }
         .build();
-        let manager = kernel.session_manager();
         let alice = make_user("alice");
         let participants = record_users(kernel.entity_stores(), &[&alice]).await;
         let thinker = stored_agent(
@@ -2759,7 +2752,7 @@ mod tests {
         let mut session = make_session("thinking", UserId::new());
         session.participants = participants;
         session.participants.push(Participant::Agent(thinker.id));
-        let session = create(manager, &alice_ctx, session).await.unwrap();
+        let session = create(&kernel, &alice_ctx, session).await.unwrap();
         let channel = session
             .create_channel(&alice_ctx, spec("talk", vec![ActorId::User(alice.id), agent]))
             .await
@@ -2805,10 +2798,9 @@ mod tests {
     #[tokio::test]
     async fn stopping_a_session_lets_its_agents_keep_their_turns() {
         let (kernel, alice, session, agent, mut events) = with_a_hanging_answer().await;
-        let manager = kernel.session_manager();
 
         let stopping = Instant::now();
-        assert!(manager.stop(&alice, session.id()).await.unwrap(), "it ran");
+        assert!(kernel.stop_session(&alice, session.id()).await.unwrap(), "it ran");
         assert!(stopping.elapsed() < STOP_GRACE, "the actors ended by themselves");
         assert_eq!(
             turns_given_up(&mut events, agent),
@@ -2825,16 +2817,16 @@ mod tests {
         let (kernel, alice, session, agent, mut events) = with_a_hanging_answer().await;
         let manager = kernel.session_manager();
         let stored =
-            create(manager, &alice, make_session("idle", alice.caller_id.as_user_id().unwrap()))
+            create(&kernel, &alice, make_session("idle", alice.caller_id.as_user_id().unwrap()))
                 .await
                 .unwrap()
                 .id();
-        manager.stop(&alice, stored).await.unwrap();
+        kernel.stop_session(&alice, stored).await.unwrap();
         let other =
-            create(manager, &alice, make_session("other", UserId::new())).await.unwrap().id();
+            create(&kernel, &alice, make_session("other", UserId::new())).await.unwrap().id();
 
         let shutting = Instant::now();
-        manager.shutdown().await;
+        kernel.shut_down_sessions().await;
         assert!(shutting.elapsed() < SHUTDOWN_BOUND, "the actors ended by themselves");
         assert!(
             manager.running(session.id()).is_none() && manager.running(other).is_none(),
@@ -2852,10 +2844,10 @@ mod tests {
                 Some(SessionError::Procedure(ProcedureError::ShuttingDown))
             )
         };
-        assert!(refused(manager.open(&alice, stored).await), "a stored one is not started");
-        assert!(refused(manager.open(&alice, session.id()).await), "nor one that ran");
+        assert!(refused(kernel.open_session(&alice, stored).await), "a stored one is not started");
+        assert!(refused(kernel.open_session(&alice, session.id()).await), "nor one that ran");
         assert!(
-            refused(create(manager, &alice, make_session("new", UserId::new())).await),
+            refused(create(&kernel, &alice, make_session("new", UserId::new())).await),
             "nor a new one"
         );
     }
@@ -2872,7 +2864,7 @@ mod tests {
         let sessions = ["interrupted", "waiting", "idle", "deleted"]
             .map(|name| make_session(name, UserId::new()));
         for session in &sessions {
-            persist(manager, &ctx, session.clone(), &mut [main_channel(session)]).await;
+            persist(&kernel, &ctx, session.clone(), &mut [main_channel(session)]).await;
         }
         let [interrupted, waiting, idle, deleted] =
             sessions.map(|session| (session.id, session.channels[0]));
@@ -2918,12 +2910,12 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            manager.delete(&ctx, deleted.0).await.unwrap(),
+            kernel.delete_session(&ctx, deleted.0).await.unwrap(),
             "deleted while it does not run, its state kept"
         );
 
         assert_eq!(
-            manager.resume_interrupted().await,
+            kernel.resume_interrupted_sessions().await,
             1,
             "one session, though two of its agents had work under way"
         );
@@ -2935,8 +2927,8 @@ mod tests {
             assert!(manager.running(id).is_none(), "no other");
         }
 
-        manager.shutdown().await;
-        assert_eq!(manager.resume_interrupted().await, 0, "none once shut down");
+        kernel.shut_down_sessions().await;
+        assert_eq!(kernel.resume_interrupted_sessions().await, 0, "none once shut down");
     }
 
     /// A session deleted (issue 377) has its actors leave, as a deleted
@@ -2945,9 +2937,8 @@ mod tests {
     #[tokio::test]
     async fn deleting_a_session_has_its_agents_leave_and_give_their_turns_up() {
         let (kernel, alice, session, agent, mut events) = with_a_hanging_answer().await;
-        let manager = kernel.session_manager();
 
-        assert!(manager.delete(&alice, session.id()).await.unwrap());
+        assert!(kernel.delete_session(&alice, session.id()).await.unwrap());
         assert_eq!(turns_given_up(&mut events, agent), [GivenUpReason::Left]);
     }
 
@@ -2958,7 +2949,6 @@ mod tests {
     #[tokio::test]
     async fn a_session_whose_storing_fails_part_of_the_way_leaves_nothing_behind() {
         let kernel = owned_kernel(Default::default());
-        let manager = kernel.session_manager();
         let mut events = kernel.event_bus().subscribe_all();
         let alice = make_user("alice");
         let ctx =
@@ -2969,7 +2959,7 @@ mod tests {
         let channels = vec![first.clone(), second];
 
         let refused =
-            manager.create(&ctx, session.clone(), channels).await.expect_err("named twice");
+            kernel.create_session(&ctx, session.clone(), channels).await.expect_err("named twice");
         assert!(
             matches!(refused.downcast_ref(), Some(StoreError::NameTaken { .. })),
             "refused by the store: {refused}"

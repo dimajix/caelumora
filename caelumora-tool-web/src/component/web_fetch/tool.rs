@@ -258,7 +258,7 @@ mod tests {
             let output = tool.execute(params, None, &mut turn).await;
             outputs.push(output.expect("fetched"));
         }
-        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+        world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
         outputs
     }
 
@@ -488,7 +488,7 @@ mod tests {
         })
         .await
         .expect("the attachment is read");
-        world.manager.stop(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
         read
     }
 

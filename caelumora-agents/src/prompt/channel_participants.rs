@@ -307,11 +307,8 @@ mod tests {
         let session = Session { participants, channels: vec![channel.id], ..session };
         let as_owner =
             SecurityContext::new(ActorId::User(kaya.id), Default::default(), Default::default());
-        let session_loop = kernel
-            .session_manager()
-            .create(&as_owner, session.clone(), vec![channel.clone()])
-            .await
-            .unwrap();
+        let session_loop =
+            kernel.create_session(&as_owner, session.clone(), vec![channel.clone()]).await.unwrap();
         // One who no longer exists: deleted once it founded the channel with the others.
         kernel.agent_manager().delete(&system, gone.id).await.unwrap();
         let mut state = AgentChannelState::default();

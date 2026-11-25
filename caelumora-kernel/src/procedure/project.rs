@@ -480,7 +480,7 @@ mod tests {
         let id = world.shared_session(&[], &[]).await.id();
         let spec = ProjectSpec::new("report", Scope::UserScope { user_id: world.alice });
         let project = world.kernel.project_manager().create(&alice, spec).await.unwrap().id;
-        world.manager.update_project(&alice, id, Some(project)).await.unwrap();
+        world.kernel.move_session(&alice, id, Some(project)).await.unwrap();
 
         let held = Held::key(&executor, Key::Session(id), false).await;
         let deleting = Delete::new(&alice, project);
@@ -511,7 +511,7 @@ mod tests {
         let lifting = Lift::new(&alice, own, "results", mine.clone());
         waits_for(held, &executor, lifting).await.expect("lifted once the project is let go");
 
-        world.manager.update_project(&alice, session.id(), None).await.unwrap();
+        world.kernel.move_session(&alice, session.id(), None).await.unwrap();
         let anew = session.session().project;
         let held = Held::key(&executor, Key::Session(session.id()), false).await;
         let lifting = Lift::new(&alice, anew, "more results", mine);
@@ -525,13 +525,12 @@ mod tests {
     async fn a_project_whose_session_another_process_holds_is_not_lifted() {
         let (kernel, locks) = shared_kernel();
         let executor = Arc::clone(kernel.procedures());
-        let manager = kernel.session_manager();
         let owner = UserId::new();
         let ctx =
             SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
-        let session = create(manager, &ctx, make_session("held", owner)).await.unwrap();
+        let session = create(&kernel, &ctx, make_session("held", owner)).await.unwrap();
         let (id, own) = (session.id(), session.session().project);
-        assert!(manager.stop(&ctx, id).await.unwrap());
+        assert!(kernel.stop_session(&ctx, id).await.unwrap());
         let mine = Scope::UserScope { user_id: owner };
 
         locks.elsewhere.lock().unwrap().insert(id);
@@ -552,17 +551,16 @@ mod tests {
         let stores = kernel.entity_stores().clone();
         let projects = Arc::clone(kernel.project_manager());
         let executor = Arc::clone(kernel.procedures());
-        let manager = kernel.session_manager();
         let owner = UserId::new();
         let ctx =
             SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
         let system = SecurityContext::system();
-        let session = create(manager, &ctx, make_session("in it", owner)).await.unwrap();
+        let session = create(&kernel, &ctx, make_session("in it", owner)).await.unwrap();
         let project = projects
             .create(&ctx, ProjectSpec::new("report", Scope::UserScope { user_id: owner }))
             .await
             .unwrap();
-        manager.update_project(&ctx, session.id(), Some(project.id)).await.unwrap();
+        kernel.move_session(&ctx, session.id(), Some(project.id)).await.unwrap();
         let mut bundle = ComponentBundle::new(
             ScopedName::new("tools", project.holds()).unwrap(),
             Default::default(),
@@ -634,17 +632,16 @@ mod tests {
         let stores = kernel.entity_stores().clone();
         let projects = Arc::clone(kernel.project_manager());
         let executor = Arc::clone(kernel.procedures());
-        let manager = kernel.session_manager();
         let owner = UserId::new();
         let ctx =
             SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
         let system = SecurityContext::system();
-        let session = create(manager, &ctx, make_session("in it", owner)).await.unwrap();
+        let session = create(&kernel, &ctx, make_session("in it", owner)).await.unwrap();
         let project = projects
             .create(&ctx, ProjectSpec::new("report", Scope::UserScope { user_id: owner }))
             .await
             .unwrap();
-        manager.update_project(&ctx, session.id(), Some(project.id)).await.unwrap();
+        kernel.move_session(&ctx, session.id(), Some(project.id)).await.unwrap();
         executor.run(Delete::new(&ctx, project.id)).await.unwrap();
 
         passing.store(0, Ordering::SeqCst);

@@ -276,7 +276,6 @@ mod tests {
         .unwrap();
         let ids = roles.clone();
         let kernel = owned_kernel(ConfidentialityRules::new(compartments).with_roles(roles));
-        let manager = kernel.session_manager();
         let user = |name: &str, roles: &[&str]| User {
             roles: ids.ids_of(roles).unwrap(),
             ..make_user(name)
@@ -363,7 +362,7 @@ mod tests {
             ActorId::Agent(id) => Participant::Agent(id),
             _ => unreachable!(),
         }));
-        let session = create(manager, &alice_ctx, session).await.unwrap();
+        let session = create(&kernel, &alice_ctx, session).await.unwrap();
         let with = |name: &str, participants| ChannelSpec {
             classification: hr.clone(),
             ..spec(name, participants)
@@ -388,7 +387,7 @@ mod tests {
             matches!(joining.downcast_ref::<ChannelError>(), Some(ChannelError::NotCleared { .. })),
             "{joining}"
         );
-        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+        kernel.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -398,7 +397,6 @@ mod tests {
         let kernel = test_kernel();
         let personalities = Arc::clone(&kernel.entity_stores().personalities);
         let agents = Arc::clone(&kernel.entity_stores().agents);
-        let manager = kernel.session_manager();
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
         let mut personality = make_personality("plain");
         personalities.create(&system, &mut personality).await.unwrap();
@@ -427,7 +425,7 @@ mod tests {
         }
         // In the session, not in its channel: adding them there is refused below.
         let main = Channel { participants: Vec::new(), ..main_channel(&session) };
-        let running = manager.create(&ctx, session, vec![main]).await.unwrap();
+        let running = kernel.create_session(&ctx, session, vec![main]).await.unwrap();
         let main = running.channel_named("main").unwrap();
 
         for agent in &elsewhere {
@@ -451,6 +449,6 @@ mod tests {
         }
         assert!(running.channel_named("with-it").is_none(), "nothing was created");
         assert!(main.channel().participants.is_empty(), "nor added");
-        manager.stop(&system, id).await.unwrap();
+        kernel.stop_session(&system, id).await.unwrap();
     }
 }

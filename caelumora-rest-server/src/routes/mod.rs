@@ -631,7 +631,7 @@ mod tests {
         let participants = format!("/sessions/{}/participants", session_id.0);
         let system = SecurityContext::system();
         let takes_part = async |actor| {
-            let session = state.kernel.session_manager().open(&system, session_id).await.unwrap();
+            let session = state.kernel.open_session(&system, session_id).await.unwrap();
             session.session().takes_part(actor)
         };
 
@@ -658,7 +658,7 @@ mod tests {
             (StatusCode::BAD_REQUEST, json!("invalid_path")),
             "a bare UUID names nobody"
         );
-        state.kernel.session_manager().stop(&SecurityContext::system(), session_id).await.unwrap();
+        state.kernel.stop_session(&SecurityContext::system(), session_id).await.unwrap();
     }
 
     /// Issue 467: a session asked for in a shared project is made in its own and put into that

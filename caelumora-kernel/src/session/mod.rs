@@ -8,7 +8,7 @@ pub mod testing;
 
 pub(crate) use channels::unavailable_components;
 pub(crate) use manager::Found;
-pub use manager::SessionManager;
+pub(crate) use manager::SessionManager;
 pub use spec::{ChannelSpec, SessionSpec};
 
 use crate::channel::ChannelLoop;
@@ -647,8 +647,7 @@ mod tests {
     #[tokio::test]
     async fn a_renamed_user_is_renamed_in_every_channel_of_the_session() {
         let kernel = test_kernel();
-        let manager = kernel.session_manager();
-        let (session, ctx, other) = running_session_of_a_user(manager).await;
+        let (session, ctx, other) = running_session_of_a_user(&kernel).await;
         let ActorId::User(owner) = ctx.initiator_id else { unreachable!() };
         let first = session.create_channel(&ctx, spec("first", vec![other])).await.unwrap();
         let second = session.create_channel(&ctx, spec("second", vec![other])).await.unwrap();
@@ -671,7 +670,7 @@ mod tests {
             "other",
             "nobody else is renamed"
         );
-        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+        kernel.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     /// Issue 585: a participant renamed while it takes part is mentioned by the handle of its new
@@ -680,8 +679,7 @@ mod tests {
     #[tokio::test]
     async fn a_renamed_participant_is_mentioned_by_its_new_name_in_every_channel() {
         let kernel = test_kernel();
-        let manager = kernel.session_manager();
-        let (session, ctx, other) = running_session_of_a_user(manager).await;
+        let (session, ctx, other) = running_session_of_a_user(&kernel).await;
         let ActorId::User(other_id) = other else { unreachable!() };
         let stores = kernel.entity_stores();
         let helper = stored_agent(stores, "helper", make_personality("plain"), ctx.caller_id).await;
@@ -711,7 +709,7 @@ mod tests {
         for old in ["@helper", "@other"] {
             assert!(channels.iter().all(|c| c.mentions().resolve(old, &[]).0.is_empty()), "{old}");
         }
-        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+        kernel.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     /// Issue 585: a participant renamed among more events than the session's subscription holds is
@@ -719,8 +717,7 @@ mod tests {
     #[tokio::test]
     async fn a_participant_renamed_while_events_were_lost_is_mentioned_by_its_new_name() {
         let kernel = test_kernel();
-        let manager = kernel.session_manager();
-        let (session, ctx, _) = running_session_of_a_user(manager).await;
+        let (session, ctx, _) = running_session_of_a_user(&kernel).await;
         let stores = kernel.entity_stores();
         let helper = stored_agent(stores, "helper", make_personality("plain"), ctx.caller_id).await;
         let agent = ActorId::Agent(helper.id);
@@ -740,7 +737,7 @@ mod tests {
             }
         };
         assert!(time::timeout(Duration::from_secs(2), mentioned).await.is_ok(), "by its new name");
-        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+        kernel.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -751,7 +748,6 @@ mod tests {
 
         let kernel = owned_kernel(Default::default());
 
-        let manager = kernel.session_manager();
         let (alice, bob) = (make_user("alice"), make_user("bob"));
         let as_user = |id: UserId| {
             SecurityContext::new(ActorId::User(id), Default::default(), Default::default())
@@ -762,7 +758,7 @@ mod tests {
             .clone()
             .granting(Subject::Actor(ActorId::User(bob.id)), Grant::Read);
         session.participants = record_users(kernel.entity_stores(), &[&alice, &bob]).await;
-        let session = create(manager, &as_user(alice.id), session).await.unwrap();
+        let session = create(&kernel, &as_user(alice.id), session).await.unwrap();
         let mut events = kernel.event_bus().subscribe_all();
 
         let refused = session
@@ -802,6 +798,6 @@ mod tests {
             PrivacyConfig::SharedAudience,
             "shown to everyone who takes part"
         );
-        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+        kernel.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 }

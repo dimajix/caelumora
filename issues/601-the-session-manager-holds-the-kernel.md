@@ -226,7 +226,8 @@ Added after step 2, at the maintainer's request: the test helpers on `SessionMan
 its weak link and an `expect`, to run a procedure by the kernel's executor -, and some hundred
 tests take the manager only to hand it on.
 
-- The helpers move to a guarded `impl Kernel` in `session::testing`, named by the kind, as a
+- The helpers move to a guarded `impl Kernel` in `crate::testing`, the nearest `testing` module
+  above the kernel (CODING-GUIDELINES.md, *Testing*), named by the kind, as a
   method of the kernel does not say what it acts on: `create_session`,
   `create_session_from_template`, `open_session`, `stop_session`, `delete_session`,
   `restore_session`, `purge_session`, `move_session` (`procedure::session::Move`, before
@@ -282,3 +283,14 @@ Documents: CODING-GUIDELINES.md, *Sessions in tests*, names `Kernel::create_sess
   processes being the session manager's alone, and step 4, the tests' helpers for sessions on the
   kernel (*Plan*), each a line of *Done when*. Step 3 implemented: `SessionManager::forget`;
   `Kernel::session_locks` removed; the docs of `SessionManager` name its holding sessions.
+- **2026-11-25** — Step 3 accepted by the maintainer and committed. Step 4 implemented: the test
+  helpers for sessions are a guarded `impl Kernel` in `crate::testing`, named by the kind; the
+  free helpers `create`, `persist` and `running_session_of_a_user` take `&Kernel` - not
+  `&Arc<Kernel>`, as the plan had it: none of them keeps it -; `World::manager` and the memory
+  fixture's `manager` removed, and some 80 tests' `let manager = …` with them;
+  `Kernel::session_manager` is `pub(crate)`, and so is the `SessionManager`, which no other crate
+  reaches any more. CODING-GUIDELINES.md, *Sessions in tests*, names `Kernel::create_session`.
+  Amended from the review of the step: the plan had the block in `session::testing`, against the
+  rule that puts it in the nearest `testing` module above the type; the views' test helper
+  `stored` takes the kernel, and the views' tests the manager no longer; REST-SERVER.md and the
+  module docs of the views no longer name the manager or `SessionManager::views`.

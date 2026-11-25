@@ -317,7 +317,7 @@ mod tests {
         let bob = ActorId::User(world.bob);
         let removing = LetGo::removed(&alice, id, bob, Some(main));
         waits_for(held, &executor, removing).await.expect("let go once its thread is let go");
-        world.manager.stop(&alice, id).await.unwrap();
+        world.kernel.stop_session(&alice, id).await.unwrap();
     }
 
     /// At the line of `channel`, at a message `user` says there (issue 595).
@@ -423,11 +423,11 @@ mod tests {
         assert!(main.close_thread_by_procedure(&alice, threads[3]).await.unwrap(), "closed");
         assert!(!deleted(agents[3]).await, "an agent it does not own is kept");
 
-        world.manager.stop(&alice, id).await.unwrap();
+        world.kernel.stop_session(&alice, id).await.unwrap();
         let closing = Close::new(&alice, id, main.id(), threads[2]);
         assert!(world.kernel.procedures().run(closing).await.unwrap(), "started and closed");
         assert!(deleted(agents[2]).await, "its agent deleted");
-        world.manager.stop(&alice, id).await.unwrap();
+        world.kernel.stop_session(&alice, id).await.unwrap();
     }
 
     /// Issue 557: what is delegated into a thread its delegate gives the recipient to read there,
@@ -521,7 +521,7 @@ mod tests {
         assert!(main.actor(ActorId::Delegate(thread)).is_none(), "which is gone");
         assert!(main.delegation(thread).await.is_none(), "with what was delegated");
         assert!(main.delegation(line).await.is_none(), "and nothing is delegated into the line");
-        world.manager.stop(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
     }
 
     /// Issue 557: what came of a brief that cannot reach its giver - gone from where the thread was
@@ -564,7 +564,7 @@ mod tests {
             entries.iter().any(|e| matches!(e, HistoryEntry::EventRejected { .. })),
             "what came of the first could not reach bob: {entries:?}"
         );
-        world.manager.stop(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
     }
 
     /// Issue 557: a thread is cancelled on its own - the turns in it end, those of the line go on -
@@ -638,7 +638,7 @@ mod tests {
         };
         assert!(not_open(main.cancel(&alice, elsewhere).await.unwrap_err()), "no such thread");
         assert!(not_open(main.wakeup(&alice, elsewhere).await.unwrap_err()), "to wake either");
-        world.manager.stop(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
     }
 
     /// Bob's thread, owning his agent, delegated into by him and answered, and the session; then
@@ -695,7 +695,7 @@ mod tests {
         let agent = helper.as_agent_id().expect("an agent");
         let agents = world.entity_store::<Agent>();
         assert!(agents.get_deleted(&World::system(), agent).await.is_ok(), "and deleted");
-        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+        world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 
     /// Issue 598: a delegation let go and not closed yet - nobody followed it - is kept let go, and
@@ -708,14 +708,14 @@ mod tests {
         let alice = World::as_user(world.alice);
 
         let mut events = world.kernel.event_bus().subscribe_all();
-        world.manager.stop(&alice, session.id()).await.unwrap();
-        let session = world.manager.open(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
+        let session = world.kernel.open_session(&alice, session.id()).await.unwrap();
         assert!(announced(&mut events, thread).await, "announced again");
         let main = Arc::clone(&session.channels()[0]);
         let let_go = main.delegation(thread).await.as_ref().is_some_and(Delegation::is_let_go);
         assert!(let_go, "kept let go");
         assert!(main.channel().lists(helper), "its agent there until the thread is closed");
-        world.manager.stop(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
     }
 
     /// Issue 598: a follower that lost events closes every thread of the running sessions whose
@@ -733,7 +733,7 @@ mod tests {
         let closed = |e: &HistoryEntry| matches!(e, HistoryEntry::ThreadClosed { thread: t, .. } if *t == thread);
         main.history_once(|entries| entries.iter().any(closed)).await;
         assert!(!main.channel().lists(helper), "its agent let go");
-        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+        world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 
     /// Issue 557: a delegation is kept with the channel's state: started again, the channel starts
@@ -765,8 +765,8 @@ mod tests {
         let briefed = |e: &HistoryEntry| matches!(e, HistoryEntry::GivenToRead { recipient, .. } if *recipient == helper);
         main.history_once(|entries| entries.iter().any(briefed)).await;
 
-        world.manager.stop(&alice, session.id()).await.unwrap();
-        let session = world.manager.open(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
+        let session = world.kernel.open_session(&alice, session.id()).await.unwrap();
         let main = Arc::clone(&session.channels()[0]);
         session.remove_participant(&alice, helper).await.expect("let go");
         let back = |e: &HistoryEntry| {
@@ -776,7 +776,7 @@ mod tests {
         };
         let entries = main.history_once(|entries| entries.iter().any(back)).await;
         assert_eq!(entries.iter().filter(|e| briefed(e)).count(), 1, "given once: {entries:?}");
-        world.manager.stop(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
     }
 
     /// Issue 557: a thread is opened with its founders new to the channel taking part in it alone -
@@ -822,8 +822,8 @@ mod tests {
             "it takes part in the thread"
         );
 
-        world.manager.stop(&alice, session.id()).await.unwrap();
-        let session = world.manager.open(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
+        let session = world.kernel.open_session(&alice, session.id()).await.unwrap();
         let main = Arc::clone(&session.channels()[0]);
         let origin = ThreadOrigin { thread, message: MessageId::new() };
         let access = world.kernel.access_policy();
@@ -853,11 +853,11 @@ mod tests {
         });
         let closed = entries.iter().position(closed);
         assert!(left.is_some() && left < closed, "closed once it has left: {entries:?}");
-        world.manager.stop(&alice, session.id()).await.unwrap();
-        let session = world.manager.open(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
+        let session = world.kernel.open_session(&alice, session.id()).await.unwrap();
         let main = Arc::clone(&session.channels()[0]);
         assert!(!main.close_thread_by_procedure(&alice, thread).await.unwrap(), "closed for good");
-        world.manager.stop(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
     }
 
     /// Issue 557: a founder is whom the opener acts for, or their own agent, and new to the
@@ -932,7 +932,7 @@ mod tests {
                 "{refused}"
             );
         }
-        world.manager.stop(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
     }
 
     /// Issue 602: a founder who takes part in the channel takes part in the thread as well; who
@@ -975,8 +975,8 @@ mod tests {
             matches!(channel_error(&refused), Some(ChannelError::AlreadyInThread { .. })),
             "{refused}"
         );
-        world.manager.stop(&alice, session.id()).await.unwrap();
-        let session = world.manager.open(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
+        let session = world.kernel.open_session(&alice, session.id()).await.unwrap();
         let main = Arc::clone(&session.channels()[0]);
         assert_eq!(main.threads_taken_part_in(bob).await, both, "both again after a restart");
 
@@ -1008,7 +1008,7 @@ mod tests {
             matches!(channel_error(&refused), Some(ChannelError::ClosedCircle { .. })),
             "{refused}"
         );
-        world.manager.stop(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
     }
 
     /// Issue 602: a thread opened at a message takes the message's author in, one who takes part in
@@ -1050,7 +1050,7 @@ mod tests {
         );
         let closed = closed.await.expect("opened");
         assert!(!main.threads_taken_part_in(bob).await.contains(&closed), "not into a closed one");
-        world.manager.stop(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
     }
 
     /// Issue 602: who takes part in closed circles alone - an agent founding a thread delegated
@@ -1092,7 +1092,7 @@ mod tests {
             BTreeSet::from([closed]),
             "not drawn into the line"
         );
-        world.manager.stop(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
     }
 
     /// Scripted agents that answer, but the one named "broken", which cannot start.
@@ -1154,6 +1154,6 @@ mod tests {
         assert!(entries.iter().any(joined) && entries.iter().any(left), "{entries:#?}");
         let closed = |e: &HistoryEntry| matches!(e, HistoryEntry::ThreadClosed { .. });
         assert!(entries.iter().any(closed), "the thread closed again");
-        world.manager.stop(&alice, session.id()).await.unwrap();
+        world.kernel.stop_session(&alice, session.id()).await.unwrap();
     }
 }

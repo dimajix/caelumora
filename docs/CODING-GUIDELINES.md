@@ -680,7 +680,7 @@ a cut is wrong: it is a [finding](../AGENTS.md#findings), and the visibility is 
     do. `session::testing::test_kernel()` and `owned_kernel(rules)` are the two kernels most tests
     share.
 *   **Sessions in tests:** a test that needs a session makes it as the kernel does - running, with
-    `SessionManager::create` (`session::testing::create`, `World::session_of`); stored and not
+    `Kernel::create_session` (`session::testing::create`, `World::session_of`); stored and not
     started, with `session::testing::persist` -: the session with the groups of its participants, a
     project of its own and its channels (issues 471, 486). Its document, by the rule above, comes
     from the domain's `session::testing::make_session`: a user's session, as a template builds one.
@@ -688,8 +688,9 @@ a cut is wrong: it is a [finding](../AGENTS.md#findings), and the visibility is 
     starts from it where the session is nobody's in particular - in the tests of the stores, whose
     subject the document is, and of what the domain derives from a session's fields -, and where it
     stores a session's document alone - a controller's, a step of `create_from_template` -, which
-    says why where it makes or stores it. Outside `caelumora-kernel`, a session is started by its
-    manager alone: `SessionLoop::new` is the crate's.
+    says why where it makes or stores it. Outside `caelumora-kernel`, a session is started by the
+    kernel's helpers alone (`Kernel::create_session`, `open_session`): `SessionLoop::new` and the
+    `SessionManager` are the crate's.
 *   **Agents in the kernel's tests:** a test of what a channel, a session or the views do with an
     agent among their participants runs a scripted agent (`testing::ScriptedAgents`, issue 370),
     which begins, ends or hangs in its answers as told; a test of what an agent does runs the

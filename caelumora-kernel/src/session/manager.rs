@@ -31,7 +31,7 @@ use tokio::task::JoinHandle;
 /// The sessions of the process: the register of those that run here, which it starts, finds, holds
 /// against the other processes that share the stores and stops, and the lifecycles of sessions and
 /// their channels.
-pub struct SessionManager {
+pub(crate) struct SessionManager {
     /// The sessions that run here, each owned by the task it runs in, which holds its loop
     /// (`start`): found here as long as it runs (issue 601). Unlike the registers of the
     /// controllers, it prunes no entry whose loop is gone, which only the end of the runtime
@@ -312,7 +312,7 @@ mod tests {
         let kernel = runtime.block_on(async { test_kernel() });
         let manager = kernel.session_manager();
         let id = runtime.block_on(async {
-            let (session, _, _) = running_session_of_a_user(manager).await;
+            let (session, _, _) = running_session_of_a_user(&kernel).await;
             assert!(manager.running(session.id()).is_some(), "found while it runs");
             session.id()
         });
@@ -332,7 +332,7 @@ mod tests {
         let runtime = Runtime::new().expect("a runtime");
         let kernel = runtime.block_on(async {
             let kernel = test_kernel();
-            running_session_of_a_user(kernel.session_manager()).await;
+            running_session_of_a_user(&kernel).await;
             Arc::downgrade(&kernel)
         });
 

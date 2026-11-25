@@ -273,7 +273,7 @@ impl Kernel {
 
     /// The sessions of the process: the register of those that run here and their lifecycles, by
     /// which the procedures reach the running sessions as they are carried out (issues 593, 601).
-    pub fn session_manager(&self) -> &Arc<SessionManager> {
+    pub(crate) fn session_manager(&self) -> &Arc<SessionManager> {
         &self.sessions
     }
 

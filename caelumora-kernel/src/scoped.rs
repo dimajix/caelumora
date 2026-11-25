@@ -799,6 +799,6 @@ mod tests {
         stores.component_bundles.get(&system, bundle.id).await.expect("back with it");
         let heard = changes_of(&subscription.drain().await, bundle.id);
         assert!(heard.is_empty(), "neither announced: {heard:?}");
-        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+        world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 }

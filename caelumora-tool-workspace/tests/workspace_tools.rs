@@ -162,7 +162,7 @@ async fn an_agent_is_offered_the_workspace_tools_its_list_lets_it_call_in_its_ch
     let session = world.shared_session(&[helper], &[]).await;
     session.update_workspace(&alice, Some(docs.id), Some(Grant::Read)).await.unwrap();
     let main = Arc::clone(&session.channels()[0]);
-    world.manager.open(&bob, session.id()).await.expect("he opens it");
+    world.kernel.open_session(&bob, session.id()).await.expect("he opens it");
     let mut watch = main.user_actor(world.bob).expect("he takes part").watch();
 
     let (answered, asked) = world
@@ -244,5 +244,5 @@ async fn an_agent_is_offered_the_workspace_tools_its_list_lets_it_call_in_its_ch
         (Vec::new(), Some("there is no workspace you can use in this channel".to_string())),
         "none where the channel uses none"
     );
-    world.manager.stop(&alice, session.id()).await.unwrap();
+    world.kernel.stop_session(&alice, session.id()).await.unwrap();
 }

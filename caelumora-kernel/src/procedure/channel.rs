@@ -681,7 +681,7 @@ mod tests {
         let held = Held::key(&executor, Key::Participant(id, bob), true).await;
         let creating = Create::new(&alice, id, spec("side", vec![bob]));
         waits_for(held, &executor, creating).await.expect("created once its founder is let go");
-        world.manager.stop(&alice, id).await.unwrap();
+        world.kernel.stop_session(&alice, id).await.unwrap();
     }
 
     /// A channel whose participant no longer exists is restored all the same: whoever cannot be
@@ -690,7 +690,6 @@ mod tests {
     #[tokio::test]
     async fn a_channel_is_restored_without_asking_of_a_participant_that_no_longer_exists() {
         let kernel = test_kernel();
-        let manager = kernel.session_manager();
         let ctx = SecurityContext::default();
         let owner = ActorId::User(UserId::new());
         let helper =
@@ -698,7 +697,7 @@ mod tests {
         let agent = ActorId::Agent(helper.id);
         let mut session = make_session("hers", UserId::new());
         session.participants = vec![Participant::Agent(helper.id)];
-        let session = create(manager, &ctx, session).await.unwrap();
+        let session = create(&kernel, &ctx, session).await.unwrap();
         let id = session.create_channel(&ctx, spec("side", vec![agent])).await.unwrap().id();
         assert!(session.delete_channel(&ctx, id).await.unwrap());
         assert!(kernel.agent_manager().delete(&ctx, helper.id).await.unwrap());

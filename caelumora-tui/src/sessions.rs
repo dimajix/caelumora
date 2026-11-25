@@ -524,8 +524,7 @@ mod tests {
     #[tokio::test]
     async fn a_session_is_started_from_the_template_named_and_others_by_the_directory() {
         let kernel = test_kernel();
-        let manager = kernel.session_manager();
-        let (_, owner, _) = running_session_of_a_user(manager).await;
+        let (_, owner, _) = running_session_of_a_user(&kernel).await;
         let sessions = testing::sessions_of(&kernel, &owner, None).await;
 
         let start =

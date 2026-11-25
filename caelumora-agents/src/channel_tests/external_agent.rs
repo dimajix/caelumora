@@ -2141,7 +2141,6 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
         ..Default::default()
     }
     .build();
-    let manager = kernel.session_manager();
 
     let (alice, bob) = (make_user("alice"), make_user("bob"));
     let participants = record_users(kernel.entity_stores(), &[&alice, &bob]).await;
@@ -2165,7 +2164,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
     let mut session = make_session("roster", UserId::new());
     session.participants = participants;
     session.participants.push(Participant::Agent(hermes.id));
-    let session = create(manager, &alice_ctx, session).await.unwrap();
+    let session = create(&kernel, &alice_ctx, session).await.unwrap();
     let channel = session
         .create_channel(
             &alice_ctx,
@@ -2269,5 +2268,5 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
             "welcome back",
         ]
     );
-    manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+    kernel.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
 }

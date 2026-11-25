@@ -15,37 +15,28 @@ use crate::actor::user::ChannelWatch;
 use crate::actor::Shown;
 use crate::channel::{ChannelLoop, ThreadSpec};
 use crate::kernel::{ChannelRuntime, Kernel, ParticipantRuntime};
-use crate::procedure::participant::{
-    take_in, Entry, LetGo, LetGoFromThread, TakeIn, TakeIntoThread,
-};
-use crate::procedure::session::{
-    establish, persist as persist_new, record_creation, resume_interrupted, shut_down, Create,
-    Delete, Move, Open, Purge, Restore, Stop,
-};
+use crate::procedure::participant::{LetGo, LetGoFromThread, TakeIn, TakeIntoThread};
+use crate::procedure::session::persist as persist_new;
 use crate::procedure::{channel, thread};
-use crate::procedure::{Compensation, Deferred, Key, Locks, Procedure};
-use crate::session::{ChannelSpec, SessionError, SessionLoop, SessionManager, SessionSpec};
+use crate::session::{ChannelSpec, SessionError, SessionLoop};
 use crate::testing::TestKernel;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::actor::{ActorEvent, Rejection};
 use caelumora_domain::channel::testing::main_channel;
-use caelumora_domain::channel::{Channel, ChannelId, HistoryAccess, Participant, ThreadId};
+use caelumora_domain::channel::{Channel, ChannelId, HistoryAccess, ThreadId};
 use caelumora_domain::message::{Message, MessageId};
-use caelumora_domain::project::ProjectId;
 use caelumora_domain::query::{FieldPath, Filter};
 use caelumora_domain::scope::Scope;
 use caelumora_domain::session::testing::make_session;
 use caelumora_domain::session::{Session, SessionId};
-use caelumora_domain::store::Stored;
 use caelumora_domain::store::{EntityKind, Revision, StoreError, StoreResult};
-use caelumora_domain::template::SessionTemplateId;
 use caelumora_domain::user::testing::make_user;
 use caelumora_domain::value::name::ScopedName;
 use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
+use caelumora_security::SecurityContext;
 use caelumora_security::{AccessPolicy, Admission, OwnershipPolicy};
-use caelumora_security::{ActionType, Enforcement, SecurityContext};
 use caelumora_store::documents::{Document, DocumentOf, DocumentStorage};
 use caelumora_store::history::HistoryStore;
 use caelumora_store::memberships::StoreMemberships;
@@ -58,7 +49,6 @@ use caelumora_store::Persistence;
 use caelumora_store::{PersistenceBackend, Presence, StateStore};
 use serde_json::Value;
 use std::collections::HashSet;
-use std::mem;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -112,12 +102,12 @@ pub fn detached_participant_in(
 
 /// Creates and starts `session` with its main channel.
 pub async fn create(
-    manager: &Arc<SessionManager>,
+    kernel: &Kernel,
     ctx: &SecurityContext,
     session: Session,
 ) -> Result<Arc<SessionLoop>> {
     let channels = vec![main_channel(&session)];
-    manager.create(ctx, session, channels).await
+    kernel.create_session(ctx, session, channels).await
 }
 
 /// Stores `session` with `channels` on behalf of `ctx` as the kernel stores a brand-new one
@@ -126,226 +116,29 @@ pub async fn create(
 /// keep the participants they name, without their joins in their histories (the domain's
 /// `channel::testing::founded`).
 pub async fn persist(
-    manager: &SessionManager,
+    kernel: &Kernel,
     ctx: &SecurityContext,
     session: Session,
     channels: &mut [Channel],
 ) -> Session {
     let mut own = session.new_own_project().expect("a session of a user");
     let mut session = Session { project: own.id, ..session };
-    let kernel = manager.kernel().expect("its kernel");
-    let storing = persist_new(&kernel, ctx, &mut session, &mut own, channels);
+    let storing = persist_new(kernel, ctx, &mut session, &mut own, channels);
     storing.await.expect("the session is stored");
     session
-}
-
-/// What the tests do with sessions as the entry points do (issue 593): each a procedure, carried
-/// out by the kernel's executor (`Kernel::procedures`), under the verb the entry points ask for -
-/// the manager itself offers only the register of the running sessions and the lifecycles -,
-/// failing as the procedures fail (`SessionError::untyped`), so that a test looks into the error as
-/// it did before.
-impl SessionManager {
-    /// Creates `session` with its `channels` on behalf of `context`, as a template would
-    /// (`Built`).
-    ///
-    /// # Errors
-    /// As `procedure::session::establish` and taking the founders in.
-    pub async fn create(
-        &self,
-        context: &SecurityContext,
-        session: Session,
-        channels: Vec<Channel>,
-    ) -> Result<Arc<SessionLoop>> {
-        let creating = Built { context: context.clone(), session, channels };
-        self.kernel()?.procedures().run(creating).await.map_err(SessionError::untyped)
-    }
-
-    /// Creates a session from the template `template_id` as `spec` asks, on behalf of `context`
-    /// (`procedure::session::Create::from_template`).
-    ///
-    /// # Errors
-    /// As `procedure::session::Create`.
-    pub async fn create_from_template(
-        &self,
-        context: &SecurityContext,
-        template_id: SessionTemplateId,
-        spec: SessionSpec,
-    ) -> Result<Arc<SessionLoop>> {
-        let creating = Create::from_template(context, template_id, spec);
-        self.kernel()?.procedures().run(creating).await.map_err(SessionError::untyped)
-    }
-
-    /// Opens session `id` for `context` (`procedure::session::Open`), and builds again the
-    /// channels left out as it started (`procedure::channel::Start`), as the REST server does.
-    ///
-    /// # Errors
-    /// As `Open`.
-    pub async fn open(&self, context: &SecurityContext, id: SessionId) -> Result<Arc<SessionLoop>> {
-        let kernel = self.kernel()?;
-        let procedures = kernel.procedures();
-        let opened = procedures.run(Open::new(context, id)).await;
-        let opened = opened.map_err(SessionError::untyped)?;
-        // Its channels left out as it started built again, as the REST server has them (issue 463).
-        let starting = channel::Start::left_out(id);
-        procedures.run(starting).await.map_err(SessionError::untyped)?;
-        Ok(opened)
-    }
-
-    /// Stops session `id` on behalf of `context` (`procedure::session::Stop`).
-    ///
-    /// # Errors
-    /// As `Stop`.
-    pub async fn stop(&self, context: &SecurityContext, id: SessionId) -> Result<bool> {
-        self.kernel()?.procedures().run(Stop::new(context, id)).await.map_err(SessionError::untyped)
-    }
-
-    /// Deletes session `id` on behalf of `context` (`procedure::session::Delete`).
-    ///
-    /// # Errors
-    /// As `procedure::session::delete`.
-    pub async fn delete(&self, context: &SecurityContext, id: SessionId) -> Result<bool> {
-        self.kernel()?
-            .procedures()
-            .run(Delete::new(context, id))
-            .await
-            .map_err(SessionError::untyped)
-    }
-
-    /// Restores session `id` on behalf of `context` (`procedure::session::Restore`).
-    ///
-    /// # Errors
-    /// As `procedure::session::restore`.
-    pub async fn restore(&self, context: &SecurityContext, id: SessionId) -> Result<Session> {
-        self.kernel()?
-            .procedures()
-            .run(Restore::new(context, id))
-            .await
-            .map_err(SessionError::untyped)
-    }
-
-    /// Purges session `id` on behalf of `context` (`procedure::session::Purge`).
-    ///
-    /// # Errors
-    /// As `procedure::session::purge`.
-    pub async fn purge(&self, context: &SecurityContext, id: SessionId) -> Result<bool> {
-        self.kernel()?
-            .procedures()
-            .run(Purge::new(context, id))
-            .await
-            .map_err(SessionError::untyped)
-    }
-
-    /// Puts session `id` into `project` on behalf of `context`, or into its own with `None`
-    /// (`procedure::session::Move`).
-    ///
-    /// # Errors
-    /// As `Move`.
-    pub async fn update_project(
-        &self,
-        context: &SecurityContext,
-        id: SessionId,
-        project: Option<ProjectId>,
-    ) -> Result<()> {
-        self.kernel()?
-            .procedures()
-            .run(Move::new(context, id, project))
-            .await
-            .map_err(SessionError::untyped)
-    }
-
-    /// Takes `participant` into session `id` by their own act, as `TakeIn::joining` does.
-    ///
-    /// # Errors
-    /// As `TakeIn::joining`.
-    pub async fn join(
-        &self,
-        context: &SecurityContext,
-        id: SessionId,
-        participant: ActorId,
-        into: Option<ChannelId>,
-    ) -> Result<Arc<SessionLoop>> {
-        let joining = TakeIn::joining(context, id, participant, into);
-        self.kernel()?.procedures().run(joining).await.map_err(SessionError::untyped)
-    }
-
-    /// Shuts the sessions down as the process ends (`procedure::session::shut_down`).
-    pub async fn shutdown(&self) {
-        shut_down(self.kernel().expect("its kernel").procedures()).await;
-    }
-
-    /// Starts the sessions interrupted again (`procedure::session::resume_interrupted`).
-    pub async fn resume_interrupted(&self) -> usize {
-        resume_interrupted(&self.kernel().expect("its kernel")).await
-    }
-}
-
-/// Creates `session` with its `channels` on behalf of `context`, as a template would build them,
-/// and starts it - holding it, and rolling its creation back if it fails, as
-/// `procedure::session::Create` does: asked to create it (`CreateSession`) before anything else,
-/// its results going to a project of its own, made with it, whatever project it names (issue
-/// 467), and the participants the channels name joining them as their founders once it runs, as a
-/// template's do (issue 420).
-struct Built {
-    context: SecurityContext,
-    session: Session,
-    channels: Vec<Channel>,
-}
-
-#[async_trait]
-impl Procedure for Built {
-    type Plan = ();
-    type Output = Arc<SessionLoop>;
-    type Error = SessionError;
-
-    async fn enumerate(&self, _: &Kernel, locks: &mut Locks<'_>) -> Result<(), Deferred> {
-        locks.exclusive(Key::Session(self.session.id))
-    }
-
-    async fn carry_out(
-        self,
-        (): (),
-        kernel: &Kernel,
-        log: &mut Compensation,
-    ) -> Result<Arc<SessionLoop>, SessionError> {
-        let Self { context, mut session, mut channels } = self;
-        record_creation(log, &kernel.session_manager().kernel()?, session.id);
-        let creating = ActionType::create(Session::KIND, &session.security_attributes);
-        kernel.access_policy().require(&context, creating, StoreError::PermissionDenied).await?;
-        let owner = session.security_attributes.owner_id;
-        let own = session.new_own_project().ok_or(SessionError::OwnerNotAUser(owner))?;
-        session.project = own.id;
-        let founders: Vec<(ChannelId, Vec<Participant>)> = channels
-            .iter_mut()
-            .map(|channel| (channel.id, mem::take(&mut channel.participants)))
-            .collect();
-        let session_loop = establish(kernel, &context, session, own, channels).await?;
-        for (channel, participants) in founders {
-            let channel = session_loop
-                .channel(channel)
-                .ok_or(SessionError::ChannelNotFound { session: session_loop.id(), channel })?;
-            let into = Some((&channel, HistoryAccess::None, ThreadId::line(channel.id())));
-            for participant in participants {
-                let founder = participant.actor_id();
-                take_in(log, kernel, &session_loop, &context, founder, Entry::Founding, into)
-                    .await?;
-            }
-        }
-        Ok(session_loop)
-    }
 }
 
 /// A running session owned by a user who takes part in it, with that
 /// user's context and a second user of the session.
 pub async fn running_session_of_a_user(
-    manager: &Arc<SessionManager>,
+    kernel: &Kernel,
 ) -> (Arc<SessionLoop>, SecurityContext, ActorId) {
     let (owner, other) = (make_user("owner"), make_user("other"));
     let (owner_id, other_id) = (ActorId::User(owner.id), ActorId::User(other.id));
     let mut session = make_session("with-users", owner.id);
-    let kernel = manager.kernel().expect("its kernel");
     session.participants = record_users(kernel.entity_stores(), &[&owner, &other]).await;
     let ctx = SecurityContext::new(owner_id, session.id, Default::default());
-    let session_loop = create(manager, &ctx, session).await.expect("the session starts");
+    let session_loop = create(kernel, &ctx, session).await.expect("the session starts");
     (session_loop, ctx, other_id)
 }
 
