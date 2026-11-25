@@ -117,8 +117,8 @@ The channel's commands come from two places:
     acts wherever the workspace's storage reaches, so the terminal program, one person's on their
     own machine, adds it to the defaults of its configuration, and a server only where its operator
     does;
-*   `SessionTemplate::commands`, for commands that belong to what a session is for, copied into the
-    session, so a running session keeps its set.
+*   `SessionTemplate::components`, the components of a session, for commands that belong to what a
+    session is for, copied into the session, so a running session keeps its set.
 
 Both are built once per session, in the name of its owner
 ([COMPONENTS.md](COMPONENTS.md#what-a-component-may-reach)), into a `CommandExecutor` shared by the

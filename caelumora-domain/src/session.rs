@@ -90,9 +90,10 @@ pub struct Session {
     /// The session's channels by id, in order; each is a document of its own
     /// (issue 70).
     pub channels: Vec<ChannelId>,
-    /// The session's own user commands, copied from its template when it was
-    /// created, so that a running session keeps its set (issue 28).
-    pub commands: ComponentConfig,
+    /// The session's components, copied from its template when it was created, so that a running
+    /// session keeps its set: the user commands it has beside the global ones (issue 28), the one
+    /// facet the kernel builds of them (`CommandExecutor::COMPONENT_FACETS`).
+    pub components: ComponentConfig,
     /// Whom the session lets read what was said in it (issue 134).
     #[serde(default)]
     pub privacy: PrivacyConfig,
@@ -379,7 +380,7 @@ pub mod testing {
             time_zone: None,
             participants: Vec::new(),
             channels: Vec::new(),
-            commands: Default::default(),
+            components: Default::default(),
             privacy: Default::default(),
             approval_rules: Vec::new(),
             workspace: None,

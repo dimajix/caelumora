@@ -200,7 +200,7 @@ users:
 #  file: "local/server.log"
 
 # User commands every session has (`/help`, the groups `participant`, `agent` and
-# `channel`), as components; a session template can add its own under `commands`.
+# `channel`), as components; a session template can add its own under `components`.
 # Without this section the built-in ones are used; an empty list switches them off.
 #commands:
 #  - id: help

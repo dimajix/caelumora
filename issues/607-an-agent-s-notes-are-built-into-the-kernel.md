@@ -226,7 +226,9 @@ follows, which the commit is given (`after`).
 
 ### The steps
 
-Each step is green and changes no behaviour; each is reviewed and committed on its own.
+Each step is green and changes no behaviour; each is reviewed and committed on its own. Revised
+below (*Decisions on the open questions*): a step is added before the kernel's part, and the move
+is step 4 there.
 
 1. **The snapshot no longer carries notes.** `Detail::NOTES`, `ChannelParticipantSnapshot::notes`
    and `ChannelResponse::notes` go; the web UI loads the board with `GET …/channels/{cid}/notes`
@@ -301,6 +303,44 @@ Taken with the maintainer on 2026-11-25, as recommended:
 
 The interfaces are agreed as proposed above.
 
+Revised with the maintainer the same day, as step 2 was planned:
+
+- **Decision 3 revised.** `caelumora-app` has no place for commands of its own: its commands are
+  the default of `AppConfig` (`default_commands`), and it cannot tell a configuration that names
+  none from one that names the defaults, so a server would lose `/channel notes`. Neither is a
+  mechanism by which a plugin adds to the defaults wanted, nor does the domain name a plugin's kind
+  in `default_commands`. Instead the plugin's component stands in a component bundle of the seed,
+  `session-basics`, beside `agent-basics`, which every one of the seven session templates of
+  `examples/seed` includes by a `ref` - the bundle is the place of the defaults, and a session that
+  copied the `ref` gets what is added to the bundle when it starts next. The terminal names the
+  component in its own commands (`home::commands`), as it names `shell`. A session of a template
+  without the `ref` has no `/channel notes`; a bundle that cannot be read keeps the sessions that
+  include it from starting, as a session's commands are built whole.
+- **A step before: a session's components are named so.** `SessionTemplate::commands` and
+  `Session::commands` are a list of components like `ChannelTemplate::components` and a
+  personality's `components`, but named after the one facet the kernel builds of them
+  (`CommandExecutor::COMPONENT_FACETS`). They become `components`, as every other owner of a
+  container names its own; which facets are built of them stays the kernel's. `AppConfig::commands`,
+  the global set of the deployment and no owner's container, keeps its name.
+
+The steps are therefore:
+
+1. The snapshot no longer carries notes (as above, done).
+2. **A session's components.** `SessionTemplate::commands` and `Session::commands` become
+   `components`, with the documents that name them; no behaviour changes. Stored data to delete:
+   every stored session, whose document carries `commands` and no `components`; and every stored
+   session template that names commands of its own - none of the seed's or the terminal's does -,
+   which would otherwise lose them unseen.
+3. **The kernel offers what a plugin needs.** `AgentMember` becomes `KeptBehind<T>` for the kinds
+   something may be kept behind (`Holder`, sealed: `Agent` and `Channel`), registered by
+   `KernelBuilder::keeps_behind` and called by the `AgentManager` and by
+   `SessionManager::purge_channel`; `ChannelView::may_read_entry` and `nothing_released` become
+   public; `this_or_named` becomes `CommandContext::channel_view_or_named`, and `command_error`
+   public.
+4. **The notes move into `caelumora-notes`**, as step 3 above describes, with the bundle
+   `session-basics` and its `ref` in the seven session templates, and the component in the
+   terminal's commands. The stored data named above is deleted with this step.
+
 ## Done when
 
 - The open questions are decided, the interfaces agreed.
@@ -320,3 +360,7 @@ maintainer's decision.
 
 **2026-11-25** - The maintainer decided the open questions as recommended (*Decisions on the open
 questions*) and agreed the interfaces; work begun on the branch `issue-607-notes-crate`.
+
+**2026-11-25** - Step 1 done: the snapshot no longer carries notes. Planning step 2, decision 3 was
+revised and a step added before the kernel's part: a session's components are named so
+(*Decisions on the open questions*).

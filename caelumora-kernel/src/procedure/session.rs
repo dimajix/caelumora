@@ -1681,7 +1681,7 @@ mod tests {
         // A second /help from the session's own configuration - with the same
         // component id, which is fine across the two configurations.
         let mut session = make_session("clashing", UserId::new());
-        session.commands = ComponentConfig {
+        session.components = ComponentConfig {
             component_nodes: vec![ComponentDescriptor {
                 id: "help".to_string(),
                 kind: HELP_KIND.to_string(),

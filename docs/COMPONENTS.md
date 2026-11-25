@@ -9,9 +9,9 @@ turn is in [AGENT-TURN.md](AGENT-TURN.md).
 
 ## Configuration, registry and container
 
-*   **`ComponentConfig`** declares the components of a personality, of a session's commands or of a
-    channel (its moderator), as a list of descriptors. Their order matters: it is the order in which
-    they are handed out.
+*   **`ComponentConfig`** declares the components of a personality, of a session (its commands) or
+    of a channel (its moderator), as a list of descriptors. Their order matters: it is the order in
+    which they are handed out.
 *   **`ComponentDescriptor`** configures one component: its `id`, `kind`, `params`, `tags` and
     `fail_policy` - `FailOpen`, the default, skips a failing component, `FailClosed` fails the turn.
     Params left out count as `{}`. They are an object, and a parameter is given a value or left out,
@@ -93,7 +93,7 @@ personalities:
     `ref` resolved is kept by its actor and shown to the agent's owner (`ReadAgentComponents`).
 *   Only components are shared. A personality's kind, roles, introduction and reasoning visibility
     are its own.
-*   It serves every `ComponentConfig` alike - a channel's components and a session's commands too.
+*   It serves every `ComponentConfig` alike - a channel's components and a session's too.
 *   A `ref` is read in the name the graph is built in, and also in the name of whoever names it,
     where that is someone else: a channel's components are built in its owner's name, so whoever
     creates the channel may name only bundles they may read themselves
@@ -201,7 +201,7 @@ it (issue 337):
 | agent | `ContextProvider`, `LanguageModelClient`, `ModelProfileProvider`, `PerceiveInProcessor`, `EmitOutProcessor`, `ToolProvider`, `CommandProvider<dyn AgentCommand>`, `ActivityProvider` | `AgentActor::COMPONENT_FACETS`, registered for its kind (`AgentKinds::facets`) |
 | external agent | `ExternalAgent`, `PerceiveInProcessor`, `ContextProvider`, `CommandProvider<dyn AgentCommand>` | `ExternalAgentActor::COMPONENT_FACETS`, registered for its kind (`AgentKinds::facets`) |
 | channel | `Moderator` | `ChannelLoop::COMPONENT_FACETS` |
-| a session's commands | `CommandProvider<dyn ChannelCommand>` | `Kernel::new_command_executor` |
+| session | `CommandProvider<dyn ChannelCommand>` | `CommandExecutor::COMPONENT_FACETS`, built with the global commands (`Kernel::new_command_executor`) |
 
 An agent's closure thus holds the `PromptProvider`s its default `turn_context` needs, and,
 if it lists `compaction`, the `CompactionStrategy` and the `KnowledgeRestorer`s that component
@@ -228,7 +228,7 @@ its components are built, and keeps it with every turn.
 
 *   Two components of one container that provide such a facet are refused before anything is built.
 *   If none does, a default is built the first time the facet is asked for. A container that never
-    asks - a session's commands, say - never builds one.
+    asks - a session's, say - never builds one.
 *   A single may have no default where none makes sense: the remote agent of an `ExternalAgent` is
     always named. A container asked for it that provides none fails then; nothing is checked
     beforehand.

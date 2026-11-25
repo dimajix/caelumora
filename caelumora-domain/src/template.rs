@@ -226,11 +226,11 @@ pub struct SessionTemplate {
     pub channels: Vec<ChannelTemplate>,
     #[serde(default = "SecurityAttributes::systems")]
     pub security_attributes: SecurityAttributes,
-    /// User commands of sessions made from this template, in addition to the
-    /// global ones from `AppConfig` (issue 28) - for commands that belong to
-    /// what the session is for, such as an integration it uses.
+    /// The components of sessions made from this template: the user commands they have beside the
+    /// global ones from `AppConfig` (issue 28) - those that belong to what the session is for, such
+    /// as an integration it uses.
     #[serde(default)]
-    pub commands: ComponentConfig,
+    pub components: ComponentConfig,
     /// The privacy policy of sessions made from this template (issue 134).
     #[serde(default)]
     pub privacy: PrivacyConfig,
@@ -399,7 +399,7 @@ impl SessionTemplate {
             time_zone: time_zone.or(self.time_zone),
             participants,
             channels: channels.iter().map(|c: &Channel| c.id).collect(),
-            commands: self.commands.clone(),
+            components: self.components.clone(),
             privacy: self.privacy,
             approval_rules: self.approval_rules.clone(),
             workspace: None,
@@ -512,7 +512,7 @@ pub mod testing {
             channels: Vec::new(),
             approval_rules: Vec::new(),
             workspace: None,
-            commands: Default::default(),
+            components: Default::default(),
             privacy: Default::default(),
             access: Vec::new(),
             security_attributes: SecurityAttributes::systems(),
@@ -573,7 +573,7 @@ mod tests {
                 },
                 make_channel_template("side"),
             ],
-            commands: default_commands(),
+            components: default_commands(),
             ..make_template("pairing")
         }
     }
@@ -813,9 +813,9 @@ mod tests {
             "the template's \"user\" is the owner"
         );
         assert_eq!(
-            session.commands.component_nodes.len(),
+            session.components.component_nodes.len(),
             default_commands().component_nodes.len(),
-            "the session keeps its template's commands"
+            "the session keeps its template's components"
         );
         assert_eq!(channels[0].classification, Classification::CHANNEL_DEFAULT);
         assert_eq!(

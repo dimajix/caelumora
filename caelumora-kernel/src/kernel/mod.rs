@@ -144,15 +144,13 @@ impl Kernel {
             .await
     }
 
-    /// The executor for the user commands of `session`: the global ones and
-    /// the session's own (issue 28), built once for all of its channels, in
-    /// the name of the session's owner (`ControllerManager::owner_context`,
-    /// issue 321).
+    /// The executor for the user commands of `session`: the global ones and those of the session's
+    /// components (issue 28), built once for all of its channels, in the name of the session's
+    /// owner (`ControllerManager::owner_context`, issue 321).
     ///
     /// # Errors
-    /// A `ComponentError` if a command component cannot be built or two
-    /// provide the same command - the session does not start then; whatever
-    /// the store reports reading its owner.
+    /// A `ComponentError` if a command component cannot be built or two provide the same command -
+    /// the session does not start then; whatever the store reports reading its owner.
     pub async fn new_command_executor(&self, session: &Session) -> Result<CommandExecutor> {
         let security = self
             .controller_manager
@@ -162,7 +160,7 @@ impl Kernel {
         let mut providers = Vec::new();
         // Each configuration on its own, so that component ids only need to
         // be unique within one of them.
-        for config in [&self.commands, &session.commands] {
+        for config in [&self.commands, &session.components] {
             let container = self
                 .component_registry
                 .build(config, CommandExecutor::COMPONENT_FACETS, &context)

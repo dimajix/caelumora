@@ -288,7 +288,7 @@ refer to by name; the address stays as written and is resolved when it is used. 
 a resolution is the id: what is state - a session, a channel, an agent, a history, a transcript -
 refers by id alone. Who owns something, who may reach it and where it lies are identity, also
 within a definition. So a template names its agents and its personalities and a personality its
-bundles, and `Channel::components` and `Session::commands`, configuration held by state, stay as
+bundles, and `Channel::components` and `Session::components`, configuration held by state, stay as
 written; an agent keeps the id of its personality, and an owner, an access list and a scope are ids
 everywhere.
 
