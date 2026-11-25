@@ -36,7 +36,7 @@ use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_kernel::plugin::Plugin;
 use caelumora_kernel::procedure::follower::SessionFollower;
 use caelumora_kernel::procedure::session;
-use caelumora_kernel::session::{SessionLoop, SessionManager};
+use caelumora_kernel::session::SessionLoop;
 use caelumora_kernel::user_provider::Credential;
 use caelumora_kernel::view::{Viewer, Views};
 use caelumora_logging::{init, LogTarget};
@@ -271,16 +271,15 @@ async fn main() -> Result<()> {
     let controller = kernel.controller_manager().user_controller(owner).await?;
     let security = controller.security_context(Default::default(), Default::default());
 
-    let session_manager = SessionManager::new(Arc::clone(&kernel));
     // Whether the agents of the running sessions exist, and the delegations let go in them,
     // followed as long as the terminal runs.
-    let _followed = SessionFollower::spawn(&session_manager);
+    let _followed = SessionFollower::spawn(&kernel);
     // Where the program was started, its project and workspace, if it works there.
     let place = match config.workspaces.storage.contains_key(HERE) {
         true => Some(place_of(&kernel, &security, owner, &here).await?),
         false => None,
     };
-    let views = session_manager.views(Viewer::new(security));
+    let views = kernel.views(Viewer::new(security));
     let sessions =
         Sessions::new(Arc::clone(&kernel), owner, views.clone(), place, args.template.clone());
     let opening = match args.invocation() {
@@ -485,15 +484,14 @@ mod tests {
     /// why, for its caller to shut the session down after.
     #[tokio::test]
     async fn who_takes_part_in_no_channel_cannot_talk() {
-        let InDirectory { sessions, manager, kernel, owner, directory: _directory } =
-            in_directory().await;
+        let InDirectory { sessions, kernel, owner, directory: _directory } = in_directory().await;
         let start = Opening::Start { template: None };
         let (session_loop, _) = sessions.open(&start).await.expect("started");
         // Someone outside the session, whom `Channels` follows no channel for, as it follows none
         // for a participant of the session in none of its channels.
         let stranger = ActorId::User(UserId::new());
         let stranger = SecurityContext::new(stranger, session_loop.id(), Default::default());
-        let views = manager.views(Viewer::new(stranger));
+        let views = kernel.views(Viewer::new(stranger));
         let mut screen = LineScreen::new().expect("a screen");
         let bus = Arc::clone(kernel.event_bus());
         let signalled = future::pending();

@@ -211,7 +211,7 @@ impl Procedure for Close {
     /// it.
     async fn enumerate(&self, kernel: &Kernel, locks: &mut Locks<'_>) -> Result<(), Deferred> {
         lock_to_open(kernel, locks, self.session)?;
-        let running = kernel.sessions().and_then(|sessions| sessions.running(self.session));
+        let running = kernel.session_manager().running(self.session);
         let owned = match running.as_ref().and_then(|running| running.channel(self.channel)) {
             Some(channel) => channel.owned_by(self.thread).await,
             None => Vec::new(),
@@ -727,7 +727,7 @@ mod tests {
         let (session, thread, helper, _) = left_by_its_giver(&world).await;
         let main = Arc::clone(&session.channels()[0]);
 
-        let _followed = SessionFollower::spawn(&world.manager);
+        let _followed = SessionFollower::spawn(&world.kernel);
         let agent = helper.as_agent_id().expect("an agent");
         world.kernel.event_bus().publish_past_capacity(&GlobalEvent::created::<Agent>(&agent));
         let closed = |e: &HistoryEntry| matches!(e, HistoryEntry::ThreadClosed { thread: t, .. } if *t == thread);

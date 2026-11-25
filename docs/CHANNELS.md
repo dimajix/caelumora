@@ -867,8 +867,8 @@ Deleting an agent (`AgentManager::delete`) marks it and changes no channel: it r
 channel it takes part in until it is restored. The channels follow its mark instead:
 
 *   the session follower, told of the deletion (`procedure::follower::SessionFollower`, issue
-    593) - which every program that runs sessions starts beside its `SessionManager`, the server
-    program and the terminal -, has the agent's actor leave each channel of a running session that
+    593) - which every program that runs sessions starts with its kernel, the server program and
+    the terminal -, has the agent's actor leave each channel of a running session that
     lists it, in the kernel's name, by a procedure that holds the agent there
     (`participant::Follow`), and announces it as a leave (`channel::LEFT`);
 *   a channel that starts leaves it out, as any participant that no longer exists -

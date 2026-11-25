@@ -477,7 +477,7 @@ mod tests {
             .await
             .unwrap();
         let view =
-            world.manager.views(Viewer::new(hers)).channel(session.id(), main.id()).await.unwrap();
+            world.kernel.views(Viewer::new(hers)).channel(session.id(), main.id()).await.unwrap();
         time::timeout(Duration::from_secs(5), async {
             loop {
                 let page = view.history_page(None, 10).await.unwrap();
@@ -746,7 +746,7 @@ mod tests {
             .await
             .unwrap();
         let view = world
-            .manager
+            .kernel
             .views(Viewer::new(World::as_user(world.alice)))
             .channel(session.id(), main.id())
             .await

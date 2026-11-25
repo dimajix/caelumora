@@ -231,7 +231,7 @@ impl Procedure for LetGo {
     /// go needs it (`lock_letting_go`).
     async fn enumerate(&self, kernel: &Kernel, locks: &mut Locks<'_>) -> Result<(), Deferred> {
         lock_to_open(kernel, locks, self.session)?;
-        let running = kernel.sessions().and_then(|sessions| sessions.running(self.session));
+        let running = kernel.session_manager().running(self.session);
         lock_letting_go(locks, running.as_deref(), self.session, self.participant, self.from).await
     }
 
@@ -1124,13 +1124,12 @@ impl Procedure for Follow {
     type Output = ();
     type Error = SessionError;
 
-    /// Nothing once the session manager is gone: no session of it is reached then.
     async fn enumerate(
         &self,
         kernel: &Kernel,
         locks: &mut Locks<'_>,
     ) -> Result<Self::Plan, Deferred> {
-        let Some(sessions) = kernel.sessions() else { return Ok(Vec::new()) };
+        let sessions = kernel.session_manager();
         let ids = match self.followed {
             Followed::Session(session) => vec![session],
             Followed::Agent(_) => sessions.running_ids(),
@@ -1169,15 +1168,14 @@ impl Procedure for Follow {
         Ok(followed)
     }
 
-    /// Nothing fails: what cannot be read or run is logged and left as it is, and nothing is
-    /// followed once the session manager is gone, as no session of it is reached then.
+    /// Nothing fails: what cannot be read or run is logged and left as it is.
     async fn carry_out(
         self,
         followed: Self::Plan,
         kernel: &Kernel,
         _: &mut Compensation,
     ) -> Result<(), SessionError> {
-        let Some(sessions) = kernel.sessions() else { return Ok(()) };
+        let sessions = kernel.session_manager();
         for (id, agents) in followed {
             if let Some(running) = sessions.running(id) {
                 running.follow_agents(Some(&agents)).await;
@@ -1200,7 +1198,7 @@ mod tests {
     use crate::procedure::Key;
     use crate::session::testing::*;
     use crate::session::ChannelSpec;
-    use crate::session::{SessionError, SessionLoop, SessionManager};
+    use crate::session::{SessionError, SessionLoop};
     use crate::testing::{attributes, Script, ScriptedAgents, World};
     use crate::view::Viewer;
     use anyhow::Error;
@@ -1318,17 +1316,18 @@ mod tests {
 
     #[tokio::test]
     async fn whoever_may_change_the_session_takes_a_user_into_it_and_a_channel_at_once() {
-        let (kernel, manager) = owned_kernel(Default::default());
+        let kernel = owned_kernel(Default::default());
+        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let (alice, bob, carol) = (make_user("alice"), make_user("bob"), make_user("carol"));
         let mut session = make_session("hers", alice.id);
         session.participants = record_users(stores, &[&alice, &carol]).await;
         record_users(stores, &[&bob]).await;
-        let session = create(&manager, &as_user(&alice), session).await.unwrap();
+        let session = create(manager, &as_user(&alice), session).await.unwrap();
         let main = Arc::clone(&session.channels()[0]);
         let bob_id = ActorId::User(bob.id);
         assert!(
-            manager.views(Viewer::new(as_user(&bob))).session(session.id()).await.is_err(),
+            kernel.views(Viewer::new(as_user(&bob))).session(session.id()).await.is_err(),
             "bob reads nothing of it before"
         );
         let mut events = kernel.event_bus().subscribe_all();
@@ -1360,7 +1359,7 @@ mod tests {
             .members;
         assert!(members.contains(&bob_id), "the group of its participants follows");
         assert!(
-            manager.views(Viewer::new(as_user(&bob))).session(session.id()).await.is_ok(),
+            kernel.views(Viewer::new(as_user(&bob))).session(session.id()).await.is_ok(),
             "so he reads it now"
         );
         assert!(events.drain().await.iter().any(|e| matches!(e.about::<Session>(), Some((id, change)) if id == session.id()
@@ -1640,7 +1639,8 @@ mod tests {
 
     #[tokio::test]
     async fn whom_the_access_list_lets_join_takes_themselves_in_and_uses_up_an_invitation() {
-        let (_, manager) = owned_kernel(Default::default());
+        let kernel = owned_kernel(Default::default());
+        let manager = kernel.session_manager();
         let (alice, bob, carol) = (make_user("alice"), make_user("bob"), make_user("carol"));
         let (bob_id, carol_id) = (ActorId::User(bob.id), ActorId::User(carol.id));
         let invited = |mut attributes: SecurityAttributes| {
@@ -1648,8 +1648,8 @@ mod tests {
             attributes
         };
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(manager.kernel().entity_stores(), &[&alice]).await;
-        record_users(manager.kernel().entity_stores(), &[&bob, &carol]).await;
+        session.participants = record_users(kernel.entity_stores(), &[&alice]).await;
+        record_users(kernel.entity_stores(), &[&bob, &carol]).await;
         session.security_attributes = invited(session.security_attributes);
         let channel = Channel {
             security_attributes: invited(main_channel(&session).security_attributes),
@@ -1705,9 +1705,9 @@ mod tests {
     #[tokio::test]
     async fn an_agent_taken_in_later_is_followed_as_one_taken_in_from_the_start() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
+        let manager = kernel.session_manager();
         // Followed as the programs follow them (issue 593).
-        let _followed = SessionFollower::spawn(&manager);
+        let _followed = SessionFollower::spawn(&kernel);
         let helper = stored_agent(
             kernel.entity_stores(),
             "helper",
@@ -1716,7 +1716,7 @@ mod tests {
         )
         .await;
         let actor = ActorId::Agent(helper.id);
-        let (session, ctx, _) = running_session_of_a_user(&manager).await;
+        let (session, ctx, _) = running_session_of_a_user(manager).await;
         let main = Arc::clone(&session.channels()[0]);
         let mut events = kernel.event_bus().subscribe_all();
         // Running, with the participants it had as it started.

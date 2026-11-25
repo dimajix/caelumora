@@ -14,7 +14,7 @@
 
 use super::participant::{let_go_where_not_running, take_in, Entry};
 use super::session::{self, lock_to_open, record_discarding_group};
-use super::{sessions_of, Compensation, Deferred, Key, Locks, Procedure};
+use super::{Compensation, Deferred, Key, Locks, Procedure};
 use crate::channel::{ChannelLoop, ResolvedParticipant};
 use crate::kernel::Kernel;
 use crate::scoped::ScopeNotEmpty;
@@ -101,7 +101,7 @@ impl Procedure for Create {
         log: &mut Compensation,
     ) -> Result<Arc<ChannelLoop>, SessionError> {
         let Self { context, session, id, spec } = self;
-        let sessions = sessions_of(kernel)?;
+        let sessions = kernel.session_manager();
         let session = session::open(kernel, &context, session).await?;
         let (mut document, founders) = asked_for(kernel, &session, &context, id, spec).await?;
         // Its group first, so that whoever it lets read the channel hears it created.
@@ -112,7 +112,7 @@ impl Procedure for Create {
         sessions.channel_lifecycle().create(&context, &mut document).await?;
         {
             // Announced as deleted, as it was announced created.
-            let (sessions, made) = (Arc::clone(&sessions), document.clone());
+            let (sessions, made) = (Arc::clone(sessions), document.clone());
             log.record("storing a channel", async move {
                 Ok(sessions.channel_lifecycle().discard(&made).await?)
             });
@@ -277,7 +277,7 @@ impl Procedure for Delete {
         log: &mut Compensation,
     ) -> Result<bool, SessionError> {
         let Self { context, session, channel: id } = self;
-        let sessions = sessions_of(kernel)?;
+        let sessions = kernel.session_manager();
         let session = session::open(kernel, &context, session).await?;
         let Some((channel, _)) = session.listed_channel_for(&context, id).await else {
             return Ok(false);
@@ -293,9 +293,9 @@ impl Procedure for Delete {
             });
         }
         let removal = Removal::now(context.caller_id);
-        mark_deleted(&sessions, &context, &channel, &removal).await?;
+        mark_deleted(sessions, &context, &channel, &removal).await?;
         {
-            let sessions = Arc::clone(&sessions);
+            let sessions = Arc::clone(sessions);
             log.record("marking a channel deleted", async move {
                 let system = SecurityContext::system();
                 Ok(sessions.channel_lifecycle().restore(&system, id).await.map(drop)?)
@@ -375,7 +375,7 @@ impl Procedure for Restore {
     ) -> Result<Self::Plan, Deferred> {
         lock_to_open(kernel, locks, self.session)?;
         locks.exclusive(Key::Channel(self.session, self.channel))?;
-        let running = kernel.sessions().and_then(|sessions| sessions.running(self.session));
+        let running = kernel.session_manager().running(self.session);
         if running.is_none() {
             return Ok(Ok(()));
         }
@@ -414,7 +414,7 @@ impl Procedure for Restore {
     ) -> Result<Arc<ChannelLoop>, SessionError> {
         read?;
         let Self { context, session, channel: id } = self;
-        let sessions = sessions_of(kernel)?;
+        let sessions = kernel.session_manager();
         let session = session::open(kernel, &context, session).await?;
         let (Deleted { removal, .. }, gone) = to_restore(kernel, &session, &context, id).await?;
         // Its group first, so that whoever it lets read the channel hears it restored; its
@@ -430,7 +430,7 @@ impl Procedure for Restore {
         }
         let document = sessions.channel_lifecycle().restore(&context, id).await?;
         {
-            let (sessions, restored) = (Arc::clone(&sessions), document.clone());
+            let (sessions, restored) = (Arc::clone(sessions), document.clone());
             let removal = removal.clone();
             log.record("taking a channel's mark away", async move {
                 let system = SecurityContext::system();
@@ -532,8 +532,7 @@ impl Procedure for Start {
     type Error = SessionError;
 
     async fn enumerate(&self, kernel: &Kernel, locks: &mut Locks<'_>) -> Result<bool, Deferred> {
-        let Some(running) = kernel.sessions().and_then(|sessions| sessions.running(self.session))
-        else {
+        let Some(running) = kernel.session_manager().running(self.session) else {
             return Ok(false);
         };
         let left_out: Vec<ChannelId> = running
@@ -558,7 +557,7 @@ impl Procedure for Start {
         kernel: &Kernel,
         _: &mut Compensation,
     ) -> Result<(), SessionError> {
-        let running = kernel.sessions().and_then(|sessions| sessions.running(self.session));
+        let running = kernel.session_manager().running(self.session);
         let (true, Some(running)) = (any, running) else { return Ok(()) };
         let session = running.id();
         for (channel, run) in running.listed_channels() {
@@ -638,7 +637,6 @@ mod tests {
     use crate::procedure::testing::{waits_for, Held};
     use crate::procedure::Key;
     use crate::session::testing::{create, spec, test_kernel};
-    use crate::session::SessionManager;
     use crate::testing::World;
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::testing::make_personality;
@@ -692,7 +690,7 @@ mod tests {
     #[tokio::test]
     async fn a_channel_is_restored_without_asking_of_a_participant_that_no_longer_exists() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
+        let manager = kernel.session_manager();
         let ctx = SecurityContext::default();
         let owner = ActorId::User(UserId::new());
         let helper =
@@ -700,7 +698,7 @@ mod tests {
         let agent = ActorId::Agent(helper.id);
         let mut session = make_session("hers", UserId::new());
         session.participants = vec![Participant::Agent(helper.id)];
-        let session = create(&manager, &ctx, session).await.unwrap();
+        let session = create(manager, &ctx, session).await.unwrap();
         let id = session.create_channel(&ctx, spec("side", vec![agent])).await.unwrap().id();
         assert!(session.delete_channel(&ctx, id).await.unwrap());
         assert!(kernel.agent_manager().delete(&ctx, helper.id).await.unwrap());

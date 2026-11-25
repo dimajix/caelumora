@@ -153,7 +153,7 @@ pub(super) async fn lift_project(
         )
     })?;
     let lifting = Lift::new(&user.security_context(), project_id, &request.name, scope);
-    state.procedures.run(lifting).await?;
+    state.kernel.procedures().run(lifting).await?;
     Ok(Json(readable(&state, &user, project_id).await?))
 }
 
@@ -165,7 +165,7 @@ pub(super) async fn delete_project(
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
     let deleting = Delete::new(&user.security_context(), project_id);
-    match state.procedures.run(deleting).await? {
+    match state.kernel.procedures().run(deleting).await? {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found(
             "project_not_found",
@@ -182,7 +182,7 @@ pub(super) async fn restore_project(
     user: AuthenticatedUser,
 ) -> Result<Json<ProjectResponse>, ApiError> {
     let restoring = Restore::new(&user.security_context(), project_id);
-    state.procedures.run(restoring).await?;
+    state.kernel.procedures().run(restoring).await?;
     Ok(Json(readable(&state, &user, project_id).await?))
 }
 
@@ -194,7 +194,7 @@ pub(super) async fn purge_project(
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
     let purging = Purge::new(&user.security_context(), project_id);
-    match state.procedures.run(purging).await? {
+    match state.kernel.procedures().run(purging).await? {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found(
             "project_not_found",
@@ -240,7 +240,7 @@ async fn update_project(
     project: Option<ProjectId>,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
     let moving = Move::new(&user.security_context(), session_id, project);
-    state.procedures.run(moving).await?;
+    state.kernel.procedures().run(moving).await?;
     Ok(Json(session_response(state, user, session_id).await?))
 }
 

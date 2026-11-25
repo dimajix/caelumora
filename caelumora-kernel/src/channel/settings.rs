@@ -77,7 +77,7 @@ mod tests {
     use crate::channel::ChannelLoop;
     use crate::error::is_forbidden;
     use crate::session::testing::*;
-    use crate::session::{ChannelSpec, SessionManager};
+    use crate::session::ChannelSpec;
     use caelumora_domain::actor::Rejection;
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::message::{Message, MessageId};
@@ -87,7 +87,6 @@ mod tests {
     use caelumora_domain::user::testing::make_user;
     use caelumora_security::SecurityContext;
     use caelumora_store::testing::record_users;
-    use std::sync::Arc;
     use std::time::Duration;
     use tokio::time;
 
@@ -96,8 +95,8 @@ mod tests {
         // Kept by the store (issue 250): in another session the name is
         // free, which the store suite says.
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
-        let (session, ctx, _) = running_session_of_a_user(&manager).await;
+        let manager = kernel.session_manager();
+        let (session, ctx, _) = running_session_of_a_user(manager).await;
         let side = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
 
         let refused =
@@ -125,8 +124,8 @@ mod tests {
             (Compartment::new("finance"), vec![]),
         ])
         .unwrap();
-        let (_, manager) = owned_kernel(ConfidentialityRules::new(compartments));
-        let kernel = Arc::clone(manager.kernel());
+        let kernel = owned_kernel(ConfidentialityRules::new(compartments));
+        let manager = kernel.session_manager();
         let (alice, bob) = (make_user("alice"), make_user("bob"));
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
@@ -134,9 +133,8 @@ mod tests {
         let mut session = make_session("hers", alice.id);
         session.security_attributes =
             session.security_attributes.clone().granting(Subject::Actor(bob_id), Grant::Read);
-        session.participants =
-            record_users(manager.kernel().entity_stores(), &[&alice, &bob]).await;
-        let session = create(&manager, &alice_ctx, session).await.unwrap();
+        session.participants = record_users(kernel.entity_stores(), &[&alice, &bob]).await;
+        let session = create(manager, &alice_ctx, session).await.unwrap();
 
         let classified = |level, compartments: &[&str]| {
             Classification::new(level, compartments.iter().map(|c| Compartment::new(*c))).unwrap()
@@ -218,14 +216,16 @@ mod tests {
     async fn renaming_a_channel_is_stored_and_only_the_owner_may() {
         use caelumora_domain::actor::ActorId;
 
-        let (kernel, manager) = owned_kernel(Default::default());
+        let kernel = owned_kernel(Default::default());
+
+        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let users = (make_user("alice"), make_user("bob"));
         let (alice, bob) = (ActorId::User(users.0.id), ActorId::User(users.1.id));
         let as_user = |actor| SecurityContext::new(actor, Default::default(), Default::default());
         let mut session = make_session("hers", users.0.id);
         session.participants = record_users(kernel.entity_stores(), &[&users.0, &users.1]).await;
-        let running = create(&manager, &as_user(alice), session).await.unwrap();
+        let running = create(manager, &as_user(alice), session).await.unwrap();
         let main = running.channel_named("main").unwrap();
 
         let refused = main

@@ -23,6 +23,7 @@ use crate::procedure::ProcedureExecutor;
 use crate::project::ProjectManager;
 use crate::scoped::{ScopeHolders, ScopeMember, ScopedEntities, ScopedKind, Unowned};
 use crate::seed::SeedSection;
+use crate::session::SessionManager;
 use crate::terminal::TerminalProvider;
 use crate::user_provider::{UserManager, UserProvider};
 use crate::view::SessionView;
@@ -720,36 +721,46 @@ impl KernelBuilder {
             Arc::clone(&self.event_bus),
             Arc::clone(&self.groups),
         ));
-        Ok(Arc::new_cyclic(|kernel| Kernel {
-            policies: self.policies,
-            state_store: self.persistence.state_store(),
-            history_store: self.persistence.history_store(),
-            transcript_store: self.persistence.transcript_store(),
-            session_locks: self.persistence.session_locks(),
-            entity_stores: self.entity_stores,
-            secret_manager: self.secret_manager,
-            user_manager: self.user_manager,
-            component_registry: Arc::new(self.component_registry),
-            agent_kinds: Arc::new(self.agent_kinds),
-            event_bus: self.event_bus,
-            controller_manager: self.controller_manager,
-            participation,
-            commands: self.commands,
-            approval_rules: self.approval_rules,
-            workspaces: self.workspaces,
-            command_reaper: self.command_reaper,
-            attachments: self.attachments,
-            groups: self.groups,
-            projects,
-            agents,
-            actors: Arc::new(ActorManager::new()),
-            scoped,
-            services: self.services,
-            extensions: self.extensions,
-            prompts,
-            seed_sections: self.seed_sections,
-            procedures: Arc::new(ProcedureExecutor::new(Weak::clone(kernel))),
-            sessions: Default::default(),
+        Ok(Arc::new_cyclic(|kernel| {
+            let sessions = Arc::new(SessionManager::new(
+                Weak::clone(kernel),
+                &self.entity_stores,
+                self.persistence.session_locks(),
+                &self.policies,
+                Arc::clone(&self.event_bus),
+                Arc::clone(&self.groups),
+            ));
+            Kernel {
+                policies: self.policies,
+                state_store: self.persistence.state_store(),
+                history_store: self.persistence.history_store(),
+                transcript_store: self.persistence.transcript_store(),
+                session_locks: self.persistence.session_locks(),
+                entity_stores: self.entity_stores,
+                secret_manager: self.secret_manager,
+                user_manager: self.user_manager,
+                component_registry: Arc::new(self.component_registry),
+                agent_kinds: Arc::new(self.agent_kinds),
+                event_bus: self.event_bus,
+                controller_manager: self.controller_manager,
+                participation,
+                commands: self.commands,
+                approval_rules: self.approval_rules,
+                workspaces: self.workspaces,
+                command_reaper: self.command_reaper,
+                attachments: self.attachments,
+                groups: self.groups,
+                projects,
+                agents,
+                actors: Arc::new(ActorManager::new()),
+                scoped,
+                services: self.services,
+                extensions: self.extensions,
+                prompts,
+                seed_sections: self.seed_sections,
+                procedures: Arc::new(ProcedureExecutor::new(Weak::clone(kernel))),
+                sessions,
+            }
         }))
     }
 }

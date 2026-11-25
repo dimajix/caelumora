@@ -3858,11 +3858,10 @@ mod tests {
     #[tokio::test]
     async fn what_others_hear_is_announced_once_it_is_stored() {
         use crate::session::testing::{running_session_of_a_user, spec, test_kernel};
-        use crate::session::SessionManager;
         use caelumora_domain::channel::{Channel, Said, SAID};
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
-        let (session, ctx, _) = running_session_of_a_user(&manager).await;
+        let manager = kernel.session_manager();
+        let (session, ctx, _) = running_session_of_a_user(manager).await;
         let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
         let owner = ctx.initiator_id;
         let said = |message: &Message| {

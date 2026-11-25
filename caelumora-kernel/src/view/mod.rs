@@ -1093,10 +1093,10 @@ mod tests {
         session: Session,
         channels: &mut [Channel],
     ) -> Session {
+        let kernel = manager.kernel().unwrap();
         let session = persist(manager, &SecurityContext::system(), session, channels).await;
         for channel in channels.iter() {
-            manager
-                .kernel()
+            kernel
                 .state_store()
                 .put_channel_state(channel.id, &mut founded(channel))
                 .await
@@ -1134,7 +1134,9 @@ mod tests {
     async fn the_context_of_an_external_agent_is_what_the_remote_agent_was_given() {
         use caelumora_domain::message::{Message, MessageId};
 
-        let (kernel, manager) = owned_kernel(Default::default());
+        let kernel = owned_kernel(Default::default());
+
+        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let alice = make_user("alice");
         let remote =
@@ -1143,7 +1145,7 @@ mod tests {
         session.participants = record_users(kernel.entity_stores(), &[&alice]).await;
         session.participants.push(Participant::Agent(remote.id));
         let mut channel = main_channel(&session);
-        let session = stored(&manager, session, slice::from_mut(&mut channel)).await;
+        let session = stored(manager, session, slice::from_mut(&mut channel)).await;
 
         let said = |t: &str| Message {
             id: MessageId::new(),
@@ -1185,7 +1187,7 @@ mod tests {
         kernel.state_store().put_channel_state(channel.id, &mut channel_state).await.unwrap();
 
         let for_alice =
-            manager.views(as_user(alice.id)).channel(session.id, channel.id).await.unwrap();
+            kernel.views(as_user(alice.id)).channel(session.id, channel.id).await.unwrap();
         let participant = for_alice.participant(ActorId::Agent(remote.id)).await.unwrap();
         let seen = participant.context().await.expect("alice made the agent");
         let texts = |messages: Vec<Message>| {
@@ -1236,7 +1238,8 @@ mod tests {
     #[tokio::test]
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn the_views_show_what_their_viewer_may_read_and_do_whether_the_session_runs_or_not() {
-        let (kernel, manager) = owned_kernel(Default::default());
+        let kernel = owned_kernel(Default::default());
+        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let (alice, bob, carol) = (make_user("alice"), make_user("bob"), make_user("carol"));
         let helper = an_agent_of(stores, ActorId::User(alice.id)).await;
@@ -1256,12 +1259,12 @@ mod tests {
         let id = running.id();
 
         let check = |state: &'static str| {
-            let manager = &manager;
+            let kernel = &kernel;
             async move {
                 let names = |channels: &[ChannelView]| {
                     channels.iter().map(|c| c.name().to_string()).collect::<Vec<_>>()
                 };
-                let for_alice = manager.views(as_user(alice.id)).session(id).await.unwrap();
+                let for_alice = kernel.views(as_user(alice.id)).session(id).await.unwrap();
                 assert_eq!(
                     names(&for_alice.channels().await),
                     ["main", "private"],
@@ -1278,7 +1281,7 @@ mod tests {
                     ["alice", "bob", "Helper"],
                     "{state}"
                 );
-                let for_bob = manager.views(as_user(bob.id)).session(id).await.unwrap();
+                let for_bob = kernel.views(as_user(bob.id)).session(id).await.unwrap();
                 assert_eq!(
                     names(&for_bob.channels().await),
                     ["main"],
@@ -1333,17 +1336,17 @@ mod tests {
                     "{state}: absent, not refused: {hidden}"
                 );
                 assert_eq!(for_alice.channel(hers).await.unwrap().name(), "private", "{state}");
-                let refused = manager
+                let refused = kernel
                     .views(as_user(carol.id))
                     .session(id)
                     .await
                     .expect_err("carol may not see it");
                 assert!(matches!(refused, ViewError::SessionNotFound(_)), "{state}: {refused}");
                 assert!(
-                    manager.views(as_user(carol.id)).sessions().await.unwrap().is_empty(),
+                    kernel.views(as_user(carol.id)).sessions().await.unwrap().is_empty(),
                     "{state}: nor is it listed for her"
                 );
-                let listed = manager.views(as_user(bob.id)).sessions().await.unwrap();
+                let listed = kernel.views(as_user(bob.id)).sessions().await.unwrap();
                 assert_eq!(listed.len(), 1, "{state}");
                 let all = Detail::all();
                 assert_eq!(
@@ -1363,15 +1366,16 @@ mod tests {
     /// in a session the viewer cannot read, nor where the session has no such channel.
     #[tokio::test]
     async fn a_channel_is_reached_by_its_session_and_its_id() {
-        let (_, manager) = owned_kernel(Default::default());
-        let (session_loop, owner, _) = running_session_of_a_user(&manager).await;
+        let kernel = owned_kernel(Default::default());
+        let manager = kernel.session_manager();
+        let (session_loop, owner, _) = running_session_of_a_user(manager).await;
         let session = session_loop.id();
         let main = session_loop.channels()[0].id();
-        let views = manager.views(Viewer::new(owner));
+        let views = kernel.views(Viewer::new(owner));
         assert_eq!(views.channel(session, main).await.map(|c| c.id()).ok(), Some(main));
         let none = views.channel(session, ChannelId::new()).await;
         assert!(matches!(none, Err(ViewError::ChannelNotFound { .. })), "no such channel");
-        let strangers = manager.views(as_user(UserId::new()));
+        let strangers = kernel.views(as_user(UserId::new()));
         let unread = strangers.channel(session, main).await;
         assert!(matches!(unread, Err(ViewError::SessionNotFound(_))), "the session is not theirs");
     }
@@ -1385,8 +1389,9 @@ mod tests {
         use caelumora_domain::approval::ApproverId;
         use caelumora_domain::question::testing::make_question_request;
         use caelumora_domain::snapshot::Waiting;
-        let (_, manager) = owned_kernel(Default::default());
-        let (session_loop, owner, other) = running_session_of_a_user(&manager).await;
+        let kernel = owned_kernel(Default::default());
+        let manager = kernel.session_manager();
+        let (session_loop, owner, other) = running_session_of_a_user(manager).await;
         let (session, channel) = (session_loop.id(), Arc::clone(&session_loop.channels()[0]));
         let ActorId::User(user) = owner.caller_id else { unreachable!("a user") };
         let actor = channel.user_actor(user).expect("the owner's actor runs");
@@ -1404,7 +1409,7 @@ mod tests {
 
         let waiting = async |viewer: ActorId, detail| {
             let ActorId::User(user) = viewer else { unreachable!("a user") };
-            let view = manager.views(as_user(user)).channel(session, channel.id()).await.unwrap();
+            let view = kernel.views(as_user(user)).channel(session, channel.id()).await.unwrap();
             view.snapshot(detail).await.waiting
         };
         let both = Waiting { approvals: 1, questions: 1 };
@@ -1419,10 +1424,11 @@ mod tests {
     /// before it; one read before the session stopped follows it as stored (issue 567).
     #[tokio::test]
     async fn a_user_follows_a_channel_as_it_stands_once_the_watch_began() {
-        let (_, manager) = owned_kernel(Default::default());
-        let (session_loop, owner, _) = running_session_of_a_user(&manager).await;
+        let kernel = owned_kernel(Default::default());
+        let manager = kernel.session_manager();
+        let (session_loop, owner, _) = running_session_of_a_user(manager).await;
         let session = session_loop.id();
-        let views = manager.views(Viewer::new(owner.clone()));
+        let views = kernel.views(Viewer::new(owner.clone()));
         let side = spec("side", vec![owner.caller_id]);
         let channel =
             session_loop.create_channel(&owner, side).await.expect("the owner creates it");
@@ -1449,17 +1455,18 @@ mod tests {
     /// session cannot be read.
     #[tokio::test]
     async fn a_channel_lists_the_viewer_while_they_take_part_in_it() {
-        let (_, manager) = owned_kernel(Default::default());
-        let (session_loop, owner, other) = running_session_of_a_user(&manager).await;
+        let kernel = owned_kernel(Default::default());
+        let manager = kernel.session_manager();
+        let (session_loop, owner, other) = running_session_of_a_user(manager).await;
         let session = session_loop.id();
-        let views = manager.views(Viewer::new(owner.clone()));
+        let views = kernel.views(Viewer::new(owner.clone()));
         let side = spec("side", vec![owner.caller_id, other]);
         let channel =
             session_loop.create_channel(&owner, side).await.expect("the owner creates it");
         let id = channel.id();
         assert!(views.listed_in(session, id).await, "listed");
         assert!(!views.listed_in(session, ChannelId::new()).await, "no such channel");
-        let strangers = manager.views(as_user(UserId::new()));
+        let strangers = kernel.views(as_user(UserId::new()));
         assert!(!strangers.listed_in(session, id).await, "the session cannot be read");
         channel.leave(&owner, owner.caller_id).await.expect("the owner may leave");
         assert!(views.channel(session, id).await.is_ok(), "the owner still reads it");
@@ -1471,17 +1478,19 @@ mod tests {
         use caelumora_domain::approval::{ApprovalStrategy, Approver};
         use caelumora_domain::channel::InternalActor;
 
-        let (_, manager) = owned_kernel(Default::default());
+        let kernel = owned_kernel(Default::default());
+
+        let manager = kernel.session_manager();
         let alice = make_user("Alice Example");
         let gone = UserId::new();
         let mut session = make_session("s", alice.id);
-        session.participants = record_users(manager.kernel().entity_stores(), &[&alice]).await;
+        session.participants = record_users(kernel.entity_stores(), &[&alice]).await;
         let mut channel = main_channel(&session);
         channel.participants.push(Participant::User(gone));
         channel.internal_actors.push(InternalActor::Approver(Approver::new(ApprovalStrategy::Any)));
-        let session = stored(&manager, session, slice::from_mut(&mut channel)).await;
+        let session = stored(manager, session, slice::from_mut(&mut channel)).await;
 
-        let view = manager
+        let view = kernel
             .views(as_user(alice.id))
             .channel(session.id, channel.id)
             .await
@@ -1523,7 +1532,7 @@ mod tests {
         let bob = World::as_user(world.bob);
         let deleted = world.kernel.agent_manager().delete(&bob, gone).await.unwrap();
         assert!(deleted, "deleted, it stays in the session");
-        let view = world.manager.views(Viewer::new(bob)).session(session.id()).await.unwrap();
+        let view = world.kernel.views(Viewer::new(bob)).session(session.id()).await.unwrap();
         let snapshot = view.snapshot(Detail::empty()).await;
         let leaving: HashSet<ActorId> =
             snapshot.participants.iter().filter(|p| p.can_leave).map(|p| p.id).collect();
@@ -1533,10 +1542,11 @@ mod tests {
 
     #[tokio::test]
     async fn what_a_place_is_for_is_shown_its_briefing_only_where_asked_for() {
-        let (_, manager) = owned_kernel(Default::default());
+        let kernel = owned_kernel(Default::default());
+        let manager = kernel.session_manager();
         let alice = make_user("alice");
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(manager.kernel().entity_stores(), &[&alice]).await;
+        session.participants = record_users(kernel.entity_stores(), &[&alice]).await;
         (session.summary, session.briefing) = (
             Some(Summary::new("Release 2.0").unwrap()),
             Some(Briefing::new("Dates are in UTC.").unwrap()),
@@ -1544,9 +1554,9 @@ mod tests {
         let mut channel = main_channel(&session);
         (channel.summary, channel.briefing) =
             (Some(Summary::new("Planning").unwrap()), Some(Briefing::new("Be brief.").unwrap()));
-        let session = stored(&manager, session, slice::from_mut(&mut channel)).await;
+        let session = stored(manager, session, slice::from_mut(&mut channel)).await;
 
-        let view = manager.views(as_user(alice.id)).session(session.id).await.unwrap();
+        let view = kernel.views(as_user(alice.id)).session(session.id).await.unwrap();
         let listed = view.snapshot(Detail::CHANNELS).await;
         assert_eq!(
             (listed.summary.as_ref().map(Summary::as_str), listed.briefing.as_ref()),
@@ -1574,7 +1584,9 @@ mod tests {
     async fn a_participants_profile_says_who_it_is_to_everybody_in_the_channel() {
         use caelumora_domain::user::UserProfile;
 
-        let (kernel, manager) = owned_kernel(Default::default());
+        let kernel = owned_kernel(Default::default());
+
+        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let system = SecurityContext::system();
         let (alice, bob, carol) = (make_user("alice"), make_user("bob"), make_user("carol"));
@@ -1602,9 +1614,9 @@ mod tests {
             )
             .await
             .unwrap();
-        let session = stored(&manager, session, slice::from_mut(&mut channel)).await;
+        let session = stored(manager, session, slice::from_mut(&mut channel)).await;
 
-        let for_bob = manager.views(as_user(bob.id)).channel(session.id, channel.id).await.unwrap();
+        let for_bob = kernel.views(as_user(bob.id)).channel(session.id, channel.id).await.unwrap();
         let plain = for_bob.snapshot(Detail::PARTICIPANTS).await;
         assert!(
             plain
@@ -1665,20 +1677,22 @@ mod tests {
         use caelumora_domain::store::StoreError;
         use caelumora_domain::user::User;
 
-        let (_, manager) = owned_kernel(Default::default());
+        let kernel = owned_kernel(Default::default());
+
+        let manager = kernel.session_manager();
         let alice = make_user("alice");
         let bob = make_user("bob");
         let carol = make_user("carol");
         let dave = make_user("dave");
         let mut session = make_session("hers", alice.id);
         session.participants =
-            record_users(manager.kernel().entity_stores(), &[&alice, &bob, &carol, &dave]).await;
+            record_users(kernel.entity_stores(), &[&alice, &bob, &carol, &dave]).await;
         let mut channel = main_channel(&session);
         channel
             .participants
             .retain(|participant| participant.actor_id() != ActorId::User(carol.id));
         let session =
-            persist(&manager, &SecurityContext::system(), session, slice::from_mut(&mut channel))
+            persist(manager, &SecurityContext::system(), session, slice::from_mut(&mut channel))
                 .await;
 
         let said = |by: &User, text: &str| Message {
@@ -1728,13 +1742,13 @@ mod tests {
             Message { addressees: vec![ActorId::User(bob.id)], ..said(&dave, "@bob, aside") };
         let elsewhere = EventContext { thread_id: ThreadId::new(), ..context };
         state.history.push(&elsewhere, aside.clone());
-        manager.kernel().state_store().put_channel_state(channel.id, &mut state).await.unwrap();
+        kernel.state_store().put_channel_state(channel.id, &mut state).await.unwrap();
 
         let unread_of = |viewer: &User| {
-            let (manager, viewer) = (&manager, viewer.id);
+            let (kernel, viewer) = (&kernel, viewer.id);
             async move {
                 let channel =
-                    manager.views(as_user(viewer)).channel(session.id, channel.id).await.unwrap();
+                    kernel.views(as_user(viewer)).channel(session.id, channel.id).await.unwrap();
                 channel.snapshot(Detail::UNREAD).await.unread
             }
         };
@@ -1751,7 +1765,7 @@ mod tests {
             unread(2, true, None),
             "hers, from where his view begins, and what addresses him in another thread"
         );
-        let without = manager
+        let without = kernel
             .views(as_user(alice.id))
             .channel(session.id, channel.id)
             .await
@@ -1759,19 +1773,19 @@ mod tests {
             .snapshot(Detail::empty())
             .await;
         assert_eq!(without.unread, None, "only where it is asked for");
-        let line = manager.views(as_user(alice.id)).channel(session.id, channel.id).await.unwrap();
+        let line = kernel.views(as_user(alice.id)).channel(session.id, channel.id).await.unwrap();
         let page = line.history_page(None, 20).await.unwrap();
         let read: Vec<_> = page.entries().filter_map(HistoryEntry::said).map(|m| m.id).collect();
         assert!(read.contains(&asking.id) && !read.contains(&aside.id), "a page of the line");
-        let his = manager.views(as_user(bob.id)).channel(session.id, channel.id).await.unwrap();
+        let his = kernel.views(as_user(bob.id)).channel(session.id, channel.id).await.unwrap();
         let page = his.history_page(None, 20).await.unwrap();
         let read: Vec<_> = page.entries().filter_map(HistoryEntry::said).map(|m| m.id).collect();
         assert!(read.contains(&aside.id), "with what addresses him in another thread");
 
         let controller = |user: &User| {
-            let (manager, user) = (&manager, user.id);
+            let (kernel, user) = (&kernel, user.id);
             async move {
-                Arc::clone(manager.views(as_user(user)).controller_manager())
+                Arc::clone(kernel.views(as_user(user)).controller_manager())
                     .user_controller(user)
                     .await
                     .unwrap()
@@ -1798,8 +1812,7 @@ mod tests {
             "but does not move the mark back"
         );
         assert_eq!(
-            manager
-                .kernel()
+            kernel
                 .state_store()
                 .get_user_channel_state(bob.id, channel.id)
                 .await
@@ -1850,7 +1863,9 @@ mod tests {
         use caelumora_domain::message::{Message, MessageId, MessageRole};
         use caelumora_domain::note::{NoteId, NoteOrigin};
 
-        let (kernel, manager) = owned_kernel(Default::default());
+        let kernel = owned_kernel(Default::default());
+
+        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let (alice, bob) = (make_user("alice"), make_user("bob"));
         let helper = an_agent_of(stores, ActorId::User(alice.id)).await;
@@ -1859,7 +1874,7 @@ mod tests {
         session.participants.push(Participant::Agent(helper.id));
         let mut channel = main_channel(&session);
         let session =
-            persist(&manager, &SecurityContext::system(), session, slice::from_mut(&mut channel))
+            persist(manager, &SecurityContext::system(), session, slice::from_mut(&mut channel))
                 .await;
 
         // What was said, of which bob - who joined later - sees the end only.
@@ -1925,8 +1940,8 @@ mod tests {
             .unwrap();
 
         let reach = |viewer: Viewer| {
-            let manager = &manager;
-            async move { manager.views(viewer).channel(session.id, channel.id).await.unwrap() }
+            let kernel = &kernel;
+            async move { kernel.views(viewer).channel(session.id, channel.id).await.unwrap() }
         };
         let for_alice = reach(as_user(alice.id)).await;
         let texts = |messages: &[Message]| {
@@ -2032,7 +2047,9 @@ mod tests {
         use caelumora_domain::privacy::SessionPrivacy;
         use caelumora_domain::removal::Removal;
 
-        let (kernel, manager) = owned_kernel(Default::default());
+        let kernel = owned_kernel(Default::default());
+
+        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let (alice, bob) = (make_user("alice"), make_user("bob"));
         let helper = an_agent_of(stores, ActorId::User(bob.id)).await;
@@ -2053,7 +2070,7 @@ mod tests {
             ..template.clone()
         };
         session.channels = vec![team.id, hers.id];
-        let session = stored(&manager, session, &mut [team.clone(), hers.clone()]).await;
+        let session = stored(manager, session, &mut [team.clone(), hers.clone()]).await;
         // Classified as team is: the flow rule alone would let team read it all.
         let mut state = kernel.state_store().get_channel_state(hers.id).await.unwrap();
         state.history.extend(
@@ -2094,7 +2111,7 @@ mod tests {
             session: SessionPrivacy::of(&session),
         };
         let from_team =
-            manager.views(Viewer::from_place(context, from)).session(session.id).await.unwrap();
+            kernel.views(Viewer::from_place(context, from)).session(session.id).await.unwrap();
         let names: Vec<String> =
             from_team.channels().await.iter().map(|c| c.name().to_string()).collect();
         assert_eq!(names, ["team"], "not hers as a whole");
@@ -2129,7 +2146,9 @@ mod tests {
         use caelumora_domain::message::MessageId;
         use caelumora_domain::note::{NoteId, NoteOrigin};
 
-        let (kernel, manager) = owned_kernel(Default::default());
+        let kernel = owned_kernel(Default::default());
+
+        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let (alice, bob) = (make_user("alice"), make_user("bob"));
         let helper = an_agent_of(stores, ActorId::User(alice.id)).await;
@@ -2145,7 +2164,7 @@ mod tests {
         };
         let (zeta, quiet, alpha) = (channel_of("zeta"), channel_of("quiet"), channel_of("alpha"));
         let session =
-            stored(&manager, session, &mut [zeta.clone(), quiet.clone(), alpha.clone()]).await;
+            stored(manager, session, &mut [zeta.clone(), quiet.clone(), alpha.clone()]).await;
         for (channel, text) in [(&zeta, "noted in zeta"), (&alpha, "noted in alpha")] {
             let mut state = AgentChannelState::default();
             state.private_notes.push(
@@ -2165,9 +2184,9 @@ mod tests {
         }
 
         let read = |viewer: Viewer| {
-            let manager = &manager;
+            let kernel = &kernel;
             async move {
-                manager
+                kernel
                     .views(viewer)
                     .session(session.id)
                     .await
@@ -2196,7 +2215,9 @@ mod tests {
         use caelumora_domain::message::MessageId;
         use caelumora_domain::note::{NoteId, NoteOrigin};
 
-        let (kernel, manager) = owned_kernel(Default::default());
+        let kernel = owned_kernel(Default::default());
+
+        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let alice = make_user("alice");
         let helper = an_agent_of(stores, ActorId::User(alice.id)).await;
@@ -2205,7 +2226,7 @@ mod tests {
         session.participants.push(Participant::Agent(helper.id));
         let mut channel = main_channel(&session);
         let system = SecurityContext::system();
-        let session = stored(&manager, session, slice::from_mut(&mut channel)).await;
+        let session = stored(manager, session, slice::from_mut(&mut channel)).await;
         // What it kept while it ran: the same state, whatever its kind was
         // (issue 206).
         let mut kept = AgentChannelState::default();
@@ -2230,7 +2251,7 @@ mod tests {
             .unwrap());
 
         let for_alice =
-            manager.views(as_user(alice.id)).channel(session.id, channel.id).await.unwrap();
+            kernel.views(as_user(alice.id)).channel(session.id, channel.id).await.unwrap();
         let participant = for_alice.participant(ActorId::Agent(helper.id)).await.unwrap();
         assert_eq!(
             (participant.name().map(Name::as_str), participant.handle().as_deref()),
@@ -2266,7 +2287,9 @@ mod tests {
         use caelumora_domain::message::MessageId;
         use caelumora_domain::note::{NoteId, NoteOrigin};
 
-        let (kernel, manager) = owned_kernel(Default::default());
+        let kernel = owned_kernel(Default::default());
+
+        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let alice = make_user("alice");
         let owner = ActorId::User(alice.id);
@@ -2282,7 +2305,7 @@ mod tests {
             participant: Participant::Agent(leaver.id),
             left: Removal::now(owner),
         }];
-        let session = stored(&manager, session, slice::from_mut(&mut channel)).await;
+        let session = stored(manager, session, slice::from_mut(&mut channel)).await;
         for (agent, text) in
             [(leaver.id, "noted before it left"), (rester.id, "noted by the rester")]
         {
@@ -2304,14 +2327,14 @@ mod tests {
         }
         let board = || async {
             let channel =
-                manager.views(as_user(alice.id)).channel(session.id, channel.id).await.unwrap();
+                kernel.views(as_user(alice.id)).channel(session.id, channel.id).await.unwrap();
             let notes = channel.notes().await.unwrap();
             notes.into_iter().map(|published| published.agent).collect::<Vec<_>>()
         };
 
         assert_eq!(board().await, [ActorId::Agent(rester.id)], "the leaver took its notes along");
         let for_alice =
-            manager.views(as_user(alice.id)).channel(session.id, channel.id).await.unwrap();
+            kernel.views(as_user(alice.id)).channel(session.id, channel.id).await.unwrap();
         let kept = for_alice.participant(ActorId::Agent(leaver.id)).await.unwrap();
         let kept = kept.notes().await.unwrap().expect("an agent");
         assert_eq!(kept.notes[0].text, "noted before it left", "kept in its own state");
@@ -2327,7 +2350,9 @@ mod tests {
     async fn the_approvals_a_channel_waits_for_are_read_from_its_agents_turns() {
         use caelumora_domain::tool::ToolCallState;
 
-        let (kernel, manager) = owned_kernel(Default::default());
+        let kernel = owned_kernel(Default::default());
+
+        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let alice = make_user("alice");
         let helper = an_agent_of(stores, ActorId::User(alice.id)).await;
@@ -2335,7 +2360,7 @@ mod tests {
         session.participants = record_users(kernel.entity_stores(), &[&alice]).await;
         session.participants.push(Participant::Agent(helper.id));
         let mut channel = main_channel(&session);
-        let session = stored(&manager, session, slice::from_mut(&mut channel)).await;
+        let session = stored(manager, session, slice::from_mut(&mut channel)).await;
 
         // The agent's turn waits for one call, the other was approved.
         let calls = vec![make_tool_call("delete")];
@@ -2349,7 +2374,7 @@ mod tests {
             .await
             .unwrap();
 
-        let main = manager.views(as_user(alice.id)).channel(session.id, channel.id).await.unwrap();
+        let main = kernel.views(as_user(alice.id)).channel(session.id, channel.id).await.unwrap();
         let pending = main.pending_approvals().await.unwrap();
         assert_eq!(pending.len(), 1, "only the call that waits");
         assert_eq!(
@@ -2371,7 +2396,9 @@ mod tests {
         use caelumora_domain::note::{NoteId, NoteOrigin};
         use caelumora_domain::snapshot::ChannelParticipantSnapshot;
 
-        let (kernel, manager) = owned_kernel(Default::default());
+        let kernel = owned_kernel(Default::default());
+
+        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let alice = make_user("alice");
         let helper = an_agent_of(stores, ActorId::User(alice.id)).await;
@@ -2379,7 +2406,7 @@ mod tests {
         session.participants = record_users(kernel.entity_stores(), &[&alice]).await;
         session.participants.push(Participant::Agent(helper.id));
         let mut channel = main_channel(&session);
-        let session = stored(&manager, session, slice::from_mut(&mut channel)).await;
+        let session = stored(manager, session, slice::from_mut(&mut channel)).await;
         // What the agent's call used, what it noted, and a call its turn
         // waits to have approved.
         let answer = Message {
@@ -2408,7 +2435,7 @@ mod tests {
             .await
             .unwrap();
 
-        let views = manager.views(as_user(alice.id));
+        let views = kernel.views(as_user(alice.id));
         let main = views.channel(session.id, channel.id).await.unwrap();
         // As counted: the last call's measure, read as it is stored (issue 390).
         let expected = TokenUsage {
@@ -2471,7 +2498,8 @@ mod tests {
         use caelumora_domain::privacy::SessionPrivacy;
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
-        let (kernel, manager) = owned_kernel(ConfidentialityRules::new(compartments));
+        let kernel = owned_kernel(ConfidentialityRules::new(compartments));
+        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let alice = make_user("alice");
         let helper = an_agent_of(stores, ActorId::User(alice.id)).await;
@@ -2493,7 +2521,7 @@ mod tests {
         let secret = channel_of("secret", classified(Confidentiality::Confidential, &[]));
         let hr = channel_of("hr", classified(Confidentiality::Internal, &["hr"]));
         let session = stored(
-            &manager,
+            manager,
             session,
             &mut [public.clone(), team.clone(), secret.clone(), hr.clone()],
         )
@@ -2580,7 +2608,7 @@ mod tests {
             messages(&page).iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>()
         };
 
-        let from_team = manager.views(reading_from(&team)).session(session.id).await.unwrap();
+        let from_team = kernel.views(reading_from(&team)).session(session.id).await.unwrap();
         assert_eq!(
             names(from_team.channels().await),
             ["public", "team"],
@@ -2628,7 +2656,7 @@ mod tests {
             ),
             "and read from its storage"
         );
-        let whole_secret = manager
+        let whole_secret = kernel
             .views(Viewer::new(SecurityContext::new(
                 ActorId::User(alice.id),
                 session.id,
@@ -2667,7 +2695,7 @@ mod tests {
         ));
         assert!(matches!(from_team.channel_named("nope").await, Err(ViewError::NoChannelNamed(_))));
 
-        let from_secret = manager.views(reading_from(&secret)).session(session.id).await.unwrap();
+        let from_secret = kernel.views(reading_from(&secret)).session(session.id).await.unwrap();
         assert_eq!(
             names(from_secret.channels().await),
             ["public", "team", "secret"],
@@ -2699,7 +2727,9 @@ mod tests {
     ) {
         use caelumora_domain::message::{Message, MessageId};
 
-        let (kernel, manager) = owned_kernel(Default::default());
+        let kernel = owned_kernel(Default::default());
+
+        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let alice = make_user("alice");
         let helper = an_agent_of(stores, ActorId::User(alice.id)).await;
@@ -2713,7 +2743,7 @@ mod tests {
             name: Name::new("deleted").unwrap(),
             ..channel.clone()
         };
-        let session = stored(&manager, session, &mut [channel.clone(), deleted.clone()]).await;
+        let session = stored(manager, session, &mut [channel.clone(), deleted.clone()]).await;
         let mut state = kernel.state_store().get_channel_state(channel.id).await.unwrap();
         state.history.extend(
             &EventContext::new(channel.session_id, channel.id, ActorId::None, String::new()),
@@ -2726,7 +2756,7 @@ mod tests {
         );
         kernel.state_store().put_channel_state(channel.id, &mut state).await.unwrap();
 
-        let views = manager.views(as_user(alice.id));
+        let views = kernel.views(as_user(alice.id));
         let reached =
             views.channel_of(session.id, channel.id).await.unwrap().there().expect("there");
         let former =
@@ -2754,7 +2784,7 @@ mod tests {
             views.channel_of(SessionId::new(), channel.id).await.unwrap(),
             Reached::Never
         ));
-        let stranger = manager.views(as_user(UserId::new()));
+        let stranger = kernel.views(as_user(UserId::new()));
         assert!(
             matches!(stranger.channel_of(session.id, reached.id()).await.unwrap(), Reached::Never),
             "nor is it there for a stranger"
@@ -2802,7 +2832,8 @@ mod tests {
             vec![Clearance { level: Confidentiality::Internal, compartment: None }],
         )])
         .unwrap();
-        let (kernel, manager) = owned_kernel(ConfidentialityRules::default().with_roles(roles));
+        let kernel = owned_kernel(ConfidentialityRules::default().with_roles(roles));
+        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let alice = make_user("alice");
         let mut session = make_session("hers", alice.id);
@@ -2820,7 +2851,7 @@ mod tests {
             ..main.clone()
         };
         let session =
-            stored(&manager, session, &mut [main.clone(), internal.clone(), secret.clone()]).await;
+            stored(manager, session, &mut [main.clone(), internal.clone(), secret.clone()]).await;
         stores
             .channels
             .delete(&SecurityContext::system(), internal.id, &Removal::now(ActorId::System))
@@ -2833,7 +2864,7 @@ mod tests {
             .unwrap();
 
         // Alice owns both, and is cleared for internal alone (issue 304).
-        let hers = manager.views(Viewer::new(
+        let hers = kernel.views(Viewer::new(
             SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default())
                 .with_roles(vec![staff], None),
         ));
@@ -2849,14 +2880,15 @@ mod tests {
 
     #[tokio::test]
     async fn what_was_deleted_is_shown_to_its_owner_with_what_they_may_do_about_it() {
-        let (kernel, manager) = owned_kernel(Default::default());
+        let kernel = owned_kernel(Default::default());
+        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let (alice, bob) = (make_user("alice"), make_user("bob"));
         let mut session = make_session("hers", alice.id);
         session.participants = record_users(kernel.entity_stores(), &[&alice, &bob]).await;
         let channel = main_channel(&session);
         let side = like(&channel, "side");
-        let session = stored(&manager, session, &mut [channel.clone(), side.clone()]).await;
+        let session = stored(manager, session, &mut [channel.clone(), side.clone()]).await;
         let alice_ctx = as_user(alice.id).context().clone();
         stores
             .channels
@@ -2864,7 +2896,7 @@ mod tests {
             .await
             .unwrap();
 
-        let hers = manager.views(as_user(alice.id));
+        let hers = kernel.views(as_user(alice.id));
         let channels = hers.session(session.id).await.unwrap().deleted_channels().await.unwrap();
         assert_eq!(
             channels.iter().map(|c| (c.id, c.name.as_str())).collect::<Vec<_>>(),
@@ -2875,7 +2907,7 @@ mod tests {
             "restored by her, purged only with the session"
         );
         assert_eq!(channels[0].deleted.by, ActorId::User(alice.id));
-        let his = manager.views(as_user(bob.id));
+        let his = kernel.views(as_user(bob.id));
         assert!(
             his.session(session.id).await.unwrap().deleted_channels().await.unwrap().is_empty(),
             "not shown to a contributor"
@@ -2904,7 +2936,9 @@ mod tests {
         use caelumora_domain::channel::FormerParticipant;
         use caelumora_domain::removal::Removal;
 
-        let (kernel, manager) = owned_kernel(Default::default());
+        let kernel = owned_kernel(Default::default());
+
+        let manager = kernel.session_manager();
         let stores = kernel.entity_stores();
         let (alice, bob) = (make_user("alice"), make_user("bob"));
         let helper = an_agent_of(stores, ActorId::User(alice.id)).await;
@@ -2921,9 +2955,9 @@ mod tests {
             FormerParticipant { participant: Participant::User(bob.id), left: removed.clone() },
             FormerParticipant { participant: Participant::Agent(helper.id), left: removed.clone() },
         ];
-        let session = stored(&manager, session, slice::from_mut(&mut channel)).await;
+        let session = stored(manager, session, slice::from_mut(&mut channel)).await;
 
-        let reached = manager
+        let reached = kernel
             .views(as_user(alice.id))
             .channel_of(session.id, channel.id)
             .await
@@ -2961,8 +2995,8 @@ mod tests {
         use caelumora_domain::confidentiality::{Compartment, Compartments, Confidentiality};
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
-        let (_, manager) = owned_kernel(ConfidentialityRules::new(compartments));
-        let kernel = Arc::clone(manager.kernel());
+        let kernel = owned_kernel(ConfidentialityRules::new(compartments));
+        let manager = kernel.session_manager();
 
         let (alice, bob) = (make_user("alice"), make_user("bob"));
         let alice_id = ActorId::User(alice.id);
@@ -2973,9 +3007,8 @@ mod tests {
         let mut session = make_session("hers", alice.id);
         session.security_attributes =
             session.security_attributes.clone().granting(Subject::Actor(bob_id), Grant::Read);
-        session.participants =
-            record_users(manager.kernel().entity_stores(), &[&alice, &bob]).await;
-        let session = create(&manager, &alice_ctx, session).await.unwrap();
+        session.participants = record_users(kernel.entity_stores(), &[&alice, &bob]).await;
+        let session = create(manager, &alice_ctx, session).await.unwrap();
 
         let classified = |level, compartments: &[&str]| {
             Classification::new(level, compartments.iter().map(|c| Compartment::new(*c))).unwrap()
@@ -3069,18 +3102,20 @@ mod tests {
         use caelumora_domain::actor::ActorId;
         use caelumora_domain::privacy::PrivacyConfig;
 
-        let (_, manager) = owned_kernel(Default::default());
+        let kernel = owned_kernel(Default::default());
+
+        let manager = kernel.session_manager();
         let (alice, carol) = (make_user("alice"), make_user("carol"));
         let (alice_id, carol_id) = (ActorId::User(alice.id), ActorId::User(carol.id));
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
 
         let mut hers = make_session("hers", alice.id);
-        hers.participants = record_users(manager.kernel().entity_stores(), &[&alice]).await;
+        hers.participants = record_users(kernel.entity_stores(), &[&alice]).await;
         hers.privacy = PrivacyConfig::SameOwner;
-        let hers = create(&manager, &alice_ctx, hers).await.unwrap();
+        let hers = create(manager, &alice_ctx, hers).await.unwrap();
         let theirs = make_session("theirs", carol.id);
         persist(
-            &manager,
+            manager,
             &SecurityContext::new(carol_id, Default::default(), Default::default()),
             theirs.clone(),
             &mut [main_channel(&theirs)],
@@ -3119,13 +3154,14 @@ mod tests {
             (Compartment::new("finance"), vec![]),
         ])
         .unwrap();
-        let (_, manager) = owned_kernel(ConfidentialityRules::new(compartments));
+        let kernel = owned_kernel(ConfidentialityRules::new(compartments));
+        let manager = kernel.session_manager();
         let alice = make_user("alice");
         let alice_id = ActorId::User(alice.id);
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
         let mut session = make_session("hers", alice.id);
-        session.participants = record_users(manager.kernel().entity_stores(), &[&alice]).await;
-        let session = create(&manager, &alice_ctx, session).await.unwrap();
+        session.participants = record_users(kernel.entity_stores(), &[&alice]).await;
+        let session = create(manager, &alice_ctx, session).await.unwrap();
 
         let classified = |level, compartments: &[&str]| {
             Classification::new(level, compartments.iter().map(|c| Compartment::new(*c))).unwrap()
@@ -3220,7 +3256,7 @@ mod tests {
             ..Default::default()
         }
         .build();
-        let manager = SessionManager::new(Arc::clone(&kernel));
+        let manager = kernel.session_manager();
         let system = SecurityContext::system();
 
         let alice = make_user("alice");
@@ -3239,7 +3275,7 @@ mod tests {
         let mut session = make_session("thinking", UserId::new());
         session.participants = participants;
         session.participants.push(Participant::Agent(thinker.id));
-        let session = create(&manager, &alice_ctx, session).await.unwrap();
+        let session = create(manager, &alice_ctx, session).await.unwrap();
         let channel = session
             .create_channel(&alice_ctx, spec("talk", vec![ActorId::User(alice.id), agent]))
             .await
@@ -3262,7 +3298,7 @@ mod tests {
             }
         };
         let participant = || async {
-            let view = manager
+            let view = kernel
                 .views(Viewer::new(alice_ctx.clone()))
                 .channel(session.id(), channel.id())
                 .await

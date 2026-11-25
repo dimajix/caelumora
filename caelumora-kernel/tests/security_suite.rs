@@ -89,7 +89,7 @@ async fn a_session_cannot_be_made_with_a_personality_the_user_may_not_read() {
     assert!(not_found(&refused), "answered as not there, so that it cannot be probed: {refused:#}");
     assert!(
         world
-            .manager
+            .kernel
             .views(Viewer::new(World::as_user(world.alice)))
             .sessions()
             .await
@@ -255,12 +255,12 @@ async fn a_stranger_finds_nothing_of_a_session() {
         !world.manager.delete(&carol, session.id()).await.unwrap(),
         "nor to delete (issue 510)"
     );
-    let views = world.manager.views(Viewer::new(carol));
+    let views = world.kernel.views(Viewer::new(carol));
     assert!(matches!(views.session(session.id()).await, Err(ViewError::SessionNotFound(_))));
     assert!(views.sessions().await.unwrap().is_empty(), "nor listed");
     assert!(
         world
-            .manager
+            .kernel
             .views(Viewer::new(World::as_user(world.alice)))
             .sessions()
             .await
@@ -490,9 +490,9 @@ async fn a_history_is_read_in_pages_and_by_message_as_far_as_the_readers_view_go
     let after = side.say_as(world.alice, "after bob", Vec::new()).await;
 
     let reach = |user| {
-        let manager = &world.manager;
+        let kernel = &world.kernel;
         let (session, channel) = (session.id(), side.id());
-        async move { manager.views(Viewer::new(World::as_user(user))).channel(session, channel).await }
+        async move { kernel.views(Viewer::new(World::as_user(user))).channel(session, channel).await }
     };
     let texts = |items: &[HistoryEntry]| {
         items
@@ -603,9 +603,9 @@ async fn the_messages_carrying_attachments_are_read_as_far_as_the_readers_view_g
     };
     side.record_said(vec![given]).await;
 
-    let (manager, session_id, channel_id) = (&world.manager, session.id(), side.id());
+    let (kernel, session_id, channel_id) = (&world.kernel, session.id(), side.id());
     let carrying = |user: UserId| async move {
-        manager
+        kernel
             .views(Viewer::new(World::as_user(user)))
             .channel(session_id, channel_id)
             .await?
@@ -677,9 +677,9 @@ async fn up_to_where_a_channel_was_read_is_marked_by_its_reader_alone() {
         }
     };
     let unread = |user: UserId| {
-        let (manager, session, channel) = (&world.manager, session.id(), side.id());
+        let (kernel, session, channel) = (&world.kernel, session.id(), side.id());
         async move {
-            manager
+            kernel
                 .views(Viewer::new(World::as_user(user)))
                 .channel(session, channel)
                 .await
@@ -744,9 +744,9 @@ async fn up_to_where_a_thread_was_read_is_marked_by_its_reader_alone() {
         }
     };
     let unread = |user: UserId| {
-        let (manager, session, channel) = (&world.manager, session.id(), main.id());
+        let (kernel, session, channel) = (&world.kernel, session.id(), main.id());
         async move {
-            let view = manager.views(Viewer::new(World::as_user(user)));
+            let view = kernel.views(Viewer::new(World::as_user(user)));
             let channel = view.channel(session, channel).await.unwrap();
             let snapshot = channel.snapshot(Detail::THREADS | Detail::UNREAD).await;
             let listed = snapshot.threads.into_iter().find(|listed| listed.id == thread);
@@ -787,9 +787,9 @@ async fn a_participant_follows_a_channel_through_their_own_actor_whether_it_runs
     let session = world.shared_session(&[], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
     let reach = |user| {
-        let manager = &world.manager;
+        let kernel = &world.kernel;
         let (session, channel) = (session.id(), main.id());
-        async move { manager.views(Viewer::new(World::as_user(user))).channel(session, channel).await }
+        async move { kernel.views(Viewer::new(World::as_user(user))).channel(session, channel).await }
     };
 
     let (watch, asked) = world
@@ -1552,7 +1552,7 @@ async fn searching_whom_to_take_in_is_for_whoever_may_change_the_session() {
     record_users(world.kernel.entity_stores(), &[&dave]).await;
     let session = world.shared_session(&[], &[]).await;
     let main = session.channels()[0].id();
-    let views = |user| world.manager.views(Viewer::new(World::as_user(user)));
+    let views = |user| world.kernel.views(Viewer::new(World::as_user(user)));
 
     let his = views(world.bob).session(session.id()).await.unwrap();
     assert!(
@@ -1622,7 +1622,7 @@ async fn a_whole_name_finds_the_nearest_whoever_asks() {
         let session = Arc::clone(&session);
         async move { session.add_participant(&alice, agent, None).await.unwrap() }
     };
-    let views = |user| world.manager.views(Viewer::new(World::as_user(user)));
+    let views = |user| world.kernel.views(Viewer::new(World::as_user(user)));
     let (alice, bob) = (world.alice, world.bob);
     let session_id = session.id();
     let found_from = |user: UserId, name: &'static str, channel: Option<ChannelId>| {
@@ -1903,9 +1903,9 @@ async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
     let main = Arc::clone(&session.channels()[0]);
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let attachments = world.kernel.attachment_manager();
-    let (manager, session_id, channel_id) = (&world.manager, session.id(), main.id());
+    let (kernel, session_id, channel_id) = (&world.kernel, session.id(), main.id());
     let channel_of = |user: UserId| async move {
-        manager.views(Viewer::new(World::as_user(user))).channel(session_id, channel_id).await
+        kernel.views(Viewer::new(World::as_user(user))).channel(session_id, channel_id).await
     };
 
     let (uploaded, asked) = world
@@ -2107,14 +2107,10 @@ async fn what_a_tool_gave_is_kept_for_a_participant_asked_of_the_flow_alone() {
     // Before the channel has recorded the message of the result (issue 547).
     let kept = keep(world.alice).await.unwrap().remove(0);
     let channel_of = |user: UserId| {
-        let manager = &world.manager;
+        let kernel = &world.kernel;
         let (session, channel) = (session.id(), main.id());
         async move {
-            manager
-                .views(Viewer::new(World::as_user(user)))
-                .channel(session, channel)
-                .await
-                .unwrap()
+            kernel.views(Viewer::new(World::as_user(user))).channel(session, channel).await.unwrap()
         }
     };
     let unrecorded = MessageId::new();
@@ -2182,7 +2178,7 @@ async fn a_profile_is_written_by_its_user_alone_and_read_by_who_shares_a_session
 
     let session = world.shared_session(&[], &[]).await;
     let channel = session.channels()[0].id();
-    let view = world.manager.views(Viewer::new(bob)).channel(session.id(), channel).await.unwrap();
+    let view = world.kernel.views(Viewer::new(bob)).channel(session.id(), channel).await.unwrap();
     let participants = view.participants().await;
     let hers = participants.iter().find(|m| m.id() == ActorId::User(world.alice)).unwrap();
     assert_eq!(
@@ -2791,7 +2787,7 @@ async fn a_project_is_seen_by_who_reads_it() {
     let alice = World::as_user(world.alice);
     let bob = World::as_user(world.bob);
     let carol = World::as_user(world.carol);
-    let views = |ctx: &SecurityContext| world.manager.views(Viewer::new(ctx.clone()));
+    let views = |ctx: &SecurityContext| world.kernel.views(Viewer::new(ctx.clone()));
     let project = world
         .kernel
         .project_manager()
@@ -3513,8 +3509,7 @@ async fn a_channel_whose_bundle_is_withdrawn_keeps_its_session_from_nothing() {
         matches!(hidden.downcast_ref::<SessionError>(), Some(SessionError::ChannelNotFound { .. })),
         "nor that it is unavailable: {hidden}"
     );
-    let views =
-        world.manager.views(Viewer::new(alice.clone())).session(session.id()).await.unwrap();
+    let views = world.kernel.views(Viewer::new(alice.clone())).session(session.id()).await.unwrap();
     let listed = views.channel(side).await.expect("listed").snapshot(Detail::empty()).await;
     assert!(
         listed.unavailable.is_some_and(|why| why.contains("bobs-policy")),
@@ -3541,7 +3536,7 @@ async fn a_channel_whose_bundle_is_withdrawn_keeps_its_session_from_nothing() {
         .await
         .expect("its owner deletes it though it does not run"));
     assert!(
-        world.manager.views(Viewer::new(alice.clone())).channel(session.id(), side).await.is_err(),
+        world.kernel.views(Viewer::new(alice.clone())).channel(session.id(), side).await.is_err(),
         "gone"
     );
     world.manager.stop(&alice, session.id()).await.unwrap();
@@ -3838,7 +3833,7 @@ async fn deleted_channels_are_restored_only_by_who_may_change_their_session() {
     his.security_attributes.owner_id = ActorId::User(world.bob);
     stores.channels.update(&World::system(), &mut his).await.unwrap();
     assert!(session.delete_channel(&World::system(), main).await.unwrap(), "deleted");
-    let views = |user| world.manager.views(Viewer::new(World::as_user(user)));
+    let views = |user| world.kernel.views(Viewer::new(World::as_user(user)));
 
     let (listed, asked) = world
         .asked(async {
@@ -4120,7 +4115,7 @@ async fn a_workspace_is_its_owners_alone() {
         "nor in a storage that is not configured: {elsewhere:?}"
     );
 
-    let views = |ctx: &SecurityContext| world.manager.views(Viewer::new(ctx.clone()));
+    let views = |ctx: &SecurityContext| world.kernel.views(Viewer::new(ctx.clone()));
     assert_eq!(views(&alice).workspaces().await.unwrap().len(), 1, "hers");
     let (listed, asked) = world.asked(views(&bob).workspaces()).await;
     assert!(listed.unwrap().is_empty(), "not his");
@@ -4289,7 +4284,7 @@ async fn a_workspace_one_is_not_cleared_for_is_not_found() {
     // what was deleted and restoring agree.
     workspaces.delete(&alice, docs.id).await.unwrap();
     let listed =
-        world.manager.views(Viewer::new(uncleared.clone())).deleted_workspaces().await.unwrap();
+        world.kernel.views(Viewer::new(uncleared.clone())).deleted_workspaces().await.unwrap();
     assert!(listed.is_empty(), "not among what she deleted");
     let (restored, asked) = world.asked(workspaces.restore(&uncleared, docs.id)).await;
     assert!(matches!(restored, Err(WorkspaceError::NotFound(_))), "nor to restore");
@@ -4298,7 +4293,7 @@ async fn a_workspace_one_is_not_cleared_for_is_not_found() {
         checks(&["alice: ReadDeletedWorkspace(alice's) yes", "alice: Cleared(alice) no"])
     );
     assert_eq!(
-        world.manager.views(Viewer::new(alice.clone())).deleted_workspaces().await.unwrap().len(),
+        world.kernel.views(Viewer::new(alice.clone())).deleted_workspaces().await.unwrap().len(),
         1,
         "where it is, cleared"
     );
@@ -4513,7 +4508,7 @@ async fn a_workspace_is_used_in_a_channel_by_its_participants_as_its_list_lets_t
     session.update_workspace(&alice, Some(docs.id), None).await.unwrap();
     let (session_id, main) = (session.id(), session.channels()[0].id());
     let in_main = |ctx: &SecurityContext| {
-        let views = world.manager.views(Viewer::new(ctx.clone()));
+        let views = world.kernel.views(Viewer::new(ctx.clone()));
         async move { views.channel(session_id, main).await.unwrap() }
     };
 
@@ -4849,7 +4844,7 @@ async fn a_workspace_is_reached_by_its_list_wherever_one_acts() {
         )
         .await
         .unwrap();
-    let views = |ctx: &SecurityContext| world.manager.views(Viewer::new(ctx.clone()));
+    let views = |ctx: &SecurityContext| world.kernel.views(Viewer::new(ctx.clone()));
     assert!(
         matches!(views(&bob).workspace(docs.id).await, Err(ViewError::WorkspaceNotFound(_))),
         "not shared: not there for him"
@@ -4944,7 +4939,7 @@ async fn what_is_shared_with_a_team_is_read_by_its_members_while_they_are_member
     let carol = World::as_user(world.carol);
     let groups = world.kernel.group_manager();
     let workspaces = world.kernel.workspace_manager();
-    let views = |ctx: &SecurityContext| world.manager.views(Viewer::new(ctx.clone()));
+    let views = |ctx: &SecurityContext| world.kernel.views(Viewer::new(ctx.clone()));
 
     let project = groups
         .create(&alice, GroupSpec::new("project", Scope::UserScope { user_id: world.alice }))
@@ -5081,10 +5076,10 @@ async fn the_group_of_a_channels_participants_follows_who_takes_part() {
     let session = world.shared_session(&[], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
     let readable = |user: UserId| {
-        let manager = Arc::clone(&world.manager);
+        let kernel = Arc::clone(&world.kernel);
         let (session_id, channel_id) = (session.id(), main.id());
         async move {
-            manager
+            kernel
                 .views(Viewer::new(World::as_user(user)))
                 .channel(session_id, channel_id)
                 .await
@@ -5150,7 +5145,7 @@ async fn a_workspace_is_not_used_in_a_channel_by_who_is_not_in_it() {
         .next(ActorId::Agent(waiting), ActorId::User(world.alice), ActorId::User(world.alice))
         .with_roles(vec![*STAFF], None);
     let main = world
-        .manager
+        .kernel
         .views(Viewer::new(as_agent))
         .channel(session.id(), session.channels()[0].id())
         .await
@@ -5294,7 +5289,7 @@ async fn an_entry_naming_a_group_that_is_gone_is_dropped_as_the_list_is_stored()
     controller.update_name(&alice, "papers").await.unwrap();
     assert_eq!(named(&controller.load()), both, "a deleted team keeps its entry");
     let shown = world
-        .manager
+        .kernel
         .views(Viewer::new(alice.clone()))
         .workspace(docs.id)
         .await
@@ -5652,7 +5647,7 @@ async fn leaving_asks_leave_channel_in_the_context_of_who_leaves() {
     let main = Arc::clone(&session.channels()[0]);
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let bob = World::as_user(world.bob);
-    let view = world.manager.views(Viewer::new(bob.clone())).session(session.id()).await.unwrap();
+    let view = world.kernel.views(Viewer::new(bob.clone())).session(session.id()).await.unwrap();
     let participants = view.channel(main.id()).await.unwrap().participants().await;
     let his: HashSet<ActorId> =
         participants.iter().filter(|p| p.may_leave()).map(|p| p.id()).collect();
@@ -5774,7 +5769,7 @@ async fn letting_someone_go_from_a_session_asks_update_session_and_nothing_of_it
     let former = stored.former.iter().find(|f| f.participant.actor_id() == bob);
     assert_eq!(former.expect("kept").left.by, ActorId::User(world.alice), "removed by alice");
     let his = World::as_user(world.bob);
-    let views = world.manager.views(Viewer::new(his.clone()));
+    let views = world.kernel.views(Viewer::new(his.clone()));
     assert!(views.session(session.id()).await.is_err(), "he reads the session no more");
     assert!(session.channel_for(&his, main.id()).await.is_err(), "nor its channel");
     world.manager.stop(&alice, session.id()).await.unwrap();

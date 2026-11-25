@@ -5,7 +5,7 @@
 
 use crate::command::SHELL_KIND;
 use crate::kernel::Kernel;
-use crate::session::{SessionLoop, SessionManager};
+use crate::session::SessionLoop;
 use crate::testing::TestKernel;
 use crate::workspace::WorkspaceSpec;
 use caelumora_api::terminal::{Shell, Terminal, TerminalReader};
@@ -112,10 +112,7 @@ pub async fn session_with_workspace() -> WithWorkspace {
         channels: vec![channel.id],
         ..session
     };
-    let session = SessionManager::new(Arc::clone(&kernel))
-        .create(&as_owner, session, vec![channel])
-        .await
-        .unwrap();
+    let session = kernel.session_manager().create(&as_owner, session, vec![channel]).await.unwrap();
     let context = SecurityContext::new(
         ActorId::User(owner),
         session.id(),

@@ -460,7 +460,9 @@ What changes an entity is split by what it changes:
     kinds, and those of the plugins (`SkillManager`, `ArtifactManager`). The lifecycles of
     sessions, their channels and shared projects, which touch several objects, are procedures
     (below), carried out by the building blocks of what they touch: the `SessionManager`, the
-    register of the sessions that run, which it starts and stops; the session's loop, which runs
+    kernel's, the register of the sessions that run, which it starts and stops - each owned by the
+    task it runs in, which the register only finds, so that the kernel holding the manager and a
+    running session holding the kernel make no cycle (issue 601); the session's loop, which runs
     its channels; the controllers of sessions, channels and projects; and the `ProjectManager`, the
     kernel's, which makes every project and finds, makes and purges the own projects of sessions. A
     session's own project is made, deleted, restored and purged with the session.
@@ -495,11 +497,11 @@ from it, an agent's deletion or restoring followed in its channels, a channel cr
 restored, built again or reclassified, a thread opened or closed. An entry point - a REST handler,
 the terminal, a command run in a channel, a plugin's writer, the session follower of an agent's
 deletion or restoring and of a delegation let go (`procedure::follower::SessionFollower`, which a
-program starts beside its `SessionManager`) - makes it, as what it asks for, and the kernel's
+program starts with its kernel) - makes it, as what it asks for, and the kernel's
 `ProcedureExecutor` carries it out in a task of its own; who reaches the session from within it
 finds the executor there (`SessionLoop::procedures`). The procedures reach the running sessions by
-the `SessionManager`, which the kernel knows weakly, since it holds the kernel (`Kernel::sessions`,
-issue 601). The executor holds the kernel weakly as well, made with it, and hands it to the
+the kernel's `SessionManager` (`Kernel::session_manager`). The executor holds the kernel weakly,
+made with it, as the `SessionManager` does (issue 601), and hands it to the
 procedure it carries out: a procedure holds only what it was asked for, and reaches the services of
 the kernel as it is carried out. It locks what it finds from the top down, by a key that names the
 object's path (`Key`), each key's parents shared with it: exclusively what it changes, shared what

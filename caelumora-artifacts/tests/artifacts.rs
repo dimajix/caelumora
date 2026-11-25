@@ -566,8 +566,6 @@ fn api_of(world: &World) -> Router {
     let state = Arc::new(AppState {
         auth,
         kernel: Arc::clone(&world.kernel),
-        session_manager: Arc::clone(&world.manager),
-        procedures: Arc::clone(world.kernel.procedures()),
         compartments: Default::default(),
         shutdown: Default::default(),
     });
@@ -746,7 +744,7 @@ async fn an_artifact_shared_with_a_team_is_among_its_members_artifacts() {
         .await
         .expect("one to share without them");
     let listed = |ctx: &SecurityContext| {
-        let views = world.manager.views(Viewer::new(ctx.clone()));
+        let views = world.kernel.views(Viewer::new(ctx.clone()));
         async move {
             let mut ids = views
                 .artifacts()
@@ -815,7 +813,7 @@ enum Read {
 }
 
 async fn read_version(world: &World, ctx: &SecurityContext, id: ArtifactId, number: u32) -> Read {
-    let artifact = match world.manager.views(Viewer::new(ctx.clone())).artifact(id).await {
+    let artifact = match world.kernel.views(Viewer::new(ctx.clone())).artifact(id).await {
         Ok(artifact) => artifact,
         Err(ArtifactError::NotFound(_)) => return Read::NoArtifact,
         Err(e) => panic!("{e}"),
@@ -855,7 +853,7 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
     session.update_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
     let (session_id, main) = (session.id(), session.channels()[0].id());
     let in_main = |ctx: &SecurityContext| {
-        let views = world.manager.views(Viewer::new(ctx.clone()));
+        let views = world.kernel.views(Viewer::new(ctx.clone()));
         async move { views.channel(session_id, main).await.unwrap() }
     };
     let (_, terminal) = terminal_in(&session, main, &alice).await.expect("hers to use");
@@ -931,7 +929,7 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
         "nor adds to alice's artifact of that name: {refused:?}"
     );
     let listed = |ctx: &SecurityContext| {
-        let views = world.manager.views(Viewer::new(ctx.clone()));
+        let views = world.kernel.views(Viewer::new(ctx.clone()));
         async move {
             views.artifacts().await.unwrap().iter().map(|a| a.artifact().id).collect::<Vec<_>>()
         }
@@ -1071,7 +1069,7 @@ async fn an_artifact_goes_with_its_session_only_as_far_as_whoever_deletes_it_may
         "the session is kept"
     );
     assert!(
-        world.manager.views(Viewer::new(alice.clone())).session(session_id).await.is_ok(),
+        world.kernel.views(Viewer::new(alice.clone())).session(session_id).await.is_ok(),
         "and runs on"
     );
     assert!(store(&world).get(&bob, his.id).await.is_ok(), "bob's artifact stays");
@@ -1227,7 +1225,7 @@ async fn drafts_of_an_artifact_stay_with_the_channel_they_were_published_in() {
     assert_eq!(final_one, 2);
 
     let his = world
-        .manager
+        .kernel
         .views(Viewer::new(bob.clone()))
         .artifact(artifact.id)
         .await
@@ -1265,7 +1263,7 @@ async fn drafts_of_an_artifact_stay_with_the_channel_they_were_published_in() {
     );
 
     let hers = world
-        .manager
+        .kernel
         .views(Viewer::new(alice.clone()))
         .artifact(artifact.id)
         .await
@@ -1296,7 +1294,7 @@ async fn drafts_of_an_artifact_stay_with_the_channel_they_were_published_in() {
     .concat();
     manager(&world).set_access(&alice, artifact.id, shared, true).await.unwrap();
     let theirs = world
-        .manager
+        .kernel
         .views(Viewer::new(carol.clone()))
         .artifact(artifact.id)
         .await
@@ -1406,7 +1404,7 @@ async fn an_artifact_of_a_shared_project_outlives_the_session_it_was_published_i
     assert_eq!(artifact.project(), Some(project.id), "in the shared project");
 
     let in_project = |ctx: &SecurityContext| {
-        let views = world.manager.views(Viewer::new(ctx.clone()));
+        let views = world.kernel.views(Viewer::new(ctx.clone()));
         async move { views.project(project.id).await.unwrap().artifacts().await.unwrap() }
     };
     let hers = in_project(&carol).await;

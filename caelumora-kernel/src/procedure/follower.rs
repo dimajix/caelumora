@@ -2,12 +2,13 @@
 //! sessions, what follows from events outside any procedure - the running channels following
 //! whether their agents exist (`participant::Follow`), and a thread whose delegation was let go
 //! closed with the agent it owns (`thread::Close`) -, which every program that runs sessions starts
-//! beside its `SessionManager`: without it, a deleted agent keeps running in the channels of a
+//! with its kernel: without it, a deleted agent keeps running in the channels of a
 //! running session until the session starts again, and a sub-agent nobody ends stays.
 
 use super::participant::Follow;
 use super::thread::Close;
 use super::{Procedure, ProcedureExecutor};
+use crate::kernel::Kernel;
 use crate::session::{SessionError, SessionManager};
 use caelumora_domain::agent::Agent;
 use caelumora_domain::channel::{self, Channel, ChannelId, ThreadId};
@@ -31,17 +32,20 @@ pub struct SessionFollower {
 }
 
 impl SessionFollower {
-    /// Follows the sessions `sessions` runs, from now on.
-    pub fn spawn(sessions: &Arc<SessionManager>) -> Self {
-        let sessions = Arc::clone(sessions);
-        let mut events = sessions.kernel().event_bus().subscribe_all().into_receiver();
+    /// Follows the sessions `kernel` runs, from now on: holding its session manager and its
+    /// executor, which know the kernel weakly, so that it keeps no kernel alive.
+    pub fn spawn(kernel: &Arc<Kernel>) -> Self {
+        let sessions = Arc::clone(kernel.session_manager());
+        let procedures = Arc::clone(kernel.procedures());
+        let mut events = kernel.event_bus().subscribe_all().into_receiver();
         let following = tokio::spawn(async move {
             loop {
                 match events.recv().await {
-                    Ok(event) => follow(&sessions, &event),
+                    Ok(event) => follow(&sessions, &procedures, &event),
                     Err(RecvError::Lagged(lost)) => {
                         warn!("The follower lost {lost} events and follows every session again");
-                        tokio::spawn(follow_again(Arc::clone(&sessions)));
+                        let again = follow_again(Arc::clone(&sessions), Arc::clone(&procedures));
+                        tokio::spawn(again);
                     }
                     // Not while the kernel holds the bus.
                     Err(RecvError::Closed) => return,
@@ -52,10 +56,9 @@ impl SessionFollower {
     }
 }
 
-/// Carries out what `event` asks to be followed in `sessions`, if anything: an agent deleted or
-/// restored, a delegation let go in a running session.
-fn follow(sessions: &SessionManager, event: &GlobalEvent) {
-    let procedures = sessions.kernel().procedures();
+/// Carries out by `procedures` what `event` asks to be followed in the sessions `sessions` runs,
+/// if anything: an agent deleted or restored, a delegation let go in a running session.
+fn follow(sessions: &SessionManager, procedures: &Arc<ProcedureExecutor>, event: &GlobalEvent) {
     if let Some((agent, EntityChange::Deleted | EntityChange::Restored)) = event.about::<Agent>() {
         carry_out(procedures, Follow::agent(agent), format!("following agent {agent}"));
     }
@@ -67,16 +70,15 @@ fn follow(sessions: &SessionManager, event: &GlobalEvent) {
     }
 }
 
-/// Follows every running session of `sessions` again, as after events were lost: its agents, and
-/// each thread of its running channels whose delegation is let go.
-async fn follow_again(sessions: Arc<SessionManager>) {
-    let procedures = sessions.kernel().procedures();
+/// Follows by `procedures` every running session of `sessions` again, as after events were lost:
+/// its agents, and each thread of its running channels whose delegation is let go.
+async fn follow_again(sessions: Arc<SessionManager>, procedures: Arc<ProcedureExecutor>) {
     for session in sessions.running_ids() {
-        carry_out(procedures, Follow::session(session), format!("following session {session}"));
+        carry_out(&procedures, Follow::session(session), format!("following session {session}"));
         let Some(running) = sessions.running(session) else { continue };
         for channel in running.channels() {
             for thread in channel.delegations_let_go().await {
-                close(procedures, session, channel.id(), thread);
+                close(&procedures, session, channel.id(), thread);
             }
         }
     }

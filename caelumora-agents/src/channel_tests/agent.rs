@@ -28,7 +28,7 @@ use caelumora_domain::transcript::TranscriptEntry;
 use caelumora_domain::turn::GivenUpReason;
 use caelumora_domain::work::TurnId;
 use caelumora_kernel::actor::user::UserActor;
-use caelumora_kernel::session::{SessionLoop, SessionManager};
+use caelumora_kernel::session::SessionLoop;
 use caelumora_security::AllowAllPolicy;
 use futures::stream;
 use futures::stream::BoxStream;
@@ -2819,8 +2819,6 @@ async fn a_rule_of_the_channel_asks_for_a_call_its_tool_would_run() {
 /// of theirs with an approver deciding by `strategy`, which bob takes part in if `with_bob`: the
 /// agent asked as alice said hello, and the approval waits for alice (issue 603).
 struct Approving {
-    /// Held while the session runs.
-    _manager: Arc<SessionManager>,
     session: Arc<SessionLoop>,
     channel: Arc<ChannelLoop>,
     context: SecurityContext,
@@ -2847,8 +2845,8 @@ async fn approving(strategy: ApprovalStrategy, with_bob: bool) -> Approving {
     let mut session = make_session("approving", alice);
     session.participants = record_users(kernel.entity_stores(), &[&bob]).await;
     session.participants.extend([Participant::User(alice), Participant::Agent(agent)]);
-    let manager = SessionManager::new(Arc::clone(&kernel));
-    let session = create(&manager, &context, session).await.expect("the session starts");
+    let manager = kernel.session_manager();
+    let session = create(manager, &context, session).await.expect("the session starts");
     let mut taking_part = vec![ActorId::User(alice), ActorId::Agent(agent)];
     if with_bob {
         taking_part.push(ActorId::User(bob.id));
@@ -2872,7 +2870,7 @@ async fn approving(strategy: ApprovalStrategy, with_bob: bool) -> Approving {
     .await
     .expect("the call waits for alice");
     assert!(waiting(&hers, 1).await, "and she is told");
-    Approving { _manager: manager, session, channel, context, alice, bob: bob.id, request }
+    Approving { session, channel, context, alice, bob: bob.id, request }
 }
 
 /// Whether `approvals` approvals wait for the user of `actor` within five seconds.
@@ -2891,7 +2889,7 @@ async fn waiting(actor: &UserActor, approvals: usize) -> bool {
 #[tokio::test]
 async fn a_user_who_joins_while_an_approval_waits_is_asked_it() {
     use caelumora_domain::channel::HistoryAccess;
-    let Approving { _manager: _running, session, channel, context, alice, bob, .. } =
+    let Approving { session, channel, context, alice, bob, .. } =
         approving(ApprovalStrategy::Any, false).await;
     let into = Some((channel.id(), HistoryAccess::All));
     session.add_participant(&context, ActorId::User(bob), into).await.expect("added");
@@ -2905,7 +2903,7 @@ async fn a_user_who_joins_while_an_approval_waits_is_asked_it() {
 /// no more - an approval all the others gave is decided.
 #[tokio::test]
 async fn an_approval_waits_no_more_for_a_user_who_left() {
-    let Approving { _manager: _running, session, channel, context, alice, bob, request: id } =
+    let Approving { session, channel, context, alice, bob, request: id } =
         approving(ApprovalStrategy::All, true).await;
     let hers = channel.user_actor(alice).expect("alice takes part");
     let his = channel.user_actor(bob).expect("bob takes part");

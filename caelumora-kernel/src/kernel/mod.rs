@@ -49,6 +49,7 @@ use crate::scoped::ScopedEntities;
 use crate::seed::{self, SeedSection};
 use crate::session::SessionManager;
 use crate::user_provider::UserManager;
+use crate::view::{Viewer, Views};
 use crate::workspace::reaper::CommandReaper;
 use crate::workspace::WorkspaceManager;
 use anyhow::Result;
@@ -69,7 +70,7 @@ use caelumora_store::{EntityStores, StateStore};
 use extension::Extensions;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::{self, Arc, Weak};
+use std::sync::Arc;
 
 /// The services and managers everything in a process shares, made once by the `KernelBuilder`.
 #[derive(Debug)]
@@ -132,8 +133,8 @@ pub struct Kernel {
     seed_sections: BTreeMap<String, Arc<dyn SeedSection>>,
     /// What carries out the changes of the lifecycles of sessions and projects (issue 593).
     procedures: Arc<ProcedureExecutor>,
-    /// The session manager made for it, known weakly, since it holds the kernel (issue 601).
-    sessions: sync::RwLock<Weak<SessionManager>>,
+    /// The sessions of the process, which knows the kernel weakly, made with it (issue 601).
+    sessions: Arc<SessionManager>,
 }
 
 impl Kernel {
@@ -279,17 +280,16 @@ impl Kernel {
         &self.procedures
     }
 
-    /// The session manager made for it (`SessionManager::new`), by which the procedures it hands
-    /// the kernel to reach the running sessions as they are carried out (issue 593); `None` if
-    /// none was made, or it is gone.
-    pub(crate) fn sessions(&self) -> Option<Arc<SessionManager>> {
-        self.sessions.read().unwrap_or_else(sync::PoisonError::into_inner).upgrade()
+    /// The sessions of the process: the register of those that run here and their lifecycles, by
+    /// which the procedures reach the running sessions as they are carried out (issues 593, 601).
+    pub fn session_manager(&self) -> &Arc<SessionManager> {
+        &self.sessions
     }
 
-    /// Makes `sessions` the session manager the kernel knows (`sessions`), as it is made.
-    pub(crate) fn know_sessions(&self, sessions: &Arc<SessionManager>) {
-        *self.sessions.write().unwrap_or_else(sync::PoisonError::into_inner) =
-            Arc::downgrade(sessions);
+    /// The root of the views (issue 163) for `viewer`: every session it may read, and from there
+    /// their channels and participants, running or not.
+    pub fn views(&self, viewer: Viewer) -> Views {
+        Views::new(self, Arc::<SessionManager>::clone(&self.sessions), viewer)
     }
 
     /// What ends the commands nobody may run any longer (issues 254, 344).

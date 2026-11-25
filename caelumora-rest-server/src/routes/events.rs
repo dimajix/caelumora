@@ -101,7 +101,7 @@ mod tests {
         let cookie = login(&api, "alice").await;
         let session = make_session("talk", UserId::new());
         let id = session.id.0.to_string();
-        create(&state.session_manager, &SecurityContext::system(), session).await.unwrap();
+        create(state.kernel.session_manager(), &SecurityContext::system(), session).await.unwrap();
 
         let request = Request::get("/events?snapshot=true").header(COOKIE, &cookie);
         let response = api.clone().oneshot(request.body(Body::empty()).unwrap()).await.unwrap();

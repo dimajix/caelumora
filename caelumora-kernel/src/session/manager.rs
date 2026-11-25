@@ -8,7 +8,7 @@ use crate::event::EventBus;
 use crate::group::GroupManager;
 use crate::kernel::Kernel;
 use crate::lifecycle::Lifecycle;
-use crate::view::{Viewer, Views};
+use crate::procedure::ProcedureError;
 use anyhow::Result;
 use caelumora_domain::channel::{Channel, ChannelId};
 use caelumora_domain::event::{Announcing, EventPublisher, GlobalEvent};
@@ -19,8 +19,10 @@ use caelumora_domain::session::{Session, SessionId};
 use caelumora_domain::store::{StoreResult, Stored};
 use caelumora_security::{ActionType, Enforcement, Policies, SecurityContext};
 use caelumora_store::sessions::{SessionHold, SessionLocks};
+use caelumora_store::EntityStores;
 use dashmap::DashMap;
 use futures::future::{self, FutureExt};
+use std::fmt;
 use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Weak};
 use tokio::task::JoinHandle;
@@ -38,11 +40,10 @@ pub struct SessionManager {
     /// 554), if any do; and the holds of the sessions that run here, let go as they stop.
     locks: Option<Arc<dyn SessionLocks>>,
     holds: DashMap<SessionId, SessionHold>,
-    /// What builds the loops of the sessions it starts and the views of them, and what is made
-    /// beside it runs in (`kernel`).
-    kernel: Arc<Kernel>,
-    /// The services it works with, taken from `kernel` once (issue
-    /// 229).
+    /// The kernel it starts its sessions in, which holds it - known weakly, made with it, as the
+    /// kernel's `ProcedureExecutor` knows it (issue 601).
+    kernel: Weak<Kernel>,
+    /// The services it works with, given as it is made (issue 229).
     policies: Policies,
     events: Arc<EventBus>,
     /// What purges the group of the participants of a channel with it (issue 348).
@@ -52,6 +53,12 @@ pub struct SessionManager {
     /// but a purge announced as it is stored (issue 593).
     session_lifecycle: Lifecycle<Session>,
     channel_lifecycle: Lifecycle<Channel>,
+}
+
+impl fmt::Debug for SessionManager {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SessionManager").finish_non_exhaustive()
+    }
 }
 
 /// A session as [`SessionManager::find`] found it for a context that may
@@ -83,24 +90,31 @@ impl Found {
 }
 
 impl SessionManager {
-    /// The session manager of `kernel`, which knows it from then on (`Kernel::sessions`).
-    pub fn new(kernel: Arc<Kernel>) -> Arc<Self> {
-        let stores = kernel.entity_stores();
-        let events: Arc<dyn EventPublisher> = Arc::<EventBus>::clone(kernel.event_bus());
-        let manager = Arc::new(Self {
+    /// The session manager of the kernel `kernel` - made with it, which holds it -, of the
+    /// sessions and channels in `stores`, held against the other processes that share them by
+    /// `locks`, if any do, asked by `policies` and announced on `events`, with the groups of their
+    /// participants purged by `groups`.
+    pub(crate) fn new(
+        kernel: Weak<Kernel>,
+        stores: &EntityStores,
+        locks: Option<Arc<dyn SessionLocks>>,
+        policies: &Policies,
+        events: Arc<EventBus>,
+        groups: Arc<GroupManager>,
+    ) -> Self {
+        let publisher: Arc<dyn EventPublisher> = Arc::<EventBus>::clone(&events);
+        Self {
             sessions: DashMap::new(),
             handles: DashMap::new(),
-            locks: kernel.session_locks().map(Arc::clone),
+            locks,
             holds: DashMap::new(),
-            policies: kernel.policies().clone(),
-            events: Arc::clone(kernel.event_bus()),
-            groups: Arc::clone(kernel.group_manager()),
-            session_lifecycle: Lifecycle::new(&stores.sessions, Arc::clone(&events)),
-            channel_lifecycle: Lifecycle::new(&stores.channels, events),
+            policies: policies.clone(),
+            events,
+            groups,
+            session_lifecycle: Lifecycle::new(&stores.sessions, Arc::clone(&publisher)),
+            channel_lifecycle: Lifecycle::new(&stores.channels, publisher),
             kernel,
-        });
-        manager.kernel.know_sessions(&manager);
-        manager
+        }
     }
 
     /// Starts `session`, stored already, with `channels` here, for a procedure that holds it
@@ -111,6 +125,10 @@ impl SessionManager {
     /// The task owns the loop, the register only finds it (issue 601): it holds it until it is
     /// stopped, also once its `run` failed or panicked - the session stays registered as running
     /// then, as `SessionLoop::run` says -, or until the runtime it runs in ends.
+    ///
+    /// # Errors
+    /// `ProcedureError::Gone` once its kernel is gone, as the process ends; whatever building the
+    /// loop fails with (`SessionLoop::new`).
     pub(crate) async fn start(
         &self,
         session: Session,
@@ -118,7 +136,7 @@ impl SessionManager {
         hold: Option<SessionHold>,
     ) -> Result<Arc<SessionLoop>> {
         let id = session.id;
-        let session_loop = SessionLoop::new(session, channels, Arc::clone(&self.kernel)).await?;
+        let session_loop = SessionLoop::new(session, channels, self.kernel()?).await?;
         self.sessions.insert(id, Arc::downgrade(&session_loop));
         if let Some(hold) = hold {
             self.holds.insert(id, hold);
@@ -240,16 +258,13 @@ impl SessionManager {
         self.channel_lifecycle.purge_for_good(id).await
     }
 
-    /// The root of the views (issue 163): every session `viewer` may
-    /// read, and from there their channels and participants, running or not.
-    pub fn views(self: &Arc<Self>, viewer: Viewer) -> Views {
-        Views::new(&self.kernel, Arc::<SessionManager>::clone(self), viewer)
-    }
-
     /// The kernel it starts its sessions in - for an undo that repeats procedures, and so holds it
     /// (`procedure::session::record_creation`).
-    pub(crate) fn kernel(&self) -> &Arc<Kernel> {
-        &self.kernel
+    ///
+    /// # Errors
+    /// `ProcedureError::Gone` once it is gone, as the process ends.
+    pub(crate) fn kernel(&self) -> Result<Arc<Kernel>, ProcedureError> {
+        self.kernel.upgrade().ok_or(ProcedureError::Gone)
     }
 
     /// The lifecycle of its sessions: each made, deleted, restored and purged by the procedures of
@@ -274,7 +289,7 @@ impl SessionManager {
 mod tests {
     use crate::channel::Ending;
     use crate::session::testing::{running_session_of_a_user, test_kernel};
-    use crate::session::SessionManager;
+    use std::sync::Arc;
     use tokio::runtime::Runtime;
 
     /// Issue 601: the task of a running session owns it, the register only finds it - a session
@@ -283,9 +298,10 @@ mod tests {
     #[test]
     fn a_session_whose_task_ended_is_not_found_running() {
         let runtime = Runtime::new().expect("a runtime");
-        let manager = runtime.block_on(async { SessionManager::new(test_kernel()) });
+        let kernel = runtime.block_on(async { test_kernel() });
+        let manager = kernel.session_manager();
         let id = runtime.block_on(async {
-            let (session, _, _) = running_session_of_a_user(&manager).await;
+            let (session, _, _) = running_session_of_a_user(manager).await;
             assert!(manager.running(session.id()).is_some(), "found while it runs");
             session.id()
         });
@@ -296,5 +312,20 @@ mod tests {
         let stopping = manager.stop_running(id, Ending::Stop);
         let stopped = Runtime::new().expect("a runtime").block_on(stopping);
         assert!(stopped.is_none(), "no loop to stop");
+    }
+
+    /// Issue 601: the kernel holds its session manager, and a running session holds the kernel -
+    /// no cycle: once the runtime that runs its sessions ends, nothing keeps the kernel.
+    #[test]
+    fn a_kernel_whose_sessions_run_is_let_go_once_their_runtime_ends() {
+        let runtime = Runtime::new().expect("a runtime");
+        let kernel = runtime.block_on(async {
+            let kernel = test_kernel();
+            running_session_of_a_user(kernel.session_manager()).await;
+            Arc::downgrade(&kernel)
+        });
+
+        drop(runtime);
+        assert!(kernel.upgrade().is_none(), "let go with its sessions");
     }
 }

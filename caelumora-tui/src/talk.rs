@@ -991,10 +991,10 @@ mod tests {
 
     /// The same, in the directory given.
     async fn talking_in(in_directory: InDirectory) -> (Talk, Arc<SessionLoop>, Running) {
-        let InDirectory { sessions, manager, kernel, owner, directory } = in_directory;
+        let InDirectory { sessions, kernel, owner, directory } = in_directory;
         let start = Opening::Start { template: None };
         let (session_loop, _) = sessions.open(&start).await.expect("started");
-        let views = manager.views(Viewer::new(owner.clone()));
+        let views = kernel.views(Viewer::new(owner.clone()));
         let bus = Arc::clone(kernel.event_bus());
         let ActorId::User(user) = owner.caller_id else { unreachable!("a user") };
         let controller = kernel.controller_manager().user_controller(user).await;

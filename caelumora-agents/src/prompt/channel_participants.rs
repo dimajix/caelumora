@@ -157,7 +157,6 @@ mod tests {
     use caelumora_domain::value::name::{Name, ScopedName};
     use caelumora_domain::work::Work;
     use caelumora_kernel::session::testing::participant_runtime_in;
-    use caelumora_kernel::session::SessionManager;
     use caelumora_kernel::testing::TestKernel;
     use caelumora_security::{Policies, SecurityContext};
     use caelumora_store::testing::record_users;
@@ -308,7 +307,8 @@ mod tests {
         let session = Session { participants, channels: vec![channel.id], ..session };
         let as_owner =
             SecurityContext::new(ActorId::User(kaya.id), Default::default(), Default::default());
-        let session_loop = SessionManager::new(Arc::clone(&kernel))
+        let session_loop = kernel
+            .session_manager()
             .create(&as_owner, session.clone(), vec![channel.clone()])
             .await
             .unwrap();

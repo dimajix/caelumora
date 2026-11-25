@@ -212,7 +212,7 @@ async fn an_agent_is_offered_the_workspace_tools_its_list_lets_it_call_in_its_ch
 
     let offered = || async {
         let view = world
-            .manager
+            .kernel
             .views(Viewer::new(World::as_user(world.bob)))
             .channel(session.id(), main.id())
             .await

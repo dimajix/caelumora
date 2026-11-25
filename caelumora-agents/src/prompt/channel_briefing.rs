@@ -144,7 +144,7 @@ mod tests {
     use caelumora_domain::user::UserId;
     use caelumora_domain::work::Work;
     use caelumora_kernel::session::testing::participant_runtime_in;
-    use caelumora_kernel::session::{SessionLoop, SessionManager};
+    use caelumora_kernel::session::SessionLoop;
     use caelumora_kernel::testing::TestKernel;
     use caelumora_security::SecurityContext;
     use caelumora_store::testing::record_users;
@@ -246,7 +246,8 @@ mod tests {
             channels: vec![channel.id],
             ..session
         };
-        let session_loop = SessionManager::new(Arc::clone(&kernel))
+        let session_loop = kernel
+            .session_manager()
             .create(&as_owner, session.clone(), vec![channel.clone()])
             .await
             .unwrap();

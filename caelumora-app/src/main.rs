@@ -23,7 +23,6 @@ use caelumora_kernel::plugin::Plugin;
 use caelumora_kernel::procedure::follower::SessionFollower;
 use caelumora_kernel::procedure::session;
 use caelumora_kernel::procedure::ProcedureExecutor;
-use caelumora_kernel::session::SessionManager;
 use caelumora_logging::{init, LogTarget};
 use caelumora_memory::library::MemoryLibrary;
 use caelumora_memory::plugin::MemoryPlugin;
@@ -92,10 +91,9 @@ async fn main() -> Result<()> {
         builder.library(library.as_ref())?;
     }
     let kernel = builder.build()?;
-    let session_manager = SessionManager::new(Arc::clone(&kernel));
     // Whether the agents of the running sessions exist, and the delegations let go in them,
     // followed as long as the server runs.
-    let _followed = SessionFollower::spawn(&session_manager);
+    let _followed = SessionFollower::spawn(&kernel);
     let user_manager = Arc::clone(kernel.user_manager());
     if user_manager.is_empty() {
         tracing::warn!(
@@ -120,9 +118,7 @@ async fn main() -> Result<()> {
     let shutdown = CancellationToken::new();
     let state = Arc::new(AppState {
         auth,
-        procedures: Arc::clone(kernel.procedures()),
         kernel,
-        session_manager: Arc::clone(&session_manager),
         compartments: Arc::new(config.compartments.clone()),
         shutdown: shutdown.clone(),
     });
@@ -141,7 +137,7 @@ async fn main() -> Result<()> {
         )
     });
     // The request id is set inside the request span, which is the outer layer.
-    let procedures = Arc::clone(&state.procedures);
+    let procedures = Arc::clone(state.kernel.procedures());
     let app = app(routes::api(state, &rest_plugins))
         .layer(middleware::from_fn(error::request_id))
         .layer(trace_layer);

@@ -14,7 +14,6 @@ use caelumora_domain::session::SessionId;
 use caelumora_domain::user::UserId;
 use caelumora_kernel::event::EventBus;
 use caelumora_kernel::session::testing::create;
-use caelumora_kernel::session::SessionManager;
 use caelumora_kernel::testing::TestKernel;
 use caelumora_kernel::user_provider::accept_any::AcceptAnyUserProvider;
 use caelumora_kernel::user_provider::UserManager;
@@ -49,12 +48,9 @@ pub(super) fn state_with(config: AppConfig) -> Arc<AppState> {
     });
     // No session follower (`SessionFollower`): what the server's tests ask follows no agent's
     // deletion, and the state the server is given holds none - the server program does.
-    let session_manager = SessionManager::new(Arc::clone(&kernel));
     Arc::new(AppState {
         auth,
-        procedures: Arc::clone(kernel.procedures()),
         kernel,
-        session_manager,
         compartments: Default::default(),
         shutdown: Default::default(),
     })
@@ -117,7 +113,7 @@ pub(super) async fn session_of(
     session.participants =
         iter::once(Participant::User(user)).chain(others.iter().cloned()).collect();
     let ids = (session.id, session.channels[0]);
-    create(&state.session_manager, &SecurityContext::system(), session).await.unwrap();
+    create(state.kernel.session_manager(), &SecurityContext::system(), session).await.unwrap();
     ids
 }
 

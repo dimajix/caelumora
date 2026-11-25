@@ -650,7 +650,7 @@ sessions, their channels and their participants as one viewer navigates them. A 
 viewer stands on; its methods are the edges to the next ones, and each edge asks its own access
 question, in the viewer's name:
 
-*   `SessionManager::views(viewer)` is the root, from which the sessions the viewer may read are
+*   `Kernel::views(viewer)` is the root, from which the sessions the viewer may read are
     reached. An agent's root is its own session, through its turn; it reads from its channel by the
     confidentiality rules (see [MEMORY.md](MEMORY.md#reading-other-channels)).
 *   A session reaches the channels the viewer may read - a user cleared for their classification, an

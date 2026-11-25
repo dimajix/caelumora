@@ -635,7 +635,7 @@ async fn an_agent_loads_the_skills_its_owner_may_use_that_flow_into_its_channel_
         classification: Classification::CHANNEL_DEFAULT,
         session: SessionPrivacy { id: session_id, ..SessionPrivacy::default() },
     };
-    let views = world.manager.views(Viewer::from_place(context, from));
+    let views = world.kernel.views(Viewer::from_place(context, from));
     let usable: Vec<(String, Scope)> = views
         .usable_skills()
         .await
@@ -661,7 +661,7 @@ async fn an_agent_loads_the_skills_its_owner_may_use_that_flow_into_its_channel_
     }
     assert!(
         world
-            .manager
+            .kernel
             .views(Viewer::new(World::as_user(bob)))
             .usable_skills()
             .await

@@ -221,3 +221,15 @@ ARCHITECTURE.md where the follower is started "beside the `SessionManager`". No 
   registered as running - the plan as accepted had it found running no longer, which would have
   left its hold and handle behind and announced it stopped never. The plan names, too, that step 2
   documents who owns a running session. Test: `a_session_whose_task_ended_is_not_found_running`.
+- **2026-11-25** — Step 1 accepted by the maintainer and committed. Step 2 implemented: the
+  `KernelBuilder` makes the `SessionManager` with the kernel, which holds it
+  (`Kernel::session_manager`), and the manager knows the kernel weakly; `Kernel::views` is the root
+  of the views; `Kernel::sessions`, `know_sessions`, `sessions_of`, `SessionManager::views`,
+  `AppState::session_manager` and `AppState::procedures` are gone; the follower is spawned with the
+  kernel. Beside the plan: the test fixture `World` keeps its field `manager`, now the kernel's,
+  which some 400 places of the tests read; the terminal's test fixture `InDirectory` loses its
+  `manager`, and its `sessions_of` the parameter it no longer needed; the test helper
+  `kernel_access_policy` had no caller already; `SessionManager::new` takes `&Policies`, as the
+  policies travel as a pair; the follower, spawned with the kernel, holds its session manager and
+  its executor, not the kernel. Test:
+  `a_kernel_whose_sessions_run_is_let_go_once_their_runtime_ends`.

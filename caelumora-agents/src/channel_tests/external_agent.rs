@@ -34,7 +34,6 @@ use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::component::ComponentRegistry;
 use caelumora_kernel::kernel::ChannelRuntime;
 use caelumora_kernel::session::testing::*;
-use caelumora_kernel::session::SessionManager;
 use caelumora_kernel::testing::TestKernel;
 use caelumora_security::SecurityContext;
 use caelumora_store::testing::record_users;
@@ -2142,7 +2141,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
         ..Default::default()
     }
     .build();
-    let manager = SessionManager::new(Arc::clone(&kernel));
+    let manager = kernel.session_manager();
 
     let (alice, bob) = (make_user("alice"), make_user("bob"));
     let participants = record_users(kernel.entity_stores(), &[&alice, &bob]).await;
@@ -2166,7 +2165,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
     let mut session = make_session("roster", UserId::new());
     session.participants = participants;
     session.participants.push(Participant::Agent(hermes.id));
-    let session = create(&manager, &alice_ctx, session).await.unwrap();
+    let session = create(manager, &alice_ctx, session).await.unwrap();
     let channel = session
         .create_channel(
             &alice_ctx,

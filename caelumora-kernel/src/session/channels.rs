@@ -248,7 +248,7 @@ mod tests {
     use crate::moderator::random_policy::RANDOM_POLICY_KIND;
     use crate::procedure::Key;
     use crate::session::testing::*;
-    use crate::session::{ChannelSpec, SessionError, SessionLoop, SessionManager};
+    use crate::session::{ChannelSpec, SessionError, SessionLoop};
     use crate::view::Viewer;
     use anyhow::Error;
     use anyhow::Result;
@@ -317,8 +317,8 @@ mod tests {
     #[tokio::test]
     async fn a_channel_created_in_a_running_session_is_stored_announced_and_runs() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
-        let (session, ctx, other) = running_session_of_a_user(&manager).await;
+        let manager = kernel.session_manager();
+        let (session, ctx, other) = running_session_of_a_user(manager).await;
         let mut rx = kernel.event_bus().subscribe_all();
 
         let with_approver = ChannelSpec {
@@ -384,8 +384,8 @@ mod tests {
     async fn a_channel_is_held_in_the_language_asked_for_and_in_none_otherwise() {
         use caelumora_domain::user::UserProfile;
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
-        let (session, ctx, _) = running_session_of_a_user(&manager).await;
+        let manager = kernel.session_manager();
+        let (session, ctx, _) = running_session_of_a_user(manager).await;
         let language = |tag: &str| Some(Language::new(tag).unwrap());
 
         let owner = ctx.initiator_id.as_user_id().unwrap();
@@ -417,8 +417,8 @@ mod tests {
     #[tokio::test]
     async fn a_channel_without_a_language_of_its_own_follows_its_sessions() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
-        let (session, ctx, _) = running_session_of_a_user(&manager).await;
+        let manager = kernel.session_manager();
+        let (session, ctx, _) = running_session_of_a_user(manager).await;
         let language = |tag: &str| Some(Language::new(tag).unwrap());
         let following = session.create_channel(&ctx, spec("following", vec![])).await.unwrap();
         let own = session
@@ -429,7 +429,7 @@ mod tests {
             .await
             .unwrap();
         let held_in = async |channel: &ChannelLoop| {
-            let view = manager
+            let view = kernel
                 .views(Viewer::new(ctx.clone()))
                 .channel(session.id(), channel.id())
                 .await
@@ -470,11 +470,11 @@ mod tests {
     #[tokio::test]
     async fn a_session_is_held_in_the_time_zone_its_owner_chooses_and_in_utc_otherwise() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
-        let (session, ctx, _) = running_session_of_a_user(&manager).await;
+        let manager = kernel.session_manager();
+        let (session, ctx, _) = running_session_of_a_user(manager).await;
         let berlin = TimeZone::new("Europe/Berlin").unwrap();
         let shown = async || {
-            manager
+            kernel
                 .views(Viewer::new(ctx.clone()))
                 .session(session.id())
                 .await
@@ -512,8 +512,8 @@ mod tests {
     #[tokio::test]
     async fn a_channel_uses_the_workspace_unless_its_creator_says_otherwise() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
-        let (session, ctx, _) = running_session_of_a_user(&manager).await;
+        let manager = kernel.session_manager();
+        let (session, ctx, _) = running_session_of_a_user(manager).await;
 
         let unsaid = session.create_channel(&ctx, spec("unsaid", vec![])).await.unwrap();
         assert!(unsaid.channel().uses_workspace, "by default");
@@ -530,8 +530,8 @@ mod tests {
     #[tokio::test]
     async fn a_channel_that_cannot_be_is_refused_before_anything_is_stored() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
-        let (session, ctx, _) = running_session_of_a_user(&manager).await;
+        let manager = kernel.session_manager();
+        let (session, ctx, _) = running_session_of_a_user(manager).await;
         let stranger = ActorId::User(UserId::new());
 
         let taken = session
@@ -593,8 +593,8 @@ mod tests {
     async fn a_deleted_channel_is_stopped_announced_and_kept_until_it_is_restored() {
         use caelumora_domain::agent::{AgentChannelState, AgentId};
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
-        let (session, ctx, _) = running_session_of_a_user(&manager).await;
+        let manager = kernel.session_manager();
+        let (session, ctx, _) = running_session_of_a_user(manager).await;
         let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
         let id = channel.id();
         let agent = AgentId::new();
@@ -680,12 +680,12 @@ mod tests {
     #[tokio::test]
     async fn a_channel_deleted_before_the_session_runs_is_never_started() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
+        let manager = kernel.session_manager();
         let ctx = SecurityContext::default();
         let session = make_session("waiting", UserId::new());
         let channel_id = session.channels[0];
         let mut channels = [main_channel(&session)];
-        let session = persist(&manager, &ctx, session, &mut channels).await;
+        let session = persist(manager, &ctx, session, &mut channels).await;
         let session_loop =
             SessionLoop::new(session.clone(), channels.to_vec(), Arc::clone(&kernel))
                 .await
@@ -727,7 +727,8 @@ mod tests {
 
     #[tokio::test]
     async fn only_who_may_change_the_session_creates_or_deletes_its_channels() {
-        let (_, manager) = owned_kernel(Default::default());
+        let kernel = owned_kernel(Default::default());
+        let manager = kernel.session_manager();
 
         let (alice, bob) = (make_user("alice"), make_user("bob"));
         let as_user = |id: UserId| {
@@ -739,9 +740,8 @@ mod tests {
             .security_attributes
             .clone()
             .granting(Subject::Actor(ActorId::User(bob.id)), Grant::Read);
-        session.participants =
-            record_users(manager.kernel().entity_stores(), &[&alice, &bob]).await;
-        let session = create(&manager, &alice_ctx, session).await.unwrap();
+        session.participants = record_users(kernel.entity_stores(), &[&alice, &bob]).await;
+        let session = create(manager, &alice_ctx, session).await.unwrap();
         let main = session.channel_named("main").unwrap().id();
 
         let refused = session
@@ -760,7 +760,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_channel_its_viewer_may_not_read_is_not_there_for_them() {
-        let (_, manager) = owned_kernel(Default::default());
+        let kernel = owned_kernel(Default::default());
+        let manager = kernel.session_manager();
         let (alice, bob) = (make_user("alice"), make_user("bob"));
         let as_user = |id: UserId| {
             SecurityContext::new(ActorId::User(id), Default::default(), Default::default())
@@ -770,9 +771,8 @@ mod tests {
             .security_attributes
             .clone()
             .granting(Subject::Actor(ActorId::User(bob.id)), Grant::Read);
-        session.participants =
-            record_users(manager.kernel().entity_stores(), &[&alice, &bob]).await;
-        let session = create(&manager, &as_user(alice.id), session).await.unwrap();
+        session.participants = record_users(kernel.entity_stores(), &[&alice, &bob]).await;
+        let session = create(manager, &as_user(alice.id), session).await.unwrap();
         // Alice's alone: bob takes part in the session, not in this channel.
         let hers = session.create_channel(&as_user(alice.id), spec("hers", vec![])).await.unwrap();
 
@@ -804,10 +804,9 @@ mod tests {
     async fn a_channel_whose_restoring_failed_comes_back_whole_when_tried_again() {
         let (kernel, passing) = failing_kernel(Session::KIND);
         let stores = kernel.entity_stores().clone();
-        let manager = SessionManager::new(kernel);
+        let manager = kernel.session_manager();
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
-        let session =
-            create(&manager, &ctx, make_session("restored", UserId::new())).await.unwrap();
+        let session = create(manager, &ctx, make_session("restored", UserId::new())).await.unwrap();
         let side = session.create_channel(&ctx, spec("side", vec![])).await.unwrap().id();
         let scope = Scope::ChannelScope { session_id: session.id(), channel_id: side };
         let mut bundle = ComponentBundle::new(

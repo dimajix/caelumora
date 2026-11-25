@@ -99,7 +99,6 @@ mod tests {
     use caelumora_domain::session::testing::make_session;
     use caelumora_domain::session::Session;
     use caelumora_domain::user::testing::make_user;
-    use caelumora_kernel::session::SessionManager;
     use caelumora_kernel::testing::TestKernel;
     use caelumora_security::SecurityContext;
     use caelumora_store::testing::{record_users, stored_agent};
@@ -172,10 +171,8 @@ mod tests {
             ..session
         };
         let as_owner = SecurityContext::new(owned_by, Default::default(), Default::default());
-        let session_loop = SessionManager::new(Arc::clone(&kernel))
-            .create(&as_owner, session, vec![channel])
-            .await
-            .unwrap();
+        let session_loop =
+            kernel.session_manager().create(&as_owner, session, vec![channel]).await.unwrap();
 
         let provider = StorePlacesComponent::new(PromptPosition::Start, testing::prompts());
         let mut state = AgentChannelState::default();

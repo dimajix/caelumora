@@ -164,7 +164,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "a message of attachments alone");
         let message = time::timeout(Duration::from_secs(5), async {
             loop {
-                let views = state.session_manager.views(Viewer::new(SecurityContext::system()));
+                let views = state.kernel.views(Viewer::new(SecurityContext::system()));
                 let history = views
                     .channel(session, channel)
                     .await

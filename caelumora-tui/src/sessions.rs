@@ -408,7 +408,6 @@ pub(crate) mod testing {
     use caelumora_domain::user::testing::make_user;
     use caelumora_domain::workspace::WorkspaceId;
     use caelumora_kernel::kernel::Kernel;
-    use caelumora_kernel::session::SessionManager;
     use caelumora_kernel::testing::TestKernel;
     use caelumora_kernel::view::Viewer;
     use caelumora_security::SecurityContext;
@@ -422,8 +421,6 @@ pub(crate) mod testing {
         /// The sessions, started from the template `default` - one channel `main` of the user's -
         /// unless another is named.
         pub(crate) sessions: Sessions,
-        /// What runs them.
-        pub(crate) manager: Arc<SessionManager>,
         /// What they run in.
         pub(crate) kernel: Arc<Kernel>,
         /// The user they are reached for.
@@ -462,18 +459,16 @@ pub(crate) mod testing {
         record_users(kernel.entity_stores(), &[&user]).await;
         let owner =
             SecurityContext::new(ActorId::User(user.id), Default::default(), Default::default());
-        let manager = SessionManager::new(Arc::clone(&kernel));
         let place = place_of(&kernel, &owner, user.id, directory.path()).await.unwrap();
-        let sessions = sessions_of(&kernel, &manager, &owner, Some(place)).await;
-        InDirectory { sessions, manager, kernel, owner, directory }
+        let sessions = sessions_of(&kernel, &owner, Some(place)).await;
+        InDirectory { sessions, kernel, owner, directory }
     }
 
-    /// The sessions of the user `owner` acts for, run by `manager` in `kernel`, in `place`; the
+    /// The sessions of the user `owner` acts for, run in `kernel`, in `place`; the
     /// templates `default` - one channel `main` of the user's - and `empty` - no channel - stored,
     /// `default` the program's.
     pub(crate) async fn sessions_of(
         kernel: &Arc<Kernel>,
-        manager: &Arc<SessionManager>,
         owner: &SecurityContext,
         place: Option<(ProjectId, WorkspaceId)>,
     ) -> Sessions {
@@ -487,7 +482,7 @@ pub(crate) mod testing {
             kernel.entity_stores().session_templates.create(&system, template).await.unwrap();
         }
         let ActorId::User(user) = owner.caller_id else { panic!("sessions are a user's") };
-        let views = manager.views(Viewer::new(owner.clone()));
+        let views = kernel.views(Viewer::new(owner.clone()));
         let template = "default".to_string();
         Sessions::new(Arc::clone(kernel), user, views, place, template)
     }
@@ -499,7 +494,6 @@ mod tests {
     use caelumora_domain::message::testing::make_message;
     use caelumora_domain::message::MessageId;
     use caelumora_kernel::session::testing::{running_session_of_a_user, test_kernel};
-    use caelumora_kernel::session::SessionManager;
     use chrono::TimeDelta;
 
     /// The session spoken in last comes first; one nobody spoke in counts by when it was made, and
@@ -530,9 +524,9 @@ mod tests {
     #[tokio::test]
     async fn a_session_is_started_from_the_template_named_and_others_by_the_directory() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
-        let (_, owner, _) = running_session_of_a_user(&manager).await;
-        let sessions = testing::sessions_of(&kernel, &manager, &owner, None).await;
+        let manager = kernel.session_manager();
+        let (_, owner, _) = running_session_of_a_user(manager).await;
+        let sessions = testing::sessions_of(&kernel, &owner, None).await;
 
         let start =
             |template: Option<&str>| Opening::Start { template: template.map(str::to_string) };

@@ -225,7 +225,7 @@ fn own_context(
 mod tests {
     use crate::channel::ResolvedParticipant;
     use crate::session::testing::*;
-    use crate::session::{ChannelSpec, SessionManager};
+    use crate::session::ChannelSpec;
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::testing::make_personality;
     use caelumora_domain::agent::Agent;
@@ -275,8 +275,8 @@ mod tests {
         ])
         .unwrap();
         let ids = roles.clone();
-        let (_, manager) = owned_kernel(ConfidentialityRules::new(compartments).with_roles(roles));
-        let kernel = Arc::clone(manager.kernel());
+        let kernel = owned_kernel(ConfidentialityRules::new(compartments).with_roles(roles));
+        let manager = kernel.session_manager();
         let user = |name: &str, roles: &[&str]| User {
             roles: ids.ids_of(roles).unwrap(),
             ..make_user(name)
@@ -363,7 +363,7 @@ mod tests {
             ActorId::Agent(id) => Participant::Agent(id),
             _ => unreachable!(),
         }));
-        let session = create(&manager, &alice_ctx, session).await.unwrap();
+        let session = create(manager, &alice_ctx, session).await.unwrap();
         let with = |name: &str, participants| ChannelSpec {
             classification: hr.clone(),
             ..spec(name, participants)
@@ -398,7 +398,7 @@ mod tests {
         let kernel = test_kernel();
         let personalities = Arc::clone(&kernel.entity_stores().personalities);
         let agents = Arc::clone(&kernel.entity_stores().agents);
-        let manager = SessionManager::new(kernel);
+        let manager = kernel.session_manager();
         let (ctx, system) = (SecurityContext::default(), SecurityContext::system());
         let mut personality = make_personality("plain");
         personalities.create(&system, &mut personality).await.unwrap();

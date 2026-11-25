@@ -34,7 +34,6 @@ mod tests {
     use crate::component::BuildContext;
     use crate::kernel::Kernel;
     use crate::seed::SeedSection;
-    use crate::session::SessionManager;
     use crate::testing::TestKernel;
     use crate::view::Viewer;
     use async_trait::async_trait;
@@ -291,8 +290,7 @@ mod tests {
 
         let notebook = kernel.services().get::<Notebook>().expect("its manager, a service");
         assert_eq!(notebook.greeting, "hello", "its section of the configuration");
-        let views =
-            SessionManager::new(Arc::clone(&kernel)).views(Viewer::new(SecurityContext::system()));
+        let views = kernel.views(Viewer::new(SecurityContext::system()));
         assert!(views.service::<Notebook>().is_some(), "reached by its views");
 
         // Its component kind, given the manager it uses.

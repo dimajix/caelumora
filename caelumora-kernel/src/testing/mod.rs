@@ -352,6 +352,7 @@ pub struct World {
     pub access_policy: Arc<Recorder>,
     pub store: Persistence,
     pub kernel: Arc<Kernel>,
+    /// The kernel's (`Kernel::session_manager`), for the tests to reach it in one step.
     pub manager: Arc<SessionManager>,
     /// What its running sessions are to follow - whether their agents exist, the delegations let
     /// go - followed as long as the world lasts (issues 593, 598), unless it is `unfollowed`.
@@ -462,8 +463,8 @@ impl World {
         }
         .build();
         memberships.bind(&kernel.entity_stores().groups);
-        let manager = SessionManager::new(Arc::clone(&kernel));
-        let followed = SessionFollower::spawn(&manager);
+        let manager = Arc::clone(kernel.session_manager());
+        let followed = SessionFollower::spawn(&kernel);
         let mut world = Self {
             access_policy: recorder,
             store,
@@ -727,7 +728,7 @@ impl World {
         channel: ChannelId,
     ) -> Vec<ActorId> {
         let view = self
-            .manager
+            .kernel
             .views(Viewer::new(Self::as_user(user)))
             .channel(session, channel)
             .await

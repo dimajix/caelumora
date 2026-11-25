@@ -11,7 +11,7 @@
 use super::session::{
     delete as delete_session, purge as purge_session, restore as restore_session,
 };
-use super::{all_or_nothing, sessions_of, Compensation, Deferred, Key, Locks, Procedure};
+use super::{all_or_nothing, Compensation, Deferred, Key, Locks, Procedure};
 use crate::error::is_forbidden;
 use crate::kernel::Kernel;
 use crate::project::{store_error, ProjectError, ProjectResult};
@@ -338,8 +338,7 @@ impl Procedure for Lift {
     ) -> ProjectResult<()> {
         let Self { context, id, name, scope } = self;
         if let Some(session_id) = read? {
-            let untyped = |e: SessionError| ProjectError::Session(e.untyped());
-            let sessions = sessions_of(kernel).map_err(untyped)?;
+            let sessions = kernel.session_manager();
             log.keep(sessions.hold(session_id).map_err(ProjectError::Session)?);
         }
         let found = kernel.controller_manager().project_controller(id).await;
@@ -455,7 +454,6 @@ mod tests {
     use crate::project::ProjectSpec;
     use crate::session::testing::{create, failing_kernel, shared_kernel};
     use crate::session::SessionError;
-    use crate::session::SessionManager;
     use crate::testing::World;
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::channel::Channel;
@@ -527,11 +525,11 @@ mod tests {
     async fn a_project_whose_session_another_process_holds_is_not_lifted() {
         let (kernel, locks) = shared_kernel();
         let executor = Arc::clone(kernel.procedures());
-        let manager = SessionManager::new(kernel);
+        let manager = kernel.session_manager();
         let owner = UserId::new();
         let ctx =
             SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
-        let session = create(&manager, &ctx, make_session("held", owner)).await.unwrap();
+        let session = create(manager, &ctx, make_session("held", owner)).await.unwrap();
         let (id, own) = (session.id(), session.session().project);
         assert!(manager.stop(&ctx, id).await.unwrap());
         let mine = Scope::UserScope { user_id: owner };
@@ -554,12 +552,12 @@ mod tests {
         let stores = kernel.entity_stores().clone();
         let projects = Arc::clone(kernel.project_manager());
         let executor = Arc::clone(kernel.procedures());
-        let manager = SessionManager::new(kernel);
+        let manager = kernel.session_manager();
         let owner = UserId::new();
         let ctx =
             SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
         let system = SecurityContext::system();
-        let session = create(&manager, &ctx, make_session("in it", owner)).await.unwrap();
+        let session = create(manager, &ctx, make_session("in it", owner)).await.unwrap();
         let project = projects
             .create(&ctx, ProjectSpec::new("report", Scope::UserScope { user_id: owner }))
             .await
@@ -636,12 +634,12 @@ mod tests {
         let stores = kernel.entity_stores().clone();
         let projects = Arc::clone(kernel.project_manager());
         let executor = Arc::clone(kernel.procedures());
-        let manager = SessionManager::new(kernel);
+        let manager = kernel.session_manager();
         let owner = UserId::new();
         let ctx =
             SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
         let system = SecurityContext::system();
-        let session = create(&manager, &ctx, make_session("in it", owner)).await.unwrap();
+        let session = create(manager, &ctx, make_session("in it", owner)).await.unwrap();
         let project = projects
             .create(&ctx, ProjectSpec::new("report", Scope::UserScope { user_id: owner }))
             .await

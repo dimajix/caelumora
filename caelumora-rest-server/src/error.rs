@@ -435,9 +435,9 @@ impl From<ProjectError> for ApiError {
 }
 
 impl From<ProcedureError> for ApiError {
-    /// What the executor of procedures failed with (issue 593): shutting down - its kernel or the
-    /// session manager gone among it - is the server's state, to be tried again; a procedure within
-    /// another or one ended without an answer is the server's fault.
+    /// What the executor of procedures failed with (issue 593): shutting down - its kernel gone
+    /// among it - is the server's state, to be tried again; a procedure within another or one
+    /// ended without an answer is the server's fault.
     fn from(error: ProcedureError) -> Self {
         let detail = error.to_string();
         match error {

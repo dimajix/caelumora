@@ -40,7 +40,7 @@ pub(super) async fn create_session(
     };
     let context = user.security_context();
     let creating = Create::from_template(&context, payload.template_id, spec);
-    let session_loop = state.procedures.run(creating).await?;
+    let session_loop = state.kernel.procedures().run(creating).await?;
 
     Ok(Json(listed(&state, &user, session_loop.id()).await?))
 }
@@ -120,7 +120,7 @@ pub(super) async fn restore_session(
     user: AuthenticatedUser,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
     let restoring = Restore::new(&user.security_context(), session_id);
-    state.procedures.run(restoring).await?;
+    state.kernel.procedures().run(restoring).await?;
     Ok(Json(session_response(&state, &user, session_id).await?))
 }
 
@@ -132,7 +132,7 @@ pub(super) async fn purge_session(
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
     let purging = Purge::new(&user.security_context(), session_id);
-    match state.procedures.run(purging).await? {
+    match state.kernel.procedures().run(purging).await? {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found(
             "session_not_found",
@@ -149,7 +149,7 @@ pub(super) async fn delete_session(
     // Deleting stops the running loop, marks the session deleted - kept with its channels until
     // it is purged (issue 164) - and emits the corresponding lifecycle events.
     let deleting = Delete::new(&user.security_context(), session_id);
-    match state.procedures.run(deleting).await? {
+    match state.kernel.procedures().run(deleting).await? {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found(
             "session_not_found",
@@ -305,7 +305,7 @@ pub(super) async fn add_participant(
     let into = payload.channel.map(|channel| (channel, payload.history));
     let context = user.security_context();
     let adding = TakeIn::added(&context, session_id, payload.participant, into);
-    state.procedures.run(adding).await?;
+    state.kernel.procedures().run(adding).await?;
     Ok(Json(session_response(&state, &user, session_id).await?))
 }
 
@@ -319,7 +319,7 @@ pub(super) async fn remove_participant(
 ) -> Result<StatusCode, ApiError> {
     let context = user.security_context();
     let removing = LetGo::removed(&context, session_id, participant, None);
-    state.procedures.run(removing).await?;
+    state.kernel.procedures().run(removing).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -332,7 +332,7 @@ pub(super) async fn leave_session(
 ) -> Result<StatusCode, ApiError> {
     let context = user.security_context();
     let leaving = LetGo::leaving(&context, session_id, participant, None);
-    state.procedures.run(leaving).await?;
+    state.kernel.procedures().run(leaving).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -349,7 +349,7 @@ pub(super) async fn join_session(
     let context = user.security_context();
     let participant = payload.participant.unwrap_or(context.principal_id);
     let joining = TakeIn::joining(&context, session_id, participant, payload.channel);
-    state.procedures.run(joining).await?;
+    state.kernel.procedures().run(joining).await?;
     Ok(Json(session_response(&state, &user, session_id).await?))
 }
 

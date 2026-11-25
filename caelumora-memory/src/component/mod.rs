@@ -287,13 +287,14 @@ mod tests {
         fn policed(confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
             let store = Persistence::in_memory();
             let memories = store.entity_store::<AgentMemory>(&Policies::permitting_all()).unwrap();
-            let (kernel, manager) = owned(TestKernel {
+            let kernel = owned(TestKernel {
                 store,
                 confidentiality,
                 plugins: vec![&MemoryPlugin],
                 libraries: vec![&AgentsLibrary, &MemoryLibrary],
                 ..Default::default()
             });
+            let manager = Arc::clone(kernel.session_manager());
             let stores = kernel.entity_stores().clone();
             Self { kernel, stores, memories, manager, loops: HashMap::new(), made: 0 }
         }

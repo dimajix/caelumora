@@ -67,30 +67,28 @@ use tokio::time;
 use uuid::Uuid;
 
 /// A kernel under the ownership policy, which learns who belongs to a group from its store (issue
-/// 23), with `rules` as the confidentiality policy beside it (issue 304), and a manager on it -
-/// what a test writes, it writes through the kernel's stores, which check as the kernel does.
-pub fn owned_kernel(rules: ConfidentialityRules) -> (Arc<Kernel>, Arc<SessionManager>) {
+/// 23), with `rules` as the confidentiality policy beside it (issue 304) - what a test writes, it
+/// writes through the kernel's stores, which check as the kernel does.
+pub fn owned_kernel(rules: ConfidentialityRules) -> Arc<Kernel> {
     owned_kernel_under(Arc::new(rules))
 }
 
 /// As `owned_kernel`, with `confidentiality` as the confidentiality policy: a test's own, for what
 /// the kernel decides by it (issue 516).
-pub fn owned_kernel_under(
-    confidentiality: Arc<dyn ConfidentialityPolicy>,
-) -> (Arc<Kernel>, Arc<SessionManager>) {
+pub fn owned_kernel_under(confidentiality: Arc<dyn ConfidentialityPolicy>) -> Arc<Kernel> {
     owned(TestKernel { confidentiality, ..Default::default() })
 }
 
 /// `kernel` built under the ownership policy, which learns who belongs to a group from its store,
-/// and a manager on it, as `owned_kernel` builds them: for a test that names more of its kernel -
-/// the plugins and the libraries it runs with (issue 518).
-pub fn owned(kernel: TestKernel<'_>) -> (Arc<Kernel>, Arc<SessionManager>) {
+/// as `owned_kernel` builds it: for a test that names more of its kernel - the plugins and the
+/// libraries it runs with (issue 518).
+pub fn owned(kernel: TestKernel<'_>) -> Arc<Kernel> {
     let memberships = Arc::new(StoreMemberships::new());
     let access_policy: Arc<dyn AccessPolicy> =
         Arc::new(OwnershipPolicy::with_memberships(Arc::<StoreMemberships>::clone(&memberships)));
     let kernel = TestKernel { access_policy, ..kernel }.build();
     memberships.bind(&kernel.entity_stores().groups);
-    (Arc::clone(&kernel), SessionManager::new(kernel))
+    kernel
 }
 
 /// A kernel under no policy: everything is allowed (`TestKernel`).
@@ -135,21 +133,10 @@ pub async fn persist(
 ) -> Session {
     let mut own = session.new_own_project().expect("a session of a user");
     let mut session = Session { project: own.id, ..session };
-    let kernel = manager.kernel();
-    let storing = persist_new(kernel, ctx, &mut session, &mut own, channels);
+    let kernel = manager.kernel().expect("its kernel");
+    let storing = persist_new(&kernel, ctx, &mut session, &mut own, channels);
     storing.await.expect("the session is stored");
     session
-}
-
-/// What tests of other crates read of a session manager past what its users may (issue 486):
-/// behind the feature `test-support` alone, under a name of its own - the manager's API is not
-/// widened by it.
-impl SessionManager {
-    /// The access policy of the kernel it starts its sessions in (`Kernel::access_policy`): what a
-    /// test builds a component with, as the kernel gives a component its policy.
-    pub fn kernel_access_policy(&self) -> &Arc<dyn AccessPolicy> {
-        self.kernel().access_policy()
-    }
 }
 
 /// What the tests do with sessions as the entry points do (issue 593): each a procedure, carried
@@ -164,14 +151,13 @@ impl SessionManager {
     /// # Errors
     /// As `procedure::session::establish` and taking the founders in.
     pub async fn create(
-        self: &Arc<Self>,
+        &self,
         context: &SecurityContext,
         session: Session,
         channels: Vec<Channel>,
     ) -> Result<Arc<SessionLoop>> {
-        let creating =
-            Built { sessions: Arc::clone(self), context: context.clone(), session, channels };
-        self.kernel().procedures().run(creating).await.map_err(SessionError::untyped)
+        let creating = Built { context: context.clone(), session, channels };
+        self.kernel()?.procedures().run(creating).await.map_err(SessionError::untyped)
     }
 
     /// Creates a session from the template `template_id` as `spec` asks, on behalf of `context`
@@ -186,7 +172,7 @@ impl SessionManager {
         spec: SessionSpec,
     ) -> Result<Arc<SessionLoop>> {
         let creating = Create::from_template(context, template_id, spec);
-        self.kernel().procedures().run(creating).await.map_err(SessionError::untyped)
+        self.kernel()?.procedures().run(creating).await.map_err(SessionError::untyped)
     }
 
     /// Opens session `id` for `context` (`procedure::session::Open`), and builds again the
@@ -195,7 +181,8 @@ impl SessionManager {
     /// # Errors
     /// As `Open`.
     pub async fn open(&self, context: &SecurityContext, id: SessionId) -> Result<Arc<SessionLoop>> {
-        let procedures = self.kernel().procedures();
+        let kernel = self.kernel()?;
+        let procedures = kernel.procedures();
         let opened = procedures.run(Open::new(context, id)).await;
         let opened = opened.map_err(SessionError::untyped)?;
         // Its channels left out as it started built again, as the REST server has them (issue 463).
@@ -209,7 +196,7 @@ impl SessionManager {
     /// # Errors
     /// As `Stop`.
     pub async fn stop(&self, context: &SecurityContext, id: SessionId) -> Result<bool> {
-        self.kernel().procedures().run(Stop::new(context, id)).await.map_err(SessionError::untyped)
+        self.kernel()?.procedures().run(Stop::new(context, id)).await.map_err(SessionError::untyped)
     }
 
     /// Deletes session `id` on behalf of `context` (`procedure::session::Delete`).
@@ -217,7 +204,7 @@ impl SessionManager {
     /// # Errors
     /// As `procedure::session::delete`.
     pub async fn delete(&self, context: &SecurityContext, id: SessionId) -> Result<bool> {
-        self.kernel()
+        self.kernel()?
             .procedures()
             .run(Delete::new(context, id))
             .await
@@ -229,7 +216,7 @@ impl SessionManager {
     /// # Errors
     /// As `procedure::session::restore`.
     pub async fn restore(&self, context: &SecurityContext, id: SessionId) -> Result<Session> {
-        self.kernel()
+        self.kernel()?
             .procedures()
             .run(Restore::new(context, id))
             .await
@@ -241,7 +228,11 @@ impl SessionManager {
     /// # Errors
     /// As `procedure::session::purge`.
     pub async fn purge(&self, context: &SecurityContext, id: SessionId) -> Result<bool> {
-        self.kernel().procedures().run(Purge::new(context, id)).await.map_err(SessionError::untyped)
+        self.kernel()?
+            .procedures()
+            .run(Purge::new(context, id))
+            .await
+            .map_err(SessionError::untyped)
     }
 
     /// Puts session `id` into `project` on behalf of `context`, or into its own with `None`
@@ -255,7 +246,7 @@ impl SessionManager {
         id: SessionId,
         project: Option<ProjectId>,
     ) -> Result<()> {
-        self.kernel()
+        self.kernel()?
             .procedures()
             .run(Move::new(context, id, project))
             .await
@@ -274,17 +265,17 @@ impl SessionManager {
         into: Option<ChannelId>,
     ) -> Result<Arc<SessionLoop>> {
         let joining = TakeIn::joining(context, id, participant, into);
-        self.kernel().procedures().run(joining).await.map_err(SessionError::untyped)
+        self.kernel()?.procedures().run(joining).await.map_err(SessionError::untyped)
     }
 
     /// Shuts the sessions down as the process ends (`procedure::session::shut_down`).
     pub async fn shutdown(&self) {
-        shut_down(self.kernel().procedures()).await;
+        shut_down(self.kernel().expect("its kernel").procedures()).await;
     }
 
     /// Starts the sessions interrupted again (`procedure::session::resume_interrupted`).
     pub async fn resume_interrupted(&self) -> usize {
-        resume_interrupted(self.kernel()).await
+        resume_interrupted(&self.kernel().expect("its kernel")).await
     }
 }
 
@@ -295,7 +286,6 @@ impl SessionManager {
 /// 467), and the participants the channels name joining them as their founders once it runs, as a
 /// template's do (issue 420).
 struct Built {
-    sessions: Arc<SessionManager>,
     context: SecurityContext,
     session: Session,
     channels: Vec<Channel>,
@@ -317,8 +307,8 @@ impl Procedure for Built {
         kernel: &Kernel,
         log: &mut Compensation,
     ) -> Result<Arc<SessionLoop>, SessionError> {
-        let Self { sessions, context, mut session, mut channels } = self;
-        record_creation(log, sessions.kernel(), session.id);
+        let Self { context, mut session, mut channels } = self;
+        record_creation(log, &kernel.session_manager().kernel()?, session.id);
         let creating = ActionType::create(Session::KIND, &session.security_attributes);
         kernel.access_policy().require(&context, creating, StoreError::PermissionDenied).await?;
         let owner = session.security_attributes.owner_id;
@@ -352,7 +342,8 @@ pub async fn running_session_of_a_user(
     let (owner, other) = (make_user("owner"), make_user("other"));
     let (owner_id, other_id) = (ActorId::User(owner.id), ActorId::User(other.id));
     let mut session = make_session("with-users", owner.id);
-    session.participants = record_users(manager.kernel().entity_stores(), &[&owner, &other]).await;
+    let kernel = manager.kernel().expect("its kernel");
+    session.participants = record_users(kernel.entity_stores(), &[&owner, &other]).await;
     let ctx = SecurityContext::new(owner_id, session.id, Default::default());
     let session_loop = create(manager, &ctx, session).await.expect("the session starts");
     (session_loop, ctx, other_id)

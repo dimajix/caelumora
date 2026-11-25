@@ -56,9 +56,9 @@ pub async fn ensure_session(
     // The running session, or loaded from the store and started - either way
     // only if this user may read it (issue 11).
     let opening = Open::new(&user.security_context(), session_id);
-    let session = state.procedures.run(opening).await?;
+    let session = state.kernel.procedures().run(opening).await?;
     // Its channels left out as it started built again, where they can be now (issue 463).
-    state.procedures.run(Start::left_out(session_id)).await?;
+    state.kernel.procedures().run(Start::left_out(session_id)).await?;
     Ok(session)
 }
 
@@ -134,7 +134,7 @@ pub async fn channel_view(
 /// The views as `user` navigates them (issue 163): what a handler reads
 /// through; `open_channel` is for what it does.
 pub fn views(state: &Arc<AppState>, user: &AuthenticatedUser) -> Views {
-    state.session_manager.views(Viewer::new(user.security_context()))
+    state.kernel.views(Viewer::new(user.security_context()))
 }
 
 /// `content` of `size` bytes, streamed, as a download named `name`: always
@@ -631,7 +631,7 @@ mod tests {
         let participants = format!("/sessions/{}/participants", session_id.0);
         let system = SecurityContext::system();
         let takes_part = async |actor| {
-            let session = state.session_manager.open(&system, session_id).await.unwrap();
+            let session = state.kernel.session_manager().open(&system, session_id).await.unwrap();
             session.session().takes_part(actor)
         };
 
@@ -658,7 +658,7 @@ mod tests {
             (StatusCode::BAD_REQUEST, json!("invalid_path")),
             "a bare UUID names nobody"
         );
-        state.session_manager.stop(&SecurityContext::system(), session_id).await.unwrap();
+        state.kernel.session_manager().stop(&SecurityContext::system(), session_id).await.unwrap();
     }
 
     /// Issue 467: a session asked for in a shared project is made in its own and put into that

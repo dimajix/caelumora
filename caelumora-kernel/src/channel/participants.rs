@@ -519,7 +519,7 @@ mod tests {
     use crate::channel::{Answer, ChannelError, ChannelLoop};
     use crate::error::is_forbidden;
     use crate::session::testing::*;
-    use crate::session::{ChannelSpec, SessionError, SessionManager};
+    use crate::session::{ChannelSpec, SessionError};
     use crate::testing::{attributes, Script, ScriptedAgent, ScriptedAgents, World};
     use crate::view::Viewer;
     use anyhow::Error;
@@ -654,7 +654,8 @@ mod tests {
         ])
         .unwrap();
         let ids = roles.clone();
-        let (_, manager) = owned_kernel(ConfidentialityRules::new(compartments).with_roles(roles));
+        let kernel = owned_kernel(ConfidentialityRules::new(compartments).with_roles(roles));
+        let manager = kernel.session_manager();
         let user = |name: &str, roles: &[&str]| User {
             roles: ids.ids_of(roles).unwrap(),
             ..make_user(name)
@@ -668,9 +669,8 @@ mod tests {
         let mut session = make_session("hers", alice.id);
         session.security_attributes =
             session.security_attributes.clone().granting(Subject::Actor(bob_id), Grant::Read);
-        session.participants =
-            record_users(manager.kernel().entity_stores(), &[&alice, &bob]).await;
-        let session = create(&manager, &alice_ctx, session).await.unwrap();
+        session.participants = record_users(kernel.entity_stores(), &[&alice, &bob]).await;
+        let session = create(manager, &alice_ctx, session).await.unwrap();
 
         let hr_confidential =
             Classification::new(Confidentiality::Confidential, [Compartment::new("hr")]).unwrap();
@@ -734,7 +734,7 @@ mod tests {
                 .downcast_ref::<SessionError>(),
             Some(SessionError::ChannelNotFound { .. })
         ));
-        let listed: Vec<ChannelId> = manager
+        let listed: Vec<ChannelId> = kernel
             .views(Viewer::new(alice_ctx.clone()))
             .session(session.id())
             .await
@@ -775,8 +775,8 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn two_who_add_one_participant_at_once_take_them_in_once() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
-        let (session, ctx, other) = running_session_of_a_user(&manager).await;
+        let manager = kernel.session_manager();
+        let (session, ctx, other) = running_session_of_a_user(manager).await;
         let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
         let add = || {
             let (channel, ctx) = (Arc::clone(&channel), ctx.clone());
@@ -806,8 +806,8 @@ mod tests {
     async fn a_participant_added_later_sees_the_history_granted_and_is_announced() {
         use crate::channel::ChannelError;
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
-        let (session, ctx, other) = running_session_of_a_user(&manager).await;
+        let manager = kernel.session_manager();
+        let (session, ctx, other) = running_session_of_a_user(manager).await;
         let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
         let owner = match ctx.initiator_id {
             ActorId::User(id) => id,
@@ -913,8 +913,8 @@ mod tests {
     async fn who_joins_or_leaves_is_recorded_where_it_happened_and_shown_also_to_who_made_it() {
         use caelumora_domain::actor::ActorEvent;
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
-        let (session, ctx, other) = running_session_of_a_user(&manager).await;
+        let manager = kernel.session_manager();
+        let (session, ctx, other) = running_session_of_a_user(manager).await;
         let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
         let writer = channel
             .user_actor(ctx.initiator_id.as_user_id().unwrap())
@@ -992,8 +992,8 @@ mod tests {
     async fn a_users_followers_are_told_their_actor_ended_when_they_leave_or_the_channel_is_deleted(
     ) {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
-        let (session, ctx, other) = running_session_of_a_user(&manager).await;
+        let manager = kernel.session_manager();
+        let (session, ctx, other) = running_session_of_a_user(manager).await;
         let owner = ctx.initiator_id.as_user_id().unwrap();
 
         // Leaving ends it.
@@ -1020,8 +1020,8 @@ mod tests {
         use caelumora_domain::channel::InternalActor;
         use caelumora_domain::template::InternalActorTemplate;
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
-        let (session, ctx, other) = running_session_of_a_user(&manager).await;
+        let manager = kernel.session_manager();
+        let (session, ctx, other) = running_session_of_a_user(manager).await;
         let with_approver = ChannelSpec {
             internal_actors: vec![InternalActorTemplate::Approver {
                 strategy: ApprovalStrategy::Any,
@@ -1075,21 +1075,21 @@ mod tests {
 
     #[tokio::test]
     async fn only_who_may_change_a_channel_adds_or_removes_its_participants() {
-        let (_, manager) = owned_kernel(Default::default());
+        let kernel = owned_kernel(Default::default());
+        let manager = kernel.session_manager();
         let (alice, bob, carol) = (make_user("alice"), make_user("bob"), make_user("carol"));
         let alice_id = ActorId::User(alice.id);
         let bob_id = ActorId::User(bob.id);
         let carol_id = ActorId::User(carol.id);
         let as_user = |actor| SecurityContext::new(actor, Default::default(), Default::default());
         let mut session = make_session("hers", alice.id);
-        session.participants =
-            record_users(manager.kernel().entity_stores(), &[&alice, &bob, &carol]).await;
+        session.participants = record_users(kernel.entity_stores(), &[&alice, &bob, &carol]).await;
         session.security_attributes = session
             .security_attributes
             .clone()
             .granting(Subject::Actor(bob_id), Grant::Read)
             .granting(Subject::Actor(carol_id), Grant::Read);
-        let running = create(&manager, &as_user(alice_id), session).await.unwrap();
+        let running = create(manager, &as_user(alice_id), session).await.unwrap();
         let channel =
             running.create_channel(&as_user(alice_id), spec("side", vec![bob_id])).await.unwrap();
 
@@ -1123,21 +1123,21 @@ mod tests {
     /// channel, to come back to - running, empty, as it was (issue 593).
     #[tokio::test]
     async fn who_takes_part_leaves_by_their_own_act_and_takes_nobody_else_out() {
-        let (kernel, manager) = owned_kernel(Default::default());
+        let kernel = owned_kernel(Default::default());
+        let manager = kernel.session_manager();
         let (alice, bob, carol) = (make_user("alice"), make_user("bob"), make_user("carol"));
         let alice_id = ActorId::User(alice.id);
         let bob_id = ActorId::User(bob.id);
         let carol_id = ActorId::User(carol.id);
         let as_user = |actor| SecurityContext::new(actor, Default::default(), Default::default());
         let mut session = make_session("hers", alice.id);
-        session.participants =
-            record_users(manager.kernel().entity_stores(), &[&alice, &bob, &carol]).await;
+        session.participants = record_users(kernel.entity_stores(), &[&alice, &bob, &carol]).await;
         session.security_attributes = session
             .security_attributes
             .clone()
             .granting(Subject::Actor(bob_id), Grant::Read)
             .granting(Subject::Actor(carol_id), Grant::Read);
-        let running = create(&manager, &as_user(alice_id), session).await.unwrap();
+        let running = create(manager, &as_user(alice_id), session).await.unwrap();
         let channel = running
             .create_channel(&as_user(alice_id), spec("side", vec![bob_id, carol_id]))
             .await
@@ -1407,8 +1407,8 @@ mod tests {
     #[tokio::test]
     async fn a_grant_begins_at_the_oldest_message_it_grants() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
-        let (session, ctx, other) = running_session_of_a_user(&manager).await;
+        let manager = kernel.session_manager();
+        let (session, ctx, other) = running_session_of_a_user(manager).await;
         let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
         let ActorId::User(owner) = ctx.initiator_id else { unreachable!() };
         let writer = channel.user_actor(owner).expect("the creator takes part");

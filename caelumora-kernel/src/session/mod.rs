@@ -604,7 +604,6 @@ fn renamed(global_event: &GlobalEvent) -> Option<(ActorId, Name)> {
 mod tests {
     use crate::kernel::Kernel;
     use crate::session::testing::*;
-    use crate::session::SessionManager;
     use crate::view::Viewer;
     use caelumora_api::actor::Actor;
     use caelumora_domain::actor::ActorId;
@@ -648,8 +647,8 @@ mod tests {
     #[tokio::test]
     async fn a_renamed_user_is_renamed_in_every_channel_of_the_session() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
-        let (session, ctx, other) = running_session_of_a_user(&manager).await;
+        let manager = kernel.session_manager();
+        let (session, ctx, other) = running_session_of_a_user(manager).await;
         let ActorId::User(owner) = ctx.initiator_id else { unreachable!() };
         let first = session.create_channel(&ctx, spec("first", vec![other])).await.unwrap();
         let second = session.create_channel(&ctx, spec("second", vec![other])).await.unwrap();
@@ -681,8 +680,8 @@ mod tests {
     #[tokio::test]
     async fn a_renamed_participant_is_mentioned_by_its_new_name_in_every_channel() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
-        let (session, ctx, other) = running_session_of_a_user(&manager).await;
+        let manager = kernel.session_manager();
+        let (session, ctx, other) = running_session_of_a_user(manager).await;
         let ActorId::User(other_id) = other else { unreachable!() };
         let stores = kernel.entity_stores();
         let helper = stored_agent(stores, "helper", make_personality("plain"), ctx.caller_id).await;
@@ -720,8 +719,8 @@ mod tests {
     #[tokio::test]
     async fn a_participant_renamed_while_events_were_lost_is_mentioned_by_its_new_name() {
         let kernel = test_kernel();
-        let manager = SessionManager::new(Arc::clone(&kernel));
-        let (session, ctx, _) = running_session_of_a_user(&manager).await;
+        let manager = kernel.session_manager();
+        let (session, ctx, _) = running_session_of_a_user(manager).await;
         let stores = kernel.entity_stores();
         let helper = stored_agent(stores, "helper", make_personality("plain"), ctx.caller_id).await;
         let agent = ActorId::Agent(helper.id);
@@ -750,8 +749,9 @@ mod tests {
         use caelumora_domain::session::SessionUpdateEvent;
         use caelumora_domain::user::UserId;
 
-        let (_, manager) = owned_kernel(Default::default());
-        let kernel = Arc::clone(manager.kernel());
+        let kernel = owned_kernel(Default::default());
+
+        let manager = kernel.session_manager();
         let (alice, bob) = (make_user("alice"), make_user("bob"));
         let as_user = |id: UserId| {
             SecurityContext::new(ActorId::User(id), Default::default(), Default::default())
@@ -761,9 +761,8 @@ mod tests {
             .security_attributes
             .clone()
             .granting(Subject::Actor(ActorId::User(bob.id)), Grant::Read);
-        session.participants =
-            record_users(manager.kernel().entity_stores(), &[&alice, &bob]).await;
-        let session = create(&manager, &as_user(alice.id), session).await.unwrap();
+        session.participants = record_users(kernel.entity_stores(), &[&alice, &bob]).await;
+        let session = create(manager, &as_user(alice.id), session).await.unwrap();
         let mut events = kernel.event_bus().subscribe_all();
 
         let refused = session
@@ -797,7 +796,7 @@ mod tests {
         };
         assert!(events.drain().await.iter().any(shared), "announced");
         let for_bob =
-            manager.views(Viewer::new(as_user(bob.id))).session(session.id()).await.unwrap();
+            kernel.views(Viewer::new(as_user(bob.id))).session(session.id()).await.unwrap();
         assert_eq!(
             for_bob.privacy().policy,
             PrivacyConfig::SharedAudience,
