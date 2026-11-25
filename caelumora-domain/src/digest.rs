@@ -746,6 +746,7 @@ pub fn frame(frame: &FrameRef) -> Digest {
 mod tests {
     use super::*;
     use crate::content::testing::make_content_ref;
+    use crate::message::CallMeasures;
     use crate::message::MessageId;
     use crate::message::MessageRole;
     use crate::tool::testing::{make_tool_call, make_tool_description};
@@ -798,7 +799,8 @@ mod tests {
 
         let mut described = original.clone();
         described.timestamp = Utc::now() + Duration::hours(1);
-        described.prompt_tokens = Some(42);
+        described.measures =
+            Some(CallMeasures { prompt_tokens: Some(42), ..CallMeasures::default() });
         described.turn_id = Some(TurnId::new());
         assert_eq!(
             message_chain(None, &original),

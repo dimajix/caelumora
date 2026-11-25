@@ -321,7 +321,9 @@ impl AgentChannelState {
     /// without a context.
     pub fn said(&mut self, thread: ThreadId, mut message: Message) -> Message {
         let part = self.thread_mut(thread);
-        part.used = TokenUsage::counted(part.used, &message);
+        if let Some(measures) = &message.measures {
+            part.used = TokenUsage::counted(part.used, measures);
+        }
         if let Some(turn) = &part.turn {
             message.turn_id = Some(turn.work.turn_id);
         }
@@ -546,8 +548,9 @@ impl AgentChannelState {
         for (message, knowledge) in replacement {
             turn.work.see_message(&message);
             // A summary written by the agent's model is a call of it.
-            if message.sender_id == actor {
-                part.used = TokenUsage::counted(part.used, &message);
+            if let Some(measures) = message.measures.as_ref().filter(|_| message.sender_id == actor)
+            {
+                part.used = TokenUsage::counted(part.used, measures);
             }
             if let Some(knowledge) = knowledge {
                 turn.work.record_knowledge(knowledge);
@@ -952,6 +955,7 @@ mod tests {
     use crate::context::{ContextResolver, KnowledgeSource};
     use crate::digest;
     use crate::message::testing::{id, make_message};
+    use crate::message::CallMeasures;
     use crate::note::NoteId;
     use crate::prompt_catalogue::testing::kernel_catalogue;
     use crate::question::{Addressee, Question, Questions};
@@ -1800,8 +1804,11 @@ mod tests {
         let answer = Message {
             sender_id: agent,
             role: MessageRole::Assistant,
-            prompt_tokens: Some(100),
-            completion_tokens: Some(10),
+            measures: Some(CallMeasures {
+                prompt_tokens: Some(100),
+                completion_tokens: Some(10),
+                ..CallMeasures::default()
+            }),
             ..said("hi", Classification::PUBLIC)
         };
         let sent = state.said(ThreadId::default(), answer.clone());
@@ -1841,7 +1848,7 @@ mod tests {
         let summary = Message {
             sender_id: agent,
             role: MessageRole::User,
-            prompt_tokens: Some(50),
+            measures: Some(CallMeasures { prompt_tokens: Some(50), ..CallMeasures::default() }),
             ..said("[Summary] they greeted", Classification::PUBLIC)
         };
         assert_eq!(
@@ -1938,8 +1945,11 @@ mod tests {
         let first = Message {
             sender_id: agent,
             role: MessageRole::Assistant,
-            prompt_tokens: Some(100),
-            completion_tokens: Some(10),
+            measures: Some(CallMeasures {
+                prompt_tokens: Some(100),
+                completion_tokens: Some(10),
+                ..CallMeasures::default()
+            }),
             ..said("call", Classification::PUBLIC)
         };
         state.said(ThreadId::default(), first.clone());
@@ -1950,8 +1960,11 @@ mod tests {
             .map(|n| n.digest);
         let summary = Message {
             sender_id: agent,
-            prompt_tokens: Some(500),
-            completion_tokens: Some(8),
+            measures: Some(CallMeasures {
+                prompt_tokens: Some(500),
+                completion_tokens: Some(8),
+                ..CallMeasures::default()
+            }),
             ..said("summary", Classification::PUBLIC)
         };
         state
@@ -2408,8 +2421,8 @@ mod tests {
         state.asleep = true;
         let step = ActorState::WaitingForUser;
         *turn_slot(&mut state) = Some(TurnState { step, model_calls: 3, ..TurnState::default() });
-        state.thread_mut(ThreadId::default()).used =
-            TokenUsage::counted(None, &Message { prompt_tokens: Some(5), ..make_message(id(2)) });
+        let measures = CallMeasures { prompt_tokens: Some(5), ..CallMeasures::default() };
+        state.thread_mut(ThreadId::default()).used = TokenUsage::counted(None, &measures);
         state.last_message = Some(id(2));
         state.heard.took(Position::new(4));
         state.heard.took_ahead(Position::new(7));

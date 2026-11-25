@@ -17,7 +17,7 @@ use caelumora_agents::turn::Turn;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_api::model::LanguageModelClient;
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::message::{Message, MessageEvent, MessageRole};
+use caelumora_domain::message::{CallMeasures, Message, MessageEvent, MessageRole};
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use futures::StreamExt;
 use std::sync::Arc;
@@ -57,8 +57,8 @@ impl SummaryCompaction {
     }
 
     /// What the agent's model answers to `context`: the texts of its messages, trimmed, between
-    /// blank lines - empty if there are none -, and the message it answered with last; `None` if it
-    /// answered no message.
+    /// blank lines - empty if there are none -, and the measures of its call, which the message it
+    /// answered with last carries.
     ///
     /// # Errors
     /// `ModelUnreachable` if it cannot be asked.
@@ -66,7 +66,7 @@ impl SummaryCompaction {
         &self,
         turn: &Turn<'_>,
         context: &[Message],
-    ) -> Result<Option<(String, Message)>, CompactionError> {
+    ) -> Result<(String, Option<CallMeasures>), CompactionError> {
         let mut stream =
             self.model_client.chat_completion(turn.situation().initiator(), context, &[]).await;
         let mut answered: Vec<Message> = Vec::new();
@@ -91,15 +91,14 @@ impl SummaryCompaction {
             .filter(|t| !t.is_empty())
             .collect::<Vec<_>>()
             .join("\n\n");
-        Ok(answered.pop().map(|last| (text, last)))
+        Ok((text, answered.last().and_then(|last| last.measures)))
     }
 }
 
 #[async_trait]
 impl CompactionStrategy for SummaryCompaction {
     /// The summary of `part`, written by the agent's model, under its title, and what of `given`
-    /// it still needs, as it answers after its summary; the message it answered with, for the
-    /// tokens of its calls.
+    /// it still needs, as it answers after its summary; the measures of its calls.
     async fn replace(
         &self,
         turn: &Turn<'_>,
@@ -115,22 +114,21 @@ impl CompactionStrategy for SummaryCompaction {
             ..Message::new(classification.clone())
         };
         part.push(in_its_name(MessageRole::User, self.instruction(given)?));
-        let Some((summary, call)) =
-            self.ask(turn, &part).await?.filter(|(text, _)| !text.is_empty())
-        else {
+        let (summary, measures) = self.ask(turn, &part).await?;
+        if summary.is_empty() {
             return Err(CompactionError::NoSummary);
-        };
+        }
         let text = self.titled(&summary)?;
         if given.is_empty() {
-            return Ok(Replacement { text, call, still_needed: Vec::new() });
+            return Ok(Replacement { text, measures, still_needed: Vec::new() });
         }
 
         part.push(in_its_name(MessageRole::Assistant, summary));
         part.push(in_its_name(MessageRole::User, self.question(given)?));
         // Its summary is written: an answer that cannot be had fails nothing.
-        let (named, call) = match self.ask(turn, &part).await {
-            Ok(Some((answer, then))) => (named_in(&answer, given), summed(call, &then)),
-            Ok(None) | Err(_) => (None, call),
+        let (named, measures) = match self.ask(turn, &part).await {
+            Ok((answer, then)) => (named_in(&answer, given), summed(measures, then)),
+            Err(_) => (None, measures),
         };
         let still_needed = named.unwrap_or_else(|| {
             tracing::warn!(
@@ -140,7 +138,7 @@ impl CompactionStrategy for SummaryCompaction {
             );
             given.to_vec()
         });
-        Ok(Replacement { text, call, still_needed })
+        Ok(Replacement { text, measures, still_needed })
     }
 }
 
@@ -167,19 +165,23 @@ fn named_in(answer: &str, given: &[String]) -> Option<Vec<String>> {
     (!named.is_empty() || none).then_some(named)
 }
 
-/// `call` with the tokens of the call `then` answered added, and the context size of `then`: the
-/// question after the summary has no message of its own to carry them (issue 514).
-fn summed(call: Message, then: &Message) -> Message {
+/// The tokens of `call` and `then` added, and the context size of `then`: the question after the
+/// summary has no message of its own to carry them (issue 514). Without the durations, which two
+/// calls do not add up to.
+fn summed(call: Option<CallMeasures>, then: Option<CallMeasures>) -> Option<CallMeasures> {
+    let (Some(call), Some(then)) = (call, then) else {
+        return call.or(then);
+    };
     let add = |a: Option<u64>, b: Option<u64>| match (a, b) {
         (None, None) => None,
         (a, b) => Some(a.unwrap_or(0) + b.unwrap_or(0)),
     };
-    Message {
+    Some(CallMeasures {
         prompt_tokens: add(call.prompt_tokens, then.prompt_tokens),
         completion_tokens: add(call.completion_tokens, then.completion_tokens),
         context_size: then.context_size.or(call.context_size),
-        ..call
-    }
+        ..CallMeasures::default()
+    })
 }
 
 /// Registers the kind `summary_compaction` with `registry`.
@@ -256,8 +258,11 @@ mod tests {
                 Some(text) => Ok(MessageEvent::Complete(Message {
                     role: MessageRole::Assistant,
                     content: Some(text.to_string()),
-                    prompt_tokens: Some(40),
-                    completion_tokens: Some(8),
+                    measures: Some(CallMeasures {
+                        prompt_tokens: Some(40),
+                        completion_tokens: Some(8),
+                        ..CallMeasures::default()
+                    }),
                     ..unlabelled_message()
                 })),
                 None => Err(ModelError::Connection {
@@ -347,8 +352,8 @@ mod tests {
             "a line a name: {question}"
         );
         assert_eq!(
-            (replacement.call.prompt_tokens, replacement.call.completion_tokens),
-            (Some(80), Some(16)),
+            replacement.measures.map(|m| (m.prompt_tokens, m.completion_tokens)),
+            Some((Some(80), Some(16))),
             "the tokens of both calls"
         );
     }
@@ -369,7 +374,8 @@ mod tests {
             let replacement = replaced(&model, &given()).await.expect("summarised all the same");
             assert_eq!(replacement.still_needed, given(), "{answer:?}");
             let tokens = if answer.is_none() { 40 } else { 80 };
-            assert_eq!(replacement.call.prompt_tokens, Some(tokens), "the calls that answered");
+            let prompt = replacement.measures.and_then(|m| m.prompt_tokens);
+            assert_eq!(prompt, Some(tokens), "the calls that answered");
         }
     }
 

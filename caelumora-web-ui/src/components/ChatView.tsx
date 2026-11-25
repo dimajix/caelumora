@@ -157,22 +157,23 @@ function stateDot(participant: ChannelParticipant, activity?: string): {classNam
 }
 
 /**
- * `usage` with the call that produced `message` added, as the server sums
- * them (`TokenUsage::of`, issue 209) - or `null` if the message reports no
+ * `usage` with the call that produced `message` added, as the server counts it
+ * (`TokenUsage::counted`, issue 209) - or `null` if the message reports no
  * tokens: a tool's result, an external agent's answer. Shown while a turn
  * runs - the steps of a plan are many calls - and replaced by what the
  * server read once it ended: a call whose message was not published at all
  * is missing until then.
  */
 function withCall(usage: TokenUsage | undefined, message: Message): TokenUsage | null {
-  if (message.prompt_tokens == null && message.completion_tokens == null) return null;
-  const prompt = message.prompt_tokens ?? 0;
-  const completion = message.completion_tokens ?? 0;
+  const measures = message.measures;
+  if (!measures || (measures.prompt_tokens == null && measures.completion_tokens == null)) return null;
+  const prompt = measures.prompt_tokens ?? 0;
+  const completion = measures.completion_tokens ?? 0;
   return {
     calls: (usage?.calls ?? 0) + 1,
     prompt_tokens: (usage?.prompt_tokens ?? 0) + prompt,
     completion_tokens: (usage?.completion_tokens ?? 0) + completion,
-    context_size: message.context_size,
+    context_size: measures.context_size,
     context_tokens: prompt + completion,
   };
 }

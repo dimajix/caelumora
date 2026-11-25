@@ -30,7 +30,7 @@ use caelumora_domain::confidentiality::{Classification, Confidentiality, Place};
 use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_domain::history::testing::{items_of, messages_of};
 use caelumora_domain::history::HistoryEntry;
-use caelumora_domain::message::{Message, MessageRole};
+use caelumora_domain::message::{CallMeasures, Message, MessageRole};
 use caelumora_domain::privacy::SessionPrivacy;
 use caelumora_domain::query::Query;
 use caelumora_domain::scope::Scope;
@@ -480,9 +480,12 @@ async fn a_skill_that_stands_given_as_it_is_is_not_given_again() {
 async fn a_compaction_gives_again_the_skills_given_in_the_part_it_replaces_that_are_still_needed() {
     // As a call of a model whose context holds 1000 tokens answered, given `prompt` tokens.
     let measured = |prompt: u64, text: &str| Message {
-        prompt_tokens: Some(prompt),
-        completion_tokens: Some(10),
-        context_size: Some(1000),
+        measures: Some(CallMeasures {
+            prompt_tokens: Some(prompt),
+            completion_tokens: Some(10),
+            context_size: Some(1000),
+            ..CallMeasures::default()
+        }),
         ..saying(text)
     };
     let script = vec![

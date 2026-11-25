@@ -22,7 +22,7 @@ use caelumora_domain::channel::ThreadId;
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::history::HistoryEntry;
-use caelumora_domain::message::Message;
+use caelumora_domain::message::{CallMeasures, Message};
 use caelumora_domain::tool::testing::make_tool_call;
 use caelumora_domain::tool::ToolCall;
 use caelumora_kernel::channel::ChannelLoop;
@@ -40,9 +40,12 @@ fn compaction() -> ComponentDescriptor {
 /// tokens.
 fn measured(prompt: u64, message: Message) -> Message {
     Message {
-        prompt_tokens: Some(prompt),
-        completion_tokens: Some(10),
-        context_size: Some(1000),
+        measures: Some(CallMeasures {
+            prompt_tokens: Some(prompt),
+            completion_tokens: Some(10),
+            context_size: Some(1000),
+            ..CallMeasures::default()
+        }),
         ..message
     }
 }

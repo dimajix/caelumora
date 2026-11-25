@@ -255,7 +255,7 @@ impl<'a> ContextResolver<'a> {
                 TranscriptEntry::Message(message)
                     if at >= added_from && message.sender_id == agent =>
                 {
-                    message.prompt_tokens
+                    message.measures.and_then(|measures| measures.prompt_tokens)
                 }
                 _ => None,
             })
@@ -562,7 +562,7 @@ mod tests {
     use crate::context::{FrameRef, PromptRef, ReasoningHistory, SenderFormat, SystemMessages};
     use crate::digest;
     use crate::digest::prompt;
-    use crate::message::TokenUsage;
+    use crate::message::{CallMeasures, TokenUsage};
     use crate::prompt_catalogue::testing::kernel_catalogue;
     use crate::prompt_catalogue::{PromptVariant, KERNEL_PROMPTS};
     use crate::tool::testing::{make_tool_call, make_tool_description};
@@ -1142,8 +1142,11 @@ mod tests {
         let call = |prompt: u64, content: &str| Message {
             sender_id: agent,
             role: MessageRole::Assistant,
-            prompt_tokens: Some(prompt),
-            completion_tokens: Some(101),
+            measures: Some(CallMeasures {
+                prompt_tokens: Some(prompt),
+                completion_tokens: Some(101),
+                ..CallMeasures::default()
+            }),
             reasoning: Some("r".repeat(400)),
             ..text(content)
         };
@@ -1182,8 +1185,11 @@ mod tests {
             .map(|n| n.digest);
         let summary = Message {
             sender_id: agent,
-            prompt_tokens: Some(500),
-            completion_tokens: Some(8),
+            measures: Some(CallMeasures {
+                prompt_tokens: Some(500),
+                completion_tokens: Some(8),
+                ..CallMeasures::default()
+            }),
             ..text("summary")
         };
         state
@@ -1386,9 +1392,12 @@ mod tests {
         let agent = ActorId::Agent(AgentId::new());
         let call = |sender: ActorId, prompt: u64, completion: u64, size: Option<u64>| Message {
             sender_id: sender,
-            prompt_tokens: Some(prompt),
-            completion_tokens: Some(completion),
-            context_size: size,
+            measures: Some(CallMeasures {
+                prompt_tokens: Some(prompt),
+                completion_tokens: Some(completion),
+                context_size: size,
+                ..CallMeasures::default()
+            }),
             ..text("answer")
         };
         let mut state = AgentChannelState::default();

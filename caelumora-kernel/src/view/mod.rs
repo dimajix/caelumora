@@ -1048,7 +1048,7 @@ mod tests {
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::context::{ContextItem, ContextRef};
     use caelumora_domain::history::{Audience, HistoryEntry, HistoryPage, Recorded};
-    use caelumora_domain::message::Message;
+    use caelumora_domain::message::{CallMeasures, Message};
     use caelumora_domain::security::{Grant, SecurityAttributes, Subject};
     use caelumora_domain::session::testing::make_session;
     use caelumora_domain::session::Session;
@@ -2389,16 +2389,20 @@ mod tests {
         let session = stored(&kernel, session, slice::from_mut(&mut channel)).await;
         // What the agent's call used, what it noted, and a call its turn
         // waits to have approved.
-        let answer = Message {
-            sender_id: ActorId::Agent(helper.id),
+        let measures = CallMeasures {
             prompt_tokens: Some(1000),
             completion_tokens: Some(50),
             context_size: Some(8192),
+            ..CallMeasures::default()
+        };
+        let answer = Message {
+            sender_id: ActorId::Agent(helper.id),
+            measures: Some(measures),
             ..Message::new(Classification::CHANNEL_DEFAULT)
         };
         let calls = vec![make_tool_call("delete")];
         let mut state = waiting_for_approval(session.id, channel.id, helper.id, calls);
-        state.thread_mut(ThreadId::line(channel.id)).used = TokenUsage::counted(None, &answer);
+        state.thread_mut(ThreadId::line(channel.id)).used = TokenUsage::counted(None, &measures);
         state.transcript.push(ThreadId::default(), answer);
         state.notes.push(
             Change::Add {

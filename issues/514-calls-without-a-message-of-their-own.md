@@ -1,7 +1,7 @@
 # 514 — A model call that produces no message of its own is counted with another
 
-**Status:** open
-**Type:** question
+**Status:** in progress
+**Type:** bug
 **Priority:** low
 **Area:** Observability and operations
 **Summary:** The statistics of a model call - its tokens and durations - are recorded on the message it produced, so a call whose answer is no message of the transcript is counted with another message, or not at all, and `TokenUsage::calls` counts fewer calls than were made.
@@ -72,6 +72,48 @@ none. `TokenUsage::calls` already says so: it counts the calls that reported the
 Not decided yet: the maintainer wants to see whether further cases of implicit calls appear
 before choosing.
 
+## Decision
+
+Decided by the maintainer on 2026-11-25, after no further implicit call had appeared since issue
+413: **the measures of a call named**, the second option above.
+
+*   `CallMeasures` is what a call of a language model reports of itself - its tokens, its
+    durations, the size of its context -, and `Message::measures: Option<CallMeasures>` replaces
+    the six fields of `Message`: `None` for a message no call produced. A model that reports a
+    size and no tokens made no call counted: `TokenUsage::counted` counts measures, and keeps its
+    check for reported tokens.
+*   **Nested, not flattened, in what is stored and sent.** `#[serde(flatten)]` would keep the JSON
+    as it was, but works only with a `CallMeasures` every message has, empty where no call
+    produced it, which says less than an `Option`. Stored data may be deleted (CODING-GUIDELINES,
+    *Stored data*), and no column of the Postgres store holds a measure: messages are kept as
+    `jsonb` in the transcripts and histories. A table of calls with columns of their own would be
+    the place for an evaluation across channels, not columns of the messages; nobody needs one
+    today.
+*   **The summary's message keeps the measures of its own call**, durations included; the
+    strategy's further calls are carried apart (`Replacement::further_calls`) and counted by
+    `AgentChannelState::compact`, which counts what carries measures - no longer what its agent
+    sent. `counted` sets the context too, which does no harm there: the estimate of the new
+    branch replaces it at once. `summed` goes.
+*   **Left as they are, named where the rule is stated:** the call of an empty summary, whose
+    turn is given up and which no `Replacement` carries; a message an `EmitOutProcessor` would
+    drop, which none does; the durations of the further calls, since `TokenUsage` sums no
+    durations of any call and nobody needs a sum of them.
+
+## Plan
+
+Two steps; the pattern is `TokenUsage` beside `Message`, a data type of the domain, and calls are
+counted where they are today, in `AgentChannelState::said` and `compact`, by `TokenUsage::counted`.
+
+1.  **The measures named, without a change of behaviour.** `CallMeasures`, `Message::measures`,
+    `TokenUsage::counted(usage: Option<Self>, measures: &CallMeasures) -> Option<Self>`; the
+    Ollama client builds the measures with the end of its answer and adds the size of the context
+    to them; `Replacement::measures`, an `Option<CallMeasures>`, instead of `Replacement::call`, a
+    `Message`, and `summed` adding measures for now; the web UI reads `Message.measures`.
+2.  **Every call counted.** `Replacement::further_calls: Vec<CallMeasures>`, passed through
+    `Turn::compact` to `AgentChannelState::compact`, which counts the measures of every message
+    of the replacement and then each further call; `summed` and the check of the sender go;
+    AGENT-TURN.md *Tokens used* names the exceptions.
+
 ## Done when
 
 *   It is decided how a call that produces no message of its own is counted, and the usage counts
@@ -87,3 +129,8 @@ before choosing.
   measures. Added what was found on the way: the empty summary and the dropped message, the calls
   that report nothing, that `counted` sets the context as well, and the option of naming a call's
   measures. Still waiting for the decision.
+- **2026-11-25** — Decided: the measures of a call named (`CallMeasures`), nested in the JSON;
+  the plan in two steps above. Step 1 done: `CallMeasures` and `Message::measures` replace the
+  six fields of `Message`, `TokenUsage::counted` counts measures, `Replacement` carries measures
+  instead of a message. A summary's message now carries the durations of its call where no
+  question follows it; where one does, the tokens of both are summed without durations.

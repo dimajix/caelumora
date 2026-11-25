@@ -83,9 +83,7 @@ impl Compactor {
             sender_id: agent,
             sender_name: turn.agent_name().to_string(),
             content: Some(replacement.text),
-            prompt_tokens: replacement.call.prompt_tokens,
-            completion_tokens: replacement.call.completion_tokens,
-            context_size: replacement.call.context_size,
+            measures: replacement.measures,
             turn_id: owner,
             ..Message::new(classification)
         };

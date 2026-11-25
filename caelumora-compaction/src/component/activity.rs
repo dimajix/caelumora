@@ -62,7 +62,7 @@ mod tests {
     use caelumora_domain::agent::AgentChannelState;
     use caelumora_domain::channel::ThreadId;
     use caelumora_domain::confidentiality::Classification;
-    use caelumora_domain::message::{Message, MessageId, MessageRole};
+    use caelumora_domain::message::{CallMeasures, Message, MessageId, MessageRole};
     use caelumora_kernel::workspace::testing::session_with_workspace;
     use std::sync::Arc;
 
@@ -111,9 +111,12 @@ mod tests {
             sender_id: ActorId::Agent(world.agent),
             role: MessageRole::Assistant,
             content: Some("x".to_string()),
-            prompt_tokens: Some(prompt),
-            completion_tokens: Some(1),
-            context_size: size,
+            measures: Some(CallMeasures {
+                prompt_tokens: Some(prompt),
+                completion_tokens: Some(1),
+                context_size: size,
+                ..CallMeasures::default()
+            }),
             ..Message::new(Classification::PUBLIC)
         };
         turn.record_said(call(700, Some(1000)));

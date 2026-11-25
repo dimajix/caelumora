@@ -5,11 +5,10 @@ use crate::{CompactionError, CompactionStrategy, Replacement, NAMESPACE, PROMPTS
 use async_trait::async_trait;
 use caelumora_agents::testing;
 use caelumora_agents::turn::Turn;
-use caelumora_api::model::unlabelled_message;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::AgentId;
 use caelumora_domain::confidentiality::Classification;
-use caelumora_domain::message::{Message, MessageRole};
+use caelumora_domain::message::{CallMeasures, Message, MessageRole};
 use caelumora_domain::prompt_catalogue::PromptTexts;
 use std::sync::Mutex;
 
@@ -79,14 +78,12 @@ impl CompactionStrategy for Scripted {
             Answer::NeedingNothing => Vec::new(),
             Answer::Failing(fails) => return Err(fails()),
         };
-        let call = Message {
-            role: MessageRole::Assistant,
-            content: Some(SUMMARY.to_string()),
+        let measures = CallMeasures {
             prompt_tokens: Some(40),
             completion_tokens: Some(8),
-            ..unlabelled_message()
+            ..CallMeasures::default()
         };
-        Ok(Replacement { text: SUMMARY.to_string(), call, still_needed })
+        Ok(Replacement { text: SUMMARY.to_string(), measures: Some(measures), still_needed })
     }
 }
 

@@ -737,19 +737,20 @@ function seconds(nanoseconds: number): string {
  * none (issue 43).
  */
 export function usageGroups(message: Message): StatGroup[] {
+  const measures = message.measures ?? {};
   const tokens: Array<[string, string]> = [];
-  if (message.prompt_tokens != null) tokens.push(['Input tokens', formatTokens(message.prompt_tokens)]);
-  if (message.completion_tokens != null) tokens.push(['Output tokens', formatTokens(message.completion_tokens)]);
-  const level = fillLevel((message.prompt_tokens ?? 0) + (message.completion_tokens ?? 0), message.context_size);
-  if (level !== null && message.context_size) {
-    tokens.push(['Context', `${percent(level)} of ${formatTokens(message.context_size)}`]);
+  if (measures.prompt_tokens != null) tokens.push(['Input tokens', formatTokens(measures.prompt_tokens)]);
+  if (measures.completion_tokens != null) tokens.push(['Output tokens', formatTokens(measures.completion_tokens)]);
+  const level = fillLevel((measures.prompt_tokens ?? 0) + (measures.completion_tokens ?? 0), measures.context_size);
+  if (level !== null && measures.context_size) {
+    tokens.push(['Context', `${percent(level)} of ${formatTokens(measures.context_size)}`]);
   }
   const times: Array<[string, string]> = [];
-  if (message.prompt_duration != null) times.push(['Prompt time', seconds(message.prompt_duration)]);
-  if (message.completion_duration != null) times.push(['Completion time', seconds(message.completion_duration)]);
-  if (message.total_duration != null) times.push(['Total time', seconds(message.total_duration)]);
-  if (message.completion_tokens != null && message.completion_duration) {
-    times.push(['Speed', `${(message.completion_tokens / (message.completion_duration / 1e9)).toFixed(1)} tokens/s`]);
+  if (measures.prompt_duration != null) times.push(['Prompt time', seconds(measures.prompt_duration)]);
+  if (measures.completion_duration != null) times.push(['Completion time', seconds(measures.completion_duration)]);
+  if (measures.total_duration != null) times.push(['Total time', seconds(measures.total_duration)]);
+  if (measures.completion_tokens != null && measures.completion_duration) {
+    times.push(['Speed', `${(measures.completion_tokens / (measures.completion_duration / 1e9)).toFixed(1)} tokens/s`]);
   }
   return [
     {title: 'Tokens', rows: tokens},

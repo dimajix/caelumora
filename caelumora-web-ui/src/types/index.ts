@@ -878,15 +878,23 @@ export interface Message {
   // UI only: a step of the plan of the turn `turn_id` began here (issue
   // 263) - not shown itself, but heading the messages of the step.
   planStep?: PlanStep;
-  // Usage statistics
+  /** The measures of the model call that produced it (issue 514); absent if no call did. */
+  measures?: CallMeasures;
+  [key: string]: unknown;
+}
+
+/**
+ * What a call of a language model reports of itself (issue 514), each absent where the model
+ * does not report it.
+ */
+export interface CallMeasures {
   prompt_tokens?: number;
   completion_tokens?: number;
   prompt_duration?: number; // ns
   completion_duration?: number; // ns
   total_duration?: number; // ns
-  /** How many tokens the context of the call that produced it held (issue 209). */
+  /** How many tokens the context of the call held (issue 209). */
   context_size?: number;
-  [key: string]: unknown;
 }
 
 /** A step of a plan, as the steps of an agent's turn are numbered (issue 263). */

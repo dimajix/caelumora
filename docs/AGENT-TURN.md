@@ -665,14 +665,14 @@ of the agent's transcript.
 
 ### Tokens used
 
-Every message the model produces carries the tokens of its call and the size of the context the call
-had. What an agent used in a thread of a channel is a running total kept with its part of the
-thread, counted as each of its calls' messages is recorded - said in a turn, or written as a summary
-in a compaction - so that a call is counted once, the turn under way's included; it is not summed
-over the transcript, whose older branches need not be at hand (`AgentThreadState::used`). What it
-used in the channel, as a view and `/agent usage` show it, is the totals of all its threads with the
-context of the thread whose context is fullest (`AgentChannelState::used`, issue 602). Two groups
-mean different things:
+Every message the model produces carries the measures of its call (`Message::measures`, a
+`CallMeasures`): its tokens, its durations and the size of the context it had. What an agent used in
+a thread of a channel is a running total kept with its part of the thread, counted as each of its
+calls' messages is recorded - said in a turn, or written as a summary in a compaction - so that a
+call is counted once, the turn under way's included; it is not summed over the transcript, whose
+older branches need not be at hand (`AgentThreadState::used`). What it used in the channel, as a
+view and `/agent usage` show it, is the totals of all its threads with the context of the thread
+whose context is fullest (`AgentChannelState::used`, issue 602). Two groups mean different things:
 
 *   **context** - how full the context is against its size (`TokenUsage::context_tokens`): the
     last call's prompt and answer, as counted. A compaction replaces it once, when it is made:

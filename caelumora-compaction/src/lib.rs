@@ -30,7 +30,7 @@ mod testing;
 use async_trait::async_trait;
 use caelumora_agents::turn::Turn;
 use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
-use caelumora_domain::message::Message;
+use caelumora_domain::message::{CallMeasures, Message};
 use caelumora_domain::prompt_catalogue::PromptError;
 use caelumora_domain::store::EntityKind;
 use std::fmt::Debug;
@@ -69,9 +69,10 @@ pub trait CompactionStrategy: Send + Sync + Debug {
 pub struct Replacement {
     /// The text that stands for the part, as the agent is given it.
     pub text: String,
-    /// The message its model answered with, which carries the measures of the calls that wrote
-    /// the replacement - their tokens summed, the context size of the last.
-    pub call: Message,
+    /// The measures of the calls that wrote the replacement, which the message standing for the
+    /// part carries: of one call whole, of several their tokens summed and the context size of
+    /// the last, without the durations, which do not add up into one call's.
+    pub measures: Option<CallMeasures>,
     /// Of what the agent knew in the part, what it still needs for the work under way, by kind and
     /// name; the rest is not given again.
     pub still_needed: Vec<String>,

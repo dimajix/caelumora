@@ -58,7 +58,7 @@ pub enum TranscriptEntry {
     /// before it on its branch - the replacement and the entries kept - was
     /// written by the compaction, what comes after was added where it
     /// stands. A message before it carries the measure of a call made on
-    /// another branch (`Message::prompt_tokens`). Gives the model nothing.
+    /// another branch (`CallMeasures::prompt_tokens`). Gives the model nothing.
     Compacted { at: DateTime<Utc> },
     /// `participant` joined the channel, as the channel's history records
     /// it (`HistoryEntry::ParticipantJoined`, issue 408), noted by the agent

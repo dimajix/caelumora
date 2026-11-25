@@ -1,7 +1,7 @@
 //! Messages: what an actor says in a channel - its text, its reasoning, its attachments, its tool
 //! calls and results -, with the rules by which a message is heard, published, modified,
-//! reclassified, fitted into its channel and taken back, and what a model's calls used
-//! (`TokenUsage`).
+//! reclassified, fitted into its channel and taken back, and what a model's calls report and use
+//! (`CallMeasures`, `TokenUsage`).
 use crate::actor::ActorId;
 use crate::confidentiality::{Classification, Visibility};
 use crate::content::ContentRef;
@@ -96,22 +96,10 @@ pub struct Message {
     /// `mentions`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub addressees: Vec<ActorId>,
-    // Usage statistics
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prompt_tokens: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub completion_tokens: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prompt_duration: Option<u64>, // ns
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub completion_duration: Option<u64>, // ns
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub total_duration: Option<u64>, // ns
-    /// How many tokens the model's context held in the call that produced
-    /// the message (issue 209): what `prompt_tokens` and
-    /// `completion_tokens` fill. `None` where it is not known.
+    /// The measures of the model call that produced the message (issue 514); `None` for a
+    /// message no call produced.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context_size: Option<u64>,
+    pub measures: Option<CallMeasures>,
     /// When the message was last modified (issue 234), `None` if it never
     /// was. Set where what stands is read - from the changes a chain
     /// recorded after the message - never by its sender, and not covered by
@@ -173,14 +161,9 @@ impl Message {
             turn_id: None,
             mentions: Vec::new(),
             addressees: Vec::new(),
-            prompt_tokens: None,
-            completion_tokens: None,
-            prompt_duration: None,
-            completion_duration: None,
+            measures: None,
             context_transcript: None,
             context_frame: None,
-            total_duration: None,
-            context_size: None,
             modified: None,
             revoked: None,
             notice_of: None,
@@ -451,8 +434,34 @@ pub fn estimated_tokens(bytes: usize) -> u64 {
     u64::try_from(bytes).unwrap_or(u64::MAX).div_ceil(4)
 }
 
-/// What an agent's model calls used (issue 209), summed from the messages
-/// they produced, each of which carries the tokens of its call.
+/// What a call of a language model reports of itself (issue 514): the tokens it was given and
+/// answered with, how long it took, how many tokens its context held - each `None` where the
+/// model does not report it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CallMeasures {
+    /// The tokens of the context the call was given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens: Option<u64>,
+    /// The tokens of its answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion_tokens: Option<u64>,
+    /// How long the model read the context, in nanoseconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_duration: Option<u64>,
+    /// How long it wrote the answer, in nanoseconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion_duration: Option<u64>,
+    /// How long the whole call took, in nanoseconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_duration: Option<u64>,
+    /// How many tokens the model's context held in the call (issue 209): what `prompt_tokens`
+    /// and `completion_tokens` fill.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_size: Option<u64>,
+}
+
+/// What an agent's model calls used (issue 209), summed from the measures
+/// of each call (`CallMeasures`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenUsage {
     /// How many calls reported their tokens.
@@ -475,14 +484,14 @@ pub struct TokenUsage {
 }
 
 impl TokenUsage {
-    /// `usage` with the call that produced `message` counted, if it reported
-    /// its tokens; `usage` as it is otherwise. `None`: nothing counted yet.
-    pub fn counted(usage: Option<Self>, message: &Message) -> Option<Self> {
-        if message.prompt_tokens.is_none() && message.completion_tokens.is_none() {
+    /// `usage` with the call `measures` reports counted, if it reported its tokens; `usage` as
+    /// it is otherwise. `None`: nothing counted yet.
+    pub fn counted(usage: Option<Self>, measures: &CallMeasures) -> Option<Self> {
+        if measures.prompt_tokens.is_none() && measures.completion_tokens.is_none() {
             return usage;
         }
-        let prompt = message.prompt_tokens.unwrap_or(0);
-        let completion = message.completion_tokens.unwrap_or(0);
+        let prompt = measures.prompt_tokens.unwrap_or(0);
+        let completion = measures.completion_tokens.unwrap_or(0);
         let usage = usage.unwrap_or(Self {
             calls: 0,
             prompt_tokens: 0,
@@ -494,7 +503,7 @@ impl TokenUsage {
             calls: usage.calls + 1,
             prompt_tokens: usage.prompt_tokens + prompt,
             completion_tokens: usage.completion_tokens + completion,
-            context_size: message.context_size,
+            context_size: measures.context_size,
             context_tokens: prompt + completion,
         })
     }
@@ -598,6 +607,18 @@ pub(crate) mod tests {
     use crate::user::UserId;
     use chrono::Duration;
     use serde_json::Value;
+
+    /// Issue 514: a model may report the size of its context and no tokens; that is no call
+    /// counted.
+    #[test]
+    fn a_call_is_counted_only_once_it_reported_its_tokens() {
+        let sized = CallMeasures { context_size: Some(8192), ..CallMeasures::default() };
+        assert_eq!(TokenUsage::counted(None, &sized), None, "nothing counted yet");
+        let measured = CallMeasures { prompt_tokens: Some(100), ..sized };
+        let usage = TokenUsage::counted(None, &measured);
+        assert_eq!(TokenUsage::counted(usage, &sized), usage, "as it was");
+        assert_eq!(usage.map(|usage| (usage.calls, usage.prompt_tokens)), Some((1, 100)));
+    }
 
     #[test]
     fn the_share_of_the_context_held_is_known_only_with_its_size_and_at_most_all_of_it() {

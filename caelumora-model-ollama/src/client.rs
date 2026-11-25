@@ -15,7 +15,7 @@
 //! the model is the agent's model's to say, not the backend's.
 //!
 //! Every complete message carries the size of the context it was produced
-//! in (`Message::context_size`): the configured one, or else the one Ollama
+//! in (`CallMeasures::context_size`): the configured one, or else the one Ollama
 //! loaded the model with, read from `/api/ps` after a call - when the model
 //! is surely loaded - and kept for `RUNNING_CONTEXT_SIZE_KEPT`. A model that
 //! is not loaded, or a server that cannot say, leaves it unknown.
@@ -41,7 +41,7 @@ use caelumora_api::error::{describe_chain, describe_request_error};
 use caelumora_api::model::{unlabelled_message, ModelError, ModelResult};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::content::ContentRef;
-use caelumora_domain::message::{Message, MessageEvent, MessageId, MessageRole};
+use caelumora_domain::message::{CallMeasures, Message, MessageEvent, MessageId, MessageRole};
 use caelumora_domain::remote::RemoteEndpoint;
 use caelumora_domain::tool::{ToolCall, ToolDescription, ToolParameters};
 use caelumora_kernel::backend::Backends;
@@ -857,7 +857,17 @@ where
                         }
                     }
                     if body.done {
-                        let mut message = Message {
+                        // What Ollama reports of the call; the size of its context is the client's
+                        // to add (`chat_completion`).
+                        let measures = CallMeasures {
+                            prompt_tokens: body.prompt_eval_count,
+                            completion_tokens: body.eval_count,
+                            prompt_duration: body.prompt_eval_duration,
+                            completion_duration: body.eval_duration,
+                            total_duration: body.total_duration,
+                            context_size: None,
+                        };
+                        let message = Message {
                             id: MessageId::new(),
                             sender_id,
                             sender_name: sender_name.clone(),
@@ -865,16 +875,10 @@ where
                             content: if full_content.is_empty() { None } else { Some(full_content.clone()) },
                             reasoning: if full_reasoning.is_empty() { None } else { Some(full_reasoning.clone()) },
                             tool_calls: all_tool_calls.clone(),
+                            measures: Some(measures),
                             ..unlabelled_message()
                         };
-                        // Fill in usage metrics from Ollama if available
-                        message.total_duration = body.total_duration;
-                        message.prompt_tokens = body.prompt_eval_count;
-                        message.completion_tokens = body.eval_count;
-                        message.prompt_duration = body.prompt_eval_duration;
-                        message.completion_duration = body.eval_duration;
-
-                        yield Ok(MessageEvent::Complete(message.clone()));
+                        yield Ok(MessageEvent::Complete(message));
                         return;
                     }
                 },
@@ -973,10 +977,14 @@ impl LanguageModelProvider for OllamaModel {
             while let Some(event) = answer.next().await {
                 match event {
                     Ok(MessageEvent::Complete(mut message)) => {
-                        message.context_size = match context_size {
-                            Some(size) => Some(size),
-                            None => known.running_context_sizes.get(&http, &remote, &model).await,
-                        };
+                        if let Some(measures) = message.measures.as_mut() {
+                            measures.context_size = match context_size {
+                                Some(size) => Some(size),
+                                None => {
+                                    known.running_context_sizes.get(&http, &remote, &model).await
+                                }
+                            };
+                        }
                         yield Ok(MessageEvent::Complete(message));
                     }
                     event => yield event,
@@ -1243,7 +1251,9 @@ mod tests {
     async fn context_size_of_an_answer(client: &OllamaModel) -> Option<u64> {
         let events: Vec<_> = client.chat_completion(&[], &[]).await.collect().await;
         match events.last() {
-            Some(Ok(MessageEvent::Complete(message))) => message.context_size,
+            Some(Ok(MessageEvent::Complete(message))) => {
+                message.measures.and_then(|measures| measures.context_size)
+            }
             other => panic!("{other:?}"),
         }
     }
