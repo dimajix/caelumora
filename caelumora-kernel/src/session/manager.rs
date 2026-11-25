@@ -1,6 +1,7 @@
 //! `SessionManager`: the sessions of the process - the register of those that run here, which it
-//! starts and stops, and the lifecycles of sessions and their channels, by which the procedures of
-//! a session make, delete, restore and purge them (`procedure::session`, issue 593).
+//! starts, holds against the other processes that share the stores and stops, and the lifecycles
+//! of sessions and their channels, by which the procedures of a session make, delete, restore and
+//! purge them (`procedure::session`, issue 593).
 
 use super::{store_error, SessionError, SessionLoop};
 use crate::channel::Ending;
@@ -27,8 +28,9 @@ use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Weak};
 use tokio::task::JoinHandle;
 
-/// The sessions of the process: the register of those that run here, which it starts, finds and
-/// stops, and the lifecycles of sessions and their channels.
+/// The sessions of the process: the register of those that run here, which it starts, finds, holds
+/// against the other processes that share the stores and stops, and the lifecycles of sessions and
+/// their channels.
 pub struct SessionManager {
     /// The sessions that run here, each owned by the task it runs in, which holds its loop
     /// (`start`): found here as long as it runs (issue 601). Unlike the registers of the
@@ -176,6 +178,15 @@ impl SessionManager {
             Some(hold) => Ok(Some(hold)),
             None => Err(SessionError::RunsElsewhere(id).into()),
         }
+    }
+
+    /// Removes what holding session `id` keeps against the other processes, once it is purged,
+    /// while the caller holds it; nothing where no other process shares the stores (issue 554).
+    ///
+    /// # Errors
+    /// As `SessionLocks::forget`.
+    pub(crate) fn forget(&self, id: SessionId) -> StoreResult<()> {
+        self.locks.as_ref().map_or(Ok(()), |locks| locks.forget(id))
     }
 
     /// Session `id` as `context` may read it: its loop if it runs, its

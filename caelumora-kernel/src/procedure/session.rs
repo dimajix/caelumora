@@ -885,8 +885,8 @@ pub(crate) async fn purge(
     let held = sessions.hold(id)?;
     let removing = async |session: &Session| remove_behind(kernel, sessions, session).await;
     let purged = sessions.session_lifecycle().purge(context, id, removing).await?;
-    if let (true, Some(locks)) = (purged, kernel.session_locks()) {
-        if let Err(e) = locks.forget(id) {
+    if purged {
+        if let Err(e) = sessions.forget(id) {
             warn!(session = %id, "What held a session purged is left: {e}");
         }
     }

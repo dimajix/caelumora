@@ -198,11 +198,55 @@ of a cycle),
 SECURITY.md (`Kernel::views` as the root of the views), REST-SERVER.md (`AppState`), CHANNELS.md and
 ARCHITECTURE.md where the follower is started "beside the `SessionManager`". No stored data changes.
 
+### Step 3: what holds a session against the other processes is the session manager's
+
+Added after step 2, at the maintainer's request: the `Kernel` holds the `SessionLocks` beside the
+`SessionManager`, which holds them too, only for the purge of a session, which lets go for good of
+what holds it (`procedure::session::purge`).
+
+```rust
+// caelumora-kernel/src/session/manager.rs
+impl SessionManager {
+    /// Removes what holding session `id` keeps against the other processes, once it is purged,
+    /// while the caller holds it; nothing where no other process shares the stores (issue 554).
+    ///
+    /// # Errors
+    /// As `SessionLocks::forget`.
+    pub(crate) fn forget(&self, id: SessionId) -> StoreResult<()>;
+}
+```
+
+Removed: `Kernel::session_locks`, the field and its accessor. No test of its own: the purge's tests
+with shared stores (`shared_kernel`) hold it. Documents: none name the field.
+
+### Step 4: the tests do with sessions what the kernel does
+
+Added after step 2, at the maintainer's request: the test helpers on `SessionManager`
+(`session/testing.rs`) use nothing of the manager - each reaches the kernel back through it, by
+its weak link and an `expect`, to run a procedure by the kernel's executor -, and some hundred
+tests take the manager only to hand it on.
+
+- The helpers move to a guarded `impl Kernel` in `session::testing`, named by the kind, as a
+  method of the kernel does not say what it acts on: `create_session`,
+  `create_session_from_template`, `open_session`, `stop_session`, `delete_session`,
+  `restore_session`, `purge_session`, `move_session` (`procedure::session::Move`, before
+  `update_project`), `join_session`, `shut_down_sessions` and `resume_interrupted_sessions`.
+- The free helpers `create`, `persist` and `running_session_of_a_user` take `&Arc<Kernel>`.
+- Removed: `World::manager`, the field `manager` of the memory plugin's fixture, the tests'
+  `let manager = kernel.session_manager();` but where they read the register (`running`, `find`).
+- `Kernel::session_manager` becomes `pub(crate)`: outside the kernel only tests used it.
+
+Documents: CODING-GUIDELINES.md, *Sessions in tests*, names `Kernel::create_session` for
+`SessionManager::create`.
+
 ## Done when
 
 - The `Kernel` holds the `SessionManager` and the `ProjectManager`, built by the `KernelBuilder`,
   and no manager holds the kernel strongly in a way that makes a cycle; the option chosen and its
   reason are recorded here.
+- What holds a session against the other processes is the `SessionManager`'s alone (step 3).
+- The tests make and change sessions through the kernel's helpers, not through a manager they take
+  only to reach the kernel back (step 4).
 
 ## History
 
@@ -233,3 +277,8 @@ ARCHITECTURE.md where the follower is started "beside the `SessionManager`". No 
   policies travel as a pair; the follower, spawned with the kernel, holds its session manager and
   its executor, not the kernel. Test:
   `a_kernel_whose_sessions_run_is_let_go_once_their_runtime_ends`.
+- **2026-11-25** — Step 2 accepted by the maintainer and committed. Of the findings of its review,
+  the maintainer has two steps added to the plan: step 3, what holds a session against the other
+  processes being the session manager's alone, and step 4, the tests' helpers for sessions on the
+  kernel (*Plan*), each a line of *Done when*. Step 3 implemented: `SessionManager::forget`;
+  `Kernel::session_locks` removed; the docs of `SessionManager` name its holding sessions.
