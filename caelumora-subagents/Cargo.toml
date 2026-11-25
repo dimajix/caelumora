@@ -19,6 +19,7 @@ kernel = [
     "dep:tokio",
     "dep:tracing",
     "dep:anyhow",
+    "dep:serde",
 ]
 # The component and the library: the agent side.
 library = ["api", "dep:caelumora-agents", "dep:anyhow", "dep:serde", "dep:serde_json"]

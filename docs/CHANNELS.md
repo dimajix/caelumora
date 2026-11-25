@@ -278,7 +278,11 @@ agent that takes part in the session already (`AlreadyParticipant`): the opening
 by its own act, as an agent of whom the closer acts for leaves or as the kernel has anyone leave,
 then each deleted, the thread closed last: a closing that stops half-way leaves the thread open, its
 delegation still to be ended - let go, it is announced again as the channel starts -, and finishes
-as it is asked again.
+as it is asked again. Following each owned agent to its thread's opener, the channel's state
+answers how deep an agent lies below owning threads (`ChannelState::ownership_depth`) and how many
+agents are owned in the tree of a first opener, delegations let go not counted
+(`ChannelState::owned_in_tree`, issue 597) - what bounds sub-agents (see
+[TOOLS.md](TOOLS.md#sub-agents)).
 
 A participant of the channel is **taken into a further thread** of it, and **let go from one
 thread** alone, staying in its others (issue 602): `procedure::participant::TakeIntoThread` - added

@@ -50,6 +50,18 @@ impl ChannelLoop {
         opening.map(|opening| opening.owned.clone()).unwrap_or_default()
     }
 
+    /// How many open threads that own an agent lie above `actor` (issue 597,
+    /// `ChannelState::ownership_depth`): how deep a sub-agent it is.
+    pub async fn ownership_depth(&self, actor: ActorId) -> usize {
+        self.state.lock().await.ownership_depth(actor)
+    }
+
+    /// How many agents are owned by open threads, not let go, in the tree `actor` belongs to (issue
+    /// 597, `ChannelState::owned_in_tree`): the sub-agents open in it.
+    pub async fn owned_in_tree(&self, actor: ActorId) -> usize {
+        self.state.lock().await.owned_in_tree(actor)
+    }
+
     /// That the message a person opens a thread at was said where it is to hang, as far as their
     /// view of the history reaches (issue 595); asked by `procedure::thread::open` beside
     /// `require_opening`. Not of an agent: a tool opens a thread while the message with its call

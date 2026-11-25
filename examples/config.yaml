@@ -114,6 +114,12 @@ plugins:
   # (`keep_in`).
   artifacts:
     max_bytes: 52428800
+  # Sub-agents (issue 597): how many may be open at once in a tree - an agent
+  # and all that descend from it -, and how deep they may lie: 1 for
+  # sub-agents that start none of their own.
+  subagents:
+    max_open: 5
+    max_depth: 1
   # The models the platform offers (issue 520), by their kind: the language
   # models under `language`, each by its name and a backend - `ollama` of the
   # plugin caelumora-model-ollama. Without them the program offers one: the

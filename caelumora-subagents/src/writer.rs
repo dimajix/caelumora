@@ -4,7 +4,7 @@
 //! (`ChannelLoop::delegate`) -; ending it is closing its thread, with the agent it owns
 //! (`procedure::thread::Close`) - made of the kernel's building blocks. It acts in the work's
 //! context, each operation of the kernel checking itself: the agent of the work gives, its owner
-//! owns what it starts.
+//! owns what it starts; within the limits the operator set (`SubagentsConfig`, issue 597).
 
 use crate::extension::{SubAgentError, SubAgentResult, SubAgentWriter};
 use crate::names;
@@ -29,25 +29,48 @@ use caelumora_kernel::procedure::{
 use caelumora_kernel::session::{SessionError, SessionLoop};
 use caelumora_kernel::view::SessionView;
 use caelumora_security::SecurityContext;
+use serde::Deserialize;
 use std::sync::Arc;
 use tracing::{info, warn};
 
 /// How often a name is drawn again when another agent of the channel's scope took it meanwhile.
 const NAMINGS: usize = 3;
 
+/// The plugin's section of the configuration (`plugins.subagents`, issue 597): how many sub-agents
+/// may be open at once in a tree - an agent and all that descend from it -, and how deep they may
+/// lie - 1 for sub-agents that start none of their own. Set by the operator and checked by the
+/// writer, on the kernel's side: a component's parameters are the agent side's word.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct SubagentsConfig {
+    pub(crate) max_open: usize,
+    pub(crate) max_depth: usize,
+}
+
+impl Default for SubagentsConfig {
+    fn default() -> Self {
+        Self { max_open: 5, max_depth: 1 }
+    }
+}
+
 /// Sub-agents as the work bound to `session` starts, asks and ends them, with the agents'
-/// manager the kernel provides.
+/// manager the kernel provides, within `limits`.
 #[derive(Clone)]
 pub(crate) struct SubAgents {
     session: SessionView,
     agents: Arc<AgentManager>,
+    limits: SubagentsConfig,
 }
 
 impl SubAgents {
     /// The writer of the work `session` was made of, its context the work's, making and deleting
-    /// agents by `agents`.
-    pub(crate) fn new(session: SessionView, agents: Arc<AgentManager>) -> Self {
-        Self { session, agents }
+    /// agents by `agents`, starting them within `limits`.
+    pub(crate) fn new(
+        session: SessionView,
+        agents: Arc<AgentManager>,
+        limits: SubagentsConfig,
+    ) -> Self {
+        Self { session, agents, limits }
     }
 
     fn context(&self) -> &SecurityContext {
@@ -197,8 +220,12 @@ impl SubAgentWriter for SubAgents {
 /// thread opened at `origin` with it as its founder, which owns it (`procedure::thread::open`,
 /// issue 598), `brief` delegated into it - undone by its compensation, the last first, if a step
 /// fails: the agent taken out of the channel and the session, its thread closed, the agent
-/// deleted. Holds the new thread, its id chosen before, and the thread it is opened at; the agent
-/// it makes nobody knows before it is made, so that it holds none of it.
+/// deleted. Within the limits (issue 597): refused before anything is made if the work is a
+/// sub-agent as deep as allowed, or as many sub-agents are open in the work's tree as allowed; and
+/// once its thread is opened, if more are open than allowed - counted with its own, so that two
+/// started at once never pass the limit, at worst both refused. Holds the new thread, its id chosen
+/// before, and the thread it is opened at; the agent it makes nobody knows before it is made, so
+/// that it holds none of it.
 struct Starting {
     work: SubAgents,
     personality: Name,
@@ -228,6 +255,16 @@ impl Procedure for Starting {
     ) -> SubAgentResult<ThreadId> {
         let Self { work, personality, origin, brief, channel, thread, .. } = self;
         let (session, channel_loop) = work.running().await?;
+        let SubagentsConfig { max_open, max_depth } = work.limits;
+        let giver = work.context().caller_id;
+        if channel_loop.ownership_depth(giver).await >= max_depth {
+            return Err(SubAgentError::TooDeep(max_depth));
+        }
+        // Refused before anything is made where the tree is full already; counted again once the
+        // thread is opened, for one started meanwhile.
+        if channel_loop.owned_in_tree(giver).await >= max_open {
+            return Err(SubAgentError::TooMany(max_open));
+        }
         let personality_id = work.personality(&personality).await?;
         let agent = work.make_agent(personality_id, &personality).await?;
         let founder = ActorId::Agent(agent);
@@ -250,6 +287,10 @@ impl Procedure for Starting {
         };
         let opening = thread::open(log, kernel, &session, &context, channel, thread, &spec);
         opening.await.map_err(told)?;
+        // Recorded by the channel once `open` returns, which waits for it to draw the author in.
+        if channel_loop.owned_in_tree(giver).await > max_open {
+            return Err(SubAgentError::TooMany(max_open));
+        }
         channel_loop.delegate(&context, thread, founder, brief).await.map_err(told)?;
         info!("Sub-agent {} started in thread {} by {}", agent, thread, context.caller_id);
         Ok(thread)

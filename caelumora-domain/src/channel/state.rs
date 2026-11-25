@@ -1,13 +1,14 @@
 //! What a channel holds while it runs (`ChannelState`): its history and from where it holds it, its
 //! threads, and what of it changed since it was stored (`ChannelStateChange`, issue 193).
 
-use super::{ChannelId, Delegation, ThreadId, ThreadState};
+use super::{ChannelId, Delegation, Opening, ThreadId, ThreadState};
 use crate::actor::ActorId;
 use crate::chain::Position;
 use crate::history::{History, HistoryEntry, WINDOW};
 use crate::store::Journaled;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::iter;
 
 /// What a channel holds while it runs: its history, from where it holds
 /// it, and its threads. Its document - what `Journaled` writes - is the small part alone; the
@@ -110,6 +111,44 @@ impl ChannelState {
             |held: &ThreadState| held.delegation.as_ref().is_some_and(Delegation::is_let_go);
         let open = self.threads.iter().filter(|(_, held)| !held.closed && let_go(held));
         open.map(|(thread, _)| *thread).collect()
+    }
+
+    /// How many open threads that own an agent (issue 598, `Opening::owned`) lie above `actor`
+    /// (issue 597): the one that owns it, the one that owns its opener, and so on - 0 for an actor
+    /// no open thread owns.
+    pub fn ownership_depth(&self, actor: ActorId) -> usize {
+        let owners = iter::successors(self.owner_of(actor), |opening| self.owner_of(opening.by));
+        // No chain is longer than the threads: bounded against a cycle, which the kernel never
+        // makes - it refuses to own an agent taking part already -, but a corrupt state would.
+        owners.take(self.threads.len()).count()
+    }
+
+    /// How many agents are owned by open threads whose delegation was not let go (issue 597), in
+    /// the tree `actor` belongs to: those whose chain of owning threads leads up to the same first
+    /// opener as `actor`'s - the first opener, or `actor` itself where no open thread owns it.
+    pub fn owned_in_tree(&self, actor: ActorId) -> usize {
+        let root = self.first_opener(actor);
+        let let_go =
+            |held: &ThreadState| held.delegation.as_ref().is_some_and(Delegation::is_let_go);
+        let open = self.threads.values().filter(|held| !held.closed && !let_go(held));
+        let openings = open.filter_map(|held| held.opening.as_ref());
+        let in_tree = openings.filter(|opening| self.first_opener(opening.by) == root);
+        in_tree.map(|opening| opening.owned.len()).sum()
+    }
+
+    /// How the open thread that owns `actor` was opened, if one does.
+    fn owner_of(&self, actor: ActorId) -> Option<&Opening> {
+        let agent = actor.as_agent_id()?;
+        let open = self.threads.values().filter(|held| !held.closed);
+        open.filter_map(|held| held.opening.as_ref()).find(|opening| opening.owned.contains(&agent))
+    }
+
+    /// Whom the chain of open threads owning `actor` begins with: the opener of the topmost, or
+    /// `actor` itself where none owns it.
+    fn first_opener(&self, actor: ActorId) -> ActorId {
+        let chain = iter::successors(Some(actor), |actor| Some(self.owner_of(*actor)?.by));
+        // Bounded as in `ownership_depth`.
+        chain.take(self.threads.len() + 1).last().unwrap_or(actor)
     }
 
     /// The delegation of `thread`, if it has one.
@@ -275,6 +314,53 @@ mod tests {
         let elsewhere = ThreadId::new();
         assert!(state.follow_giver(&left(true), elsewhere).is_empty(), "another thread left");
         assert_eq!(state.follow_giver(&left(false), line), [threads[0]], "where it was opened");
+    }
+
+    /// Issue 597: an agent owned by an open thread lies as deep as the chain of owning threads
+    /// above it, and counts in the tree of the chain's first opener - unless its thread was closed
+    /// or its delegation let go; another first opener's tree is another.
+    #[test]
+    fn a_channel_counts_the_agents_owned_in_a_tree_and_how_deep_they_lie() {
+        use super::super::{Circle, Opening, ThreadOrigin, Word};
+        use crate::agent::AgentId;
+        use crate::message::MessageId;
+        use std::collections::VecDeque;
+
+        let channel = ChannelId::new();
+        let line = ThreadId::line(channel);
+        let mut state = ChannelState::new(channel);
+        let agent = || ActorId::Agent(AgentId::new());
+        let mut own = |by: ActorId| {
+            let owned = AgentId::new();
+            let origin = ThreadOrigin { thread: line, message: MessageId::new() };
+            let opening = Opening { origin, by, circle: Circle::Closed, owned: vec![owned] };
+            let thread = ThreadId::new();
+            let held = ThreadState { opening: Some(opening), closed: false, delegation: None };
+            state.threads.insert(thread, held);
+            (thread, ActorId::Agent(owned))
+        };
+        let (lead, other) = (agent(), agent());
+        let (_, first) = own(lead);
+        let (deeper_thread, deeper) = own(first);
+        let (let_go_thread, _) = own(lead);
+        let (_, others) = own(other);
+        let delegation = Delegation {
+            giver: lead,
+            recipient: lead,
+            initiator: lead,
+            briefs: VecDeque::new(),
+            word: Word::LetGo,
+        };
+        state.threads.get_mut(&let_go_thread).expect("opened").delegation = Some(delegation);
+
+        let depths = [lead, first, deeper, others].map(|actor| state.ownership_depth(actor));
+        assert_eq!(depths, [0, 1, 2, 1], "as deep as the owning threads above");
+        let counts = [lead, first, deeper, other].map(|actor| state.owned_in_tree(actor));
+        assert_eq!(counts, [2, 2, 2, 1], "per tree, the one let go not counted");
+
+        state.threads.get_mut(&deeper_thread).expect("opened").closed = true;
+        assert_eq!(state.owned_in_tree(lead), 1, "a closed thread owns nobody");
+        assert_eq!(state.ownership_depth(deeper), 0, "nor lies anyone below it");
     }
 
     /// Issue 557: a channel's line is open from its start.

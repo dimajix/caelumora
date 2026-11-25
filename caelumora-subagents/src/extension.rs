@@ -15,8 +15,9 @@ pub trait SubAgentWriter: Send + Sync {
     /// the thread was opened.
     ///
     /// # Errors
-    /// `UnknownPersonality`, `External`, or `Forbidden` or `Failed` with what the kernel refused or
-    /// failed with.
+    /// `UnknownPersonality`, `External`; `TooDeep` if the work is a sub-agent as deep as allowed,
+    /// `TooMany` if as many sub-agents are open in its tree as allowed (issue 597); or `Forbidden`
+    /// or `Failed` with what the kernel refused or failed with.
     async fn start(
         &self,
         personality: &str,
@@ -53,6 +54,14 @@ pub enum SubAgentError {
     /// A thread that holds no sub-agent the work started.
     #[error("thread {0} holds no sub-agent of yours")]
     NoSubAgent(ThreadId),
+    /// As many sub-agents open in the work's tree as allowed, the number allowed (issue 597).
+    #[error(
+        "as many sub-agents are open as allowed, {0}: end one of yours, or wait for one to end"
+    )]
+    TooMany(usize),
+    /// The work is a sub-agent as deep as allowed, the depth allowed (issue 597).
+    #[error("sub-agents are started no deeper than {0}")]
+    TooDeep(usize),
     /// What the kernel refused the work, worded as users are told it - not by which rule.
     #[error("{0}")]
     Forbidden(String),

@@ -8,23 +8,29 @@ use caelumora_agents::testing::{
     agent_runtime, calling, register_answering, register_scripted, Answer,
 };
 use caelumora_agents::tool::ToolProvider;
+use caelumora_api::library::Library;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::{Agent, Personality, PersonalityId, PersonalityKind};
 use caelumora_domain::channel::{ThreadId, ThreadOrigin};
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::{Classification, Confidentiality};
+use caelumora_domain::config::AppConfig;
 use caelumora_domain::history::HistoryEntry;
 use caelumora_domain::message::{Message, MessageId, MessageRole};
 use caelumora_domain::query::Query;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::user::UserId;
 use caelumora_domain::value::name::ScopedName;
+use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::component::testing::{built, descriptor};
+use caelumora_kernel::component::ComponentRegistry;
+use caelumora_kernel::session::SessionLoop;
 use caelumora_kernel::testing::{participant_runtime_in, World};
 use caelumora_subagents::component::{ASK_SUBAGENT, START_SUBAGENT, SUBAGENTS_KIND};
 use caelumora_subagents::extension::{SubAgentError, SubAgentWriter};
 use caelumora_subagents::library::SubagentsLibrary;
 use caelumora_subagents::plugin::SubagentsPlugin;
+use caelumora_subagents::SUBAGENTS;
 use std::sync::Arc;
 
 fn said(text: &str) -> Message {
@@ -39,11 +45,17 @@ fn said(text: &str) -> Message {
 /// none - a turn that calls it again never ends -, and whose model "researching" answers what it
 /// is given.
 async fn world(leading: Vec<Answer>) -> World {
-    World::with(&[&SubagentsPlugin], &[&AgentsLibrary, &SubagentsLibrary], |registry| {
+    configured_world(leading, |_| {}).await
+}
+
+/// The world `world` makes, its configuration changed by `configure` before the kernel is built.
+async fn configured_world(leading: Vec<Answer>, configure: impl FnOnce(&mut AppConfig)) -> World {
+    let libraries: [&dyn Library; 2] = [&AgentsLibrary, &SubagentsLibrary];
+    let register = |registry: &mut ComponentRegistry| {
         register_answering(registry, "leading", leading);
         register_scripted(registry, "researching", vec![said("found it"), said("found more")]);
-    })
-    .await
+    };
+    World::configured(&[&SubagentsPlugin], &libraries, register, configure).await
 }
 
 /// What the model "leading" answers to start a researcher, ask it again in the turn that reads
@@ -93,6 +105,42 @@ async fn personality(
     let personalities = &world.kernel.entity_stores().personalities;
     personalities.update(&World::system(), &mut personality).await.unwrap();
     personality
+}
+
+/// The writer of sub-agents bound to the work of `actor` in `main`, asked by `user`.
+async fn writer_of(
+    main: &Arc<ChannelLoop>,
+    actor: ActorId,
+    user: UserId,
+) -> Arc<dyn SubAgentWriter> {
+    let runtime = agent_runtime(participant_runtime_in(main, actor));
+    let internal = Classification::general(Confidentiality::Internal);
+    let writer = runtime.writer::<dyn SubAgentWriter>(ActorId::User(user), internal).await;
+    writer.unwrap()
+}
+
+/// A session of alice's with a lead of hers, whose agents do not answer - no turn ends, so that no
+/// sub-agent is let go meanwhile -, and a personality "researcher" to start them of: the session,
+/// its main channel and the lead.
+async fn silent_lead(world: &World) -> (Arc<SessionLoop>, Arc<ChannelLoop>, ActorId) {
+    let silent = || vec![ComponentDescriptor::new("model", "leading")];
+    let internal = PersonalityKind::Internal;
+    personality(world, "researcher", world.alice, internal, silent()).await;
+    let leading = personality(world, "leading", world.alice, internal, silent()).await;
+    let lead = world.agent("lead", world.alice, &leading).await;
+    let session = world.session_of(&[], &[lead], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    (session, main, ActorId::Agent(lead))
+}
+
+/// The world `world` makes with `max_open` and `max_depth` as the plugin's section of the
+/// configuration.
+async fn limited_world(leading: Vec<Answer>, max_open: usize, max_depth: usize) -> World {
+    let limits = serde_json::json!({ "max_open": max_open, "max_depth": max_depth });
+    let configure = |config: &mut AppConfig| {
+        config.plugins.insert(SUBAGENTS.to_string(), limits);
+    };
+    configured_world(leading, configure).await
 }
 
 /// Issue 558: an agent starts a sub-agent of a personality its tool lists - a new agent, named by
@@ -171,10 +219,7 @@ async fn an_agent_starts_a_sub_agent_asks_it_again_as_it_reads_its_answer_and_le
     assert!(name.ends_with("-researcher"), "an adjective and the personality: {name}");
     assert!(!main.channel().lists(ActorId::Agent(sub_agent)), "let go");
 
-    let runtime = agent_runtime(participant_runtime_in(&main, lead));
-    let internal = Classification::general(Confidentiality::Internal);
-    let alice = ActorId::User(world.alice);
-    let writer = runtime.writer::<dyn SubAgentWriter>(alice, internal).await.expect("bound");
+    let writer = writer_of(&main, lead, world.alice).await;
     let refused = writer.ask(thread, "Still there?".to_string()).await.unwrap_err();
     assert!(matches!(refused, SubAgentError::NoSubAgent(_)), "none to ask: {refused}");
     let refused = writer.end(thread).await.unwrap_err();
@@ -209,10 +254,7 @@ async fn an_agent_of_one_who_does_not_own_the_session_starts_a_sub_agent() {
     let main = Arc::clone(&session.channels()[0]);
     let lead = ActorId::Agent(lead);
 
-    let runtime = agent_runtime(participant_runtime_in(&main, lead));
-    let internal = Classification::general(Confidentiality::Internal);
-    let bob = ActorId::User(world.bob);
-    let writer = runtime.writer::<dyn SubAgentWriter>(bob, internal).await.expect("bound");
+    let writer = writer_of(&main, lead, world.bob).await;
     let origin = ThreadOrigin { thread: ThreadId::line(main.id()), message: MessageId::new() };
     let (started, asked) =
         world.asked(writer.start("researcher", origin, "Find it.".to_string())).await;
@@ -236,9 +278,7 @@ async fn an_agent_of_one_who_does_not_own_the_session_starts_a_sub_agent() {
             _ => None,
         })
         .expect("opened");
-    let others = agent_runtime(participant_runtime_in(&main, ActorId::Agent(other)));
-    let internal = Classification::general(Confidentiality::Internal);
-    let theirs = others.writer::<dyn SubAgentWriter>(bob, internal).await.expect("bound");
+    let theirs = writer_of(&main, ActorId::Agent(other), world.bob).await;
     let refused = theirs.ask(thread, "Mine now?".to_string()).await.unwrap_err();
     assert!(matches!(refused, SubAgentError::NoSubAgent(_)), "not another's to ask: {refused}");
     let refused = theirs.end(thread).await.unwrap_err();
@@ -282,10 +322,7 @@ async fn a_personality_is_found_from_the_channel_innermost_first() {
     let personalities = &world.kernel.entity_stores().personalities;
     personalities.create(&World::system(), &mut inner).await.unwrap();
 
-    let runtime = agent_runtime(participant_runtime_in(&main, lead));
-    let internal = Classification::general(Confidentiality::Internal);
-    let alice = ActorId::User(world.alice);
-    let writer = runtime.writer::<dyn SubAgentWriter>(alice, internal).await.expect("bound");
+    let writer = writer_of(&main, lead, world.alice).await;
     let origin = ThreadOrigin { thread: ThreadId::line(main.id()), message: MessageId::new() };
     let refused = writer.start("secret", origin, "Find it.".to_string()).await.unwrap_err();
     assert!(matches!(refused, SubAgentError::UnknownPersonality(_)), "not hers: {refused}");
@@ -312,10 +349,7 @@ async fn a_start_that_fails_leaves_no_agent() {
     let lead = world.agent("lead", world.alice, &leading).await;
     let session = world.session_of(&[], &[lead], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
-    let runtime = agent_runtime(participant_runtime_in(&main, ActorId::Agent(lead)));
-    let classification = Classification::general(Confidentiality::Internal);
-    let alice = ActorId::User(world.alice);
-    let writer = runtime.writer::<dyn SubAgentWriter>(alice, classification).await.expect("bound");
+    let writer = writer_of(&main, ActorId::Agent(lead), world.alice).await;
     let agents = || async {
         let listed = world.entity_store::<Agent>().list(&World::system(), &Query::all()).await;
         listed.unwrap().items.len()
@@ -349,4 +383,117 @@ async fn starting_a_sub_agent_asks_for_approval_as_configured() {
     let unconfigured = tools(serde_json::json!({ "personalities": ["researcher"] })).await.unwrap();
     assert!(!unconfigured.tools()[0].description().requires_approval, "unless configured");
     assert!(tools(serde_json::json!({ "personalities": [] })).await.is_err(), "one to start");
+}
+
+/// Issue 597: unless the operator allows more, a sub-agent starts none of its own - refused before
+/// anything is made.
+#[tokio::test]
+async fn a_sub_agent_starts_none_of_its_own_by_default() {
+    let world = world(Vec::new()).await;
+    let (session, main, lead) = silent_lead(&world).await;
+    let line = ThreadOrigin { thread: ThreadId::line(main.id()), message: MessageId::new() };
+
+    let led = writer_of(&main, lead, world.alice).await;
+    let thread = led.start("researcher", line, "Find it.".to_string()).await.expect("started");
+    let sub_agent = main.delegation(thread).await.expect("delegated").recipient;
+    let theirs = writer_of(&main, sub_agent, world.alice).await;
+    let origin = ThreadOrigin { thread, message: MessageId::new() };
+    let refused = theirs.start("researcher", origin, "And you?".to_string()).await;
+    assert!(matches!(refused, Err(SubAgentError::TooDeep(1))), "{refused:?}");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// Issue 597: sub-agents are started within the limits of the plugin's section of the
+/// configuration - no deeper than `max_depth`, no more open at once in a tree than `max_open`,
+/// each refused before an agent is made -; one ended makes room for another.
+#[tokio::test]
+async fn sub_agents_are_started_within_the_limits_the_operator_set() {
+    let world = limited_world(Vec::new(), 2, 2).await;
+    let (session, main, lead) = silent_lead(&world).await;
+    let agents = || async {
+        let listed = world.entity_store::<Agent>().list(&World::system(), &Query::all()).await;
+        listed.unwrap().items.len()
+    };
+    let deleted = || async {
+        let agents = world.entity_store::<Agent>();
+        let listed = agents.list_deleted(&World::system(), &Query::all()).await;
+        listed.unwrap().items.len()
+    };
+    let origin = |thread| ThreadOrigin { thread, message: MessageId::new() };
+    let line = origin(ThreadId::line(main.id()));
+    let brief = || "Find it.".to_string();
+
+    let led = writer_of(&main, lead, world.alice).await;
+    let first = led.start("researcher", line, brief()).await.expect("started");
+    let first_agent = main.delegation(first).await.expect("delegated").recipient;
+    let firsts = writer_of(&main, first_agent, world.alice).await;
+    let second = firsts.start("researcher", origin(first), brief()).await.expect("two deep");
+    let second_agent = main.delegation(second).await.expect("delegated").recipient;
+    let seconds = writer_of(&main, second_agent, world.alice).await;
+    let before = (agents().await, deleted().await);
+
+    let refused = seconds.start("researcher", origin(second), brief()).await;
+    assert!(matches!(refused, Err(SubAgentError::TooDeep(2))), "{refused:?}");
+    let refused = led.start("researcher", line, brief()).await;
+    assert!(matches!(refused, Err(SubAgentError::TooMany(2))), "two open in the tree: {refused:?}");
+    assert_eq!((agents().await, deleted().await), before, "no agent made, nor deleted again");
+
+    firsts.end(second).await.expect("ended");
+    led.start("researcher", line, brief()).await.expect("room for another");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// Issue 597: a sub-agent let go - left without a word in the turn that read its answer (issue
+/// 598) - counts no more, though its thread is not closed yet: here with nobody to close it.
+#[tokio::test]
+async fn a_sub_agent_let_go_counts_no_more() {
+    let world = limited_world(leading_a_researcher(), 1, 1).await.unfollowed();
+    let model = |kind: &str| ComponentDescriptor::new("model", kind);
+    let internal = PersonalityKind::Internal;
+    personality(&world, "researcher", world.alice, internal, vec![model("researching")]).await;
+    let subagents = ComponentDescriptor {
+        params: serde_json::json!({ "personalities": ["researcher"] }),
+        ..ComponentDescriptor::new("subagents", SUBAGENTS_KIND)
+    };
+    let components = vec![model("leading"), subagents];
+    let leading = personality(&world, "leading", world.alice, internal, components).await;
+    let lead = world.agent("lead", world.alice, &leading).await;
+    let session = world.session_of(&[], &[lead], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let lead = ActorId::Agent(lead);
+
+    main.user_actor(world.alice)
+        .expect("alice takes part")
+        .send_message(None, Some("@lead find it".to_string()), None, Vec::new())
+        .await
+        .expect("said");
+    // The lead's turn that read the second answer ended: its delegation let go.
+    let read_the_second = |entries: &[HistoryEntry]| {
+        let given_back = entries.iter().position(|e| {
+            matches!(e, HistoryEntry::GivenToRead { recipient, message, .. }
+                if *recipient == lead && message.content.as_deref() == Some("found more"))
+        });
+        given_back.is_some_and(|at| {
+            entries[at..]
+                .iter()
+                .any(|e| matches!(e, HistoryEntry::TurnFinished { actor, .. } if *actor == lead))
+        })
+    };
+    let entries = main.history_once(read_the_second).await;
+    let thread = entries
+        .iter()
+        .find_map(|e| match e {
+            HistoryEntry::ThreadOpened { thread, by, .. } if *by == lead => Some(*thread),
+            _ => None,
+        })
+        .expect("opened by the lead");
+    let delegation = main.delegation(thread).await.expect("not closed: nobody closes it");
+    assert!(delegation.is_let_go(), "let go");
+
+    let line = ThreadOrigin { thread: ThreadId::line(main.id()), message: MessageId::new() };
+    let led = writer_of(&main, lead, world.alice).await;
+    led.start("researcher", line, "Find more.".to_string())
+        .await
+        .expect("the one let go not counted");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
