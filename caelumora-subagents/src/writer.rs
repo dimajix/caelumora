@@ -89,7 +89,8 @@ impl SubAgents {
 
     /// The personality `personality` an agent may be made of in the work's channel: the one the
     /// owner finds from there, as the kernel finds one by name (`Views::personality_named`) - one
-    /// of an internal agent alone.
+    /// of an internal agent alone, whose agents are cleared no wider than the work's agent: limited
+    /// at least as the work's context is (`SecurityContext::covers_limit`, issue 597).
     async fn personality(&self, personality: &Name) -> SubAgentResult<PersonalityId> {
         let place = self.scope();
         let found = match self.session.views().personality_named(personality, &place).await {
@@ -101,6 +102,9 @@ impl SubAgents {
         };
         if found.kind == PersonalityKind::External {
             return Err(SubAgentError::External(personality.to_string()));
+        }
+        if !self.context().covers_limit(found.limiting_roles()) {
+            return Err(SubAgentError::ClearedWider(personality.to_string()));
         }
         Ok(found.id)
     }

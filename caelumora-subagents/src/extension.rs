@@ -15,9 +15,10 @@ pub trait SubAgentWriter: Send + Sync {
     /// the thread was opened.
     ///
     /// # Errors
-    /// `UnknownPersonality`, `External`; `TooDeep` if the work is a sub-agent as deep as allowed,
-    /// `TooMany` if as many sub-agents are open in its tree as allowed (issue 597); or `Forbidden`
-    /// or `Failed` with what the kernel refused or failed with.
+    /// `UnknownPersonality`, `External`; `ClearedWider` if the personality's agents would be
+    /// cleared wider than the work's agent, `TooDeep` if the work is a sub-agent as deep as
+    /// allowed, `TooMany` if as many sub-agents are open in its tree as allowed (issue 597); or
+    /// `Forbidden` or `Failed` with what the kernel refused or failed with.
     async fn start(
         &self,
         personality: &str,
@@ -51,6 +52,9 @@ pub enum SubAgentError {
     /// A personality of an external agent, which cannot be a sub-agent (issue 591).
     #[error("'{0}' is the personality of an external agent, which cannot be a sub-agent")]
     External(String),
+    /// A personality whose agents would be cleared wider than the work's agent (issue 597).
+    #[error("'{0}' is cleared wider than you, so it cannot be your sub-agent")]
+    ClearedWider(String),
     /// A thread that holds no sub-agent the work started.
     #[error("thread {0} holds no sub-agent of yours")]
     NoSubAgent(ThreadId),

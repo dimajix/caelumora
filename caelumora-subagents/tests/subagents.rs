@@ -18,6 +18,7 @@ use caelumora_domain::config::AppConfig;
 use caelumora_domain::history::HistoryEntry;
 use caelumora_domain::message::{Message, MessageId, MessageRole};
 use caelumora_domain::query::Query;
+use caelumora_domain::role::RoleId;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::user::UserId;
 use caelumora_domain::value::name::ScopedName;
@@ -25,7 +26,7 @@ use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::component::testing::{built, descriptor};
 use caelumora_kernel::component::ComponentRegistry;
 use caelumora_kernel::session::SessionLoop;
-use caelumora_kernel::testing::{participant_runtime_in, World};
+use caelumora_kernel::testing::{participant_runtime_in, World, STAFF};
 use caelumora_subagents::component::{ASK_SUBAGENT, START_SUBAGENT, SUBAGENTS_KIND};
 use caelumora_subagents::extension::{SubAgentError, SubAgentWriter};
 use caelumora_subagents::library::SubagentsLibrary;
@@ -495,5 +496,40 @@ async fn a_sub_agent_let_go_counts_no_more() {
     led.start("researcher", line, "Find more.".to_string())
         .await
         .expect("the one let go not counted");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// Issue 597: a sub-agent is cleared no wider than the agent that starts it - of a lead limited to
+/// a role, one of a personality that limits nothing, or that names another role besides, even one
+/// its owner does not hold, is refused; one limited as the lead is, started.
+#[tokio::test]
+async fn a_sub_agent_is_cleared_no_wider_than_the_agent_that_starts_it() {
+    let world = world(Vec::new()).await;
+    let silent = || vec![ComponentDescriptor::new("model", "leading")];
+    let limited = async |name: &str, roles: Option<Vec<RoleId>>| {
+        let internal = PersonalityKind::Internal;
+        let mut limited = Personality {
+            roles,
+            ..personality(&world, name, world.alice, internal, silent()).await
+        };
+        let personalities = &world.kernel.entity_stores().personalities;
+        personalities.update(&World::system(), &mut limited).await.unwrap();
+        limited
+    };
+    let leading = limited("leading", Some(vec![*STAFF])).await;
+    limited("unlimited", None).await;
+    limited("other", Some(vec![*STAFF, RoleId::new()])).await;
+    limited("staff", Some(vec![*STAFF])).await;
+    let lead = world.agent("lead", world.alice, &leading).await;
+    let session = world.session_of(&[], &[lead], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let line = ThreadOrigin { thread: ThreadId::line(main.id()), message: MessageId::new() };
+    let writer = writer_of(&main, ActorId::Agent(lead), world.alice).await;
+
+    for wider in ["unlimited", "other"] {
+        let refused = writer.start(wider, line, "Find it.".to_string()).await;
+        assert!(matches!(refused, Err(SubAgentError::ClearedWider(_))), "{wider}: {refused:?}");
+    }
+    writer.start("staff", line, "Find it.".to_string()).await.expect("limited as the lead");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }

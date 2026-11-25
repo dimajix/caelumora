@@ -51,7 +51,8 @@ struct End {
 }
 
 /// What starting, asking or ending a sub-agent failed of, as the model is told it: what it can
-/// correct - a personality, a thread, a sub-agent to end first - is a parameter; what the kernel
+/// correct - a personality, one cleared no wider, a thread, a sub-agent to end first - is a
+/// parameter; what the kernel
 /// refused is a refusal, without the rule, and so is a depth nothing the model does changes; what
 /// failed a failure.
 impl From<SubAgentError> for ToolError {
@@ -59,6 +60,7 @@ impl From<SubAgentError> for ToolError {
         match error {
             SubAgentError::UnknownPersonality(_)
             | SubAgentError::External(_)
+            | SubAgentError::ClearedWider(_)
             | SubAgentError::NoSubAgent(_)
             | SubAgentError::TooMany(_) => ToolError::InvalidParameter(error.to_string()),
             SubAgentError::Forbidden(_) | SubAgentError::TooDeep(_) => {

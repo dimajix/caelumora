@@ -114,6 +114,20 @@ impl SecurityContext {
         self.roles.iter().copied().filter(|role| self.has_role(*role)).collect()
     }
 
+    /// Whether an agent of this context's owner, limited by `limiting_roles`, is limited at least
+    /// as this context is (issue 597): where this context is limited, every role `limiting_roles`
+    /// names is named by its limit too - held by the owner or not. So it counts no role this
+    /// context does not (`has_role`), and is cleared for nothing it is not: a limit clears by
+    /// itself, beside the owner's roles (`ConfidentialityQuestions::cleared_for`), and more roles
+    /// never clear less.
+    pub fn covers_limit(&self, limiting_roles: Option<&[RoleId]>) -> bool {
+        match (&self.limiting_roles, limiting_roles) {
+            (None, _) => true,
+            (Some(_), None) => false,
+            (Some(ours), Some(theirs)) => theirs.iter().all(|role| ours.contains(role)),
+        }
+    }
+
     /// The context of the kernel acting on its own - for work that follows from an action already
     /// permitted, or that no user started (initial data, records kept in step with events). The
     /// ownership policy allows it everything, so it is used deliberately and never as a fallback.
@@ -177,5 +191,25 @@ mod tests {
             (owner, owner),
             "answered for by its owner, in their name"
         );
+    }
+
+    /// Issue 597: a limit is covered where the context is not limited, or where its limit names
+    /// every role the other names - one the owner does not hold too, since a limit clears by
+    /// itself.
+    #[test]
+    fn a_context_covers_a_limit_that_names_no_role_its_own_does_not() {
+        let (staff, admin, other) = (RoleId::new(), RoleId::new(), RoleId::new());
+        let owner = ActorId::User(UserId::new());
+        let context = SecurityContext::new(owner, Default::default(), Default::default());
+        let unlimited = context.clone().with_roles(vec![staff, admin], None);
+        let staff_only = context.with_roles(vec![staff, admin], Some(vec![staff]));
+
+        assert!(unlimited.covers_limit(None), "no limit within no limit");
+        assert!(unlimited.covers_limit(Some(&[staff])), "a narrower one");
+        assert!(!staff_only.covers_limit(None), "no limit is wider");
+        assert!(!staff_only.covers_limit(Some(&[admin])), "another role is wider");
+        assert!(staff_only.covers_limit(Some(&[staff])), "the same");
+        assert!(!staff_only.covers_limit(Some(&[staff, other])), "nor one the owner lacks");
+        assert!(staff_only.covers_limit(Some(&[])), "none");
     }
 }

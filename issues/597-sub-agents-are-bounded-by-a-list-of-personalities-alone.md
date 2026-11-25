@@ -1,6 +1,6 @@
 # 597 — Sub-agents are bounded by a list of personalities alone
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Identity and access management
@@ -84,8 +84,8 @@ Rejected:
 - **Leaving the rights as they are** (R0) - a participant could have the main agent start a
   sub-agent its limiting roles do not narrow, and read through it what the main agent may not.
 
-Not in 597: the list of personalities checked by the kernel (a finding of 2026-11-25, see
-History).
+Not in 597: the list of personalities checked by the kernel (a finding of 2026-11-25, issue
+[604](604-the-personalities-of-sub-agents-are-the-agent-side-s-word.md)).
 
 ## Plan
 
@@ -135,3 +135,20 @@ Nothing stored changes.
   made as well, so that a full tree leaves no agent deleted and no thread in the history - counted
   again once the thread is opened, for one started meanwhile; its message holds for a sub-agent
   whose siblings fill the tree; `SubagentsConfig` beside the writer that checks it.
+- **2026-11-25** — Decided by the maintainer at step 2's interface review: the comparison is
+  `SecurityContext::covers_limit` - every role of the owner the personality's limit lets through
+  counts for the work's context, so that a role the owner does not hold matters to neither -, and
+  a wider personality is `SubAgentError::ClearedWider`, a parameter error. Implemented, with
+  SECURITY.md, PERMISSION-CHECKS.md and TOOLS.md.
+- **2026-11-25** — On review, the comparison of the interface review found too lax: a limit clears
+  by itself, beside the owner's roles (`cleared_for`), so a personality naming a role the owner
+  does not hold - one clearing higher than the lead's limit - was let through, its agent cleared
+  for more than the lead. Decided by the maintainer: `covers_limit` compares the limits as the
+  plan first said (option a) - where the work's context is limited, every role the personality
+  names is named by that limit too; more roles never clear less, so it holds for the roles that
+  count and for the clearance alike. Rejected: giving a limit one meaning, the roles the owner
+  holds and the limit names, for the clearance too (b) - it would turn a limit from a ceiling
+  ("what `staff` sees at most", as the seed's `hermes-remote` uses it) into a set an owner must
+  hold; opened as [605](605-a-personality-s-limit-means-two-things.md), and the list of
+  personalities checked on the agent side alone as
+  [604](604-the-personalities-of-sub-agents-are-the-agent-side-s-word.md). Done.

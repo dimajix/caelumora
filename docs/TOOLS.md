@@ -599,16 +599,18 @@ dropped - if its leave came first, the agent is given back that it left before i
 They are offered where the work's session runs, and act through the `SubAgentWriter` the plugin
 binds to the turn's work (issue 516), in its context: the agent gives, its owner owns the sub-agent,
 made in the channel's scope, of the personality of that name the owner finds from the channel - the
-innermost they may read, as `/agent create` finds one -, an internal one alone (issue 591), named by
-an adjective and the personality (`curious-researcher`), never by a name the channel has had. Only
-the agent that started a sub-agent asks or ends it. Starting one asks for approval only where the
-component is configured so (`requires_approval`), and is bounded by the limits the operator sets
-in the plugin's section of the configuration (`plugins.subagents`, issue 597): no more sub-agents
-open at once in a tree of a channel - an agent and all that descend from it there, those let go
-not counted - than `max_open`, refused as a parameter, since ending one makes room; none deeper
-than `max_depth`, refused as not permitted - by default, a sub-agent starts none of its own. The
-writer checks them, on the kernel's side: a component's parameters are the agent side's word. What
-the access policy refuses is answered as a refusal, saying what was refused and not by which rule;
-anything else as users are told it - a work that may not reach its own channel among them, which
-is not found, as a channel one may not reach is.
+innermost they may read, as `/agent create` finds one -, an internal one alone (issue 591), cleared
+no wider than the agent that starts it (issue 597: where that agent is limited, every role the
+personality names is named by its limit too; refused as a parameter, since another personality may
+do), named by an adjective and the personality (`curious-researcher`), never by a name the channel
+has had. Only the agent that started a sub-agent asks or ends it. Starting one asks for approval
+only where the component is configured so (`requires_approval`), and is bounded by the limits the
+operator sets in the plugin's section of the configuration (`plugins.subagents`, issue 597): no more
+sub-agents open at once in a tree of a channel - an agent and all that descend from it there, those
+let go not counted - than `max_open`, refused as a parameter, since ending one makes room; none
+deeper than `max_depth`, refused as not permitted - by default, a sub-agent starts none of its own.
+The writer checks them, on the kernel's side: a component's parameters are the agent side's word.
+What the access policy refuses is answered as a refusal, saying what was refused and not by which
+rule; anything else as users are told it - a work that may not reach its own channel among them,
+which is not found, as a channel one may not reach is.
 
