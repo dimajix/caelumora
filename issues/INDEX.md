@@ -221,6 +221,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [549](549-kernel-takes-an-agents-word-on-a-content-reference.md) | done | `ActorRuntime::load_attachments` and `copy_attachment` take a `ContentRef` from the agent side and act on its key and its label, although a library of the agent side is trusted for nothing, so that it can read content of another channel or copy an attachment under a lower label. |
 | [559](559-labels-of-what-an-agent-writes-are-its-word.md) | open | The kernel bounds what the agent side writes only by the place it writes to; below that, the labels of its messages, of the content it keeps and of what it stages are the word of a library that is trusted for nothing, so that a misbehaving one can put what it read under a lower label. |
 | [597](597-sub-agents-are-bounded-by-a-list-of-personalities-alone.md) | open | What a sub-agent may is bounded only by the personalities its component lists (issue 558): it acts with its owner's rights, not the main agent's, and nothing bounds how many sub-agents an agent starts or how deep sub-agents start sub-agents of their own. |
+| [604](604-the-personalities-of-sub-agents-are-the-agent-side-s-word.md) | open | Which personalities an agent may start a sub-agent of is listed on its component `subagents`, but only the tool checks the list, on the agent side, which is trusted for nothing; the kernel's writer starts an agent of any internal personality its owner finds, as long as the limits of issue 597 hold. |
 
 ## Audit
 
