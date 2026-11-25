@@ -559,7 +559,9 @@ the server answers every error with problem details, as described in
     gets its answer there, not in the handlers.
 *   An error that means a refusal carries the `Refused` that `Enforcement::require` hands over as
     its `#[source]` - never `#[error(transparent)]` directly around it, which would hide it from
-    the chain.
+    the chain. The one exception is the refusal a plugin answers in the kernel's types as a text,
+    without the rule (`CommandError::PermissionDenied`, see
+    [REST-SERVER.md](REST-SERVER.md#errors)).
 *   Use `ApiError::internal` for server errors: it logs the full chain and discloses only what
     `user_message` allows.
 *   Use the `Json`, `Path` and `Query` extractors from `crate::error`, so that malformed requests

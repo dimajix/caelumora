@@ -1091,6 +1091,13 @@ mod tests {
             StatusCode::FORBIDDEN
         );
         assert_eq!(
+            status(CommandError::PermissionDenied {
+                command: "x".to_string(),
+                reason: "y".to_string()
+            }),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
             status(CommandError::Failed { command: "x".to_string(), reason: "y".to_string() }),
             StatusCode::INTERNAL_SERVER_ERROR
         );

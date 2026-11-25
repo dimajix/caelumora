@@ -30,6 +30,11 @@ pub enum CommandError {
     },
     #[error("/{command}: {reason}")]
     InvalidArguments { command: String, reason: String },
+    /// What the command acts on was refused, as whoever refused it words it - not by which rule:
+    /// the refusal of a command that holds no `Refused`, a plugin's (issue 596), as a tool answers
+    /// it (`ToolError::PermissionDenied`).
+    #[error("/{command} refused: {reason}")]
+    PermissionDenied { command: String, reason: String },
     #[error("/{command} failed: {reason}")]
     Failed { command: String, reason: String },
 }

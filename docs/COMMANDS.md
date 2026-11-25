@@ -290,8 +290,8 @@ external agent alike.
     contexts continued in the agent's name - its owner's rights, the issuer as initiator
     ([SECURITY.md](SECURITY.md#in-whose-name-an-agent-acts)). The agent asks nothing: what reached
     it was admitted. Carried out, the turn is taken over and stored; not carried out - the command
-    failed, its arguments were refused, or the agent has none of that name -, it is dropped as if it
-    had never begun, and the agent answers `CommandFailed` to the issuer.
+    failed, its arguments or what it acts on were refused, or the agent has none of that name -, it
+    is dropped as if it had never begun, and the agent answers `CommandFailed` to the issuer.
 *   **Begun.** The agent tells the issuer alone that it began, whatever its answer's visibility:
     for `/compact`, the issuer sees it begin and everybody sees it done.
 *   **Answered.** Carried out, the agent answers `CommandExecuted` - to the issuer alone if the

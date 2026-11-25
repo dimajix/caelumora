@@ -1,6 +1,6 @@
 # 596 — A user cannot start a sub-agent by command
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** low
 **Area:** Sessions and channels
@@ -122,3 +122,11 @@ Two findings in the code around the command, planned by the maintainer as a step
   world gives no catalogue that fails there. Accepted by the maintainer for now: the terminal
   completes the personality from all the user sees, not from the component's list. The findings of
   its review planned as step 2 (*Step 2*).
+- **2026-11-25** — Decided by the maintainer: a variant of `CommandError` for a refusal told as a
+  text. Step 2 implemented: `CommandError::PermissionDenied`, answered by REST as `403
+  command_refused`; `/subagent` answers with it what the kernel refused and a depth not allowed, as
+  the tool does; `/skill` no longer sets its message's time beside `Message::new`. On review: the
+  variant reads "/… refused: …", so that a refusal is told from arguments refused; whether an error
+  of sub-agents is to be corrected, refused or failed is one exhaustive match
+  (`SubAgentError::class`, `ErrorClass`), which the tool and the command translate, in place of
+  `is_correctable` and a second match beside it. Done.

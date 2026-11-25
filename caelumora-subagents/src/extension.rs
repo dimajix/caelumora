@@ -74,21 +74,33 @@ pub enum SubAgentError {
     Failed(String),
 }
 
+/// What an error of sub-agents is to whoever asked (issue 596): what a tool's model and a
+/// command's issuer are told apart by.
+#[cfg(feature = "library")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ErrorClass {
+    /// What they can correct: a personality, one cleared no wider, a thread, a sub-agent to end
+    /// first.
+    Correctable,
+    /// What is refused whatever they do: what the kernel refused, told without the rule, and a
+    /// depth not allowed.
+    Refused,
+    /// What failed.
+    Failed,
+}
+
 #[cfg(feature = "library")]
 impl SubAgentError {
-    /// Whether whoever asked can correct it (issue 596): a personality, one cleared no wider, a
-    /// thread, a sub-agent to end first - not what the kernel refused, a depth nothing they do
-    /// changes, or what failed. What a tool's model and a command's issuer are told apart by.
-    pub(crate) fn is_correctable(&self) -> bool {
+    /// What it is to whoever asked.
+    pub(crate) fn class(&self) -> ErrorClass {
         match self {
             SubAgentError::UnknownPersonality(_)
             | SubAgentError::External(_)
             | SubAgentError::ClearedWider(_)
             | SubAgentError::NoSubAgent(_)
-            | SubAgentError::TooMany(_) => true,
-            SubAgentError::TooDeep(_) | SubAgentError::Forbidden(_) | SubAgentError::Failed(_) => {
-                false
-            }
+            | SubAgentError::TooMany(_) => ErrorClass::Correctable,
+            SubAgentError::TooDeep(_) | SubAgentError::Forbidden(_) => ErrorClass::Refused,
+            SubAgentError::Failed(_) => ErrorClass::Failed,
         }
     }
 }

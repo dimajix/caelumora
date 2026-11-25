@@ -264,7 +264,10 @@ the plugin's own handlers; to the kernel, a plugin answers in the kernel's types
     `session_forbidden`) or what one of the kernel's own actions concerns (`context_forbidden` for
     what an agent saw, `agent_forbidden` for its tools and components, `command_forbidden`, …). The
     detail is the kernel's text. A refusal is found anywhere in an error's chain, also in an error
-    of a type the server does not know.
+    of a type the server does not know. A command's refusal that holds no `Refused` - a plugin's,
+    told as a text (`CommandError::PermissionDenied`, issue 596) - is `403 command_refused` where
+    it reaches a handler; an agent's command, which is what a plugin's is, answers in the stream
+    (`command_failed`).
 *   **What a request named and was not found** is told by the operation's own error
     (`SessionError::NotFound`, `ViewError::ChannelNotFound`, …), as `<kind>_not_found`. A
     `StoreError::NotFound` met on the way - a personality missing while a session is loaded - is a

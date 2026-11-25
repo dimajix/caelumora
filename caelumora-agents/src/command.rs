@@ -20,6 +20,7 @@ pub trait AgentCommand: Command {
     /// never given any, one with a required parameter never none (`check_arguments`).
     ///
     /// # Errors
-    /// As `ChannelCommand::execute`.
+    /// As `ChannelCommand::execute`; a refusal that holds no `Refused` - a plugin's, told as a
+    /// text - as `CommandError::PermissionDenied` (issue 596).
     async fn execute(&self, args: &str, turn: &mut Turn<'_>) -> CommandResult<CommandOutput>;
 }

@@ -670,3 +670,25 @@ async fn a_sub_agent_is_started_by_command_by_an_owner_on_a_listed_personality_a
     assert!(given.iter().all(|m| m.sender_id != ActorId::User(world.alice)), "{given:?}");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
+
+/// Issue 596: what the writer refuses a start by `/subagent` - here a depth the operator allows
+/// none at - is answered to the issuer as a refusal, as the tool answers it, not as a failure.
+#[tokio::test]
+async fn a_start_by_command_refused_is_answered_as_a_refusal() {
+    let world = limited_world(Vec::new(), 5, 0).await;
+    let (session, main, _) = commanded_lead(&world).await;
+    let alice = main.user_actor(world.alice).unwrap();
+    let mut hers = alice.watch();
+
+    let line = format!("{SUBAGENT_COMMAND_NAME} @lead researcher Find it.");
+    alice.execute_command(None, &line).await.expect("sent");
+    let ActorEvent::CommandFailed { reason, .. } = shown(&mut hers, "CommandFailed").await else {
+        unreachable!()
+    };
+    let refused = CommandError::PermissionDenied {
+        command: SUBAGENT_COMMAND_NAME.to_string(),
+        reason: SubAgentError::TooDeep(0).to_string(),
+    };
+    assert_eq!(reason, refused.to_string(), "a refusal, not a failure");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}

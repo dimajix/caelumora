@@ -13,7 +13,6 @@ use caelumora_api::command::{Command, CommandError, CommandResult};
 use caelumora_domain::command::{CommandDescription, CommandOutput, CommandParameter};
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::value::command_name::CommandName;
-use chrono::Utc;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -104,7 +103,6 @@ impl AgentCommand for SkillCommand {
             sender_id: issuer,
             sender_name: issuer_name.unwrap_or_else(|| "a user".to_string()),
             content: Some(content),
-            timestamp: Utc::now(),
             ..Message::new(skill.classification.clone())
         };
         // Nothing can fail from here on: what is given is written at once.

@@ -6,7 +6,7 @@
 //! work can start a sub-agent.
 
 use super::{listed, SubagentsComponent, SUBAGENTS_KIND};
-use crate::extension::{SubAgentError, SubAgentWriter};
+use crate::extension::{ErrorClass, SubAgentError, SubAgentWriter};
 use crate::NAMESPACE;
 use async_trait::async_trait;
 use caelumora_agents::situation::Situation;
@@ -50,16 +50,16 @@ struct End {
     thread: ThreadId,
 }
 
-/// What starting, asking or ending a sub-agent failed of, as the model is told it: what it can
-/// correct (`SubAgentError::is_correctable`) is a parameter; what failed a failure; anything else -
-/// what the kernel refused, without the rule, and a depth nothing the model does changes - a
-/// refusal.
+/// What starting, asking or ending a sub-agent failed of, as the model is told it, by its class
+/// (`SubAgentError::class`): what it can correct is a parameter, a refusal a refusal, what failed a
+/// failure.
 impl From<SubAgentError> for ToolError {
     fn from(error: SubAgentError) -> Self {
-        match error {
-            _ if error.is_correctable() => ToolError::InvalidParameter(error.to_string()),
-            SubAgentError::Failed(_) => ToolError::ExecutionFailed(error.to_string()),
-            _ => ToolError::PermissionDenied(error.to_string()),
+        let told = error.to_string();
+        match error.class() {
+            ErrorClass::Correctable => ToolError::InvalidParameter(told),
+            ErrorClass::Refused => ToolError::PermissionDenied(told),
+            ErrorClass::Failed => ToolError::ExecutionFailed(told),
         }
     }
 }

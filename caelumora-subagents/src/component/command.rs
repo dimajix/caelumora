@@ -6,7 +6,7 @@
 //! given back to the agent and it responds.
 
 use super::{listed, ASK_SUBAGENT, END_SUBAGENT};
-use crate::extension::{SubAgentError, SubAgentWriter};
+use crate::extension::{ErrorClass, SubAgentError, SubAgentWriter};
 use crate::NAMESPACE;
 use async_trait::async_trait;
 use caelumora_agents::command::AgentCommand;
@@ -97,12 +97,17 @@ fn failed(reason: String) -> CommandError {
     CommandError::Failed { command: SUBAGENT_COMMAND_NAME.to_string(), reason }
 }
 
-/// What starting a sub-agent failed of, as the issuer is told it: what they can correct
-/// (`SubAgentError::is_correctable`) as their arguments, anything else as a failure.
+/// What starting a sub-agent failed of, as the issuer is told it, by its class
+/// (`SubAgentError::class`), as the tool tells its model: what they can correct as their
+/// arguments, a refusal as a refusal, what failed as a failure.
 fn command_error(error: SubAgentError) -> CommandError {
-    match error.is_correctable() {
-        true => invalid(error.to_string()),
-        false => failed(error.to_string()),
+    let reason = error.to_string();
+    match error.class() {
+        ErrorClass::Correctable => invalid(reason),
+        ErrorClass::Refused => {
+            CommandError::PermissionDenied { command: SUBAGENT_COMMAND_NAME.to_string(), reason }
+        }
+        ErrorClass::Failed => failed(reason),
     }
 }
 

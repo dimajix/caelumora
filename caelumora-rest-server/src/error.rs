@@ -596,6 +596,7 @@ impl From<CommandError> for ApiError {
                 Self::bad_request("invalid_command_arguments", detail)
             }
             CommandError::Forbidden { ref refused, .. } => Self::refused(refused, detail),
+            CommandError::PermissionDenied { .. } => Self::forbidden("command_refused", detail),
             // Its reason is written to be read by users.
             CommandError::Failed { .. } => {
                 Self::new(StatusCode::INTERNAL_SERVER_ERROR, "command_failed", detail)
