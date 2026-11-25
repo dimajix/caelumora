@@ -20,13 +20,19 @@ use caelumora_domain::store::{StoreResult, Stored};
 use caelumora_security::{ActionType, Enforcement, Policies, SecurityContext};
 use caelumora_store::sessions::{SessionHold, SessionLocks};
 use dashmap::DashMap;
-use std::sync::Arc;
+use futures::future::{self, FutureExt};
+use std::panic::AssertUnwindSafe;
+use std::sync::{Arc, Weak};
 use tokio::task::JoinHandle;
 
-/// The sessions of the process: the register of those that run here, which it starts, holds and
+/// The sessions of the process: the register of those that run here, which it starts, finds and
 /// stops, and the lifecycles of sessions and their channels.
 pub struct SessionManager {
-    sessions: DashMap<SessionId, Arc<SessionLoop>>,
+    /// The sessions that run here, each owned by the task it runs in, which holds its loop
+    /// (`start`): found here as long as it runs (issue 601). Unlike the registers of the
+    /// controllers, it prunes no entry whose loop is gone, which only the end of the runtime
+    /// leaves: it is removed by `stop_running`, with its handle and its hold.
+    sessions: DashMap<SessionId, Weak<SessionLoop>>,
     handles: DashMap<SessionId, JoinHandle<()>>,
     /// What holds a session for this process against the others that share the stores (issue
     /// 554), if any do; and the holds of the sessions that run here, let go as they stop.
@@ -101,6 +107,10 @@ impl SessionManager {
     /// exclusively: its loop built, registered and run in a task of its own, and announced as
     /// `session::STARTED`; held by `hold` - the session held for this process where others share
     /// the stores (`hold`, issue 554) - as long as it runs.
+    ///
+    /// The task owns the loop, the register only finds it (issue 601): it holds it until it is
+    /// stopped, also once its `run` failed or panicked - the session stays registered as running
+    /// then, as `SessionLoop::run` says -, or until the runtime it runs in ends.
     pub(crate) async fn start(
         &self,
         session: Session,
@@ -109,15 +119,20 @@ impl SessionManager {
     ) -> Result<Arc<SessionLoop>> {
         let id = session.id;
         let session_loop = SessionLoop::new(session, channels, Arc::clone(&self.kernel)).await?;
-        self.sessions.insert(id, Arc::clone(&session_loop));
+        self.sessions.insert(id, Arc::downgrade(&session_loop));
         if let Some(hold) = hold {
             self.holds.insert(id, hold);
         }
 
         let loop_for_task = Arc::clone(&session_loop);
         let handle = tokio::spawn(async move {
-            let Err(e) = loop_for_task.run().await;
-            tracing::error!("Session loop for {} failed: {}", id, e);
+            // A panic caught, so that the loop is not dropped with what unwinds.
+            match AssertUnwindSafe(loop_for_task.run()).catch_unwind().await {
+                Ok(Err(e)) => tracing::error!("Session loop for {} failed: {}", id, e),
+                Err(_) => tracing::error!("Session loop for {} panicked", id),
+            }
+            // Held until it is stopped, which aborts this.
+            future::pending::<()>().await;
         });
         self.handles.insert(id, handle);
 
@@ -154,8 +169,7 @@ impl SessionManager {
     /// `SessionError::NotFound` if there is no such session or `context`
     /// may not read it, alike whether it runs.
     pub(crate) async fn find(&self, context: &SecurityContext, id: SessionId) -> Result<Found> {
-        let running = self.sessions.get(&id).map(|entry| entry.clone());
-        match running {
+        match self.running(id) {
             Some(session_loop) => {
                 let attributes = session_loop.session().security_attributes.clone();
                 self.policies
@@ -172,9 +186,13 @@ impl SessionManager {
         }
     }
 
-    /// The sessions that run.
+    /// The sessions that run: not one whose task ended with the runtime it ran in.
     pub(crate) fn running_ids(&self) -> Vec<SessionId> {
-        self.sessions.iter().map(|entry| *entry.key()).collect()
+        self.sessions
+            .iter()
+            .filter(|entry| entry.value().strong_count() > 0)
+            .map(|entry| *entry.key())
+            .collect()
     }
 
     /// Stops session `id` if it runs, for a procedure that holds it exclusively. Its actors are
@@ -191,7 +209,7 @@ impl SessionManager {
         ending: Ending,
     ) -> Option<Arc<SessionLoop>> {
         let handle = self.handles.remove(&id).map(|(_, handle)| handle);
-        let removed = self.sessions.remove(&id).map(|(_, s)| s);
+        let removed = self.sessions.remove(&id).and_then(|(_, s)| s.upgrade());
         if let Some(session_loop) = &removed {
             session_loop.end_actors(ending).await;
         }
@@ -246,8 +264,37 @@ impl SessionManager {
         &self.channel_lifecycle
     }
 
-    /// The loop of session `id`, if it runs.
+    /// The loop of session `id`, if it runs: not if its task ended with the runtime it ran in.
     pub(crate) fn running(&self, id: SessionId) -> Option<Arc<SessionLoop>> {
-        self.sessions.get(&id).map(|entry| entry.clone())
+        self.sessions.get(&id).and_then(|entry| entry.upgrade())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::channel::Ending;
+    use crate::session::testing::{running_session_of_a_user, test_kernel};
+    use crate::session::SessionManager;
+    use tokio::runtime::Runtime;
+
+    /// Issue 601: the task of a running session owns it, the register only finds it - a session
+    /// whose task ended with the runtime it ran in is found running no longer, nor listed among
+    /// the running ones; stopping it finds no loop to stop.
+    #[test]
+    fn a_session_whose_task_ended_is_not_found_running() {
+        let runtime = Runtime::new().expect("a runtime");
+        let manager = runtime.block_on(async { SessionManager::new(test_kernel()) });
+        let id = runtime.block_on(async {
+            let (session, _, _) = running_session_of_a_user(&manager).await;
+            assert!(manager.running(session.id()).is_some(), "found while it runs");
+            session.id()
+        });
+
+        drop(runtime);
+        assert!(manager.running(id).is_none(), "not found once its task ended");
+        assert!(manager.running_ids().is_empty(), "not listed once its task ended");
+        let stopping = manager.stop_running(id, Ending::Stop);
+        let stopped = Runtime::new().expect("a runtime").block_on(stopping);
+        assert!(stopped.is_none(), "no loop to stop");
     }
 }
