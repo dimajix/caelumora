@@ -1197,6 +1197,7 @@ mod tests {
                 ThreadId::default(),
                 agent,
                 vec![(summary, None)],
+                &[],
                 kept_from,
                 kernel_catalogue(),
             )

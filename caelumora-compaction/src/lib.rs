@@ -69,10 +69,12 @@ pub trait CompactionStrategy: Send + Sync + Debug {
 pub struct Replacement {
     /// The text that stands for the part, as the agent is given it.
     pub text: String,
-    /// The measures of the calls that wrote the replacement, which the message standing for the
-    /// part carries: of one call whole, of several their tokens summed and the context size of
-    /// the last, without the durations, which do not add up into one call's.
+    /// The measures of the call that wrote `text`, which the message standing for the part
+    /// carries.
     pub measures: Option<CallMeasures>,
+    /// The measures of the strategy's further calls, whose answers stand in no message (issue
+    /// 514): counted with what the agent used, as its other calls are.
+    pub further_calls: Vec<CallMeasures>,
     /// Of what the agent knew in the part, what it still needs for the work under way, by kind and
     /// name; the rest is not given again.
     pub still_needed: Vec<String>,

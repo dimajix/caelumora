@@ -587,7 +587,7 @@ mod tests {
             .entries(ThreadId::default())
             .next()
             .map(|node| node.digest);
-        turn.compact(vec![(message("summary"), None)], at_first).expect("compacted");
+        turn.compact(vec![(message("summary"), None)], &[], at_first).expect("compacted");
         assert_eq!(
             given(&mut turn).len(),
             6,
@@ -604,7 +604,7 @@ mod tests {
             .rev()
             .find(|node| node.entry.message().is_some())
             .map(|node| node.digest);
-        turn.compact(vec![(message("summary again"), None)], kept_from).expect("compacted");
+        turn.compact(vec![(message("summary again"), None)], &[], kept_from).expect("compacted");
         let texts: Vec<String> = given(&mut turn).into_iter().map(|(_, text)| text).collect();
         assert_eq!(texts.len(), 3, "the summary, the plan named again, what was kept: {texts:?}");
         assert_eq!(texts[0], "summary again");

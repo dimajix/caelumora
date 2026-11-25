@@ -50,7 +50,7 @@ use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::content::{ContentId, ContentRef};
 use caelumora_domain::context::KnowledgeRef;
 use caelumora_domain::digest::Digest;
-use caelumora_domain::message::{Message, MessageId, MessageRole};
+use caelumora_domain::message::{CallMeasures, Message, MessageId, MessageRole};
 use caelumora_domain::note::NoteChange;
 use caelumora_domain::prompt_catalogue::PromptError;
 use caelumora_domain::tool::{ToolContent, ToolDescription};
@@ -233,15 +233,14 @@ impl<'a> Turn<'a> {
         self.agent_channel_state.given(thread, message, knowledge)
     }
 
-    /// Replaces the agent's context in this turn (issue 16): its transcript
-    /// begins anew with `replacement` - a summary, the skills given again,
-    /// each with the knowledge it is, if it is one - and the entries from
-    /// `keep_from` on as they stand; the old branch stays, the turn's prompt
-    /// parts are carried over (`AgentChannelState::compact`), and a plan
-    /// whose instructions were replaced is named again (`name_plan_again`,
-    /// issue 284). Written at once, so a component compacts only once
-    /// nothing can fail any more. Returns the heads of the transcript before
-    /// and after, `None` if nothing was compacted.
+    /// Replaces the agent's context in this turn (issue 16): its transcript begins anew with
+    /// `replacement` - a summary, the skills given again, each with the knowledge it is, if it is
+    /// one - and the entries from `keep_from` on as they stand; the old branch stays, the turn's
+    /// prompt parts are carried over, the calls that wrote the replacement are counted - those its
+    /// messages carry the measures of, and `further_calls` (`AgentChannelState::compact`) -, and a
+    /// plan whose instructions were replaced is named again (`name_plan_again`, issue 284). Written
+    /// at once, so a component compacts only once nothing can fail any more. Returns the heads of
+    /// the transcript before and after, `None` if nothing was compacted.
     ///
     /// # Errors
     /// `PromptError` if the plan cannot be worded to be named again;
@@ -249,6 +248,7 @@ impl<'a> Turn<'a> {
     pub fn compact(
         &mut self,
         replacement: Vec<(Message, Option<KnowledgeRef>)>,
+        further_calls: &[CallMeasures],
         keep_from: Option<Digest>,
     ) -> Result<Option<(Digest, Digest)>, PromptError> {
         let replaced = replacement.len();
@@ -257,6 +257,7 @@ impl<'a> Turn<'a> {
             self.thread,
             ActorId::Agent(self.agent_id),
             replacement,
+            further_calls,
             keep_from,
             self.runtime.prompts(),
         ) else {

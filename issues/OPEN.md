@@ -9,7 +9,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | low | bug | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
-| [514](514-calls-without-a-message-of-their-own.md) | in progress | low | bug | The statistics of a model call - its tokens and durations - are recorded on the message it produced, so a call whose answer is no message of the transcript is counted with another message, or not at all, and `TokenUsage::calls` counts fewer calls than were made. |
 | [588](588-a-person-s-call-is-released-without-its-result.md) | open | low | bug | A message carrying a person's call (issue 587) is reclassified and fitted into a lowered channel by its own classification alone, while its tool results keep theirs, so whoever is given the message is labelled below what it read, or loses more than the result. |
 
 ## Sessions and channels

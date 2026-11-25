@@ -455,7 +455,7 @@ mod tests {
         turn.push_message(second.clone());
         let kept_from =
             turn.situation().agent_channel_state().transcript.digest(ThreadId::default());
-        turn.compact(vec![(message("summary of first"), None)], kept_from).expect("compacted");
+        turn.compact(vec![(message("summary of first"), None)], &[], kept_from).expect("compacted");
         let third = message("third");
         turn.push_message(third.clone());
 

@@ -41,6 +41,9 @@ pub enum ProcessingError {
 }
 
 pub trait PerceiveInProcessor: MessageProcessor {}
+/// A `MessageProcessor` of what the agent says. A message it drops takes the call that produced
+/// it out of what the agent used (`TokenUsage`, issue 514): its measures are counted as it is
+/// recorded.
 pub trait EmitOutProcessor: MessageProcessor {}
 
 /// Passes `input` through `processors` in turn, each given what the one

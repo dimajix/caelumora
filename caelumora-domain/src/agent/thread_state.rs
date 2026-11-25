@@ -19,12 +19,14 @@ pub struct AgentThreadState {
     /// (issue 75). An external agent does not resume from it: it is resumed from its open tasks
     /// (issue 363).
     pub turn: Option<TurnState>,
-    /// What the agent's model calls in the thread used (issue 209), each counted once, as the
-    /// message it produced is recorded - said, or replacing older messages in a compaction
-    /// (`TokenUsage::counted`) - rather than summed over the transcript (issue 376). `None` while
-    /// no call reported its tokens; an external agent's never do. How full the context is, is the
-    /// last call's measure, and after a compaction the new branch as estimated then
-    /// (`AgentChannelState::compact`, issue 390): never read anew, however often it is asked for.
+    /// What the agent's model calls in the thread used (issue 209), each counted once
+    /// (`TokenUsage::counted`): as the message it produced is recorded - said, or replacing older
+    /// messages in a compaction -, or by its measures alone, for a further call of a compaction's
+    /// strategy (`AgentChannelState::compact`) - rather than summed over the transcript (issue
+    /// 376). `None` while no call reported its tokens; an external agent's never do. How full the
+    /// context is, is the last call's measure, and after a compaction the new branch as estimated
+    /// then (`AgentChannelState::compact`, issue 390): never read anew, however often it is asked
+    /// for.
     pub used: Option<TokenUsage>,
 }
 

@@ -668,15 +668,17 @@ of the agent's transcript.
 Every message the model produces carries the measures of its call (`Message::measures`, a
 `CallMeasures`): its tokens, its durations and the size of the context it had. What an agent used in
 a thread of a channel is a running total kept with its part of the thread, counted as each of its
-calls' messages is recorded - said in a turn, or written as a summary in a compaction - so that a
-call is counted once, the turn under way's included; it is not summed over the transcript, whose
-older branches need not be at hand (`AgentThreadState::used`). What it used in the channel, as a
-view and `/agent usage` show it, is the totals of all its threads with the context of the thread
-whose context is fullest (`AgentChannelState::used`, issue 602). Two groups mean different things:
+calls is recorded - by the message it said in a turn, by the summary a compaction writes, and by its
+measures alone for a further call of the compaction's strategy, whose answer stands in no message
+(`Replacement::further_calls`) - so that a call is counted once, the turn under way's included; it
+is not summed over the transcript, whose older branches need not be at hand
+(`AgentThreadState::used`). What it used in the channel, as a view and `/agent usage` show it, is
+the totals of all its threads with the context of the thread whose context is fullest
+(`AgentChannelState::used`, issue 602). Two groups mean different things:
 
 *   **context** - how full the context is against its size (`TokenUsage::context_tokens`): the
     last call's prompt and answer, as counted. A compaction replaces it once, when it is made:
-    the summary's call measured the old branch, so the new one is estimated then, by the
+    the compaction's calls measured the old branch, so the new one is estimated then, by the
     `ContextResolver`, with what the turn's model is given next (issue 390). It is kept, never
     read anew however often it is asked for; what was added since the last call - a tool's
     result, what was heard - is not in it until the next call measures it. How full the context
@@ -688,7 +690,12 @@ whose context is fullest (`AgentChannelState::used`, issue 602). Two groups mean
 *   **usage** - the total of all calls: what was processed. Every call is given the whole context
     again, so the totals grow much faster than the context and are no measure of how full it is.
 
-An external agent's calls report no tokens, so its usage is unknown, not zero.
+An external agent's calls report no tokens, so its usage is unknown, not zero. A call cut short -
+cancelled, or failed midway - reports nothing to count. Two calls are not counted (issue 514): the
+call of a summary that came back empty, whose compaction fails and gives the turn up
+(`CompactionError::NoSummary`), and one whose message an `EmitOutProcessor` drops, which none does
+today. Of a call whose answer stands in no message, the durations are kept nowhere: the totals sum
+no durations, and only a message shows them.
 
 ### Compaction
 

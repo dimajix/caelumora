@@ -464,7 +464,9 @@ pub struct CallMeasures {
 /// of each call (`CallMeasures`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenUsage {
-    /// How many calls reported their tokens.
+    /// How many calls reported their tokens - all but the call of a summary that came back
+    /// empty, whose compaction fails, and one whose message an `EmitOutProcessor` drops (issue
+    /// 514).
     pub calls: u64,
     /// The prompt tokens of all calls: every call is given the whole
     /// context again, so this is what was consumed, not what is held.

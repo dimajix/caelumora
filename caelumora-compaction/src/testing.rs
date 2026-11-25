@@ -40,7 +40,8 @@ enum Answer {
 
 /// A strategy that replaces every part by `SUMMARY`, its call measured as 40 tokens of prompt and 8
 /// of answer, as its `Answer` says, keeping what it was asked: the part, and what can be given
-/// again.
+/// again. Where something can, it makes a further call, as `summary_compaction` asks after its
+/// summary, measured as 20 tokens of prompt and 2 of answer.
 #[derive(Debug, Default)]
 pub(super) struct Scripted {
     answer: Answer,
@@ -83,7 +84,18 @@ impl CompactionStrategy for Scripted {
             completion_tokens: Some(8),
             ..CallMeasures::default()
         };
-        Ok(Replacement { text: SUMMARY.to_string(), measures: Some(measures), still_needed })
+        let asked = CallMeasures {
+            prompt_tokens: Some(20),
+            completion_tokens: Some(2),
+            ..CallMeasures::default()
+        };
+        let further_calls = if given.is_empty() { Vec::new() } else { vec![asked] };
+        Ok(Replacement {
+            text: SUMMARY.to_string(),
+            measures: Some(measures),
+            further_calls,
+            still_needed,
+        })
     }
 }
 

@@ -98,7 +98,8 @@ impl SummaryCompaction {
 #[async_trait]
 impl CompactionStrategy for SummaryCompaction {
     /// The summary of `part`, written by the agent's model, under its title, and what of `given`
-    /// it still needs, as it answers after its summary; the measures of its calls.
+    /// it still needs, as it answers after its summary; the measures of its summary's call, and
+    /// of the question after it as a further call.
     async fn replace(
         &self,
         turn: &Turn<'_>,
@@ -120,15 +121,20 @@ impl CompactionStrategy for SummaryCompaction {
         }
         let text = self.titled(&summary)?;
         if given.is_empty() {
-            return Ok(Replacement { text, measures, still_needed: Vec::new() });
+            return Ok(Replacement {
+                text,
+                measures,
+                further_calls: Vec::new(),
+                still_needed: Vec::new(),
+            });
         }
 
         part.push(in_its_name(MessageRole::Assistant, summary));
         part.push(in_its_name(MessageRole::User, self.question(given)?));
         // Its summary is written: an answer that cannot be had fails nothing.
-        let (named, measures) = match self.ask(turn, &part).await {
-            Ok((answer, then)) => (named_in(&answer, given), summed(measures, then)),
-            Err(_) => (None, measures),
+        let (named, further_calls) = match self.ask(turn, &part).await {
+            Ok((answer, then)) => (named_in(&answer, given), then.into_iter().collect()),
+            Err(_) => (None, Vec::new()),
         };
         let still_needed = named.unwrap_or_else(|| {
             tracing::warn!(
@@ -138,7 +144,7 @@ impl CompactionStrategy for SummaryCompaction {
             );
             given.to_vec()
         });
-        Ok(Replacement { text, measures, still_needed })
+        Ok(Replacement { text, measures, further_calls, still_needed })
     }
 }
 
@@ -163,25 +169,6 @@ fn named_in(answer: &str, given: &[String]) -> Option<Vec<String>> {
         .collect();
     let none = lines.iter().any(|line| line.eq_ignore_ascii_case(NONE));
     (!named.is_empty() || none).then_some(named)
-}
-
-/// The tokens of `call` and `then` added, and the context size of `then`: the question after the
-/// summary has no message of its own to carry them (issue 514). Without the durations, which two
-/// calls do not add up to.
-fn summed(call: Option<CallMeasures>, then: Option<CallMeasures>) -> Option<CallMeasures> {
-    let (Some(call), Some(then)) = (call, then) else {
-        return call.or(then);
-    };
-    let add = |a: Option<u64>, b: Option<u64>| match (a, b) {
-        (None, None) => None,
-        (a, b) => Some(a.unwrap_or(0) + b.unwrap_or(0)),
-    };
-    Some(CallMeasures {
-        prompt_tokens: add(call.prompt_tokens, then.prompt_tokens),
-        completion_tokens: add(call.completion_tokens, then.completion_tokens),
-        context_size: then.context_size.or(call.context_size),
-        ..CallMeasures::default()
-    })
 }
 
 /// Registers the kind `summary_compaction` with `registry`.
@@ -221,7 +208,8 @@ mod tests {
     use std::sync::Mutex;
 
     /// A model that gives its answers one a call - `None` as a model that cannot be reached -,
-    /// each call measured as 40 tokens of prompt and 8 of answer, keeping what it was given.
+    /// each call measured as 10 tokens of prompt a message it was given and 8 of answer, in a
+    /// second (`measured`), keeping what it was given.
     #[derive(Debug)]
     struct Summariser {
         answers: Mutex<VecDeque<Option<&'static str>>>,
@@ -254,15 +242,12 @@ mod tests {
         ) -> BoxStream<'static, ModelResult<MessageEvent>> {
             self.asked.lock().unwrap().push(context.to_vec());
             let answer = self.answers.lock().unwrap().pop_front().expect("an answer left");
+            let prompt = 10 * u64::try_from(context.len()).unwrap();
             let event = match answer {
                 Some(text) => Ok(MessageEvent::Complete(Message {
                     role: MessageRole::Assistant,
                     content: Some(text.to_string()),
-                    measures: Some(CallMeasures {
-                        prompt_tokens: Some(40),
-                        completion_tokens: Some(8),
-                        ..CallMeasures::default()
-                    }),
+                    measures: Some(measured(prompt)),
                     ..unlabelled_message()
                 })),
                 None => Err(ModelError::Connection {
@@ -271,6 +256,16 @@ mod tests {
                 }),
             };
             stream::iter(vec![event]).boxed()
+        }
+    }
+
+    /// The measures `Summariser` reports of a call given `prompt` tokens.
+    fn measured(prompt: u64) -> CallMeasures {
+        CallMeasures {
+            prompt_tokens: Some(prompt),
+            completion_tokens: Some(8),
+            total_duration: Some(1_000_000_000),
+            ..CallMeasures::default()
         }
     }
 
@@ -352,9 +347,14 @@ mod tests {
             "a line a name: {question}"
         );
         assert_eq!(
-            replacement.measures.map(|m| (m.prompt_tokens, m.completion_tokens)),
-            Some((Some(80), Some(16))),
-            "the tokens of both calls"
+            replacement.measures,
+            Some(measured(20)),
+            "the summary's call whole, durations included: its part and the instruction"
+        );
+        assert_eq!(
+            replacement.further_calls,
+            [measured(40)],
+            "the question after it, a further call (issue 514)"
         );
     }
 
@@ -373,9 +373,8 @@ mod tests {
             let model = Summariser::answering([Some("They met."), answer]);
             let replacement = replaced(&model, &given()).await.expect("summarised all the same");
             assert_eq!(replacement.still_needed, given(), "{answer:?}");
-            let tokens = if answer.is_none() { 40 } else { 80 };
-            let prompt = replacement.measures.and_then(|m| m.prompt_tokens);
-            assert_eq!(prompt, Some(tokens), "the calls that answered");
+            let answered = usize::from(answer.is_some());
+            assert_eq!(replacement.further_calls.len(), answered, "the calls that answered");
         }
     }
 

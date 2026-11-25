@@ -107,7 +107,8 @@ impl Compactor {
             messages.push((message, Some(again.knowledge.clone())));
         }
         // Nothing can fail from here on: the transcript changes at once.
-        turn.compact(messages, cut.keep_from())?.ok_or(CompactionError::NotReplaced)?;
+        turn.compact(messages, &replacement.further_calls, cut.keep_from())?
+            .ok_or(CompactionError::NotReplaced)?;
 
         Ok(Some(Compaction {
             replaced: cut.messages_replaced(),
@@ -621,11 +622,11 @@ mod tests {
         let usage = state
             .thread(ThreadId::line(world.session.channels()[0].id()))
             .and_then(|part| part.used)
-            .expect("the replacement's call");
+            .expect("the replacement's calls");
         assert_eq!(
-            (usage.prompt_tokens, usage.completion_tokens),
-            (40, 8),
-            "the replacement's call counts"
+            (usage.calls, usage.prompt_tokens, usage.completion_tokens),
+            (2, 40 + 20, 8 + 2),
+            "the replacement's call counts, and the further call of its strategy (issue 514)"
         );
     }
 

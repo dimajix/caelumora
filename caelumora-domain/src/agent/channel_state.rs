@@ -17,7 +17,7 @@ use crate::external_agent::RemoteState;
 use crate::history::{Heard, HistoryEntry};
 use crate::kept::Kept;
 use crate::ledger::LedgerEntry;
-use crate::message::{executed_calls, Message, MessageId, MessageRole, TokenUsage};
+use crate::message::{executed_calls, CallMeasures, Message, MessageId, MessageRole, TokenUsage};
 use crate::note::{NoteChain, NoteChange, NoteOrigin, Notes};
 use crate::prompt_catalogue::PromptCatalogue;
 use crate::question::QuestionRequest;
@@ -507,6 +507,10 @@ impl AgentChannelState {
     /// then the replacement as messages the agent was given. Returns the
     /// heads of the transcript before and after.
     ///
+    /// The calls of its model that wrote the replacement are counted (issue 514): those whose
+    /// measures a message of the replacement carries, and `further_calls`, whose answers stand in
+    /// no message.
+    ///
     /// Nothing is removed: every reference recorded before resolves to what
     /// it did. The replacement is seen by the turn; whose it is
     /// (`Message::turn_id`) is the caller's to say (issue 284). The prompt
@@ -525,6 +529,7 @@ impl AgentChannelState {
         thread: ThreadId,
         actor: ActorId,
         replacement: Vec<(Message, Option<KnowledgeRef>)>,
+        further_calls: &[CallMeasures],
         keep_from: Option<Digest>,
         catalogue: &Arc<PromptCatalogue>,
     ) -> Option<(Digest, Digest)> {
@@ -547,9 +552,7 @@ impl AgentChannelState {
         self.to_tell.push((thread, compacted));
         for (message, knowledge) in replacement {
             turn.work.see_message(&message);
-            // A summary written by the agent's model is a call of it.
-            if let Some(measures) = message.measures.as_ref().filter(|_| message.sender_id == actor)
-            {
+            if let Some(measures) = &message.measures {
                 part.used = TokenUsage::counted(part.used, measures);
             }
             if let Some(knowledge) = knowledge {
@@ -558,6 +561,9 @@ impl AgentChannelState {
             self.last_message = Some(message.id);
             self.to_tell.push((thread, ActorEvent::MessageGiven { message }));
         }
+        for measures in further_calls {
+            part.used = TokenUsage::counted(part.used, measures);
+        }
         turn.work.context.transcript = Some(to);
         turn.work.context.frame.prompts.retain_mut(|prompt| match prompt.at {
             PromptAt::Start | PromptAt::End => true,
@@ -565,10 +571,9 @@ impl AgentChannelState {
                 moved.get(&after).map(|now| prompt.at = PromptAt::after(*now)).is_some()
             }
         });
-        // How full the new branch is: no call measured it yet, and the
-        // summary's measured the old one. Estimated once, here, with what the
-        // turn's model is given next (issue 390) - a text that cannot be had
-        // leaves it unestimated, and fails the next call of the model.
+        // How full the new branch is: no call measured it yet, and those counted above measured the
+        // old one. Estimated once, here, with what the turn's model is given next (issue 390) - a
+        // text that cannot be had leaves it unestimated, and fails the next call of the model.
         let estimated = self
             .turn(thread)
             .and_then(|turn| {
@@ -955,7 +960,6 @@ mod tests {
     use crate::context::{ContextResolver, KnowledgeSource};
     use crate::digest;
     use crate::message::testing::{id, make_message};
-    use crate::message::CallMeasures;
     use crate::note::NoteId;
     use crate::prompt_catalogue::testing::kernel_catalogue;
     use crate::question::{Addressee, Question, Questions};
@@ -1838,6 +1842,7 @@ mod tests {
                 ThreadId::default(),
                 agent,
                 vec![(said("summary", Classification::PUBLIC), None)],
+                &[],
                 None,
                 kernel_catalogue()
             ),
@@ -1856,6 +1861,7 @@ mod tests {
                 ThreadId::default(),
                 agent,
                 vec![(summary.clone(), None)],
+                &[],
                 Some(digest::content(b"elsewhere")),
                 kernel_catalogue()
             ),
@@ -1878,6 +1884,7 @@ mod tests {
                 ThreadId::default(),
                 agent,
                 vec![(summary.clone(), None), (skill.clone(), Some(knowledge.clone()))],
+                &[],
                 Some(answered),
                 kernel_catalogue(),
             )
@@ -1937,8 +1944,11 @@ mod tests {
         assert_eq!((usage.calls, usage.prompt_tokens), (2, 150), "the answer kept counts once");
     }
 
+    /// Issue 514: the calls that wrote the replacement are counted - the one whose measures its
+    /// message carries, and the further ones -, and the context is then the new branch as
+    /// estimated.
     #[test]
-    fn after_a_compaction_the_context_is_the_new_branch_as_estimated_then() {
+    fn a_compaction_counts_its_calls_and_the_context_is_the_new_branch_as_estimated_then() {
         let agent = ActorId::Agent(AgentId::new());
         let mut state = a_state_that_heard("hello", Classification::PUBLIC);
         begin(&mut state, Vec::new());
@@ -1967,22 +1977,31 @@ mod tests {
             }),
             ..said("summary", Classification::PUBLIC)
         };
+        let question = CallMeasures {
+            prompt_tokens: Some(600),
+            completion_tokens: Some(4),
+            ..CallMeasures::default()
+        };
         state
             .compact(
                 ThreadId::default(),
                 agent,
                 vec![(summary, None)],
+                &[question],
                 kept_from,
                 kernel_catalogue(),
             )
             .expect("compacted");
+        let used = state.thread(ThreadId::default()).and_then(|part| part.used);
         assert_eq!(
-            state
-                .thread(ThreadId::default())
-                .and_then(|part| part.used)
-                .map(|u| (u.calls, u.context_tokens)),
-            Some((2, 2 + 1)),
-            "the new branch as estimated, not the summary's call over the old one"
+            used.map(|u| (u.calls, u.prompt_tokens, u.completion_tokens)),
+            Some((3, 100 + 500 + 600, 10 + 8 + 4)),
+            "the call before, the summary's and the question after it"
+        );
+        assert_eq!(
+            used.map(|u| u.context_tokens),
+            Some(2 + 1),
+            "the new branch as estimated, not the compaction's calls over the old one"
         );
 
         let turn = turn_slot(&mut state).take().unwrap().work.turn_id;
@@ -2026,6 +2045,7 @@ mod tests {
                 ThreadId::default(),
                 agent,
                 vec![(said("summary", Classification::PUBLIC), None)],
+                &[],
                 kept_at,
                 kernel_catalogue(),
             )
@@ -2211,6 +2231,7 @@ mod tests {
                 ThreadId::default(),
                 agent,
                 vec![(said("[Summary]", Classification::CHANNEL_DEFAULT), None)],
+                &[],
                 None,
                 kernel_catalogue(),
             )

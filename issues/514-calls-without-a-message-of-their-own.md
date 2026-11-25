@@ -1,6 +1,6 @@
 # 514 — A model call that produces no message of its own is counted with another
 
-**Status:** in progress
+**Status:** done
 **Type:** bug
 **Priority:** low
 **Area:** Observability and operations
@@ -134,3 +134,10 @@ counted where they are today, in `AgentChannelState::said` and `compact`, by `To
   six fields of `Message`, `TokenUsage::counted` counts measures, `Replacement` carries measures
   instead of a message. A summary's message now carries the durations of its call where no
   question follows it; where one does, the tokens of both are summed without durations.
+- **2026-11-25** — Step 2 done: `Replacement::further_calls` carries the measures of the
+  strategy's calls whose answers stand in no message - `summary_compaction`'s question after its
+  summary -, `Turn::compact` passes them to `AgentChannelState::compact`, which counts them after
+  the measures the replacement's messages carry, whoever sent them; `summed` is gone. The
+  exceptions are named in AGENT-TURN.md *Tokens used*, at `TokenUsage::calls` and at
+  `EmitOutProcessor`. The estimate replaces how full the context is, not its size: that is the
+  last call's counted, the question's, as it is after every call. Done.
