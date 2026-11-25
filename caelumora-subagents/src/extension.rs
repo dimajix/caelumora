@@ -53,15 +53,15 @@ pub enum SubAgentError {
     #[error("'{0}' is the personality of an external agent, which cannot be a sub-agent")]
     External(String),
     /// A personality whose agents would be cleared wider than the work's agent (issue 597).
-    #[error("'{0}' is cleared wider than you, so it cannot be your sub-agent")]
+    #[error(
+        "'{0}' is cleared wider than the agent that would start it, so it cannot be its sub-agent"
+    )]
     ClearedWider(String),
     /// A thread that holds no sub-agent the work started.
     #[error("thread {0} holds no sub-agent of yours")]
     NoSubAgent(ThreadId),
     /// As many sub-agents open in the work's tree as allowed, the number allowed (issue 597).
-    #[error(
-        "as many sub-agents are open as allowed, {0}: end one of yours, or wait for one to end"
-    )]
+    #[error("as many sub-agents are open as allowed, {0}: end one, or wait for one to end")]
     TooMany(usize),
     /// The work is a sub-agent as deep as allowed, the depth allowed (issue 597).
     #[error("sub-agents are started no deeper than {0}")]
@@ -72,6 +72,25 @@ pub enum SubAgentError {
     /// What the kernel failed with, worded as users are told it; what may not be shown is logged.
     #[error("{0}")]
     Failed(String),
+}
+
+#[cfg(feature = "library")]
+impl SubAgentError {
+    /// Whether whoever asked can correct it (issue 596): a personality, one cleared no wider, a
+    /// thread, a sub-agent to end first - not what the kernel refused, a depth nothing they do
+    /// changes, or what failed. What a tool's model and a command's issuer are told apart by.
+    pub(crate) fn is_correctable(&self) -> bool {
+        match self {
+            SubAgentError::UnknownPersonality(_)
+            | SubAgentError::External(_)
+            | SubAgentError::ClearedWider(_)
+            | SubAgentError::NoSubAgent(_)
+            | SubAgentError::TooMany(_) => true,
+            SubAgentError::TooDeep(_) | SubAgentError::Forbidden(_) | SubAgentError::Failed(_) => {
+                false
+            }
+        }
+    }
 }
 
 pub type SubAgentResult<T> = Result<T, SubAgentError>;

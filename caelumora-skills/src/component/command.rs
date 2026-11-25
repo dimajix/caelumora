@@ -13,7 +13,6 @@ use caelumora_api::command::{Command, CommandError, CommandResult};
 use caelumora_domain::command::{CommandDescription, CommandOutput, CommandParameter};
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::value::command_name::CommandName;
-use caelumora_domain::value::name::Name;
 use chrono::Utc;
 use std::sync::Arc;
 use tracing::warn;
@@ -95,12 +94,7 @@ impl AgentCommand for SkillCommand {
         let skill = skills.usable_skill_named(wanted).await.map_err(|e| command_error(name, e))?;
         // In the name of who asked, as the channel knows them.
         let issuer = turn.situation().initiator();
-        let issuer_name = match turn.situation().channel().await {
-            Ok(Some(channel)) => {
-                channel.participant(issuer).await.ok().and_then(|m| m.name().map(Name::to_string))
-            }
-            Ok(None) | Err(_) => None,
-        };
+        let issuer_name = turn.situation().initiator_name().await;
         let content = self.skills.given(&skill).map_err(|e| CommandError::Failed {
             command: name.to_string(),
             reason: e.to_string(),

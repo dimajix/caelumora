@@ -337,6 +337,7 @@ external agent alike.
 | `/private-notes` | - | the agent | `private_notes` | `@agent` | private | For the agent's owners: shows the private notes it recalls here - of this channel, and of the session's other channels as far as they may be told here ([MEMORY.md](MEMORY.md#private-notes)). |
 | `/memory` | - | the agent | `agent_memory` | `@agent` | private | For the agent's owners: shows what it recalls of its memory here, as far as it may be told here ([MEMORY.md](MEMORY.md#agent-memory)). |
 | `/compact` | - | the agent | `compaction` | `@agent` | channel-wide | For the agent's owners: compacts its context now rather than when it is too full, as the agent does on its own ([AGENT-TURN.md](AGENT-TURN.md#compaction)). |
+| `/subagent` | - | the agent | `subagents` | `@agent <personality> <brief>` | private | For the agent's owners: has it start a sub-agent of a personality its component lists on the brief, as its tool does; it is given what it started to read, and what the sub-agent answers where the command was issued ([TOOLS.md](TOOLS.md#sub-agents)). |
 | `/exit` | `/quit` | the terminal | - | - | - | Ends the program, the session shut down in order. |
 | `/channel switch` | `/switch` | the terminal | - | `[channel]` | - | Talks in another channel of the session the user takes part in; without one, tells where the user could. |
 | `/session list` | - | the terminal | - | - | - | Lists the sessions of the directory, the one spoken in last first, the one talked in marked. |
@@ -348,6 +349,6 @@ external agent alike.
 | `/approval deny` | `/deny` | the terminal | - | `[id]` | - | Denies the call asked of the user, or the one waiting for approval whose id begins so. |
 | `/question answer` | `/answer` | the terminal | - | `[id]` | - | Asks the questions put to the user whose id begins so, or those put aside, one by one. |
 | `/question decline` | `/decline` | the terminal | - | `[id]` | - | Declines the questions asked of the user, or those put to them whose id begins so. |
-| `/thread list` | - | the terminal | - | - | - | Lists the threads open in the channel talked in, numbered: whose sub-agent's, who takes part, where it hangs. |
+| `/thread list` | - | the terminal | - | - | - | Lists the threads open in the channel talked in, numbered: whose sub-agent's, who takes part, where it hangs - of one started by `/subagent`, no words, since it hangs at what its agent was given. |
 | `/thread follow` | - | the terminal | - | `<thread>` | - | Follows a thread of the channel talked in, by its number in `/thread list` or the beginning of its id: what its view shows is printed, and what is typed goes there. |
 | `/thread line` | - | the terminal | - | - | - | Follows the line of the channel talked in again. |

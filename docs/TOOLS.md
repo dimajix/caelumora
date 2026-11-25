@@ -614,3 +614,15 @@ What the access policy refuses is answered as a refusal, saying what was refused
 rule; anything else as users are told it - a work that may not reach its own channel among them,
 which is not found, as a channel one may not reach is.
 
+An agent's owner has it start one by a command of the agent, `/subagent @agent <personality>
+<brief>` (issue 596), offered by the same component with the same personalities - the one the
+arguments begin with, compared as names are; the rest is the brief - and for the agent's owners
+alone: whoever issues it would approve the tool's call, so it asks for no approval. The agent
+carries it out in a command turn and delegates as with the tool, and is given to read in the
+issuer's name what it started, as `/skill` gives a skill: the personality, the brief and the
+thread, since a command turn leaves nothing else in its transcript. The thread hangs at that
+message, in the thread the command was issued in, where what the sub-agent answers is given back and
+the agent responds; a message given goes to nobody, so the frontends mark the thread at no message
+they show, while its opening is announced to everyone. A start that fails gives nothing; one whose
+text cannot be given is ended again.
+

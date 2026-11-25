@@ -23,6 +23,7 @@ use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_domain::secret::Secrets;
 use caelumora_domain::session::SessionId;
 use caelumora_domain::tool::ToolSet;
+use caelumora_domain::value::name::Name;
 use caelumora_domain::value::time_zone::TimeZone;
 use caelumora_domain::work::Work;
 use std::sync::Arc;
@@ -92,6 +93,15 @@ impl<'a> Situation<'a> {
     /// rights, which the kernel builds itself (issue 516).
     pub fn initiator(&self) -> ActorId {
         self.work.initiator()
+    }
+
+    /// The name of the work's initiator (`initiator`), as its channel knows them: in whose name a
+    /// command gives the agent something to read (issues 22, 596). `None` where the work reaches
+    /// no channel, or the channel knows no name of them.
+    pub async fn initiator_name(&self) -> Option<String> {
+        let channel = self.channel().await.ok()??;
+        let initiator = channel.participant(self.initiator()).await.ok()?;
+        initiator.name().map(Name::to_string)
     }
 
     /// The classification of the agent's channel as it was when the work

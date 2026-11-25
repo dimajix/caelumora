@@ -69,6 +69,20 @@ impl Name {
     pub fn handle(&self) -> Option<String> {
         Some(handle_of(self.as_str())).filter(|handle| !handle.is_empty())
     }
+
+    /// What follows the name in `line`, trimmed, if `line` begins with it - as many words of
+    /// `line` as the name has, compared as names are -, as a command's arguments may begin with a
+    /// name (issue 596); `None` if it does not.
+    pub fn strip_from<'a>(&self, line: &'a str) -> Option<&'a str> {
+        let line = line.trim_start();
+        let mut end = 0;
+        for _ in self.as_str().split_whitespace() {
+            let rest = &line[end..];
+            let start = end + rest.len() - rest.trim_start().len();
+            end = start + line[start..].split_whitespace().next()?.len();
+        }
+        (*self == line[..end]).then(|| line[end..].trim())
+    }
 }
 
 /// What a name is compared by: transliterated to ASCII (`any_ascii` - the
@@ -262,6 +276,20 @@ mod tests {
             "naming the field"
         );
         assert!(Name::new("x".repeat(MAX_NAME_CHARS)).is_ok());
+    }
+
+    /// Issue 596: a line begins with a name word by word, compared as names are - in any case,
+    /// with any whitespace -, and what follows is the rest, trimmed; a word begun but not ended,
+    /// or a line shorter than the name, does not begin with it.
+    #[test]
+    fn a_line_begins_with_a_name_word_by_word() {
+        let senior = name("Senior  Researcher");
+        assert_eq!(senior.strip_from("  senior researcher  Find it. "), Some("Find it."));
+        assert_eq!(senior.strip_from("SENIOR\tRESEARCHER"), Some(""), "nothing follows");
+        assert_eq!(name("Zoë").strip_from("zoe hello"), Some("hello"), "beyond ASCII");
+        assert_eq!(senior.strip_from("senior researchers find it"), None, "a longer word");
+        assert_eq!(senior.strip_from("senior"), None, "a shorter line");
+        assert_eq!(senior.strip_from("junior researcher find it"), None);
     }
 
     #[test]

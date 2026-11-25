@@ -79,7 +79,7 @@ drawn in [CRATES.md](CRATES.md):
 *   **`caelumora-subagents`** - sub-agents, a plugin and a library built as `caelumora-memory` is:
     the writer of an agent's work that starts an agent on a brief in a thread of its own, asks it
     again and ends it, made of the kernel's threads and delegating, and the component `subagents`
-    with its tools (issue 558). See [TOOLS.md](TOOLS.md#sub-agents).
+    with its tools and `/subagent` (issues 558, 596). See [TOOLS.md](TOOLS.md#sub-agents).
 *   **`caelumora-tool-mcp`** - the tools of MCP servers, a library that brings nothing but its
     component kind `mcp_server`, and with it `rmcp` (issue 325). See
     [TOOLS.md](TOOLS.md#mcp-servers).

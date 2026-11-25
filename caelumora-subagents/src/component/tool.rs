@@ -5,7 +5,7 @@
 //! through the `SubAgentWriter` the plugin binds to the turn's work (issue 516), offered where the
 //! work can start a sub-agent.
 
-use super::{SubagentsComponent, SUBAGENTS_KIND};
+use super::{listed, SubagentsComponent, SUBAGENTS_KIND};
 use crate::extension::{SubAgentError, SubAgentWriter};
 use crate::NAMESPACE;
 use async_trait::async_trait;
@@ -51,22 +51,15 @@ struct End {
 }
 
 /// What starting, asking or ending a sub-agent failed of, as the model is told it: what it can
-/// correct - a personality, one cleared no wider, a thread, a sub-agent to end first - is a
-/// parameter; what the kernel
-/// refused is a refusal, without the rule, and so is a depth nothing the model does changes; what
-/// failed a failure.
+/// correct (`SubAgentError::is_correctable`) is a parameter; what failed a failure; anything else -
+/// what the kernel refused, without the rule, and a depth nothing the model does changes - a
+/// refusal.
 impl From<SubAgentError> for ToolError {
     fn from(error: SubAgentError) -> Self {
         match error {
-            SubAgentError::UnknownPersonality(_)
-            | SubAgentError::External(_)
-            | SubAgentError::ClearedWider(_)
-            | SubAgentError::NoSubAgent(_)
-            | SubAgentError::TooMany(_) => ToolError::InvalidParameter(error.to_string()),
-            SubAgentError::Forbidden(_) | SubAgentError::TooDeep(_) => {
-                ToolError::PermissionDenied(error.to_string())
-            }
+            _ if error.is_correctable() => ToolError::InvalidParameter(error.to_string()),
             SubAgentError::Failed(_) => ToolError::ExecutionFailed(error.to_string()),
+            _ => ToolError::PermissionDenied(error.to_string()),
         }
     }
 }
@@ -147,12 +140,11 @@ impl Tool for StartSubagentTool {
         turn: &mut Turn<'_>,
     ) -> ToolResult<ToolOutput> {
         let Start { personality, brief } = arguments(params)?;
-        let listed = Name::new(&personality).is_ok_and(|named| self.personalities.contains(&named));
-        if !listed {
-            let allowed: Vec<&str> = self.personalities.iter().map(Name::as_str).collect();
-            let allowed = allowed.join(", ");
+        let known = Name::new(&personality).is_ok_and(|named| self.personalities.contains(&named));
+        if !known {
+            let allowed = listed(&self.personalities);
             return Err(ToolError::InvalidParameter(format!(
-                "'{personality}' is none of the personalities to start a sub-agent of: {allowed}"
+                "'{personality}' is none of {allowed}"
             )));
         }
         // Hung at the message whose call this is, in the thread the work happens in.

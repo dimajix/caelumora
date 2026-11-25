@@ -22,7 +22,14 @@ kernel = [
     "dep:serde",
 ]
 # The component and the library: the agent side.
-library = ["api", "dep:caelumora-agents", "dep:anyhow", "dep:serde", "dep:serde_json"]
+library = [
+    "api",
+    "dep:caelumora-agents",
+    "dep:anyhow",
+    "dep:serde",
+    "dep:serde_json",
+    "dep:tracing",
+]
 
 [dependencies]
 caelumora-domain.workspace = true

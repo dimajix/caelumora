@@ -8,9 +8,10 @@ use caelumora_agents::testing::{
     agent_runtime, calling, register_answering, register_scripted, Answer,
 };
 use caelumora_agents::tool::ToolProvider;
+use caelumora_api::command::CommandError;
 use caelumora_api::library::Library;
-use caelumora_domain::actor::ActorId;
-use caelumora_domain::agent::{Agent, Personality, PersonalityId, PersonalityKind};
+use caelumora_domain::actor::{ActorEvent, ActorId};
+use caelumora_domain::agent::{Agent, AgentId, Personality, PersonalityId, PersonalityKind};
 use caelumora_domain::channel::{ThreadId, ThreadOrigin};
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::{Classification, Confidentiality};
@@ -26,8 +27,10 @@ use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::component::testing::{built, descriptor};
 use caelumora_kernel::component::ComponentRegistry;
 use caelumora_kernel::session::SessionLoop;
-use caelumora_kernel::testing::{participant_runtime_in, World, STAFF};
-use caelumora_subagents::component::{ASK_SUBAGENT, START_SUBAGENT, SUBAGENTS_KIND};
+use caelumora_kernel::testing::{participant_runtime_in, shown, World, STAFF};
+use caelumora_subagents::component::{
+    ASK_SUBAGENT, START_SUBAGENT, SUBAGENTS_KIND, SUBAGENT_COMMAND_NAME,
+};
 use caelumora_subagents::extension::{SubAgentError, SubAgentWriter};
 use caelumora_subagents::library::SubagentsLibrary;
 use caelumora_subagents::plugin::SubagentsPlugin;
@@ -531,5 +534,139 @@ async fn a_sub_agent_is_cleared_no_wider_than_the_agent_that_starts_it() {
         assert!(matches!(refused, Err(SubAgentError::ClearedWider(_))), "{wider}: {refused:?}");
     }
     writer.start("staff", line, "Find it.".to_string()).await.expect("limited as the lead");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// A session of alice's with a lead of hers, that starts sub-agents of "researcher" and "researcher
+/// assistant" - a personality nobody has - by its tools and its command, and a "researcher" of
+/// hers: the session, its main channel and the lead.
+async fn commanded_lead(world: &World) -> (Arc<SessionLoop>, Arc<ChannelLoop>, AgentId) {
+    let model = |kind: &str| ComponentDescriptor::new("model", kind);
+    let internal = PersonalityKind::Internal;
+    personality(world, "researcher", world.alice, internal, vec![model("researching")]).await;
+    let subagents = ComponentDescriptor {
+        params: serde_json::json!({ "personalities": ["researcher", "researcher assistant"] }),
+        ..ComponentDescriptor::new("subagents", SUBAGENTS_KIND)
+    };
+    let components = vec![model("leading"), subagents];
+    let leading = personality(world, "leading", world.alice, internal, components).await;
+    let lead = world.agent("lead", world.alice, &leading).await;
+    let session = world.shared_session(&[lead], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    (session, main, lead)
+}
+
+/// Issue 596: an agent's owner has it start a sub-agent by `/subagent` - the agent is given in her
+/// name what it started, its personality, its brief and its thread, and the thread hangs at that
+/// message, in the line the command was issued in -; what the sub-agent answers is given back to
+/// the agent there, which responds, and, leaving it without a word, lets it go.
+#[tokio::test]
+async fn an_owner_has_an_agent_start_a_sub_agent_by_command() {
+    let thanks: Answer = Box::new(|_| said("thanks"));
+    let world = world(vec![thanks]).await;
+    let (session, main, lead_id) = commanded_lead(&world).await;
+    let lead = ActorId::Agent(lead_id);
+    let line = ThreadId::line(main.id());
+    let alice = main.user_actor(world.alice).unwrap();
+    let mut hers = alice.watch();
+
+    let line_of_command = format!("{SUBAGENT_COMMAND_NAME} @lead researcher Find it.");
+    alice.execute_command(None, &line_of_command).await.expect("hers");
+    let ActorEvent::CommandExecuted { output, .. } = shown(&mut hers, "CommandExecuted").await
+    else {
+        unreachable!()
+    };
+    assert!(output.starts_with("lead started a sub-agent of 'researcher'"), "{output}");
+    let closed =
+        |e: &HistoryEntry| matches!(e, HistoryEntry::ThreadClosed { by, .. } if *by != lead);
+    let entries = main.history_once(|entries| entries.iter().any(closed)).await;
+    let (thread, origin) = entries
+        .iter()
+        .find_map(|e| match e {
+            HistoryEntry::ThreadOpened { thread, origin, by, .. } if *by == lead => {
+                Some((*thread, *origin))
+            }
+            _ => None,
+        })
+        .expect("opened by the lead");
+    assert_eq!(origin.thread, line, "where the command was issued");
+    let brief = entries.iter().any(|e| {
+        matches!(e, HistoryEntry::GivenToRead { by: ActorId::Delegate(t), message, .. }
+            if *t == thread && message.sender_id == lead
+                && message.content.as_deref() == Some("Find it."))
+    });
+    assert!(brief, "the brief delegated by the lead: {entries:?}");
+    let given_back = entries.iter().position(|e| {
+        matches!(e, HistoryEntry::GivenToRead { recipient, message, .. }
+            if *recipient == lead && message.content.as_deref() == Some("found it"))
+    });
+    assert!(given_back.is_some(), "given back to the lead: {entries:?}");
+    assert_eq!(main.thread_said_in("thanks").await, line, "the lead responded in the line");
+    let recorded = entries.iter().any(|e| {
+        matches!(e, HistoryEntry::CommandExecuted { command, issuer, .. }
+            if command == SUBAGENT_COMMAND_NAME && *issuer == ActorId::User(world.alice))
+    });
+    assert!(recorded, "the command recorded: {entries:?}");
+
+    let state = world.store.state_store().get_agent_channel_state(lead_id, main.id()).await;
+    let messages = state.unwrap().transcript.messages(line);
+    let given =
+        messages.iter().find(|m| m.id == origin.message).expect("hung at what it was given");
+    assert_eq!(given.sender_id, ActorId::User(world.alice), "in her name");
+    let content = given.content.as_deref().unwrap_or_default();
+    for told in ["researcher", "Find it.", &thread.to_string()] {
+        assert!(content.contains(told), "{told}: {content}");
+    }
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// Issue 596: `/subagent` is for the agent's owners alone - bob, who may write in the channel,
+/// finds it unknown -; arguments that begin with no personality the component lists, or give no
+/// brief, are refused with what is wanted; the longest personality listed that they begin with is
+/// taken; and a start the kernel refuses gives the agent nothing and opens no thread.
+#[tokio::test]
+async fn a_sub_agent_is_started_by_command_by_an_owner_on_a_listed_personality_alone() {
+    // A lead that does not answer: a command wakes nobody.
+    let world = world(Vec::new()).await;
+    let (session, main, lead_id) = commanded_lead(&world).await;
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+
+    let bob = main.user_actor(world.bob).unwrap();
+    let line = format!("{SUBAGENT_COMMAND_NAME} @lead researcher Find it.");
+    let refused = bob.execute_command(None, &line).await;
+    let refused = refused.expect_err("not his");
+    assert!(
+        matches!(refused.downcast_ref::<CommandError>(),
+            Some(CommandError::Unknown(name)) if name == SUBAGENT_COMMAND_NAME),
+        "unknown to him: {refused}"
+    );
+
+    let alice = main.user_actor(world.alice).unwrap();
+    let mut hers = alice.watch();
+    for (args, wanted) in [
+        (
+            "nobody Find it.",
+            "begin with one of the personalities to start a sub-agent of: researcher, \
+             researcher assistant",
+        ),
+        ("researcher", "a brief for the sub-agent of 'researcher'"),
+        // The longest listed: a personality nobody has, which the kernel does not find.
+        ("researcher  Assistant Find it.", "no personality 'researcher assistant'"),
+    ] {
+        let line = format!("{SUBAGENT_COMMAND_NAME} @lead {args}");
+        alice.execute_command(None, &line).await.expect("sent");
+        let ActorEvent::CommandFailed { reason, .. } = shown(&mut hers, "CommandFailed").await
+        else {
+            unreachable!()
+        };
+        assert!(reason.contains(wanted), "{line}: {reason}");
+    }
+    let entries = main.history_entries().await;
+    let opened = entries.iter().any(|e| matches!(e, HistoryEntry::ThreadOpened { .. }));
+    assert!(!opened, "no thread opened: {entries:?}");
+    let state = world.store.state_store().get_agent_channel_state(lead_id, main.id()).await;
+    let transcript = state.unwrap().transcript;
+    let given = transcript.messages(ThreadId::line(main.id()));
+    assert!(given.iter().all(|m| m.sender_id != ActorId::User(world.alice)), "{given:?}");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }

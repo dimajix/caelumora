@@ -2,6 +2,15 @@
 # rendered by `PromptCatalogue`; the conventions are those of the agents' file
 # (`caelumora-agents/src/prompts.yaml`). Names of tools are values.
 
+# What an agent is given to read, in its owner's name, of a sub-agent it started on their word
+# (`/subagent`, issue 596): given the `personality`, the `brief`, the `thread` and the names of the
+# tools `ask` and `end`.
+started: |-
+  [Sub-agent started]
+  On my word you started a sub-agent of the personality {{ personality }}, in the thread {{ thread }}, on this brief:
+  {{ brief }}
+  What it answers is given to you to read here. Ask it again with {{ ask }} in the turn in which you read its answer - left without a word then, it is ended -, or end it with {{ end }} once its work is done.
+
 # The descriptions of the tools (`caelumora_agents::tool::described`); `start_subagent` is given
 # the `personalities` it may start an agent of, and the names of the other two, `ask` and `end`;
 # those two the name of `start`.
