@@ -23,7 +23,6 @@ use caelumora_domain::work::TurnId;
 use caelumora_domain::workspace::WorkspaceId;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::mem;
 
 /// The state of a channel when a stream connects: its participants and the last
 /// page of its history, as items - messages and how turns ended (issue 258).
@@ -34,11 +33,6 @@ pub struct ChannelSnapshot {
     pub channel: ChannelResponse,
     pub items: Vec<HistoryPageItem<Message>>,
     pub earlier: Option<Position>,
-    /// The notes every agent of the channel published (issue 17); a change
-    /// is announced as the channel's `agent_state_changed` on the event
-    /// stream, and
-    /// the notes reloaded from `GET …/channels/{cid}/notes` (issue 65).
-    pub notes: Vec<PublishedNotesResponse>,
     /// The approvals the channel's agents wait for (issue 172), as their
     /// turns are stored: the stream tells only of requests made while it
     /// listens. Empty for a viewer who does not take part as a user.
@@ -51,23 +45,14 @@ pub struct ChannelSnapshot {
 
 impl ChannelSnapshot {
     /// The snapshot of a channel's stream: `channel`, whose agents carry
-    /// their notes and pending approvals - listed beside the channel, as the
-    /// API has them - and the last page of its history.
+    /// their pending approvals - listed beside the channel, as the API has
+    /// them - and the last page of its history.
     pub fn of(
         mut channel: snapshot::ChannelSnapshot,
         history: HistoryPageResponse<Message>,
     ) -> Self {
-        let mut notes = Vec::new();
         let (mut pending_approvals, mut pending_questions) = (Vec::new(), Vec::new());
         for participant in &mut channel.participants {
-            if matches!(participant.id, ActorId::Agent(_)) {
-                let name = participant.name.clone().unwrap_or_default();
-                notes.push(PublishedNotesResponse {
-                    agent_id: participant.id,
-                    name,
-                    notes: mem::take(&mut participant.notes),
-                });
-            }
             pending_approvals.append(&mut participant.pending_approvals);
             pending_questions.append(&mut participant.pending_questions);
         }
@@ -75,7 +60,6 @@ impl ChannelSnapshot {
             channel: channel.into(),
             items: history.items,
             earlier: history.earlier,
-            notes,
             pending_approvals,
             pending_questions,
         }
@@ -555,7 +539,6 @@ mod tests {
     use caelumora_domain::approval::ApproverId;
     use caelumora_domain::user::UserId;
     use caelumora_domain::value::command_name::CommandName;
-    use chrono::Utc;
 
     #[test]
     fn a_channel_view_is_answered_with_kinds_and_a_name_for_the_deleted() {
@@ -572,7 +555,6 @@ mod tests {
             can_retry: false,
             can_cancel: false,
             usage: None,
-            notes: Vec::new(),
             pending_approvals: Vec::new(),
             pending_questions: Vec::new(),
             left: None,
@@ -684,44 +666,40 @@ mod tests {
     }
 
     #[test]
-    fn a_stream_lists_its_agents_notes_and_approvals_beside_the_channel() {
-        use caelumora_domain::note::{Note, NoteId};
-        let (alice, helper) = (ActorId::User(UserId::new()), ActorId::Agent(AgentId::new()));
-        let note = Note {
-            id: NoteId(1),
-            text: "noted".to_string(),
-            classification: Classification::CHANNEL_DEFAULT,
-            origin: Default::default(),
-            after: Default::default(),
-            written_at: Utc::now(),
-        };
-        let participant = |id, name: &str, notes: Vec<Note>| snapshot::ChannelParticipantSnapshot {
-            id,
-            name: Some(name.to_string()),
-            handle: None,
-            can_read_context: false,
-            can_read_tools: false,
-            can_read_components: false,
-            can_approve: false,
-            can_retry: false,
-            can_cancel: false,
-            usage: None,
-            notes,
-            pending_approvals: Vec::new(),
-            pending_questions: Vec::new(),
-            left: None,
-            can_delete: false,
-            can_leave: false,
-            threads: Vec::new(),
-            turns_under_way: BTreeMap::new(),
-            answering_in: None,
-            state: None,
-            commands: Vec::new(),
-            introduction: None,
-            personality: None,
-            personality_kind: None,
-            owner: None,
-            owner_name: None,
+    fn a_stream_lists_its_agents_approvals_beside_the_channel() {
+        use caelumora_domain::approval::testing::make_approval_request;
+        use caelumora_domain::session::SessionId;
+        let (alice, agent) = (UserId::new(), AgentId::new());
+        let channel_id = ChannelId::new();
+        let request = make_approval_request(SessionId::new(), channel_id, agent);
+        let participant = |id, name: &str, pending_approvals: Vec<ApprovalRequest>| {
+            snapshot::ChannelParticipantSnapshot {
+                id,
+                name: Some(name.to_string()),
+                handle: None,
+                can_read_context: false,
+                can_read_tools: false,
+                can_read_components: false,
+                can_approve: false,
+                can_retry: false,
+                can_cancel: false,
+                usage: None,
+                pending_approvals,
+                pending_questions: Vec::new(),
+                left: None,
+                can_delete: false,
+                can_leave: false,
+                threads: Vec::new(),
+                turns_under_way: BTreeMap::new(),
+                answering_in: None,
+                state: None,
+                commands: Vec::new(),
+                introduction: None,
+                personality: None,
+                personality_kind: None,
+                owner: None,
+                owner_name: None,
+            }
         };
         let channel = snapshot::ChannelSnapshot {
             summary: None,
@@ -730,7 +708,7 @@ mod tests {
             workspace_id: None,
             unavailable: None,
             uses_workspace: true,
-            id: ChannelId::new(),
+            id: channel_id,
             name: "main".to_string(),
             moderator: None,
             responder_policy: None,
@@ -739,8 +717,8 @@ mod tests {
             effective_language: None,
             can_change: false,
             participants: vec![
-                participant(alice, "alice", Vec::new()),
-                participant(helper, "Helper", vec![note]),
+                participant(ActorId::User(alice), "alice", Vec::new()),
+                participant(ActorId::Agent(agent), "Helper", vec![request.clone()]),
             ],
             former_participants: Vec::new(),
             unread: None,
@@ -754,12 +732,11 @@ mod tests {
         ))
         .unwrap();
 
-        assert_eq!(json["notes"].as_array().map(Vec::len), Some(1), "one entry per agent");
-        assert_eq!(json["notes"][0]["name"], "Helper");
-        assert_eq!(json["notes"][0]["notes"][0]["id"], 1);
-        assert_eq!(json["pending_approvals"], serde_json::json!([]));
+        let approvals = json["pending_approvals"].as_array().map(Vec::len);
+        assert_eq!(approvals, Some(1), "listed beside the channel");
+        assert_eq!(json["pending_approvals"][0]["id"], serde_json::json!(request.id));
         assert!(
-            json["channel"]["participants"][1].get("notes").is_none(),
+            json["channel"]["participants"][1].get("pending_approvals").is_none(),
             "not repeated at the participant"
         );
     }
@@ -779,7 +756,6 @@ mod tests {
             can_retry: false,
             can_cancel: false,
             usage: None,
-            notes: Vec::new(),
             pending_approvals: Vec::new(),
             pending_questions: Vec::new(),
             left,
@@ -850,7 +826,6 @@ mod tests {
             can_retry: false,
             can_cancel: false,
             usage,
-            notes: Vec::new(),
             pending_approvals: Vec::new(),
             pending_questions: Vec::new(),
             left: None,
@@ -947,7 +922,6 @@ mod tests {
             can_retry: false,
             can_cancel: false,
             usage: None,
-            notes: Vec::new(),
             pending_approvals: Vec::new(),
             pending_questions: Vec::new(),
             left: None,

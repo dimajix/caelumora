@@ -589,7 +589,9 @@ takes part in, not only this one, until it is restored.
 
 Below the participants, "Former participants" lists who took part and left, with history and private
 notes where `can_read_context`, so that what a removed agent did - the turn it gave up when removed
-included - can still be read. A "Notes" tab shows the notes the channel's agents published.
+included - can still be read. A "Notes" tab shows the notes the channel's agents published, fetched
+as the channel is opened, again whenever its stream begins anew, and on every change the global
+stream announces.
 
 ### What an agent saw
 

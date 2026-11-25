@@ -219,9 +219,8 @@ pub(super) async fn get_message(
     Ok(Json(channel.message(message_id).await?))
 }
 
-/// The notes every agent of the channel published (issue 17) - what a
-/// client reloads on the channel's `channel::AGENT_STATE_CHANGED` (issue
-/// 65).
+/// The notes every agent of the channel published (issue 17) - what a client reads as it opens the
+/// channel, and again on the channel's `channel::AGENT_STATE_CHANGED` (issue 65).
 pub(super) async fn get_notes(
     State(state): State<Arc<AppState>>,
     Path((session_id, channel_id)): Path<(SessionId, ChannelId)>,
@@ -362,7 +361,6 @@ impl ChannelFollower {
             .snapshot(
                 Detail::PARTICIPANTS
                     | Detail::USAGE
-                    | Detail::NOTES
                     | Detail::APPROVALS
                     | Detail::BRIEFING
                     | Detail::UNREAD

@@ -64,8 +64,8 @@ published in the channel.
     channel.
 *   **Read as the channel's.** Though each note is its author's, what is noted in a channel is read
     as the channel's, as a notice board is: whoever reads the channel reads the notes of its agents
-    (`ChannelView::notes`), nothing asked of the agents themselves. Clients get them per agent with
-    the channel's snapshot and read them again when the global stream announces a change (see
+    (`ChannelView::notes`), nothing asked of the agents themselves. Clients read them per agent over
+    REST as they open the channel, and again when the global stream announces a change (see
     [WEB-UI.md](WEB-UI.md#participants-moderator-and-notes)); `/channel notes` shows them (see
     [COMMANDS.md](COMMANDS.md)).
 *   **Taken along.** Only the agents taking part in a channel are read there: the notes of one that

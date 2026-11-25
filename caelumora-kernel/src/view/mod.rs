@@ -2372,9 +2372,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_snapshot_holds_the_details_asked_for_and_no_others() {
-        use caelumora_domain::ledger::Change;
-        use caelumora_domain::message::{Message, MessageId, TokenUsage};
-        use caelumora_domain::note::{NoteId, NoteOrigin};
+        use caelumora_domain::message::{Message, TokenUsage};
         use caelumora_domain::snapshot::ChannelParticipantSnapshot;
 
         let kernel = owned_kernel(Default::default());
@@ -2387,8 +2385,8 @@ mod tests {
         session.participants.push(Participant::Agent(helper.id));
         let mut channel = main_channel(&session);
         let session = stored(&kernel, session, slice::from_mut(&mut channel)).await;
-        // What the agent's call used, what it noted, and a call its turn
-        // waits to have approved.
+        // What the agent's call used, and a call its turn waits to have
+        // approved.
         let measures = CallMeasures {
             prompt_tokens: Some(1000),
             completion_tokens: Some(50),
@@ -2404,15 +2402,6 @@ mod tests {
         let mut state = waiting_for_approval(session.id, channel.id, helper.id, calls);
         state.thread_mut(ThreadId::line(channel.id)).used = TokenUsage::counted(None, &measures);
         state.transcript.push(ThreadId::default(), answer);
-        state.notes.push(
-            Change::Add {
-                id: NoteId(1),
-                text: "noted".to_string(),
-                classification: Classification::CHANNEL_DEFAULT,
-            },
-            NoteOrigin::default(),
-            MessageId::default(),
-        );
         kernel
             .state_store()
             .put_agent_channel_state(helper.id, channel.id, &mut state)
@@ -2430,24 +2419,22 @@ mod tests {
             context_tokens: 1050,
         };
         let details = |participant: &ChannelParticipantSnapshot| {
-            (participant.usage, participant.notes.len(), participant.pending_approvals.len())
+            (participant.usage, participant.pending_approvals.len())
         };
 
-        let all = main
-            .snapshot(Detail::PARTICIPANTS | Detail::USAGE | Detail::NOTES | Detail::APPROVALS)
-            .await;
+        let all = main.snapshot(Detail::PARTICIPANTS | Detail::USAGE | Detail::APPROVALS).await;
         let [user, agent] = all.participants.as_slice() else {
             panic!("two participants: {all:?}")
         };
-        assert_eq!(details(user), (None, 0, 0), "a user has none of them");
-        assert_eq!(details(agent), (Some(expected), 1, 1), "an agent's, from its state");
+        assert_eq!(details(user), (None, 0), "a user has none of them");
+        assert_eq!(details(agent), (Some(expected), 1), "an agent's, from its state");
         let alone = main
             .participant(ActorId::Agent(helper.id))
             .await
             .unwrap()
             .snapshot(Detail::USAGE)
             .await;
-        assert_eq!(details(&alone), (Some(expected), 0, 0), "only what was asked for");
+        assert_eq!(details(&alone), (Some(expected), 0), "only what was asked for");
         let usage = |actor| {
             let main = main.clone();
             async move { main.participant(actor).await.unwrap().usage().await }
@@ -2455,7 +2442,7 @@ mod tests {
         assert_eq!(usage(ActorId::Agent(helper.id)).await.unwrap(), Some(expected), "as carried");
         assert_eq!(usage(ActorId::User(alice.id)).await.unwrap(), None, "a user's is none");
         let plain = main.snapshot(Detail::PARTICIPANTS).await;
-        assert!(plain.participants.iter().all(|m| details(m) == (None, 0, 0)), "none asked for");
+        assert!(plain.participants.iter().all(|m| details(m) == (None, 0)), "none asked for");
         assert!(
             main.snapshot(Detail::USAGE).await.participants.is_empty(),
             "no participants to carry it"

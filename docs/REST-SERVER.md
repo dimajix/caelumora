@@ -408,8 +408,8 @@ Both streams accept `?snapshot=true` and then begin with a named `snapshot` even
 state they start from:
 
 *   for a channel - at the start, and again whenever it stops or starts -, its participants, the
-    last page of its line's history (issue 557) with `earlier` (older ones over REST, from there on)
-    and the notes its agents published; for a participant, also the approvals and questions its
+    last page of its line's history (issue 557) with `earlier` (older ones over REST from there on);
+    for a participant, also the approvals and questions its
     agents wait for, read from their stored turns, so that one asked before the client connected or
     before a restart is shown - a sensitive question only to whom it was asked -, each with the
     thread of the turn that waits (`thread_id`). The channel carries its open threads (`threads`:

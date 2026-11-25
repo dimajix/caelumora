@@ -421,8 +421,6 @@ export interface ChannelSnapshot {
   items: HistoryItem<Message>[];
   /** What to read the page before it with over REST (issue 218); `null` if there is none. */
   earlier: number | null;
-  /** The notes every agent of the channel published (issue 17). */
-  notes: PublishedNotes[];
   /**
    * The approvals the channel's agents wait for (issue 172): the stream tells only of requests made
    * while it listens.

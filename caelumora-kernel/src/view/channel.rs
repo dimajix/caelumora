@@ -12,7 +12,7 @@ use caelumora_api::error::AttachmentError;
 use caelumora_api::reader::{ViewError, ViewResult};
 use caelumora_api::terminal::ByteStream;
 use caelumora_domain::actor::{ActorDescription, ActorId, ActorState};
-use caelumora_domain::agent::{AgentChannelState, PersonalityKind};
+use caelumora_domain::agent::PersonalityKind;
 use caelumora_domain::approval::ApprovalRequest;
 use caelumora_domain::chain::Position;
 use caelumora_domain::channel::{Channel, ChannelId, Participant, ThreadId};
@@ -1041,7 +1041,7 @@ impl ParticipantView {
     pub async fn notes(&self) -> ViewResult<Option<PublishedNotes>> {
         let Some(agent) = self.state.agent() else { return Ok(None) };
         let state = agent.stored().await?;
-        let notes = self.notes_in(&state).await;
+        let notes = self.channel.released(state.notes.current());
         Ok(Some(PublishedNotes {
             agent: self.id(),
             name: self.name().map(Name::to_string).unwrap_or_default(),
@@ -1060,12 +1060,6 @@ impl ParticipantView {
     pub async fn usage(&self) -> ViewResult<Option<TokenUsage>> {
         let Some(agent) = self.state.agent() else { return Ok(None) };
         Ok(agent.stored().await?.used())
-    }
-
-    /// Of the notes the agent published, as its `state` holds them, those
-    /// the viewer may read.
-    async fn notes_in(&self, state: &AgentChannelState) -> Vec<Note> {
-        self.channel.released(state.notes.current())
     }
 
     /// The approvals the participant's turn waits for (issue 172), as stored;
@@ -1162,7 +1156,7 @@ impl ParticipantView {
     /// personality, its owner and a user's profile. What cannot be read is
     /// left out.
     pub async fn snapshot(&self, detail: Detail) -> ChannelParticipantSnapshot {
-        let mut wanted = detail & (Detail::USAGE | Detail::NOTES | Detail::APPROVALS);
+        let mut wanted = detail & (Detail::USAGE | Detail::APPROVALS);
         if self.former || !self.channel.shows_approvals() {
             wanted.remove(Detail::APPROVALS);
         }
@@ -1198,14 +1192,10 @@ impl ParticipantView {
         }
         let (personality, personality_kind) = personality.unzip();
         let mut usage = None;
-        let mut notes = Vec::new();
         let (mut pending_approvals, mut pending_questions) = (Vec::new(), Vec::new());
         if let Some(state) = &state {
             if wanted.contains(Detail::USAGE) {
                 usage = state.used();
-            }
-            if wanted.contains(Detail::NOTES) {
-                notes = self.notes_in(state).await;
             }
             if wanted.contains(Detail::APPROVALS) {
                 pending_approvals = state.pending_approvals();
@@ -1244,7 +1234,6 @@ impl ParticipantView {
             state: self.state(),
             commands: self.commands().await,
             usage,
-            notes,
             pending_approvals,
             pending_questions,
             left: self.left.clone(),

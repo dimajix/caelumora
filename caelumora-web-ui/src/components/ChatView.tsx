@@ -224,7 +224,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   // Changes whenever the stream starts again from a snapshot: the thread open is read anew.
   const [streamStarts, setStreamStarts] = useState(0);
   const [channel, setChannel] = useState<ChannelResponse | null>(null);
-  const [notes, setNotes] = useState<PublishedNotes[]>([]);
+  // The notes, with the channel they were fetched for: those of another channel are not shown under
+  // this one while its own are fetched.
+  const [notes, setNotes] = useState<{channelId: string; notes: PublishedNotes[]} | null>(null);
   const [sideTab, setSideTab] = useState<SideTab>('channel');
   // Changes whenever what the channel's messages carry may have changed (issue 509): a message
   // with attachments said, a message changed, taken back or reclassified, the channel reclassified,
@@ -389,17 +391,22 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     return () => { cancelled = true; stop(); };
   }, [channelId]);
 
-  // The notes follow the global stream: a changed state of an agent in this
-  // channel is announced without content, and the notes are fetched again
-  // (issue 65).
+  // The notes are fetched as the channel is opened, again whenever its stream begins anew -
+  // `streamStarts` counts its snapshots, which carry none (issue 607) -, and whenever the global
+  // stream announces a changed state of an agent in this channel, without content (issue 65).
   useEffect(() => {
-    return onGlobalEvent(event => {
-      if (changedChannel(event) !== channelId) return;
+    let cancelled = false;
+    const load = () => {
       api.getNotes(sessionId, channelId)
-        .then(setNotes)
+        .then(notes => { if (!cancelled) setNotes({channelId, notes}); })
         .catch(error => reportError('Failed to load the notes', error));
+    };
+    load();
+    const stop = onGlobalEvent(event => {
+      if (changedChannel(event) === channelId) load();
     });
-  }, [sessionId, channelId]);
+    return () => { cancelled = true; stop(); };
+  }, [sessionId, channelId, streamStarts]);
 
   // The participants follow the global stream as well: someone joined or left, and
   // the channel is fetched again (issue 46). Whoever was removed can no
@@ -588,7 +595,6 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
         setChannel(snapshot.channel);
         setUsage(Object.fromEntries(snapshot.channel.participants.flatMap(m => m.usage ? [[actorKey(m.id), m.usage]] : [])));
         countedCalls.current = new Set(snapshot.items.flatMap(item => 'said' in item && item.said.id ? [item.said.id] : []));
-        setNotes(snapshot.notes ?? []);
         setPendingApprovals(snapshot.pending_approvals ?? []);
         setPendingQuestions(snapshot.pending_questions ?? []);
         setAttachmentsVersion(v => v + 1);
@@ -1304,7 +1310,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
                 </button>
               ))}
             </div>
-            {sideTab === 'notes' ? <NotesList notes={notes} /> : sideTab === 'workspace' ? (
+            {sideTab === 'notes' ? <NotesList notes={notes?.channelId === channelId ? notes.notes : []} /> : sideTab === 'workspace' ? (
               <ChannelWorkspacePanel workspace={workspace} files={workspaceFiles} version={workspaceVersion} />
             ) : sideTab === 'attachments' ? (
               <ChannelAttachmentsPanel key={channelId} attachments={channelAttachments} version={attachmentsVersion} />

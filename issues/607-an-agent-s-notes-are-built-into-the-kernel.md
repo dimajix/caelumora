@@ -1,6 +1,6 @@
 # 607 — An agent's notes are built into the kernel, not brought as a system service
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** medium
 **Area:** Context and knowledge
@@ -284,6 +284,23 @@ the removed variants of `KnowledgeSource` - in practice every channel with an ag
    board on it. Besides, the document's own updates go to its owner, as every writer of a document
    announces. Recommended as described.
 
+### Decisions on the open questions
+
+Taken with the maintainer on 2026-11-25, as recommended:
+
+1. **What removes the notes with a channel:** `AgentMember` generalised to what is kept behind
+   something, for the agent and the channel alike - or, should the two not read alike, a
+   `ChannelMember` beside it; not a `ScopeMember`.
+2. **How the document is cut:** one per agent and channel.
+3. **How `/channel notes` reaches a session:** a component of the plugin's own, which the programs
+   add to their configured commands.
+4. **Who may reclassify:** the plugin asks `Reclassified::Note`, as the kernel asks it today; a
+   custom verb of the plugin's is a question of its own.
+5. **Who hears of a change:** a custom event of the channel's, `notes_changed`, in the place of
+   `channel::AGENT_STATE_CHANGED`.
+
+The interfaces are agreed as proposed above.
+
 ## Done when
 
 - The open questions are decided, the interfaces agreed.
@@ -300,3 +317,6 @@ the removed variants of `KnowledgeSource` - in practice every channel with an ag
 into a crate of their own, as a plugin and a library, before the notes of the channel are built
 beside them. The plan above, with its open questions, was worked out with an advisor and awaits the
 maintainer's decision.
+
+**2026-11-25** - The maintainer decided the open questions as recommended (*Decisions on the open
+questions*) and agreed the interfaces; work begun on the branch `issue-607-notes-crate`.

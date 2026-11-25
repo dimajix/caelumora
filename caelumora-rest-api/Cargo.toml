@@ -12,6 +12,7 @@ uuid = { workspace = true, features = ["v4", "serde"] }
 chrono = { workspace = true, features = ["serde"] }
 
 [dev-dependencies]
+caelumora-domain = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 
 [lints]

@@ -12,7 +12,7 @@
 //! is shown. A detail is taken where it is asked for and its part is
 //! there, and nothing else: `USAGE` without `PARTICIPANTS` gives no usage, since
 //! there are no participants to carry it. A list not asked for is empty. What
-//! a participant's details read - its usage, notes and pending approvals - comes
+//! a participant's details read - its usage and pending approvals - comes
 //! from its agent's state, read once for all of them; who it is
 //! (`PROFILE`) from its personality, its owner and a user's profile.
 
@@ -53,27 +53,25 @@ bitflags::bitflags! {
         const PARTICIPANTS = 1 << 1;
         /// Of a participant: what its model calls used (issue 209).
         const USAGE = 1 << 2;
-        /// Of a participant: the notes it published (issue 17).
-        const NOTES = 1 << 3;
         /// Of a participant: the approvals its turn waits for (issue 172), and the
         /// questions (issue 165).
-        const APPROVALS = 1 << 4;
+        const APPROVALS = 1 << 3;
         /// Of a participant: who it is - its introduction, and of an agent its
         /// personality and owner (issue 244).
-        const PROFILE = 1 << 5;
+        const PROFILE = 1 << 4;
         /// Of a session or channel: its briefing (issue 245), which may be
         /// long - not where they are listed.
-        const BRIEFING = 1 << 6;
+        const BRIEFING = 1 << 5;
         /// Of a channel: what is new in it to a viewing user (issue 404),
         /// which reads its history.
-        const UNREAD = 1 << 7;
+        const UNREAD = 1 << 6;
         /// Of a channel: its threads that are open, and of a participant where it takes part, its
         /// turns there and where it answers (issue 595), which reads the history of one that does
         /// not run.
-        const THREADS = 1 << 8;
+        const THREADS = 1 << 7;
         /// Of a channel: what waits in it for a viewing user (issue 594), read from their running
         /// actor.
-        const WAITING = 1 << 9;
+        const WAITING = 1 << 8;
     }
 }
 
@@ -300,10 +298,6 @@ pub struct ChannelParticipantSnapshot {
     /// no tokens (an external agent, a user), before its first call, and if
     /// the agent's state could not be read.
     pub usage: Option<TokenUsage>,
-    /// The notes an agent participant published in the channel (issue 17) - of
-    /// a channel read entry by entry, those released to where the viewer
-    /// reads from - with `Detail::NOTES`.
-    pub notes: Vec<Note>,
     /// The approvals an agent participant's turn waits for (issue 172), for a
     /// viewer who takes part in the channel as a user and reads all of it -
     /// with `Detail::APPROVALS`.
