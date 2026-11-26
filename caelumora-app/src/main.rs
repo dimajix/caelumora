@@ -18,7 +18,7 @@ use caelumora_artifacts::plugin::ArtifactsPlugin;
 use caelumora_compaction::library::CompactionLibrary;
 use caelumora_decision::plugin::DecisionPlugin;
 use caelumora_domain::config::AppConfig;
-use caelumora_kernel::kernel::KernelBuilder;
+use caelumora_kernel::kernel::{Kernel, KernelBuilder};
 use caelumora_kernel::plugin::Plugin;
 use caelumora_kernel::procedure::follower::SessionFollower;
 use caelumora_kernel::procedure::session;
@@ -75,6 +75,25 @@ struct Args {
     config: Option<PathBuf>,
 }
 
+/// The kernel of the program, built from `config` with its plugins - `rest_plugins`, whose routes
+/// it serves, among them - and its libraries, and seeded as `config` says.
+///
+/// # Errors
+/// As `KernelBuilder::from_config`, `library` and `build`, and `Kernel::seed`.
+async fn kernel_of(
+    config: &AppConfig,
+    rest_plugins: &[Box<dyn RestPlugin>],
+) -> Result<Arc<Kernel>> {
+    let plugins = plugins();
+    let mut builder = KernelBuilder::from_config(config, &all(rest_plugins, &plugins)).await?;
+    for library in libraries() {
+        builder.library(library.as_ref())?;
+    }
+    let kernel = builder.build()?;
+    kernel.seed(&config.seed).await?;
+    Ok(kernel)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -88,12 +107,7 @@ async fn main() -> Result<()> {
     init(&config.logging, LogTarget::Stderr, "info,tower_http=debug,axum::rejection=trace")?;
 
     let rest_plugins = rest_plugins();
-    let plugins = plugins();
-    let mut builder = KernelBuilder::from_config(&config, &all(&rest_plugins, &plugins)).await?;
-    for library in libraries() {
-        builder.library(library.as_ref())?;
-    }
-    let kernel = builder.build()?;
+    let kernel = kernel_of(&config, &rest_plugins).await?;
     // Whether the agents of the running sessions exist, and the delegations let go in them,
     // followed as long as the server runs.
     let _followed = SessionFollower::spawn(&kernel);
@@ -110,7 +124,6 @@ async fn main() -> Result<()> {
         controllers: Arc::clone(kernel.controller_manager()),
     });
 
-    kernel.seed(&config.seed).await?;
     // What was under way when the process last ended goes on (issue 388),
     // beside the requests rather than before them.
     tokio::spawn({
@@ -293,7 +306,6 @@ mod tests {
     use caelumora_kernel::backend::Backends;
     use caelumora_kernel::channel::ChannelLoop;
     use caelumora_kernel::component::BuildContext;
-    use caelumora_kernel::kernel::Kernel;
     use caelumora_kernel::seed::{self, Seed};
     use caelumora_kernel::terminal::TerminalProvider;
     use caelumora_model::plugin::{IMAGE, LANGUAGE, MODEL};
@@ -366,7 +378,7 @@ mod tests {
         }
         let models = [(MODEL.to_string(), models)].into();
         let AppConfig { compartments, roles, component_defaults, secrets, .. } = config;
-        kernel_of(
+        kernel_over(
             store,
             &AppConfig {
                 compartments,
@@ -382,7 +394,7 @@ mod tests {
 
     /// The kernel of the program, with its plugins and its libraries, over `store`, as `config`
     /// configures it.
-    fn kernel_of(store: &Persistence, config: &AppConfig) -> Arc<Kernel> {
+    fn kernel_over(store: &Persistence, config: &AppConfig) -> Arc<Kernel> {
         let config = &with_local_model(config.clone());
         let access_policy = Arc::new(AllowAllPolicy::new());
         let (rest_plugins, plugins) = (rest_plugins(), plugins());
@@ -460,7 +472,7 @@ mod tests {
             serde_json::from_value(config.plugins[MODEL][LANGUAGE].clone()).unwrap();
         let backends: Vec<&str> = models.values().map(|model| model.kind.as_str()).collect();
         assert_eq!(backends, [OLLAMA_BACKEND]);
-        kernel_of(&Persistence::in_memory(), &config);
+        kernel_over(&Persistence::in_memory(), &config);
     }
 
     #[tokio::test]
