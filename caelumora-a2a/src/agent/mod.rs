@@ -286,6 +286,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register(
         ComponentKind::new(A2A_AGENT_KIND)
             .params::<A2aAgentParams>()
+            .reaches()
             .provides::<dyn ExternalAgent>()
             .provides::<dyn ModelProfileProvider>()
             .uses::<PromptCatalogue>(),

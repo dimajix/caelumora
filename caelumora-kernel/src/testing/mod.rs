@@ -29,6 +29,7 @@ use crate::actor::user::ChannelWatch;
 use crate::agent::AgentError;
 use crate::backend::Backends;
 use crate::channel::ChannelLoop;
+use crate::component::testing::no_secrets;
 use crate::component::{ComponentRegistry, Origin};
 use crate::controller::WorkspaceController;
 use crate::error::refusal;
@@ -673,6 +674,29 @@ impl World {
         agents: &[AgentId],
         waiting: &[AgentId],
     ) -> Arc<SessionLoop> {
+        let id = self.make_session_of(others, agents, waiting).await.expect("the session is made");
+        self.kernel
+            .open_session(&Self::as_user(self.alice), id)
+            .await
+            .expect("alice opens her session")
+    }
+
+    /// As `shared_session`, made but not opened, or what making it reports - for a test of what
+    /// refuses a session.
+    ///
+    /// # Errors
+    /// What `Kernel::create_session` reports.
+    pub async fn try_shared_session(&self, agents: &[AgentId]) -> Result<SessionId> {
+        self.make_session_of(&[self.bob], agents, &[]).await
+    }
+
+    /// The session `session_of` makes, made by alice; its id.
+    async fn make_session_of(
+        &self,
+        others: &[UserId],
+        agents: &[AgentId],
+        waiting: &[AgentId],
+    ) -> Result<SessionId> {
         let alice = ActorId::User(self.alice);
         let users: Vec<Participant> =
             iter::once(self.alice).chain(others.iter().copied()).map(Participant::User).collect();
@@ -699,14 +723,8 @@ impl World {
         let session =
             Session { participants: in_session.clone(), channels: vec![channel.id], ..session };
         let id = session.id;
-        self.kernel
-            .create_session(&Self::as_user(self.alice), session, vec![channel])
-            .await
-            .expect("the session is made");
-        self.kernel
-            .open_session(&Self::as_user(self.alice), id)
-            .await
-            .expect("alice opens her session")
+        self.kernel.create_session(&Self::as_user(self.alice), session, vec![channel]).await?;
+        Ok(id)
     }
 
     /// The ids of the participants of `channel` as `user` sees them.
@@ -818,6 +836,7 @@ pub async fn shown(watch: &mut ChannelWatch, wanted: &str) -> ActorEvent {
 pub fn test_registry(store: &Persistence) -> ComponentRegistry {
     ComponentRegistry::built_in(
         EntityStores::open(store, &Policies::permitting_all()).unwrap().component_bundles,
+        no_secrets(),
     )
 }
 

@@ -747,11 +747,13 @@ mod tests {
     use caelumora_domain::project::ProjectId;
     use caelumora_domain::question::QuestionId;
     use caelumora_domain::scope::Scope;
+    use caelumora_domain::secret::SecretError;
     use caelumora_domain::session::SessionId;
     use caelumora_domain::store::Stored;
     use caelumora_domain::template::SessionTemplateId;
     use caelumora_domain::user::UserId;
     use caelumora_domain::value::name::Name;
+    use caelumora_domain::value::secret_ref::SecretRef;
     use caelumora_domain::work::TurnId;
     use caelumora_domain::workspace::WorkspaceId;
     use serde::Deserialize;
@@ -1169,6 +1171,22 @@ mod tests {
         )));
         assert_eq!((failed.status.as_u16(), failed.code.as_ref()), (500, "internal_error"));
         assert!(!failed.detail.contains("/srv"), "{}", failed.detail);
+    }
+
+    /// Issue 310: a session whose founding agent is refused a credential, as its components are
+    /// built in its owner's name, is refused the request - found through the component that wraps
+    /// it, as anywhere in the chain.
+    #[test]
+    fn a_credential_refused_as_a_component_is_built_is_a_refusal() {
+        let secret = SecretRef::new("withheld/TOKEN").unwrap();
+        let refused = SecretError::PermissionDenied { secret, refused: refused("secret") };
+        let built = ComponentError::Build {
+            component: "remote".to_string(),
+            kind: "a2a_agent".to_string(),
+            cause: Box::new(ComponentError::Secret(refused)),
+        };
+        let failed = SessionError::Failed(Error::new(built));
+        assert_eq!(answer(failed), (403, "secret_forbidden".to_string()));
     }
 
     #[test]

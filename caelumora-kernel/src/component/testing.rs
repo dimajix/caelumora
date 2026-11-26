@@ -15,6 +15,7 @@ use caelumora_api::component::{ComponentError, ComponentResult, Params};
 use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
 use caelumora_domain::type_map::TypeKey;
+use caelumora_security::secret::SecretManager;
 use caelumora_security::{AccessPolicy, AllowAllPolicy, Policies, SecurityContext};
 use caelumora_store::{EntityStores, Persistence};
 use serde::Deserialize;
@@ -24,6 +25,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 pub trait Marker: Debug + Send + Sync {}
+
+/// The secrets of a registry a test builds components with: none, every one unknown, as a
+/// component that reaches no remote side needs (`ComponentRegistry::new`).
+pub fn no_secrets() -> Arc<SecretManager> {
+    Arc::new(SecretManager::without_vaults(Arc::new(AllowAllPolicy::new())))
+}
 
 /// What the tests' containers are asked for, as the owner of one asks.
 pub const ASKED: &[TypeKey] =
@@ -133,6 +140,7 @@ pub fn choices() -> (ComponentRegistry, Arc<AtomicUsize>) {
         EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
             .unwrap()
             .component_bundles,
+        no_secrets(),
     );
     let built = Arc::new(AtomicUsize::new(0));
     let counted = Arc::clone(&built);

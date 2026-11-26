@@ -110,6 +110,7 @@ pub(super) fn register(registry: &mut LibraryComponents<'_>) {
         writing_for_the_model(
             ComponentKind::new(WEB_SEARCH_KIND)
                 .params::<WebSearchParams>()
+                .reaches()
                 .provides::<dyn ToolProvider>(),
         ),
         |descriptor, context| async move {

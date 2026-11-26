@@ -15,6 +15,7 @@ use caelumora_domain::component::{ComponentBundle, ComponentConfig, ComponentDes
 use caelumora_domain::scope::Scope;
 use caelumora_domain::type_map::TypeKey;
 use caelumora_domain::value::name::{Name, ScopedName};
+use caelumora_security::secret::SecretManager;
 use caelumora_security::SecurityContext;
 use caelumora_store::EntityStore;
 use futures::future::BoxFuture;
@@ -118,6 +119,8 @@ pub struct ComponentRegistry {
     /// by the single they provide.
     defaults: HashMap<TypeId, ComponentDescriptor>,
     bundles: Arc<dyn EntityStore<ComponentBundle>>,
+    /// What the credentials of the components that reach a remote side are asked of (issue 310).
+    secrets: Arc<SecretManager>,
 }
 
 impl Debug for ComponentRegistry {
@@ -130,9 +133,13 @@ impl Debug for ComponentRegistry {
 }
 
 impl ComponentRegistry {
-    /// A registry without kinds, resolving the bundles a `ref` names in
-    /// `bundles`.
-    pub fn new(bundles: Arc<dyn EntityStore<ComponentBundle>>) -> Self {
+    /// A registry without kinds, resolving the bundles a `ref` names in `bundles`, and asking
+    /// whether the credentials of the components that reach a remote side may be used of
+    /// `secrets`.
+    pub fn new(
+        bundles: Arc<dyn EntityStore<ComponentBundle>>,
+        secrets: Arc<SecretManager>,
+    ) -> Self {
         Self {
             kinds: HashMap::new(),
             singles: HashMap::new(),
@@ -140,6 +147,7 @@ impl ComponentRegistry {
             registered_twice: None,
             defaults: HashMap::new(),
             bundles,
+            secrets,
         }
     }
 
@@ -149,8 +157,11 @@ impl ComponentRegistry {
     /// (`caelumora_agents::library::AgentsLibrary`, issue 370), those of other libraries and
     /// plugins theirs. A binary passes it to the `KernelBuilder` as it is; a test may register
     /// kinds of its own, such as a stand-in for the model.
-    pub fn built_in(bundles: Arc<dyn EntityStore<ComponentBundle>>) -> Self {
-        let mut registry = Self::new(bundles);
+    pub fn built_in(
+        bundles: Arc<dyn EntityStore<ComponentBundle>>,
+        secrets: Arc<SecretManager>,
+    ) -> Self {
+        let mut registry = Self::new(bundles, secrets);
         command::register_all(&mut registry);
         moderator::register_all(&mut registry);
         registry
@@ -476,7 +487,8 @@ impl ComponentRegistry {
     /// `context`: for whoever writes a configuration in a request, before
     /// the verb (issue 337), and builds it in someone else's name - the
     /// components of a channel, built in its owner's (issue 321) -, so that
-    /// they name only what they may read themselves. Nothing is built.
+    /// they name only what they may read themselves, and only credentials
+    /// they may use (issue 310). Nothing is built.
     ///
     /// # Errors
     /// As `ComponentContainer::from_config` before it builds anything: `ComponentError::Bundle`,
@@ -484,7 +496,8 @@ impl ComponentRegistry {
     /// `ComponentError::DuplicateId`, `ComponentError::UnsupportedKind`,
     /// `ComponentError::InvalidConfig` for two components of a single, one nobody asks for, or one
     /// whose params its kind does not take or finds wrong - wrapped with it, and with the `ref`
-    /// that brings it -;
+    /// that brings it -; `ComponentError::Secret`, wrapped so, for one whose credential `context`
+    /// may not use or not send to its endpoint, or whose vault is not configured;
     pub async fn require_acceptable(
         &self,
         config: &ComponentConfig,
@@ -492,7 +505,8 @@ impl ComponentRegistry {
         context: &SecurityContext,
     ) -> ComponentResult<()> {
         let planned = self.plan(config, &HashMap::new(), context).await?;
-        self.require_buildable(&planned, &HashMap::new(), asked)
+        self.require_buildable(&planned, &HashMap::new(), asked)?;
+        self.require_usable(&planned, context).await
     }
 
     /// The components of `config`, its `ref`s resolved in the name `context` and those that build
@@ -595,6 +609,37 @@ impl ComponentRegistry {
                 None => Err(ComponentError::UnsupportedKind(descriptor.kind.clone())),
             };
             checked.map_err(|cause| component.wrapped(cause))?;
+        }
+        Ok(())
+    }
+
+    /// Whether the credential of every component of `planned` whose kind reaches a remote side
+    /// (`ComponentKind::reaches`) may be used in the name `context` and sent there (issue 310):
+    /// for whoever writes a configuration, before the verb, and for its owner as it is built. The
+    /// default of a single, built as it is first asked for and not planned, is asked only as its
+    /// credential is read - only the operator configures one.
+    ///
+    /// # Errors
+    /// `ComponentError::Secret` for the first whose credential may not, or whose vault is not
+    /// configured; `ComponentError::InvalidConfig` for one that names no endpoint - each wrapped
+    /// with the component and the `ref` that brings it (`Planned::wrapped`).
+    pub(super) async fn require_usable(
+        &self,
+        planned: &[Planned],
+        context: &SecurityContext,
+    ) -> ComponentResult<()> {
+        let secrets = self.secrets.for_context(context.clone());
+        for component in planned {
+            let descriptor = &component.descriptor;
+            // A kind that is not registered was refused before (`require_params`).
+            let Some(registration) = self.kinds.get(&descriptor.kind) else { continue };
+            let checked = async {
+                match registration.kind.endpoint_of(&descriptor.params)? {
+                    Some(endpoint) => Ok(endpoint.require_usable(&secrets).await?),
+                    None => Ok(()),
+                }
+            };
+            checked.await.map_err(|cause: ComponentError| component.wrapped(cause))?;
         }
         Ok(())
     }
@@ -825,19 +870,26 @@ impl ComponentRegistry {
 mod tests {
     use super::*;
     use crate::component::testing::*;
+    use crate::component::BuildContext;
     use async_trait::async_trait;
     use caelumora_api::component::ComponentContainer;
     use caelumora_api::component::Params;
+    use caelumora_api::component::Services;
     use caelumora_domain::actor::ActorId;
+    use caelumora_domain::channel::ChannelId;
     use caelumora_domain::component::{ComponentBundle, ComponentBundleId, ComponentFailPolicy};
     use caelumora_domain::query::{Page, Query};
+    use caelumora_domain::remote::RemoteEndpoint;
     use caelumora_domain::removal::{Removal, RemovalId};
     use caelumora_domain::scope::ScopeField;
+    use caelumora_domain::secret::SecretError;
     use caelumora_domain::security::SecurityAttributes;
+    use caelumora_domain::session::SessionId;
     use caelumora_domain::store::{StoreError, StoreResult};
     use caelumora_domain::user::UserId;
-    use caelumora_security::Policies;
+    use caelumora_security::{OwnershipPolicy, Policies};
     use caelumora_store::{Deleted, EntityStores, Persistence};
+    use serde::Deserialize;
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -882,7 +934,7 @@ mod tests {
         let counted = Arc::clone(&build_count);
 
         let store = store_with(&[("shared-marker", &[("marker", "counter")])]).await;
-        let mut registry = ComponentRegistry::new(store);
+        let mut registry = ComponentRegistry::new(store, no_secrets());
         registry.register(
             ComponentKind::new("counter").provides::<dyn Marker>(),
             move |_node, _context| {
@@ -912,7 +964,7 @@ mod tests {
     /// A registry of the kind `named`, whose components are named by their
     /// id, resolving references in `store`.
     fn named_registry(store: Arc<dyn EntityStore<ComponentBundle>>) -> Arc<ComponentRegistry> {
-        let mut registry = ComponentRegistry::new(store);
+        let mut registry = ComponentRegistry::new(store, no_secrets());
         registry.register(ComponentKind::new("named").provides::<dyn Named>(), |node, _| {
             Ok(named(&node.id))
         });
@@ -1278,6 +1330,7 @@ mod tests {
             EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
                 .unwrap()
                 .component_bundles,
+            no_secrets(),
         );
         let built = Arc::new(AtomicUsize::new(0));
         let counted = Arc::clone(&built);
@@ -1340,7 +1393,7 @@ mod tests {
         assert_eq!(built.load(Ordering::SeqCst), 0, "nothing is built");
 
         let store = store_with(&[("shared", &[("tracker", "stray")])]).await;
-        let mut through_ref = ComponentRegistry::new(store);
+        let mut through_ref = ComponentRegistry::new(store, no_secrets());
         through_ref.register(ComponentKind::new("stray").provides::<dyn Other>(), |_, _| {
             unreachable!("refused before it is built")
         });
@@ -1664,5 +1717,84 @@ mod tests {
             "The component kind 'part' is registered by the kernel and again by the library late",
             "{refused}"
         );
+    }
+
+    /// What a kind that reaches a remote side is configured with: where it reaches it, which only
+    /// the registry reads here.
+    #[derive(Deserialize)]
+    struct Reaching {
+        #[expect(dead_code, reason = "read by the registry (`ComponentKind::endpoint_of`)")]
+        endpoint: RemoteEndpoint,
+    }
+
+    impl Params for Reaching {}
+
+    /// Issue 310: whoever writes a configuration, and the owner it is built for, may use the
+    /// credential of each component that reaches a remote side and send it there - asked before
+    /// anything is built, without reading it.
+    #[tokio::test]
+    async fn a_credential_that_may_not_be_used_or_sent_there_is_refused_before_anything_is_built() {
+        let secrets = Arc::new(SecretManager::of_test_vaults(Arc::new(OwnershipPolicy::new())));
+        let mut registry = ComponentRegistry::new(store_with(&[]).await, secrets);
+        let built = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&built);
+        registry.register(
+            ComponentKind::new("reaching").params::<Reaching>().reaches().provides::<dyn Marker>(),
+            move |_, _| {
+                counted.fetch_add(1, Ordering::SeqCst);
+                let mut facets = ComponentFacets::empty();
+                facets.insert::<dyn Marker>(Arc::new(MarkerImpl));
+                Ok(facets)
+            },
+        );
+        let registry = Arc::new(registry);
+        let reaching = |url: &str, secret: &str| {
+            let auth = json!({ "type": "bearer", "secret": secret });
+            let params = json!({ "endpoint": { "url": url, "auth": auth } });
+            ComponentConfig { component_nodes: vec![descriptor("remote", "reaching", params)] }
+        };
+        let alice = SecurityContext::new(
+            ActorId::User(UserId::new()),
+            SessionId::default(),
+            ChannelId::default(),
+        );
+        let refused = |result: ComponentResult<()>| match result {
+            Ok(()) => None,
+            Err(ComponentError::Build { cause, .. }) => match *cause {
+                ComponentError::Secret(SecretError::PermissionDenied { .. }) => Some("not hers"),
+                ComponentError::Secret(SecretError::NotSentTo { .. }) => Some("not sent there"),
+                ComponentError::Secret(SecretError::UnknownVault(_)) => Some("no such vault"),
+                other => panic!("refused otherwise: {other}"),
+            },
+            Err(other) => panic!("refused otherwise: {other}"),
+        };
+        let written = |config: ComponentConfig, context: SecurityContext| {
+            let registry = Arc::clone(&registry);
+            async move { refused(registry.require_acceptable(&config, ASKED, &context).await) }
+        };
+        let remote = "https://remote.example/a2a";
+        assert_eq!(written(reaching(remote, "test/TOKEN"), alice.clone()).await, None);
+        assert_eq!(
+            written(reaching(remote, "withheld/TOKEN"), alice.clone()).await,
+            Some("not hers")
+        );
+        assert_eq!(
+            written(reaching(remote, "bound/TOKEN"), alice.clone()).await,
+            Some("not sent there")
+        );
+        let bound = "https://bound.example/a2a";
+        assert_eq!(written(reaching(bound, "bound/TOKEN"), alice.clone()).await, None);
+        assert_eq!(
+            written(reaching(remote, "nope/TOKEN"), alice.clone()).await,
+            Some("no such vault")
+        );
+        let system = SecurityContext::system();
+        assert_eq!(written(reaching(remote, "withheld/TOKEN"), system).await, None, "the system's");
+
+        let context = BuildContext::new(alice, Services::empty());
+        let withheld = reaching(remote, "withheld/TOKEN");
+        let building = registry.build(&withheld, ASKED, &context).await.map(drop);
+        assert_eq!(refused(building), Some("not hers"), "in the owner's name, as it is built");
+        assert_eq!(built.load(Ordering::SeqCst), 0, "nothing built");
     }
 }

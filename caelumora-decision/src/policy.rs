@@ -431,7 +431,7 @@ mod tests {
     use caelumora_domain::value::name::Name;
     use caelumora_domain::value::text::Introduction;
     use caelumora_kernel::channel::ChannelLoop;
-    use caelumora_kernel::component::testing::{built, descriptor};
+    use caelumora_kernel::component::testing::{built, descriptor, no_secrets};
     use caelumora_kernel::testing::TestKernel;
     use caelumora_model::plugin::ModelPlugin;
     use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
@@ -879,6 +879,7 @@ mod tests {
             EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
                 .unwrap()
                 .component_bundles,
+            no_secrets(),
         );
         register(&mut registry);
         let config = ComponentConfig {

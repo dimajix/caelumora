@@ -53,6 +53,7 @@ mod tests {
             EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
                 .unwrap()
                 .component_bundles,
+            no_secrets(),
         );
         registry.register(ComponentKind::new("part").provides::<dyn Named>(), |descriptor, _| {
             Ok(named(&descriptor.id))
@@ -106,6 +107,7 @@ mod tests {
             EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
                 .unwrap()
                 .component_bundles,
+            no_secrets(),
         );
         registry.register(
             ComponentKind::new("seeing").provides::<dyn Named>().uses::<dyn AccessPolicy>(),
@@ -144,6 +146,7 @@ mod tests {
             EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
                 .unwrap()
                 .component_bundles,
+            no_secrets(),
         );
         registry.register_async(
             ComponentKind::new("greedy").provides::<dyn Named>(),

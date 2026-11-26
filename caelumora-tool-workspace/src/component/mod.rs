@@ -166,6 +166,7 @@ mod tests {
     use caelumora_agents::testing::with_agent_kinds;
     use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_domain::type_map::TypeKey;
+    use caelumora_kernel::component::testing::no_secrets;
     use caelumora_kernel::component::BuildContext;
     use caelumora_kernel::component::ComponentRegistry;
     use caelumora_kernel::workspace::testing::session_with_workspace;
@@ -181,6 +182,7 @@ mod tests {
             EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
                 .unwrap()
                 .component_bundles,
+            no_secrets(),
         );
         // The agents' kinds, with a model whose profile names the variant.
         with_agent_kinds(&mut registry);

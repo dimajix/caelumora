@@ -86,6 +86,21 @@ impl RemoteEndpoint {
         self.refresh_secs.map_or(default, Duration::from_secs)
     }
 
+    /// Whether the credential `auth` names may be used, in the name `secrets` are bound to, and
+    /// sent to its URL - asked of a configuration that names it, where it is written and where it
+    /// is built (issue 310), without reading it; anything without authentication may.
+    ///
+    /// # Errors
+    /// Whatever asking it reports.
+    pub async fn require_usable(&self, secrets: &dyn Secrets) -> SecretResult<()> {
+        match &self.auth {
+            None => Ok(()),
+            Some(RemoteAuthConfig::Bearer { secret }) => {
+                secrets.require_usable(secret, &self.url).await
+            }
+        }
+    }
+
     /// The bearer token `auth` names, resolved of `secrets`, in the name they are bound to, to be
     /// sent to `sent_to` - the URL of the request it goes with, which its vault's origins have to
     /// hold (issue 310) -; `None` without authentication. A secret is resolved on every use, never

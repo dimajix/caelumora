@@ -477,7 +477,8 @@ async fn a_server_gone_leaves_the_tools_discovered_before() {
 
 /// Issue 126: the tools are discovered in the name of whoever acts, as a
 /// call is made (`ComponentContext` keeps no security context for later):
-/// nothing is read while the agent is built, and its credential is read
+/// nothing is read while the agent is built - only whether its owner may
+/// use its credential is asked (issue 310) -, and its credential is read
 /// for alice's agent, asked by bob, as its turn begins.
 #[tokio::test]
 async fn the_tools_are_discovered_in_the_name_of_whoever_acts() {
@@ -499,9 +500,11 @@ async fn the_tools_are_discovered_in_the_name_of_whoever_acts() {
     let helper = world.agent("helper", world.alice, &working).await;
 
     let (session, asked) = world.asked(world.shared_session(&[helper], &[])).await;
-    assert!(
-        !asked.iter().any(|line| line.contains("UseSecret")),
-        "nothing read while built: {asked:?}"
+    let used: Vec<&String> = asked.iter().filter(|line| line.contains("UseSecret")).collect();
+    assert_eq!(
+        used,
+        ["alice as helper: UseSecret(system's) yes"],
+        "while built, only asked whether alice may use it (issue 310), nothing read: {asked:?}"
     );
 
     let main = Arc::clone(&session.channels()[0]);

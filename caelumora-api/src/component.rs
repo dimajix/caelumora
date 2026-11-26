@@ -10,6 +10,8 @@ use crate::error::describe_chain;
 use async_trait::async_trait;
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
 use caelumora_domain::prompt_catalogue::PromptError;
+use caelumora_domain::remote::RemoteEndpoint;
+use caelumora_domain::secret::SecretError;
 use caelumora_domain::store::StoreError;
 use caelumora_domain::type_map::{TypeKey, TypeMap};
 use futures::future::BoxFuture;
@@ -35,6 +37,10 @@ pub enum ComponentError {
     Cycle { component: String, facet: String, other: String },
     #[error("invalid configuration: {0}")]
     InvalidConfig(String),
+    /// A secret a component names could not be had (issue 310): its credential may not be used, or
+    /// not be sent there, in the name it is written or built in, or its vault is not configured.
+    #[error("{0}")]
+    Secret(#[from] SecretError),
     /// A text the component gives its model cannot be had from the prompt
     /// catalogue (issue 57) - a fault of the texts or of the component.
     #[error("{0}")]
@@ -53,17 +59,31 @@ pub enum ComponentError {
     /// the reader's, it keeps an agent from being run, as its personality's would
     /// (`ComponentError::is_unavailable`).
     #[error("component bundle '{name}' cannot be read: {cause}")]
-    Bundle { name: String, cause: StoreError },
+    Bundle {
+        name: String,
+        #[source]
+        cause: StoreError,
+    },
     /// A component of a graph could not be built. Wraps whatever went wrong
     /// with the component's id and kind, so that the message names the
     /// offending component on its own (issue 02).
     #[error("component '{component}' ({kind}) cannot be built: {cause}")]
-    Build { component: String, kind: String, cause: Box<ComponentError> },
+    Build {
+        component: String,
+        kind: String,
+        #[source]
+        cause: Box<ComponentError>,
+    },
     /// A backend of a service could not be made (issue 324): `backend`
     /// names it - "the storage of workspaces 'main'" -, `kind` is its
     /// type, as `Build` names a component.
     #[error("{backend} ({kind}) cannot be made: {cause}")]
-    Backend { backend: String, kind: String, cause: Box<ComponentError> },
+    Backend {
+        backend: String,
+        kind: String,
+        #[source]
+        cause: Box<ComponentError>,
+    },
 }
 
 impl ComponentError {
@@ -242,9 +262,10 @@ pub type ComponentFacets = TypeMap;
 pub type Services = TypeMap;
 
 /// A component kind as it is registered: its name, the parameters it takes, the facets it provides,
-/// the services it uses, the facets of others it needs and the extensions it reads and writes by -
-/// which is how a component's params are checked, components that provide a facet are found, what a
-/// container accepts is known, and a kernel that lacks an extension is refused, before anything is
+/// the services it uses, the facets of others it needs, the extensions it reads and writes by and
+/// whether it reaches a remote side - which is how a component's params are checked, components
+/// that provide a facet are found, what a container accepts is known, a kernel that lacks an
+/// extension is refused and a credential that may not be used is refused, before anything is
 /// built. The container checks that the factory kept to it.
 #[derive(Debug, Clone)]
 pub struct ComponentKind {
@@ -254,7 +275,18 @@ pub struct ComponentKind {
     uses: Vec<TypeKey>,
     needs: Vec<TypeKey>,
     extensions: Vec<(Face, TypeKey)>,
+    /// Whether its components reach a remote side, named in `params.endpoint` (`reaches`).
+    reaches: bool,
 }
+
+/// What a component of a kind that reaches a remote side names it by (`ComponentKind::reaches`,
+/// issue 310): its parameter `endpoint`. Its other parameters are its kind's own.
+#[derive(Deserialize)]
+struct Reached {
+    endpoint: RemoteEndpoint,
+}
+
+impl Params for Reached {}
 
 /// How the params of a component of a kind are checked: read as the configuration the kind
 /// declared (`ComponentKind::params`), which checks its values (`Params::check`).
@@ -300,6 +332,19 @@ impl ComponentKind {
         &self.extensions
     }
 
+    /// The remote side a component of it reaches, read of its `params`: their `endpoint` where it
+    /// declares it reaches one (`reaches`), `None` where it does not.
+    ///
+    /// # Errors
+    /// `ComponentError::InvalidConfig`, naming the parameter, if it reaches one and `params` name
+    /// none.
+    pub fn endpoint_of(&self, params: &Value) -> ComponentResult<Option<RemoteEndpoint>> {
+        match self.reaches {
+            true => Reached::read(params).map(|reached| Some(reached.endpoint)),
+            false => Ok(None),
+        }
+    }
+
     pub fn new(name: &str) -> Self {
         Self {
             name: name.to_string(),
@@ -308,6 +353,7 @@ impl ComponentKind {
             uses: Vec::new(),
             needs: Vec::new(),
             extensions: Vec::new(),
+            reaches: false,
         }
     }
 
@@ -353,6 +399,15 @@ impl ComponentKind {
     /// serve (`KernelBuilder::extend_writers`), as `reads` declares a reader.
     pub fn writes<T: ?Sized + 'static>(mut self) -> Self {
         self.extensions.push((Face::Writer, TypeKey::of::<T>()));
+        self
+    }
+
+    /// Declares that components of this kind reach a remote side, named in their parameter
+    /// `endpoint` (a `RemoteEndpoint`, issue 310): its credential is asked whether it may be used
+    /// and sent there where a configuration is written, in the writer's name, and where it is
+    /// built, in its owner's (`endpoint_of`).
+    pub fn reaches(mut self) -> Self {
+        self.reaches = true;
         self
     }
 }

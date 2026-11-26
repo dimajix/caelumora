@@ -127,6 +127,7 @@ pub(crate) fn register(registry: &mut LibraryComponents<'_>) {
         writing_for_the_model(
             ComponentKind::new(MCP_SERVER_KIND)
                 .params::<McpServerParams>()
+                .reaches()
                 .provides::<dyn ToolProvider>(),
         ),
         |descriptor, context| async move {

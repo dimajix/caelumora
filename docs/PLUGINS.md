@@ -274,7 +274,8 @@ plugin or a library depends on:
     `Situation` (`secrets`), or handed to an `ExternalAgent` with every call (issue 516). A
     credential is read for the URL of the request it goes with, which its vault's origins have to
     hold (issue 310) - where that is not the endpoint's, as an A2A agent's card may name another,
-    for that URL.
+    for that URL -; and its kind declares that it reaches its `endpoint` (`ComponentKind::reaches`),
+    so that the credential is asked where its configuration is written and built.
 *   **The domain's types** of what it handles: `ToolDescription`, `RemoteEndpoint`,
     `Classification`, ...
 

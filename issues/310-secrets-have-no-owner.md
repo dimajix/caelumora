@@ -1,6 +1,6 @@
 # 310 — Any secret can be named by whoever writes a component
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** high
 **Area:** Identity and access management
@@ -286,3 +286,27 @@ rules out of the backends. To be aligned in an issue of its own, not here.
   test kernel has a third vault, `bound`, granted to everyone and sent to `https://bound.example`
   alone, and the agents' suite shows an agent's credential granted in its owner's name and refused
   for where its remote agent is reached.
+- **2026-11-26** — Step 4 done, and with it the issue: `ComponentKind::reaches` declares that a
+  kind's components reach the `RemoteEndpoint` in their parameter `endpoint`, which the registry
+  reads through `ComponentKind::endpoint_of`, a fixed method of the declaration, no hook of the
+  kind; `mcp_server`, `a2a_agent` and `web_search` declare it. The `ComponentRegistry` holds the
+  `SecretManager` and asks `require_usable` of each planned component whose kind reaches - in
+  `require_acceptable`, in the writer's name, and in `build_with_defaults`, in its owner's - after
+  `require_buildable`, `ref`s resolved: of the vault the reference names alone, its fallbacks asked
+  as it is read; a refusal is a `ComponentError::Secret`, wrapped with the component
+  (`ComponentError::Build`). `RemoteEndpoint::require_usable` and `Secrets::require_usable` ask it
+  without reading. The vaults are made by `Backends::make_vaults`, which the program's test builds
+  its kernel's with too, so that the seed is built with the example's vaults. The registry's tests
+  refuse a credential not granted, not sent there or of no vault, in the writer's and the owner's
+  name; the agents' suite shows an agent not built with a credential its owner may not use, by a
+  stand-in kind that reaches (`remote_reaching`), beside the one that declares nothing and is asked
+  as it reads. No kind of the program is written by users yet, so the check where a configuration is
+  written is shown by the registry's tests, not through a route.
+- **2026-11-26** — Decided with the maintainer on the review of step 4: a credential refused as an
+  agent is built is a refusal to the REST server (`403 secret_forbidden`), not a server error - the
+  causes of `ComponentError::Build`, `Backend` and `Bundle` are their `#[source]`, so that the
+  `Refused` is found through the components that wrap it, as REST-SERVER.md says; a REST test holds
+  it. The default of a single, built as it is first asked for, is asked only as its credential is
+  read, which the documents say. The check where a configuration is written is held by the
+  registry's tests until a route lets users write a component that reaches. Writing and building
+  ask the vault the reference names alone; its fallbacks are asked as it is read.

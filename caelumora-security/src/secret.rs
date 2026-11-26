@@ -136,17 +136,7 @@ impl SecretManager {
     ) -> SecretResult<String> {
         let mut name = secret.vault();
         loop {
-            // Only the vault named can be missing: every fallback is configured (`new`).
-            let vault =
-                self.vaults.get(name).ok_or_else(|| SecretError::UnknownVault(secret.clone()))?;
-            let using = ActionType::custom(SecretRef::KIND, &USE, &vault.attributes);
-            self.access_policy
-                .require(context, using, |refused| SecretError::PermissionDenied {
-                    secret: secret.clone(),
-                    refused,
-                })
-                .await?;
-            vault.require_sent_to(secret, sent_to)?;
+            let vault = self.usable(context, name, secret, sent_to).await?;
             if let Some(value) = vault.provider.get_secret(secret.key()).await? {
                 return Ok(value);
             }
@@ -156,6 +146,49 @@ impl SecretManager {
                 None => return Err(SecretError::NotFound(secret.clone())),
             }
         }
+    }
+
+    /// Whether `secret` may be used in the name of `context` and sent to `sent_to`, the URL of a
+    /// request, as resolving it asks of its vault - before any backend is asked, so that it is
+    /// decided by the configuration alone: for a configuration that names it, where it is written
+    /// and where it is built (issue 310). Its fallbacks are asked as it is resolved.
+    ///
+    /// # Errors
+    /// As `resolve`, but for what a backend answers: `PermissionDenied`, `NotSentTo`,
+    /// `UnknownVault`.
+    pub async fn require_usable(
+        &self,
+        context: &SecurityContext,
+        secret: &SecretRef,
+        sent_to: &str,
+    ) -> SecretResult<()> {
+        self.usable(context, secret.vault(), secret, Some(sent_to)).await.map(drop)
+    }
+
+    /// The vault `name`, which `secret` is to be read of, once the policy let `context` use it
+    /// (`USE`) and its origins hold `sent_to`'s.
+    ///
+    /// # Errors
+    /// `UnknownVault` if it is not configured, `PermissionDenied`, `NotSentTo`.
+    async fn usable(
+        &self,
+        context: &SecurityContext,
+        name: &str,
+        secret: &SecretRef,
+        sent_to: Option<&str>,
+    ) -> SecretResult<&Vault> {
+        // Only the vault named can be missing: every fallback is configured (`new`).
+        let vault =
+            self.vaults.get(name).ok_or_else(|| SecretError::UnknownVault(secret.clone()))?;
+        let using = ActionType::custom(SecretRef::KIND, &USE, &vault.attributes);
+        self.access_policy
+            .require(context, using, |refused| SecretError::PermissionDenied {
+                secret: secret.clone(),
+                refused,
+            })
+            .await?;
+        vault.require_sent_to(secret, sent_to)?;
+        Ok(vault)
     }
 }
 
@@ -245,6 +278,10 @@ pub struct SecretsFor {
 impl Secrets for SecretsFor {
     async fn resolve(&self, secret: &SecretRef, sent_to: &str) -> SecretResult<String> {
         self.manager.resolve(&self.context, secret, Some(sent_to)).await
+    }
+
+    async fn require_usable(&self, secret: &SecretRef, sent_to: &str) -> SecretResult<()> {
+        self.manager.require_usable(&self.context, secret, sent_to).await
     }
 }
 
@@ -512,6 +549,32 @@ mod tests {
         assert_eq!(token.as_deref(), Some("api's"));
         let refused = endpoint.bearer_token(&secrets, "https://elsewhere.example/v1").await;
         assert!(matches!(refused, Err(SecretError::NotSentTo { .. })), "{refused:?}");
+    }
+
+    #[tokio::test]
+    async fn whether_a_secret_may_be_used_is_asked_of_its_vault_alone_without_its_backend() {
+        let carol = user();
+        let manager = SecretManager::new(
+            [
+                granted("broken", Arc::new(FailingSecretProvider), &[carol], None),
+                granted("team", holding(&[]), &[carol], Some("ops")),
+                vault("ops", holding(&[("KEY", "ops'")]), None),
+            ]
+            .into_iter()
+            .collect(),
+            Arc::new(OwnershipPolicy::new()),
+        )
+        .unwrap();
+        let usable = |text: &str| {
+            let manager = &manager;
+            let secret = secret(text);
+            async move { manager.require_usable(&context(carol), &secret, "https://x.example").await }
+        };
+        assert!(usable("broken/KEY").await.is_ok(), "its backend is not asked");
+        assert!(usable("team/KEY").await.is_ok(), "nor its fallback");
+        let read = manager.resolve(&context(carol), &secret("team/KEY"), None).await;
+        assert!(matches!(read, Err(SecretError::PermissionDenied { .. })), "which reading asks");
+        assert!(matches!(usable("ops/KEY").await, Err(SecretError::PermissionDenied { .. })));
     }
 
     #[tokio::test]

@@ -818,7 +818,10 @@ program's environment (`environment: inherit`, for a program of one person, see
 [WORKSPACE.md](WORKSPACE.md#storages)) reads it without asking, what the backend `env` reads among
 it. A component of a library holds no `SecretManager`: it is handed the secrets that may be read in
 the name of the work it serves (`Secrets`, bound by the kernel, `ActorRuntime::secrets`, issue 516),
-and each read is checked in that name. Naming a secret is not yet checked where a component is
-written ([310](../issues/310-secrets-have-no-owner.md)): until then, only the seed and the
-configuration - whoever runs the server - may write personalities and components that name secrets;
-nothing may let users write them.
+and each read is checked in that name. What resolving asks of the vault a reference names is asked
+three times: where a configuration that names it is written, in the writer's name, before the verb;
+where it is built, in its owner's; and at every use, in the name of whoever acts
+(`SecretManager::require_usable`, issue [310](../issues/310-secrets-have-no-owner.md)) - the first
+two of a component whose kind declares the remote side it reaches (`ComponentKind::reaches`), so
+that whoever writes a component that names a secret may use it themselves, and an agent whose
+owner may not is not built.

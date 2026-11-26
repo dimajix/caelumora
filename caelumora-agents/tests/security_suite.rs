@@ -57,6 +57,7 @@ use caelumora_domain::group::GroupId;
 use caelumora_domain::message::{Message, MessageEvent};
 use caelumora_domain::query::Query;
 use caelumora_domain::question::{Addressee, Answers, QuestionId, QuestionRequest, Questions};
+use caelumora_domain::remote::{RemoteAuthConfig, RemoteEndpoint};
 use caelumora_domain::removal::Removal;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::secret::{SecretError, Secrets};
@@ -2766,11 +2767,13 @@ struct RemoteAtWork {
     calls: Arc<Mutex<Vec<&'static str>>>,
     declared: Option<Classification>,
     gate: Option<Arc<Semaphore>>,
-    secret: SecretRef,
+    /// Where it is reached, with the credential it reads there.
+    endpoint: RemoteEndpoint,
 }
 
 /// What a `remote_at_work` is configured with: the secret it reads as its credential, unless given
-/// `test/TOKEN`, of the vault granted to everyone.
+/// `test/TOKEN`, of the vault granted to everyone. Its kind declares no remote side
+/// (`ComponentKind::reaches`), so that its credential is asked as it is read alone.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RemoteAtWorkParams {
@@ -2786,16 +2789,27 @@ impl RemoteAtWorkParams {
 
 impl Params for RemoteAtWorkParams {}
 
-/// Where a `RemoteAtWork` sends its credential: where it is reached.
+/// What a `remote_reaching` is configured with: where it is reached, with its credential there.
+/// Its kind declares that it reaches a remote side, so that its credential is asked as it is
+/// written and built as well (issue 310).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RemoteReachingParams {
+    endpoint: RemoteEndpoint,
+}
+
+impl Params for RemoteReachingParams {}
+
+/// Where a `remote_at_work` is reached.
 const REMOTE_AT_WORK: &str = "https://remote.example/a2a";
 
 impl RemoteAtWork {
-    /// Records `call`, made with `secrets`, reading its secret as a credential is read, to be sent
-    /// where it is reached: whether the vault has it does not matter, in whose name it is used
-    /// does (issues 310, 516) - and where it may go, so that a credential refused for that is
+    /// Records `call`, made with `secrets`, reading its credential as a credential is read, to be
+    /// sent where it is reached: whether the vault has it does not matter, in whose name it is
+    /// used does (issues 310, 516) - and where it may go, so that a credential refused for that is
     /// recorded before the call.
     async fn called(&self, call: &'static str, secrets: &dyn Secrets) {
-        let read = secrets.resolve(&self.secret, REMOTE_AT_WORK).await;
+        let read = self.endpoint.bearer_token(secrets, &self.endpoint.url).await;
         let mut calls = self.calls.lock().unwrap();
         if matches!(read, Err(SecretError::NotSentTo { .. })) {
             calls.push("its credential not sent there");
@@ -2871,6 +2885,20 @@ async fn with_remote(
     gate: Option<Arc<Semaphore>>,
 ) -> World {
     let calls = Arc::clone(calls);
+    // The facets of a `RemoteAtWork` reached at `endpoint`.
+    let remote = move |endpoint: RemoteEndpoint| {
+        let mut facets = ComponentFacets::empty();
+        let remote = Arc::new(RemoteAtWork {
+            calls: Arc::clone(&calls),
+            declared: declared.clone(),
+            gate: gate.clone(),
+            endpoint,
+        });
+        facets.insert::<dyn ExternalAgent>(Arc::<RemoteAtWork>::clone(&remote));
+        facets.insert::<dyn ModelProfileProvider>(remote);
+        facets
+    };
+    let reaching = remote.clone();
     World::with(&[], &[&AgentsLibrary], |registry| {
         registry.register(
             ComponentKind::new("remote_at_work")
@@ -2878,18 +2906,21 @@ async fn with_remote(
                 .provides::<dyn ExternalAgent>()
                 .provides::<dyn ModelProfileProvider>(),
             move |descriptor, _| {
-                let mut facets = ComponentFacets::empty();
-                let remote = Arc::new(RemoteAtWork {
-                    calls: Arc::clone(&calls),
-                    declared: declared.clone(),
-                    gate: gate.clone(),
-                    secret: RemoteAtWorkParams::read(&descriptor.params)?.secret,
-                });
-                facets.insert::<dyn ExternalAgent>(Arc::<RemoteAtWork>::clone(&remote));
-                facets.insert::<dyn ModelProfileProvider>(remote);
-                Ok(facets)
+                let secret = RemoteAtWorkParams::read(&descriptor.params)?.secret;
+                let auth = Some(RemoteAuthConfig::Bearer { secret });
+                Ok(remote(RemoteEndpoint { auth, ..RemoteEndpoint::new(REMOTE_AT_WORK) }))
             },
-        )
+        );
+        registry.register(
+            ComponentKind::new("remote_reaching")
+                .params::<RemoteReachingParams>()
+                .reaches()
+                .provides::<dyn ExternalAgent>()
+                .provides::<dyn ModelProfileProvider>(),
+            move |descriptor, _| {
+                Ok(reaching(RemoteReachingParams::read(&descriptor.params)?.endpoint))
+            },
+        );
     })
     .await
 }
@@ -2977,6 +3008,32 @@ async fn an_agents_credential_is_not_sent_where_its_vault_does_not_let_it_go() {
         "granted in her name"
     );
     assert_eq!(calls.lock().unwrap().as_slice(), ["its credential not sent there", "send"]);
+}
+
+/// Issue 310: an agent is not built with a component whose credential its owner may not use:
+/// hermes, alice's, reaches its remote agent with a secret of a vault granted to nobody - asked in
+/// her name as it is built, refused, so that the session it is to found is not made, and its
+/// remote agent never called.
+#[tokio::test]
+async fn an_agent_is_not_built_with_a_credential_its_owner_may_not_use() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let world = with_remote_at_work(&calls, None).await;
+    let mut remote = remote_personality(&world).await;
+    let auth = serde_json::json!({ "type": "bearer", "secret": "withheld/TOKEN" });
+    let endpoint = serde_json::json!({ "url": REMOTE_AT_WORK, "auth": auth });
+    remote.components.component_nodes = vec![ComponentDescriptor {
+        params: serde_json::json!({ "endpoint": endpoint }),
+        ..ComponentDescriptor::new("remote", "remote_reaching")
+    }];
+    world.kernel.entity_stores().personalities.update(&World::system(), &mut remote).await.unwrap();
+    let hermes = world.agent("hermes", world.alice, &remote).await;
+
+    let (made, asked) = world.asked(world.try_shared_session(&[hermes])).await;
+    let refused = made.expect_err("not made").to_string();
+    assert!(refused.contains("access denied for secret: withheld/TOKEN"), "{refused}");
+    let used: Vec<&String> = asked.iter().filter(|line| line.contains("UseSecret")).collect();
+    assert_eq!(used, ["alice as hermes: UseSecret(system's) no"], "refused in her name, as built");
+    assert!(calls.lock().unwrap().is_empty(), "its remote agent never called");
 }
 
 /// Waits until `calls` holds `count` calls.

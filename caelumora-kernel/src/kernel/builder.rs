@@ -49,7 +49,7 @@ use caelumora_domain::store::{StoreResult, Stored};
 use caelumora_domain::turn::StagedChange;
 use caelumora_domain::type_map::{ErasedArc, TypeKey};
 use caelumora_security::confidentiality::ConfidentialityPolicy;
-use caelumora_security::secret::{SecretManager, SecretProvider, Vault};
+use caelumora_security::secret::SecretManager;
 use caelumora_security::{AccessPolicy, Policies};
 use caelumora_store::memberships::StoreMemberships;
 use caelumora_store::places::StorePlaces;
@@ -295,8 +295,10 @@ impl KernelBuilder {
         // The kernel's texts, before any plugin adds its own.
         let mut prompts = PromptCatalogue::new();
         prompts.add(KERNEL, KERNEL_PROMPTS)?;
-        let component_registry =
-            ComponentRegistry::built_in(Arc::clone(&entity_stores.component_bundles));
+        let component_registry = ComponentRegistry::built_in(
+            Arc::clone(&entity_stores.component_bundles),
+            Arc::clone(&secret_manager),
+        );
         let extensions = Self::kernel_extensions(persistence.places())?;
         Ok(Self {
             persistence,
@@ -376,21 +378,7 @@ impl KernelBuilder {
         let secret_services = Services::empty()
             .with(Arc::clone(&access_policy))
             .with(Arc::clone(policies.confidentiality()));
-        let vaults = config
-            .secrets
-            .vaults
-            .iter()
-            .map(|(name, vault)| {
-                let what = format!("vault of secrets '{name}'");
-                let provider = backends.make_one::<dyn SecretProvider>(
-                    &what,
-                    name.as_str(),
-                    &vault.backend,
-                    &secret_services,
-                )?;
-                Ok((name.clone(), Vault::new(provider, vault)))
-            })
-            .collect::<ComponentResult<_>>()?;
+        let vaults = backends.make_vaults(&config.secrets, &secret_services)?;
         let secret_manager = Arc::new(
             SecretManager::new(vaults, Arc::clone(&access_policy))
                 .context("Cannot make the vaults of secrets")?,

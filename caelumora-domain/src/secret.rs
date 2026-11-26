@@ -46,4 +46,11 @@ pub trait Secrets: Send + Sync {
     /// # Errors
     /// As `SecretManager::resolve`.
     async fn resolve(&self, secret: &SecretRef, sent_to: &str) -> SecretResult<String>;
+
+    /// Whether `secret` may be used and sent to `sent_to`, as resolving it asks of its vault, but
+    /// without reading it: for a configuration that names it (issue 310).
+    ///
+    /// # Errors
+    /// As `SecretManager::require_usable`.
+    async fn require_usable(&self, secret: &SecretRef, sent_to: &str) -> SecretResult<()>;
 }

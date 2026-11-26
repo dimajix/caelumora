@@ -246,8 +246,10 @@ impl ComponentRegistry {
     /// components they stand for do - wrapped with the `ref` that brings the second -;
     /// `ComponentError::InvalidConfig` if two provide a facet of which there is one, or - wrapped
     /// with its entry - one provides no facet of the closure or has params its kind does not take
-    /// or finds wrong, refused before anything is built; whatever resolving a `ref` or building a
-    /// component reports, wrapped with its id and kind.
+    /// or finds wrong, refused before anything is built; `ComponentError::Secret`, wrapped so, for
+    /// one whose credential its owner may not use or not send to its endpoint, or whose vault is
+    /// not configured (issue 310), refused before anything is built; whatever resolving a `ref` or
+    /// building a component reports, wrapped with its id and kind.
     pub async fn build(
         self: &Arc<Self>,
         config: &ComponentConfig,
@@ -279,6 +281,9 @@ impl ComponentRegistry {
         // finds wrong (issue 515), and what nobody asks for, which would read
         // its owner's secrets for nothing (issue 337).
         self.require_buildable(&planned, &own_defaults, asked)?;
+        // Credentials its owner may not use, or not send where they go, are refused before
+        // anything reads them (issue 310).
+        self.require_usable(&planned, &context.acting.context()).await?;
         let graph = Arc::new(Graph {
             registry: Arc::clone(self),
             context: context.clone(),
@@ -355,6 +360,7 @@ mod tests {
             EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
                 .unwrap()
                 .component_bundles,
+            no_secrets(),
         );
         registry.register_async(
             ComponentKind::new("chicken").provides::<dyn Named>().needs::<dyn Other>(),
@@ -392,6 +398,7 @@ mod tests {
             EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
                 .unwrap()
                 .component_bundles,
+            no_secrets(),
         );
         registry.register(ComponentKind::new("liar").provides::<dyn Named>(), |_, _| {
             Ok(ComponentFacets::empty())
@@ -496,6 +503,7 @@ mod tests {
             EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
                 .unwrap()
                 .component_bundles,
+            no_secrets(),
         );
         let built = Arc::new(AtomicUsize::new(0));
         let counted = Arc::clone(&built);

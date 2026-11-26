@@ -150,6 +150,13 @@ Components are wired the way Spring Boot wires beans.
     [PLUGINS.md](PLUGINS.md#what-a-system-service-offers-an-agents-work)). A kernel in which a
     declared one is bound by no plugin is not built; unlike `uses` and `needs`, it refuses nothing
     to a component that did not declare it.
+*   **A kind declares that it reaches a remote side** (`ComponentKind::reaches`), named in its
+    parameter `endpoint` ([Remote endpoints](#remote-endpoints)): the registry reads it itself
+    (`ComponentKind::endpoint_of`), not through a hook of the kind, and asks whether its credential
+    may be used and sent there - where a configuration is written, in the writer's name, and where
+    it is built, in its owner's (issue 310). A kind that reaches one and does not declare it is
+    asked as its credential is read alone, and so is the default of a single, which is built as
+    it is first asked for and only the operator configures.
 *   **A component asks for what it needs, by type** (`context.all::<dyn PromptProvider>()`, or
     `one`). This builds the components that provide the facet on demand, recursively, and returns
     every *other* one in the order of the configuration.
@@ -491,11 +498,13 @@ to grant them its use and let it be sent to the endpoint's origin (see
 without it, the component says. So does it for `refresh_secs`: how long what it reads of its remote
 side - an MCP server's tools, an A2A agent's card - is kept before it is read again. That is read
 when it is first needed, in the name of whoever needs it, never while the component is built, and a
-read that fails is not kept (`ExpiringCache`, issue 126). An unknown field is refused, and so is a
-`url` that is no `http` or `https` URL, as the `params` are read and without naming it. In messages
-the endpoint is shown without credentials, query or fragment. A component that reaches paths below
-the endpoint's URL builds them with `RemoteEndpoint::url_of` - each segment encoded as one, the
-query kept -, never as text.
+read that fails is not kept (`ExpiringCache`, issue 126). A kind whose components reach their
+endpoint declares it (`ComponentKind::reaches`), so that whether its credential may be used and sent
+there is asked before anything is built, where the configuration is written and where it is built,
+without reading it. An unknown field is refused, and so is a `url` that is no `http` or `https` URL,
+as the `params` are read and without naming it. In messages the endpoint is shown without
+credentials, query or fragment. A component that reaches paths below the endpoint's URL builds them
+with `RemoteEndpoint::url_of` - each segment encoded as one, the query kept -, never as text.
 
 ### The components
 

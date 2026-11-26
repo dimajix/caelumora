@@ -347,8 +347,9 @@ mod tests {
     /// The kernel of the program, with its plugins and libraries, over `store`, with the policy of
     /// the example configuration, which knows the roles the example seed names, its models and its
     /// component defaults, on which the example seed's models build (issue 445), its variants of
-    /// the texts, which they are given (issue 57), and the workflows its image models run (issues
-    /// 512, 525) - read from where the program runs, the root of the sources.
+    /// the texts, which they are given (issue 57), the workflows its image models run (issues
+    /// 512, 525) - read from where the program runs, the root of the sources -, and its vaults of
+    /// secrets, which the seed's components name (issue 310).
     fn kernel(store: &Persistence) -> Arc<Kernel> {
         let config = AppConfig::load(example("config.yaml")).unwrap();
         let root = root();
@@ -362,7 +363,7 @@ mod tests {
             model["workflow"] = json!(workflow);
         }
         let models = [(MODEL.to_string(), models)].into();
-        let AppConfig { compartments, roles, component_defaults, .. } = config;
+        let AppConfig { compartments, roles, component_defaults, secrets, .. } = config;
         kernel_of(
             store,
             &AppConfig {
@@ -371,6 +372,7 @@ mod tests {
                 component_defaults,
                 prompts,
                 plugins: models,
+                secrets,
                 ..AppConfig::default()
             },
         )
@@ -381,13 +383,16 @@ mod tests {
     fn kernel_of(store: &Persistence, config: &AppConfig) -> Arc<Kernel> {
         let config = &with_local_model(config.clone());
         let access_policy = Arc::new(AllowAllPolicy::new());
-        let secrets =
-            Arc::new(SecretManager::without_vaults(Arc::<AllowAllPolicy>::clone(&access_policy)));
         let (rest_plugins, plugins) = (rest_plugins(), plugins());
         let plugins = all(&rest_plugins, &plugins);
+        // The vaults it configures, which the components of the seed name (issue 310).
+        let vaults = Backends::with_plugins(&plugins)
+            .make_vaults(&config.secrets, &Services::empty())
+            .unwrap();
+        let secrets = SecretManager::new(vaults, Arc::<AllowAllPolicy>::clone(&access_policy));
         let mut builder = KernelBuilder::new(
             store.clone(),
-            secrets,
+            Arc::new(secrets.unwrap()),
             Policies::new(access_policy, Arc::new(ConfidentialityRules::configured(config))),
             config,
             Backends::with_plugins(&plugins),

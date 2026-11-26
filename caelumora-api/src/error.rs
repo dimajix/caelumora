@@ -15,6 +15,7 @@ use crate::terminal::TerminalError;
 use crate::workspace::WorkspaceError;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::content::ContentId;
+use caelumora_domain::secret::SecretError;
 use caelumora_domain::store::StoreError;
 use caelumora_domain::template::TemplateError;
 use caelumora_domain::value::ValueError;
@@ -143,11 +144,13 @@ fn content_message(error: &ContentError) -> Option<String> {
 }
 
 /// Component errors name the component, the bundle and what was written - except where a bundle
-/// was looked for in a store that failed (issue 457), whose failure is judged as store errors are:
-/// then none of it is shown, the components that wrap it included.
+/// was looked for in a store that failed (issue 457), whose failure is judged as store errors are,
+/// and where a backend of the secrets failed, which may write what it read, paths included: then
+/// none of it is shown, the components that wrap it included.
 pub fn component_message(error: &ComponentError) -> Option<String> {
     match error {
         ComponentError::Bundle { cause, .. } => store_message(cause).map(|_| error.to_string()),
+        ComponentError::Secret(SecretError::Backend(_)) => None,
         ComponentError::Build { cause, .. } | ComponentError::Backend { cause, .. } => {
             component_message(cause).map(|_| error.to_string())
         }

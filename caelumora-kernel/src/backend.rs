@@ -23,8 +23,10 @@ use crate::{content, secret, terminal, user_provider};
 use caelumora_api::component::Services;
 use caelumora_api::component::{ComponentError, ComponentResult, NoParams, Params};
 use caelumora_api::error::StorageGone;
-use caelumora_domain::config::BackendConfig;
+use caelumora_domain::config::{BackendConfig, SecretsConfig};
 use caelumora_domain::type_map::TypeKey;
+use caelumora_domain::value::identifier::Identifier;
+use caelumora_security::secret::Vault;
 use caelumora_store::memory::MemoryStore;
 use caelumora_store::PersistenceBackend;
 use serde_json::Value;
@@ -217,6 +219,27 @@ impl Backends {
             .collect()
     }
 
+    /// The vaults of secrets `config` names (issue 310), each over the backend of its type
+    /// (`dyn SecretProvider`), with what the configuration gives it beside the backend.
+    ///
+    /// # Errors
+    /// `ComponentError::Backend` naming the first whose backend cannot be made.
+    pub fn make_vaults(
+        &self,
+        config: &SecretsConfig,
+        services: &Services,
+    ) -> ComponentResult<BTreeMap<Identifier, Vault>> {
+        config
+            .vaults
+            .iter()
+            .map(|(name, vault)| {
+                let what = format!("the vault of secrets '{name}'");
+                let provider = self.make(&what, name.as_str(), &vault.backend, services)?;
+                Ok((name.clone(), Vault::new(provider, vault)))
+            })
+            .collect()
+    }
+
     /// The one backend of `T` that `config` names, configured as `name`;
     /// `what` names it in messages - "entity store".
     ///
@@ -276,7 +299,7 @@ mod tests {
     use caelumora_domain::value::identifier::Identifier;
     use caelumora_domain::value::secret_ref::SecretRef;
     use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
-    use caelumora_security::secret::{SecretManager, SecretProvider, Vault};
+    use caelumora_security::secret::SecretManager;
     use caelumora_security::{AllowAllPolicy, Policies, SecurityContext};
     use caelumora_store::{EntityStores, Persistence};
     use serde::Deserialize;
@@ -462,19 +485,17 @@ mod tests {
         let file = dir.path().join("secrets.json");
         fs::write(&file, r#"{"CAELUMORA_TEST_BACKEND_FILE": "from-file"}"#).unwrap();
         env::set_var("CAELUMORA_TEST_BACKEND_ENV", "from-env");
-        let vault = |name: &str, backend: BackendConfig| {
-            let provider = Backends::built_in()
-                .make_one::<dyn SecretProvider>("vault", name, &backend, &Services::empty())
-                .unwrap();
-            (Identifier::new(name).unwrap(), Vault::new(provider, &VaultConfig::new(backend)))
+        let config = SecretsConfig {
+            vaults: [
+                ("file", BackendConfig::new("file", json!({ "path": file }))),
+                ("env", BackendConfig::new("env", json!(null))),
+            ]
+            .into_iter()
+            .map(|(name, backend)| (Identifier::new(name).unwrap(), VaultConfig::new(backend)))
+            .collect(),
         };
-        let vaults = [
-            vault("file", BackendConfig::new("file", json!({ "path": file }))),
-            vault("env", BackendConfig::new("env", json!(null))),
-        ];
-        let secrets =
-            SecretManager::new(vaults.into_iter().collect(), Arc::new(AllowAllPolicy::new()))
-                .unwrap();
+        let vaults = Backends::built_in().make_vaults(&config, &Services::empty()).unwrap();
+        let secrets = SecretManager::new(vaults, Arc::new(AllowAllPolicy::new())).unwrap();
         let read = |text: &str| {
             let secret = SecretRef::new(text).unwrap();
             let secrets = &secrets;
@@ -484,13 +505,11 @@ mod tests {
         assert_eq!(read("file/CAELUMORA_TEST_BACKEND_FILE").await, "from-file");
         assert_eq!(read("env/CAELUMORA_TEST_BACKEND_ENV").await, "from-env");
         env::remove_var("CAELUMORA_TEST_BACKEND_ENV");
-        let misspelt = Backends::built_in().make_one::<dyn SecretProvider>(
-            "vault",
-            "env",
-            &BackendConfig::new("env", json!({ "prefix": "X" })),
-            &Services::empty(),
-        );
-        assert!(misspelt.is_err(), "env takes no parameters");
+        let env = VaultConfig::new(BackendConfig::new("env", json!({ "prefix": "X" })));
+        let misspelt = SecretsConfig { vaults: [(Identifier::new("env").unwrap(), env)].into() };
+        let refused = Backends::built_in().make_vaults(&misspelt, &Services::empty());
+        let message = refused.map(drop).unwrap_err().to_string();
+        assert!(message.contains("the vault of secrets 'env' (env)"), "named: {message}");
     }
 
     #[tokio::test]
