@@ -49,7 +49,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 |---|---|---|---|---|
 | [208](208-generated-artifacts.md) | open | high | feature | The images and resources of an MCP tool's result and the file parts of an external agent's answer are dropped; only their text is kept, and an MCP result without text is put into the context as JSON, base64 and all. |
 | [298](298-pick-users-and-roles-to-share-with.md) | open | medium | feature | The web UI shares a workspace or an artifact only with the members of a session or channel, not with a user or a role by name, since the REST API lists neither. |
-| [609](609-the-terminal-s-assistant-starts-no-sub-agent.md) | open | medium | feature | The personality `assistant` that `caelumora-tui` writes on its first start has no component `subagents`, and no personality to start a sub-agent of is written beside it, so the terminal's assistant cannot hand a task to a sub-agent, nor can its owner start one by `/subagent`, though the program joins the plugin and the library of `caelumora-subagents`. |
 | [611](611-the-terminal-cannot-cancel-a-turn.md) | open | medium | feature | The terminal has no way to end the turn an agent is in: the kernel can cancel a channel, a thread or one participant, and the web UI does so over REST, but no command or key of `caelumora-tui` reaches it, so a turn that hangs or goes astray can only be ended by taking the agent out of the channel. |
 
 ## Context and knowledge

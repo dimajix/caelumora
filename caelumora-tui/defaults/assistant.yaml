@@ -57,3 +57,9 @@ components:
 - id: artifacts
   kind: artifacts
   fail_policy: FailClosed
+- id: subagents
+  kind: subagents
+  params:
+    personalities:
+    - helper
+  fail_policy: FailClosed

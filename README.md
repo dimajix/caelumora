@@ -75,10 +75,13 @@ The TUI is a program of one person, called `caelumora`, in the directory it is s
 554). Without a configuration it keeps what the person writes in `~/.config/caelumora` - skills,
 personalities, bundles and templates, each a file by its name - and what it writes itself in
 `~/.local/share/caelumora`, a directory per session; the directories of XDG move them. On the first
-start it writes there a template `default` and the personality of its assistant. The directory it
-was started in is the workspace of its session, and its commands run there with the person's own
-environment; every session of one directory lies in that directory's project. It acts for the user
-of the system, or for the one `--user <name>` names, and starts a session from the template
+start it writes there a template `default`, the personality of its assistant and that of the
+helpers the assistant hands a task to as sub-agents (`helper`). It never writes them again, so
+personalities written before get neither the helper nor the assistant's component `subagents`:
+`caelumora-tui/defaults` holds the files, to be compared by hand. The directory it was started in
+is the workspace of its session, and its commands run there with the person's own environment;
+every session of one directory lies in that directory's project. It acts for the user of the
+system, or for the one `--user <name>` names, and starts a session from the template
 `default`, or from the one `--template <name>` names. `--sessions` lists the sessions of the
 directory, the one spoken in last first - one nobody spoke in by when it was started -; `--continue`
 continues that one instead of starting a session, or starts one if there is none, and
