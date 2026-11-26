@@ -14,6 +14,7 @@ pub use call::{
 use crate::confidentiality::{Classification, Visibility};
 use crate::intern::intern;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::Value;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -60,7 +61,8 @@ pub enum ArgumentLanguage {
 /// The parameters of a tool: built as a schema - which there are, of which
 /// type, which are required -, and described apart from it (issue 57):
 /// one by one (`described`), or all of them by their paths, from where the
-/// texts of a tool are kept (`describe`).
+/// texts of a tool are kept (`describe`); or read, descriptions included,
+/// of a JSON Schema a remote side gives (`from_json_schema`).
 impl ToolParameters {
     pub fn string() -> Self {
         Self::String { description: None, language: None }
@@ -95,6 +97,57 @@ impl ToolParameters {
         Self::Object {
             properties: properties.into_iter().map(|(k, v)| (k.into(), v)).collect(),
             required: required.into_iter().map(|s| s.into()).collect(),
+        }
+    }
+
+    /// The parameters `schema` describes - a JSON Schema, as MCP and OpenAPI write a tool's input
+    /// (issue 252) -, as well as they can be: an object by its properties and what of them is
+    /// required, a string, a number or an integer, an array and a boolean by their `type`, each
+    /// but the object with its `description`; the values of an `enum` are dropped. A schema that
+    /// is no object, or has no `type` among these - `oneOf`, a `type` given as a list -, becomes a
+    /// string with its own description, or else one described as unrecognized, since
+    /// `ToolParameters` models no more of JSON Schema.
+    pub fn from_json_schema(schema: &Value) -> Self {
+        let Some(obj) = schema.as_object() else {
+            return Self::string().described("Unrecognized parameter schema");
+        };
+
+        let description = obj.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+        match obj.get("type").and_then(|v| v.as_str()) {
+            Some("object") => {
+                let properties = obj
+                    .get("properties")
+                    .and_then(|v| v.as_object())
+                    .map(|props| {
+                        props.iter().map(|(k, v)| (k.clone(), Self::from_json_schema(v))).collect()
+                    })
+                    .unwrap_or_default();
+                let required = obj
+                    .get("required")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
+                    })
+                    .unwrap_or_default();
+                Self::Object { properties, required }
+            }
+            Some("array") => {
+                let items = obj
+                    .get("items")
+                    .map(Self::from_json_schema)
+                    .unwrap_or_else(|| Self::string().described("Array item"));
+                Self::Array { items: Box::new(items), description }
+            }
+            Some("string") => Self::String { description, language: None },
+            Some("number") | Some("integer") => Self::Number { description },
+            Some("boolean") => Self::Boolean { description },
+            _ => Self::String {
+                description: Some(
+                    description.unwrap_or_else(|| "Unrecognized parameter schema".to_string()),
+                ),
+                language: None,
+            },
         }
     }
 
@@ -388,6 +441,7 @@ pub mod testing {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn every_parameter_is_described_by_its_path() {
@@ -483,5 +537,38 @@ mod tests {
             }
             _ => panic!("Expected Object"),
         }
+    }
+
+    #[test]
+    fn schema_conversion_recognizes_basic_types() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "description": "Search query" },
+                "limit": { "type": "number" },
+                "verbose": { "type": "boolean" },
+                "tags": { "type": "array", "items": { "type": "string" } }
+            },
+            "required": ["query"]
+        });
+
+        let params = ToolParameters::from_json_schema(&schema);
+        match params {
+            ToolParameters::Object { properties, required } => {
+                assert_eq!(required, vec!["query".to_string()]);
+                assert!(matches!(properties.get("query"), Some(ToolParameters::String { .. })));
+                assert!(matches!(properties.get("limit"), Some(ToolParameters::Number { .. })));
+                assert!(matches!(properties.get("verbose"), Some(ToolParameters::Boolean { .. })));
+                assert!(matches!(properties.get("tags"), Some(ToolParameters::Array { .. })));
+            }
+            _ => panic!("Expected Object"),
+        }
+    }
+
+    #[test]
+    fn schema_conversion_falls_back_to_string_for_unrecognized_schema() {
+        let schema = json!({ "oneOf": [{ "type": "string" }, { "type": "number" }] });
+        let params = ToolParameters::from_json_schema(&schema);
+        assert!(matches!(params, ToolParameters::String { .. }));
     }
 }

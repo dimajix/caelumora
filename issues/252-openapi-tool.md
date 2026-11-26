@@ -1,6 +1,6 @@
 # 252 — Tool servers described by OpenAPI cannot be reached
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** low
 **Area:** Tools and approvals
@@ -300,3 +300,6 @@ Agreed with the maintainer on 2026-11-26.
   the operations it names are offered -, and an operation may set its own `requires_approval`
   over the component's (*Decisions taken*). The same override per tool for `mcp_server` is noted
   for later.
+- **2026-11-26** — Step 1 done: the conversion of a JSON Schema into `ToolParameters` is
+  `ToolParameters::from_json_schema` in `caelumora-domain`, moved from `caelumora-tool-mcp`
+  (`schema_to_tool_parameters`) with its tests, without a change of behaviour.

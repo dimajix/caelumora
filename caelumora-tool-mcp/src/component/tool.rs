@@ -147,7 +147,7 @@ async fn discover_tools(
             let tool = ToolDescription {
                 name: format!("{}{}{}", descriptor_id, NAME_SEPARATOR, t.name),
                 description,
-                parameters: schema_to_tool_parameters(&schema),
+                parameters: ToolParameters::from_json_schema(&schema),
                 requires_approval: params
                     .requires_approval
                     .required(read_only(t.annotations.as_ref())),
@@ -159,53 +159,6 @@ async fn discover_tools(
         })
         .collect();
     Ok(Discovered { tools, instructions })
-}
-
-/// Best-effort conversion of a JSON-Schema fragment (as used by MCP tool
-/// `input_schema`s) into `ToolParameters`. Recognizes object/string/number/
-/// array/boolean structurally; anything else (enums, oneOf, tuples, ...)
-/// falls back to a string parameter with a description hint, since
-/// `ToolParameters` does not model full JSON Schema.
-fn schema_to_tool_parameters(schema: &Value) -> ToolParameters {
-    let Some(obj) = schema.as_object() else {
-        return ToolParameters::string().described("Unrecognized parameter schema");
-    };
-
-    let description = obj.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
-
-    match obj.get("type").and_then(|v| v.as_str()) {
-        Some("object") => {
-            let properties = obj
-                .get("properties")
-                .and_then(|v| v.as_object())
-                .map(|props| {
-                    props.iter().map(|(k, v)| (k.clone(), schema_to_tool_parameters(v))).collect()
-                })
-                .unwrap_or_default();
-            let required = obj
-                .get("required")
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
-                .unwrap_or_default();
-            ToolParameters::Object { properties, required }
-        }
-        Some("array") => {
-            let items = obj
-                .get("items")
-                .map(schema_to_tool_parameters)
-                .unwrap_or_else(|| ToolParameters::string().described("Array item"));
-            ToolParameters::Array { items: Box::new(items), description }
-        }
-        Some("string") => ToolParameters::String { description, language: None },
-        Some("number") | Some("integer") => ToolParameters::Number { description },
-        Some("boolean") => ToolParameters::Boolean { description },
-        _ => ToolParameters::String {
-            description: Some(
-                description.unwrap_or_else(|| "Unrecognized parameter schema".to_string()),
-            ),
-            language: None,
-        },
-    }
 }
 
 impl McpServer {
@@ -574,38 +527,5 @@ mod tests {
             prompts(),
         );
         assert_eq!(cleared.destination(), Some(internal));
-    }
-
-    #[test]
-    fn schema_conversion_recognizes_basic_types() {
-        let schema = json!({
-            "type": "object",
-            "properties": {
-                "query": { "type": "string", "description": "Search query" },
-                "limit": { "type": "number" },
-                "verbose": { "type": "boolean" },
-                "tags": { "type": "array", "items": { "type": "string" } }
-            },
-            "required": ["query"]
-        });
-
-        let params = schema_to_tool_parameters(&schema);
-        match params {
-            ToolParameters::Object { properties, required } => {
-                assert_eq!(required, vec!["query".to_string()]);
-                assert!(matches!(properties.get("query"), Some(ToolParameters::String { .. })));
-                assert!(matches!(properties.get("limit"), Some(ToolParameters::Number { .. })));
-                assert!(matches!(properties.get("verbose"), Some(ToolParameters::Boolean { .. })));
-                assert!(matches!(properties.get("tags"), Some(ToolParameters::Array { .. })));
-            }
-            _ => panic!("Expected Object"),
-        }
-    }
-
-    #[test]
-    fn schema_conversion_falls_back_to_string_for_unrecognized_schema() {
-        let schema = json!({ "oneOf": [{ "type": "string" }, { "type": "number" }] });
-        let params = schema_to_tool_parameters(&schema);
-        assert!(matches!(params, ToolParameters::String { .. }));
     }
 }
