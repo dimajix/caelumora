@@ -168,6 +168,12 @@ impl SecretManager {
     /// The vault the kernel's tests keep from everybody but the system (`of_test_vaults`).
     const WITHHELD_VAULT: &'static str = "withheld";
 
+    /// The vault of the kernel's tests whose secrets go to `BOUND_ORIGIN` alone (`of_test_vaults`).
+    const BOUND_VAULT: &'static str = "bound";
+
+    /// Where the secrets of `BOUND_VAULT` may be sent.
+    const BOUND_ORIGIN: &'static str = "https://bound.example";
+
     /// A manager of no vaults, asking `access_policy`: every secret is unknown - for a test that
     /// reads none.
     pub fn without_vaults(access_policy: Arc<dyn AccessPolicy>) -> Self {
@@ -186,13 +192,18 @@ impl SecretManager {
     }
 
     /// A manager of the vaults the kernel's tests use secrets of, asking `access_policy`: `test`,
-    /// granted to everyone, and `withheld`, the system's alone, neither of which has a key - for a
-    /// test of in whose name a secret is used, and whether it may be.
+    /// granted to everyone, `withheld`, the system's alone, and `bound`, granted to everyone but
+    /// sent to `https://bound.example` alone, none of which has a key - for a test of in whose
+    /// name a secret is used, whether it may be, and where it may go.
+    #[expect(clippy::expect_used, reason = "test code: the origin is a literal")]
     pub fn of_test_vaults(access_policy: Arc<dyn AccessPolicy>) -> Self {
         use crate::testing::NoSecrets;
+        let origin = Origin::new(Self::BOUND_ORIGIN).expect("an origin");
+        let bound = VaultConfig { origins: Some(vec![origin]), ..Self::granted() };
         let vaults = BTreeMap::from([
             Self::test_vault(Self::TEST_VAULT, Arc::new(NoSecrets), Self::granted()),
             Self::test_vault(Self::WITHHELD_VAULT, Arc::new(NoSecrets), Self::withheld()),
+            Self::test_vault(Self::BOUND_VAULT, Arc::new(NoSecrets), bound),
         ]);
         Self { vaults, access_policy }
     }

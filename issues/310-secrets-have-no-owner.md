@@ -282,3 +282,7 @@ rules out of the backends. To be aligned in an issue of its own, not here.
   card that names an interface elsewhere. The crates whose tests use the test vaults now ask for
   the feature `test-support` of `caelumora-security` themselves, which they had relied on the
   workspace for.
+- **2026-11-26** — At the maintainer's request, the origins in the security suite after all: the
+  test kernel has a third vault, `bound`, granted to everyone and sent to `https://bound.example`
+  alone, and the agents' suite shows an agent's credential granted in its owner's name and refused
+  for where its remote agent is reached.

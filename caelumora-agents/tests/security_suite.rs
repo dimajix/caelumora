@@ -59,7 +59,7 @@ use caelumora_domain::query::Query;
 use caelumora_domain::question::{Addressee, Answers, QuestionId, QuestionRequest, Questions};
 use caelumora_domain::removal::Removal;
 use caelumora_domain::scope::Scope;
-use caelumora_domain::secret::Secrets;
+use caelumora_domain::secret::{SecretError, Secrets};
 use caelumora_domain::security::{AclEntry, Grant, Secured, Subject};
 use caelumora_domain::session::SessionId;
 use caelumora_domain::snapshot::PersonalitySnapshot;
@@ -2786,12 +2786,21 @@ impl RemoteAtWorkParams {
 
 impl Params for RemoteAtWorkParams {}
 
+/// Where a `RemoteAtWork` sends its credential: where it is reached.
+const REMOTE_AT_WORK: &str = "https://remote.example/a2a";
+
 impl RemoteAtWork {
-    /// Records `call`, made with `secrets`, reading its secret as a credential is read: whether
-    /// the vault has it does not matter, in whose name it is used does (issues 310, 516).
+    /// Records `call`, made with `secrets`, reading its secret as a credential is read, to be sent
+    /// where it is reached: whether the vault has it does not matter, in whose name it is used
+    /// does (issues 310, 516) - and where it may go, so that a credential refused for that is
+    /// recorded before the call.
     async fn called(&self, call: &'static str, secrets: &dyn Secrets) {
-        let _ = secrets.resolve(&self.secret, "https://remote.example").await;
-        self.calls.lock().unwrap().push(call);
+        let read = secrets.resolve(&self.secret, REMOTE_AT_WORK).await;
+        let mut calls = self.calls.lock().unwrap();
+        if matches!(read, Err(SecretError::NotSentTo { .. })) {
+            calls.push("its credential not sent there");
+        }
+        calls.push(call);
     }
 }
 
@@ -2933,6 +2942,41 @@ async fn an_agent_is_refused_a_secret_of_a_vault_its_owner_is_not_granted() {
         ["alice as hermes, asked by bob: UseSecret(system's) no"],
         "refused in her name, whoever asked"
     );
+}
+
+/// Issue 310: an agent's credential goes only where its vault lets it be sent: hermes, alice's,
+/// asked by bob, uses a secret of a vault granted to everyone but bound to another origin than
+/// where its remote agent is reached - granted in her name, and refused all the same, for where it
+/// was to go.
+#[tokio::test]
+async fn an_agents_credential_is_not_sent_where_its_vault_does_not_let_it_go() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let world = with_remote_at_work(&calls, None).await;
+    let mut remote = remote_personality(&world).await;
+    remote.components.component_nodes[0].params = serde_json::json!({ "secret": "bound/TOKEN" });
+    world.kernel.entity_stores().personalities.update(&World::system(), &mut remote).await.unwrap();
+    let hermes = world.agent("hermes", world.alice, &remote).await;
+    let session = world.shared_session(&[hermes], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.kernel.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+
+    let (_, asked) = world
+        .asked(async {
+            main.user_actor(world.bob)
+                .expect("he takes part")
+                .send_message(None, Some("@hermes find it out".to_string()), None, Vec::new())
+                .await
+                .expect("and asks");
+            calls_made(&calls, 2).await;
+        })
+        .await;
+    let used: Vec<&String> = asked.iter().filter(|line| line.contains("UseSecret")).collect();
+    assert_eq!(
+        used,
+        ["alice as hermes, asked by bob: UseSecret(system's) yes"],
+        "granted in her name"
+    );
+    assert_eq!(calls.lock().unwrap().as_slice(), ["its credential not sent there", "send"]);
 }
 
 /// Waits until `calls` holds `count` calls.

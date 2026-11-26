@@ -274,8 +274,9 @@ pub fn attributes_of<'a>(action: &ActionType<'a>) -> Option<&'a SecurityAttribut
 /// A kernel of a test, built from its parts by the `KernelBuilder` (issue 375): each part has a
 /// default, and a test names only those it differs in -
 /// `TestKernel { plugins: vec![&Notes], ..Default::default() }`. Its secrets are always the vaults
-/// `test`, granted to everyone, and `withheld`, the system's alone, neither of which has a key
-/// (`SecretManager::of_test_vaults`), under its access policy.
+/// `test`, granted to everyone, `withheld`, the system's alone, and `bound`, whose secrets go to
+/// `https://bound.example` alone, none of which has a key (`SecretManager::of_test_vaults`), under
+/// its access policy.
 pub struct TestKernel<'a> {
     /// What the entities and the states are kept in: new, empty stores in memory, which the kernel
     /// opens by the two policies below.
