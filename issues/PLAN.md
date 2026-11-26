@@ -127,7 +127,7 @@ Sound issues whose time has not come. None of them changes what a user can do wi
 | [343](343-users-bring-their-own-secrets.md) | Secrets a user brings, in the vault `user`. After 310, and only once users write agents of their own that reach remote systems. |
 | [346](346-subscription-topics-for-every-kind.md) | Topics on the event bus for every kind. No use case yet; opened to be referred to. |
 | [139](139-mcp-result-classification.md) | Small, but no MCP server classifies its results yet. Do it when one does. |
-| [252](252-openapi-tool.md) | A generic OpenAPI tool is worth having, but has no concrete service waiting for it: Open Terminal has a component of its own. Do it when a second OpenAPI service is to be reached - that service decides the open questions (the default of the filter, API keys in a header). |
+| [252](252-openapi-tool.md) | A generic OpenAPI tool is worth having, but has no concrete service waiting for it: Open Terminal has a component of its own. Its questions are decided; do it when a second OpenAPI service is to be reached, after [310](310-secrets-have-no-owner.md). |
 | [124](124-observer-participants.md) | Nice for watching agents work among themselves; a participant who stays silent does the job meanwhile. |
 | [42](42-export-import-chats.md) | Useful for bug reports; the context panel covers reproducing for now. |
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | A real gap, but it needs finer `KnowledgeRef`s (as 58) and the audit log (140) first. |
