@@ -140,6 +140,36 @@ differ from `mcp_server` only where the protocols do:
 - **Interruption.** A dropped call drops its request, as for MCP; what the server does with a
   request it already received is up to it.
 
+### The first service: Kimai
+
+The time tracking of the maintainer's instance, `https://kimai.dimajix.net`, is the second,
+concrete service *Relation to issue 251* waits for. Its document, as Kimai's Swagger page shows it
+(`kimai-api.json`), says:
+
+- **OpenAPI 3.0.0**, 69 paths, 99 operations (35 `GET`, 22 `POST`, 19 `PATCH`, 23 `DELETE`), each
+  with an `operationId` of its own (`get_timesheets`, `post_timesheet`, ...). No `servers`; the
+  paths are absolute (`/api/timesheets`), so the endpoint is the host.
+- **Authentication** by a bearer token (`securitySchemes.bearer`, `scheme: bearer`): `bearer` of
+  `RemoteAuthConfig`, nothing of a header of its own. What `security` an operation names besides
+  are Kimai's permissions, not schemes.
+- **Parameters** in the path (96) and the query (59), none in a header, no name shared with a
+  field of a body. Request bodies are JSON: 19 a schema of `components` (`$ref`), 5 an object
+  written in place, 2 an array (`patch_app_api_invoice_updatemetafields`,
+  `patch_app_api_user_updateuserpreference`) - the case of a body that needs a property of its
+  own.
+- **Schemas:** 53 in `components`, 141 `$ref`s, no cycles, no `allOf` or `oneOf`, one `nullable`.
+- **Results** are JSON but for 21 without a body and 8 that export or render (PDF, DOCX, XLSX,
+  ODS, XML, HTML): those are left out by `operations`.
+- **What a reading has to bear:** query parameters named with `[]` (`users[]`, `projects[]`,
+  `tags[]`), which a model's tool can hardly be given as they are - named without the brackets for
+  the model, sent as `users[]=1&users[]=2` -; `"items": []` for those arrays, which OpenAPI does
+  not allow and is read as anything; allowed values given as a `pattern` alone (`"ASC|DESC"`,
+  `"0|1"`, `"\d+|all"`), with no `enum`, which goes to the model as the `enum`'s values do; and
+  `"default": null` nearly everywhere.
+- **Kimai serves its document only inside the HTML of its Swagger page**: `/api/doc.json`, where
+  its documentation names it, is not found on this instance, logged in or not. Hence `spec_file`
+  (*Decisions taken*).
+
 ### Confidentiality
 
 As for MCP: what comes back is classified as configured (`classification`; issue
@@ -182,7 +212,27 @@ Agreed with the maintainer on 2026-11-26.
 - **The filter is one optional list, `operations`,** of `operationId`s. Without it, every operation
   is offered, as MCP offers every tool; approval by default (`requires_approval: true`) and
   `destination` keep that safe, and a service of hundreds of operations needs the list. No tags and
-  no `exclude` until somebody needs them.
+  no `exclude` until somebody needs them. *Replaced the same day by the map below.*
+- **`operations` is a map, and required:** each operation offered is named by its `operationId`,
+  with what holds for it alone - `{}` for nothing of its own -, and only what it names becomes a
+  tool; a component without it, or with none in it, is not built. An operation the document does
+  not have is refused as the component is built. Unlike `mcp_server`, which offers every tool of
+  its server: a service described by OpenAPI has hundreds of operations, deleting ones among them,
+  and what an agent may do with it is chosen, not filtered. What holds for an operation alone is,
+  for now, `requires_approval`, `true` or `false`, over the component's `requires_approval` (`true`
+  unless written, `false`, or `"unless_read_only"`, which trusts `GET` and `HEAD`): so a reading
+  operation may be asked, and a writing one - stopping the running timesheet - may not. Rules of a
+  place still ask or deny on top (APPROVALS.md). Considered for later, not built: the same override
+  per tool for `mcp_server`, in the shared discovered tool set, once an MCP server needs it.
+
+  ```yaml
+  requires_approval: unless_read_only
+  operations:
+    get_timesheets: {}
+    post_timesheet: {}
+    patch_stop_timesheet: { requires_approval: false }
+    get_users: { requires_approval: true }
+  ```
 - **The document is read as `serde_json::Value`**, by our own reading of the parts needed - paths,
   their parameters, a JSON request body, `info.description` -, covering 3.0 and 3.1 without a new
   dependency. Resolving `$ref` is needed by the schema conversion for MCP anyway.
@@ -191,6 +241,16 @@ Agreed with the maintainer on 2026-11-26.
 - **The document lies below the endpoint:** `spec_path`, relative to `endpoint.url`, by default
   `openapi.json`, read with the endpoint's credential. It cannot lie on another origin, so whether
   the credential goes there does not arise.
+- **Or the document lies in a file:** `spec_file`, a path relative to the working directory, for a
+  service that does not serve its document as such - Kimai, which renders it into its Swagger page
+  alone (*The first service: Kimai*). `spec_path` and `spec_file` exclude each other. A file is
+  read once, when the tools are first offered; `refresh_secs` is `spec_path`'s alone. What fails
+  in reading it names the component and that the document cannot be read or is no OpenAPI 3.x,
+  never what the file holds. That a file is read with the server's rights, as a URL is reached from
+  its network, is decided on the layer of who may write a component (issue
+  [608](608-a-component-a-user-writes-acts-with-the-servers-position.md)), not by a guard here: a
+  path in the operator's configuration of the library alone was weighed and set aside as a detour
+  that solves it for files and not for URLs.
 - **Authentication by a header of its own** is an issue of its own, opened once a service needs it;
   such a variant names its secret by a reference, as `bearer` does.
 - **The credential is resolved as every remote component resolves it:** through `RemoteEndpoint`
@@ -232,3 +292,11 @@ Agreed with the maintainer on 2026-11-26.
   endpoint; authentication by header an issue of its own once needed. Added at the maintainer's
   request: a call should reach the service with a secret of the agent's owner, which needs 310 and
   343 and nothing of this component's own.
+- **2026-11-26** — Kimai (`https://kimai.dimajix.net`) is the first service (*The first service:
+  Kimai*). It serves its document only inside the HTML of its Swagger page, so a document may also
+  lie in a file (`spec_file`), decided with the maintainer; who may name a file, as who may name a
+  URL, is issue [608](608-a-component-a-user-writes-acts-with-the-servers-position.md).
+- **2026-11-26** — Decided with the maintainer on approvals: `operations` is a map, required - only
+  the operations it names are offered -, and an operation may set its own `requires_approval`
+  over the component's (*Decisions taken*). The same override per tool for `mcp_server` is noted
+  for later.
