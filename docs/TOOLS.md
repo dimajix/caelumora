@@ -49,8 +49,8 @@ tool's, `notes.write_note.text` its parameter's, `.item` an entry's of a list, a
 list of objects are described by their fields under the list's path. A parameter described already
 keeps its text, as the parameters every reclassifying tool shares (`tool::reclassify_parameters`).
 The texts are rendered once, when the component is made; a text missing keeps it from being built. A
-tool of a generic provider, an MCP server's, is described as it describes itself
-(`ToolParameters::described`).
+tool of a generic provider, an MCP server's, is described as it describes itself, its parameters
+read of the JSON Schema it gives (`ToolParameters::from_json_schema`).
 
 ## Tool sets
 

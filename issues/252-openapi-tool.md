@@ -200,7 +200,13 @@ Agreed with the maintainer on 2026-11-26.
   `caelumora-domain`: `ToolParameters::from_json_schema(&Value)`. It moves there first, without a
   change of behaviour. Resolving `$ref` and reading a `type` given as a list follow in a step of
   their own, since they change what MCP's tools are offered as. The values of an `enum` go into the
-  parameter's description for now; `ToolParameters` gets no variant for them.
+  parameter's description for now; `ToolParameters` gets no variant for them. Decided with step 2:
+  `from_json_schema(schema, document)`, `document` what the references point into - an MCP tool's
+  input schema itself, an OpenAPI service's whole document -; a `pattern` goes into the description
+  as an `enum`'s values do, and stays there where a description written beside a reference takes
+  the place of the one it points to; an array whose `items` is no schema holds strings; and a
+  reading follows a bounded number of references, so that definitions that refer to each other do
+  not make it without end.
 - **The discovered tool set is shared before this component is built**, as AGENTS.md asks of
   repeated logic: what `McpServerComponent` does in `offered`, `description` and `tools_of` becomes
   one type that both use. Its interface is designed in the plan of the implementation. What each
@@ -303,3 +309,13 @@ Agreed with the maintainer on 2026-11-26.
 - **2026-11-26** — Step 1 done: the conversion of a JSON Schema into `ToolParameters` is
   `ToolParameters::from_json_schema` in `caelumora-domain`, moved from `caelumora-tool-mcp`
   (`schema_to_tool_parameters`) with its tests, without a change of behaviour.
+- **2026-11-26** — Step 2 done: `ToolParameters::from_json_schema(schema, document)` resolves a
+  `$ref` as a JSON pointer into `document` - an MCP tool's input schema itself, an OpenAPI
+  service's whole document -, cutting one that points nowhere or back to where it began; reads a
+  `type` given as a list beside `"null"` as that type; adds the values of an `enum` and a `pattern`
+  to the description; and reads an array whose `items` is no schema - Kimai's `"items": []` - as
+  one of strings. MCP's tools whose schemas use these are offered more precisely than before. The
+  review added that a description beside a reference keeps the allowed values where it points, a
+  reference is cut by what it points to, not by how it is written, and a reading follows at most
+  `MAX_REFERENCES` (1000) references - a document of definitions that refer to each other is read
+  again on every way to them, which grows without end otherwise.

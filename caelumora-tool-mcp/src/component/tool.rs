@@ -147,7 +147,7 @@ async fn discover_tools(
             let tool = ToolDescription {
                 name: format!("{}{}{}", descriptor_id, NAME_SEPARATOR, t.name),
                 description,
-                parameters: ToolParameters::from_json_schema(&schema),
+                parameters: ToolParameters::from_json_schema(&schema, &schema),
                 requires_approval: params
                     .requires_approval
                     .required(read_only(t.annotations.as_ref())),

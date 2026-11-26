@@ -14,8 +14,9 @@ pub use call::{
 use crate::confidentiality::{Classification, Visibility};
 use crate::intern::intern;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::collections::HashMap;
+use std::ptr;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
@@ -47,6 +48,71 @@ pub enum ToolParameters {
         #[serde(skip_serializing_if = "Option::is_none")]
         description: Option<String>,
     },
+}
+
+/// How many references a reading of a JSON Schema follows in all
+/// (`ToolParameters::from_json_schema`): definitions that refer to each other are read again on
+/// every way to them, which a document of many could make without end.
+const MAX_REFERENCES: usize = 1000;
+
+/// One reading of a JSON Schema into `ToolParameters` (`ToolParameters::from_json_schema`): the
+/// document its references point into, the schemas on the way to what is read - so that one of
+/// them again is cut, as a reference back -, and how many references it may follow yet.
+struct SchemaReading<'a> {
+    document: &'a Value,
+    following: Vec<&'a Value>,
+    left: usize,
+}
+
+impl<'a> SchemaReading<'a> {
+    /// The parameters `schema` describes, `written` - a description written where it is referred
+    /// to - in the place of its own.
+    fn of(&mut self, schema: &'a Value, written: Option<&str>) -> ToolParameters {
+        let Some(obj) = schema.as_object() else {
+            return ToolParameters::unrecognized(written.map(str::to_string));
+        };
+        if let Some(reference) = obj.get("$ref").and_then(Value::as_str) {
+            let written = written.or_else(|| obj.get("description").and_then(Value::as_str));
+            let target = reference.strip_prefix('#').and_then(|p| self.document.pointer(p));
+            let back = |target: &&Value| self.following.iter().any(|on| ptr::eq(*on, *target));
+            let Some(target) = target.filter(|target| !back(target) && self.left > 0) else {
+                return ToolParameters::unrecognized(ToolParameters::description_of(obj, written));
+            };
+            self.left -= 1;
+            self.following.push(target);
+            let read = self.of(target, written);
+            self.following.pop();
+            return read;
+        }
+        let description = ToolParameters::description_of(obj, written);
+        match ToolParameters::type_of(obj) {
+            Some("object") => {
+                let properties = obj
+                    .get("properties")
+                    .and_then(Value::as_object)
+                    .map(|props| props.iter().map(|(k, v)| (k.clone(), self.of(v, None))).collect())
+                    .unwrap_or_default();
+                let required = obj
+                    .get("required")
+                    .and_then(Value::as_array)
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                    .unwrap_or_default();
+                ToolParameters::Object { properties, required }
+            }
+            Some("array") => {
+                let items = obj
+                    .get("items")
+                    .filter(|items| items.is_object())
+                    .map(|items| self.of(items, None))
+                    .unwrap_or_else(|| ToolParameters::string().described("Array item"));
+                ToolParameters::Array { items: Box::new(items), description }
+            }
+            Some("string") => ToolParameters::String { description, language: None },
+            Some("number") | Some("integer") => ToolParameters::Number { description },
+            Some("boolean") => ToolParameters::Boolean { description },
+            _ => ToolParameters::unrecognized(description),
+        }
+    }
 }
 
 /// A language an argument of a tool is written in (issue 247), whose meaning a pattern cannot
@@ -101,54 +167,66 @@ impl ToolParameters {
     }
 
     /// The parameters `schema` describes - a JSON Schema, as MCP and OpenAPI write a tool's input
-    /// (issue 252) -, as well as they can be: an object by its properties and what of them is
-    /// required, a string, a number or an integer, an array and a boolean by their `type`, each
-    /// but the object with its `description`; the values of an `enum` are dropped. A schema that
-    /// is no object, or has no `type` among these - `oneOf`, a `type` given as a list -, becomes a
-    /// string with its own description, or else one described as unrecognized, since
-    /// `ToolParameters` models no more of JSON Schema.
-    pub fn from_json_schema(schema: &Value) -> Self {
-        let Some(obj) = schema.as_object() else {
-            return Self::string().described("Unrecognized parameter schema");
-        };
+    /// (issue 252) -, its references (`$ref`) resolved in `document`: the JSON Schema of an MCP
+    /// tool's input itself, the whole document of an OpenAPI service. As well as they can be: an
+    /// object by its properties and what of them is required, a string, a number or an integer, an
+    /// array and a boolean by their `type` - one of a list beside `"null"` -, each but the object
+    /// with its `description`, followed by the values of its `enum` and its `pattern`, so that the
+    /// model learns what a value may be; a description written beside a reference takes the place
+    /// of the one where it points, not of those. A schema that is no object, has no `type` among
+    /// these (`oneOf`, several types), or refers to what `document` does not hold - a fragment is
+    /// read as written, not percent-decoded -, back to where it began, or past
+    /// `MAX_REFERENCES` followed in all, becomes a string with its own description, or else one
+    /// described as unrecognized, since `ToolParameters` models no more of JSON Schema; the
+    /// entries of an array whose `items` is no schema, strings described as such.
+    pub fn from_json_schema(schema: &Value, document: &Value) -> Self {
+        let mut reading = SchemaReading { document, following: vec![schema], left: MAX_REFERENCES };
+        reading.of(schema, None)
+    }
 
-        let description = obj.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
-
-        match obj.get("type").and_then(|v| v.as_str()) {
-            Some("object") => {
-                let properties = obj
-                    .get("properties")
-                    .and_then(|v| v.as_object())
-                    .map(|props| {
-                        props.iter().map(|(k, v)| (k.clone(), Self::from_json_schema(v))).collect()
-                    })
-                    .unwrap_or_default();
-                let required = obj
-                    .get("required")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
-                    })
-                    .unwrap_or_default();
-                Self::Object { properties, required }
+    /// The one type `obj` names: its `type`, or the one of a list of them beside `"null"`, which
+    /// says that a value may be missing; `None` for none, or several.
+    fn type_of(obj: &Map<String, Value>) -> Option<&str> {
+        match obj.get("type")? {
+            Value::String(name) => Some(name),
+            Value::Array(names) => {
+                let mut named = names.iter().filter_map(Value::as_str).filter(|n| *n != "null");
+                let first = named.next();
+                named.next().map_or(first, |_| None)
             }
-            Some("array") => {
-                let items = obj
-                    .get("items")
-                    .map(Self::from_json_schema)
-                    .unwrap_or_else(|| Self::string().described("Array item"));
-                Self::Array { items: Box::new(items), description }
-            }
-            Some("string") => Self::String { description, language: None },
-            Some("number") | Some("integer") => Self::Number { description },
-            Some("boolean") => Self::Boolean { description },
-            _ => Self::String {
-                description: Some(
-                    description.unwrap_or_else(|| "Unrecognized parameter schema".to_string()),
-                ),
-                language: None,
-            },
+            _ => None,
         }
+    }
+
+    /// What `obj` says of its value: `written` - a description written where it is referred to -
+    /// or else its own `description`, ended as a sentence, then the values of its `enum` and its
+    /// `pattern`; `None` where there is none of them.
+    fn description_of(obj: &Map<String, Value>, written: Option<&str>) -> Option<String> {
+        let text = written.or_else(|| obj.get("description").and_then(Value::as_str)).map(|text| {
+            let text = text.trim_end();
+            match text.ends_with(['.', '!', '?', ':']) {
+                true => text.to_string(),
+                false => format!("{text}."),
+            }
+        });
+        let values = obj.get("enum").and_then(Value::as_array).map(|values| {
+            let values: Vec<String> = values
+                .iter()
+                .map(|v| v.as_str().map_or_else(|| v.to_string(), str::to_string))
+                .collect();
+            format!("One of: {}.", values.join(", "))
+        });
+        let pattern = obj.get("pattern").and_then(Value::as_str).map(|p| format!("Matching: {p}"));
+        let parts: Vec<String> = [text, values, pattern].into_iter().flatten().collect();
+        (!parts.is_empty()).then(|| parts.join(" "))
+    }
+
+    /// A string, as what is not recognized is offered: with `description`, or described as
+    /// unrecognized.
+    fn unrecognized(description: Option<String>) -> Self {
+        let description =
+            description.unwrap_or_else(|| "Unrecognized parameter schema".to_string());
+        Self::String { description: Some(description), language: None }
     }
 
     /// The parameter, described by `text`. An object has no description of
@@ -552,7 +630,7 @@ mod tests {
             "required": ["query"]
         });
 
-        let params = ToolParameters::from_json_schema(&schema);
+        let params = ToolParameters::from_json_schema(&schema, &schema);
         match params {
             ToolParameters::Object { properties, required } => {
                 assert_eq!(required, vec!["query".to_string()]);
@@ -568,7 +646,117 @@ mod tests {
     #[test]
     fn schema_conversion_falls_back_to_string_for_unrecognized_schema() {
         let schema = json!({ "oneOf": [{ "type": "string" }, { "type": "number" }] });
-        let params = ToolParameters::from_json_schema(&schema);
+        let params = ToolParameters::from_json_schema(&schema, &schema);
         assert!(matches!(params, ToolParameters::String { .. }));
+    }
+
+    /// Issue 252: a reference is read where it points - into the schema itself, as MCP writes
+    /// it, or into the whole document, as OpenAPI does -, a description written beside it in the
+    /// place of the one there but not of its allowed values; one that points nowhere, to what is no
+    /// schema, or back to where it began, is cut.
+    #[test]
+    fn references_are_read_where_they_point_and_cut_where_they_lead_back() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "owner": { "$ref": "#/$defs/user" },
+                "mode": { "$ref": "#/$defs/mode", "description": "How it runs" },
+                "slashed": { "$ref": "#/$defs/a~1b" },
+                "lost": { "$ref": "#/$defs/missing" },
+                "far": { "$ref": "https://example.com/schema" },
+                "plain": { "$ref": "#/$defs/plain" },
+                "itself": { "$ref": "#" }
+            },
+            "$defs": {
+                "user": { "type": "string", "description": "Who owns it" },
+                "mode": { "type": "string", "enum": ["fast", "safe"], "description": "The mode" },
+                "a/b": { "type": "boolean" },
+                "plain": "no schema"
+            }
+        });
+        let ToolParameters::Object { properties, .. } =
+            ToolParameters::from_json_schema(&schema, &schema)
+        else {
+            panic!("an object");
+        };
+        let unrecognized = ToolParameters::string().described("Unrecognized parameter schema");
+        assert_eq!(properties["owner"], ToolParameters::string().described("Who owns it."));
+        assert_eq!(
+            properties["mode"],
+            ToolParameters::string().described("How it runs. One of: fast, safe."),
+            "the description beside it, the values where it points"
+        );
+        assert_eq!(properties["slashed"], ToolParameters::boolean(), "a pointer's escapes read");
+        assert_eq!(properties["lost"], unrecognized);
+        assert_eq!(properties["far"], unrecognized, "only into the document");
+        assert_eq!(properties["plain"], unrecognized, "no schema");
+        assert_eq!(properties["itself"], unrecognized, "back to the schema itself");
+
+        let document = json!({ "components": { "schemas": {
+            "Timesheet": { "type": "object", "properties": {
+                "project": { "type": "integer", "description": "Project ID" },
+                "next": { "$ref": "#/components/schemas/Link" }
+            } },
+            "Link": { "type": "object", "properties": {
+                "to": { "$ref": "#/components/schemas/Timesheet" }
+            } }
+        } } });
+        let body = &document["components"]["schemas"]["Timesheet"];
+        let link = ToolParameters::object([("to", unrecognized.clone())], Vec::<String>::new());
+        let expected = ToolParameters::object(
+            [("project", ToolParameters::number().described("Project ID.")), ("next", link)],
+            Vec::<String>::new(),
+        );
+        assert_eq!(
+            ToolParameters::from_json_schema(body, &document),
+            expected,
+            "of the document, cut where two definitions lead back to each other"
+        );
+    }
+
+    /// Issue 252: definitions that refer to each other are read again on every way to them, which
+    /// is bounded: a reading follows at most `MAX_REFERENCES` references.
+    #[test]
+    fn a_reading_follows_a_bounded_number_of_references() {
+        // Each definition refers twice to the next: 2^30 ways to the last.
+        let defs: Map<String, Value> = (0..30)
+            .map(|n| {
+                let next = json!({ "$ref": format!("#/$defs/d{}", n + 1) });
+                let schema = json!({ "type": "object", "properties": { "a": next, "b": next } });
+                (format!("d{n}"), schema)
+            })
+            .collect();
+        let schema = json!({ "$ref": "#/$defs/d0", "$defs": defs });
+        let read = ToolParameters::from_json_schema(&schema, &schema);
+        assert!(matches!(read, ToolParameters::Object { .. }), "read as far as it may follow");
+    }
+
+    /// Issue 252: a type beside `"null"` is the type, allowed values are told the model, and an
+    /// array whose `items` is no schema holds strings - as Kimai writes its lists of ids.
+    #[test]
+    fn a_type_of_a_list_allowed_values_and_items_that_are_no_schema_are_read_as_well_as_they_can() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": ["string", "null"], "description": "Its name" },
+                "either": { "type": ["string", "integer"] },
+                "order": { "type": "string", "enum": ["ASC", "DESC"], "description": "The order." },
+                "user": { "type": "string", "pattern": "\\d+|all" },
+                "users[]": { "type": "array", "items": [] }
+            }
+        });
+        let ToolParameters::Object { properties, .. } =
+            ToolParameters::from_json_schema(&schema, &schema)
+        else {
+            panic!("an object");
+        };
+        assert_eq!(properties["name"], ToolParameters::string().described("Its name."));
+        let unrecognized = ToolParameters::string().described("Unrecognized parameter schema");
+        assert_eq!(properties["either"], unrecognized, "several types");
+        let order = ToolParameters::string().described("The order. One of: ASC, DESC.");
+        assert_eq!(properties["order"], order);
+        assert_eq!(properties["user"], ToolParameters::string().described("Matching: \\d+|all"));
+        let items = ToolParameters::string().described("Array item");
+        assert_eq!(properties["users[]"], ToolParameters::array(items));
     }
 }
