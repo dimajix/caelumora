@@ -500,6 +500,7 @@ dependencies = [
  "caelumora-tool-attachment",
  "caelumora-tool-image",
  "caelumora-tool-mcp",
+ "caelumora-tool-openapi",
  "caelumora-tool-web",
  "caelumora-tool-workspace",
  "clap",
@@ -1044,7 +1045,27 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
- "tracing",
+]
+
+[[package]]
+name = "caelumora-tool-openapi"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "caelumora-agents",
+ "caelumora-api",
+ "caelumora-domain",
+ "caelumora-kernel",
+ "caelumora-security",
+ "caelumora-store",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -1127,6 +1148,7 @@ dependencies = [
  "caelumora-tool-attachment",
  "caelumora-tool-image",
  "caelumora-tool-mcp",
+ "caelumora-tool-openapi",
  "caelumora-tool-web",
  "caelumora-tool-workspace",
  "chrono",

@@ -94,7 +94,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [182](182-entity-reads-not-cached.md) | open | low | feature | Personalities, agents and users are read from the store again for every use - for every member of a channel, on every turn - though they change rarely. |
 | [237](237-erasing-a-message.md) | open | low | feature | A message written by mistake can be taken back but not erased: it stays in every participant's record and in the contexts built on it. |
 | [238](238-retry-of-an-older-answer.md) | open | low | feature | Only an agent's last answer can be asked for again, and the alternatives of an answer are not kept. |
-| [252](252-openapi-tool.md) | in progress | low | feature | A tool server that describes itself by OpenAPI - as most HTTP services and Open WebUI's tool servers do - cannot be reached; only MCP servers can. |
 | [256](256-workspace-versions.md) | open | low | feature | A workspace has no versions: what a person, a file tool or a command overwrote cannot be taken back, and who changed what is not recorded. |
 | [272](272-artifacts-in-s3.md) | open | low | feature | Artifacts can be kept only on the server's own disk, not in S3 or another object storage. |
 | [283](283-show-agent-components.md) | open | low | feature | The web UI does not show what an agent was built from, so its owner cannot see which components it has or which came from an included list. |

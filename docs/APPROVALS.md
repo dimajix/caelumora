@@ -90,7 +90,11 @@ approval follows from that:
     `"unless_read_only"` for all but the tools the server marks read-only. A tool without that mark
     counts as one that changes something. The mark is the server's word: trusted only where the
     configuration says so, and relaxing nothing beyond that. Read-only does not mean that nothing
-    leaves the system: the arguments of a search reach the server all the same.
+    leaves the system: the arguments of a search reach the server all the same. `openapi_server`
+    does the same with its operations, `"unless_read_only"` trusting `GET` and `HEAD` to only read,
+    as HTTP defines them; and as its operations are chosen one by one, each may say for itself
+    whether it asks, `true` or `false`, over what the component says
+    ([TOOLS.md](TOOLS.md#openapi-servers)).
 *   **Releasing** a note, a private note or something remembered to a wider circle needs it.
 *   **Writing into the workspace** an attachment heard needs it: `copy_attachment` is always asked,
     as a write there is. Showing an attachment again, reading one or attaching it to the answer

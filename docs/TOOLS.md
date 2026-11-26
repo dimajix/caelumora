@@ -15,15 +15,15 @@ it runs (`questions`). A component gives an agent tools through the facet `ToolP
 hands out its tools as objects and answers for them as a set: what they are for, which of them it
 offers in a turn and why it offers none (`offered`, in general terms, never with the error), and
 where their arguments go (`destination`). A provider that decides none of this beyond a description
-and a destination is `FixedTools`, the tools its component made as it was built; one whose tools
-are discovered of its remote side - an MCP server - is a `DiscoveredTools` over its `ToolSource`,
-which plugs in how they are discovered and made, while the set keeps them for a time and decides
-what is offered when discovering fails ([MCP servers](#mcp-servers)); one whose offer depends on its
-tools holds each with what it is offered by, never choosing among them by their names. A parameter
-written in a language - a bash command line, `ToolParameters::shell` - says so; the model is not
-told of it, but the default `matcher` derives from it a rule on the words a command begins with
-([APPROVALS.md](APPROVALS.md#rules-on-commands)). A tool that knows more of what makes two calls
-alike says better than the default.
+and a destination is `FixedTools`, the tools its component made as it was built; one whose tools are
+discovered of its remote side - an MCP server, an OpenAPI server - is a `DiscoveredTools` over its
+`ToolSource`, which plugs in how they are discovered and made, while the set keeps them for a time
+and decides what is offered when discovering fails ([MCP servers](#mcp-servers)); one whose offer
+depends on its tools holds each with what it is offered by, never choosing among them by their
+names. A parameter written in a language - a bash command line, `ToolParameters::shell` - says so;
+the model is not told of it, but the default `matcher` derives from it a rule on the words a command
+begins with ([APPROVALS.md](APPROVALS.md#rules-on-commands)). A tool that knows more of what makes
+two calls alike says better than the default.
 
 What a call does, as its tool describes it, is the call's: the agent stamps it on the call as the
 executor admits it (`ToolCall::description`, issue 586), whoever decides on the call is shown it,
@@ -285,6 +285,62 @@ the kind as before. What such a component kind may use of the kernel is said in
     too, and a storage of content that is missing fails the call, after the server has acted. What
     a failure of the tool says is not kept: it is cut to the size of a preview where a bound is
     configured.
+
+## OpenAPI servers
+
+An `openapi_server` component (issue 252, library `caelumora-tool-openapi`) offers the operations of
+a server described by an OpenAPI 3.x document as tools, chosen one by one:
+
+```yaml
+- id: kimai
+  kind: openapi_server
+  params:
+    endpoint: { url: "https://kimai.example.com", auth: { type: bearer, secret: agents/KIMAI_TOKEN } }
+    spec_file: local/kimai-api.json
+    requires_approval: unless_read_only
+    operations:
+      get_timesheets: {}
+      post_timesheet: {}
+      patch_stop_timesheet: { requires_approval: false }
+```
+
+It is an `mcp_server` of another protocol, and alike where the protocols do not differ: one server
+per component, its tools named `{component_id}__{operationId}`, discovered as an MCP server's are -
+a `DiscoveredTools` over the server -, its parameters those of an `mcp_server` with their defaults,
+its results kept beside a preview above `keep_whole_above_bytes` as an MCP server's (JSON without
+one), and its credential resolved for the URL of each request.
+
+*   **The document.** `spec_path`, below the endpoint (`openapi.json` unless written), read with
+    the endpoint's credential and again after `refresh_secs`; or `spec_file`, a file relative to the
+    working directory, read once, for a server that does not serve its document - the two exclude
+    each other, and `refresh_secs` goes with `spec_path` alone. What fails in reading it names
+    neither the file nor what it holds. The paths of the document lie below the endpoint; its
+    `servers` are not read. The description of the tool set is the parameter `description`, else
+    the document's `info.description`, else a generic text.
+*   **Which operations.** `operations` is required: each operation offered is named by its
+    `operationId`, with what holds for it alone - `{}` for nothing; no other becomes a tool. A
+    server has hundreds, deleting ones among them, and what an agent may do with it is chosen, not
+    filtered. An operation the document lacks, or one that needs what the component cannot give - a
+    parameter in a header or a cookie, or one without a name or a place, a parameter named `body`,
+    two arguments of one name, a body that is required and no JSON -, fails the reading of the
+    document as an unreachable server does: the tools read before stay, without any the tool set
+    is unavailable, and the log names the operation.
+*   **Approval.** An operation's own `requires_approval`, `true` or `false`, else the component's:
+    `true` by default, `false`, or `"unless_read_only"`, which trusts `GET` and `HEAD` to only read,
+    as HTTP defines them - a server that changes something on a `GET` is wrong, and trusted only
+    where configured (see [What needs approval](APPROVALS.md#what-needs-approval)).
+*   **Arguments.** An operation's parameters in the path and the query, by their names - a name
+    ending in `[]` (`users[]`) without it, an array sent as the name repeated
+    (`users[]=1&users[]=2`) -, and its JSON request body, whatever it is, as one argument of its
+    own, `body`, so that no field of a body collides with a parameter. Their schemas are read as an
+    MCP tool's are (`ToolParameters::from_json_schema`), references into the whole document. A
+    value of the path that is empty, `.` or `..` is refused: it would make the call reach another
+    path than its operation's.
+*   **Results.** A call is one request; an interrupted call drops it. JSON is given as JSON, text as
+    text, an answer without a body as its status (`{"status": 204}`); anything else - a PDF, an
+    image - fails the call. A status of failure is the call's failure, with what the server said,
+    cut to the size of a preview whether a bound is configured or not - unlike an MCP tool's
+    failure: an HTTP server's is often a whole page of HTML.
 
 ## Images
 

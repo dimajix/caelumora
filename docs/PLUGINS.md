@@ -132,23 +132,22 @@ agent unless a library brings them (`World::with(plugins, libraries, …)`).
 A library (issue [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)) is a crate of
 the agent side: what runs an agent - `caelumora-agents`, the essential one, which brings the kinds
 of agent and the built-in components (issue 370) - or brings components for an agent's facets -
-`caelumora-tool-mcp` (issue 325), `caelumora-a2a` (issue 326), `caelumora-tool-workspace` (issue
-428), `caelumora-compaction` (issue 464), `caelumora-tool-image` (issue 525),
-`caelumora-tool-attachment` (issue 533), `caelumora-tool-web` (issue 544), and the library sides
-of `caelumora-skills`, `caelumora-artifacts`, `caelumora-memory`, `caelumora-notes` and
-`caelumora-subagents` (`SkillsLibrary`, `ArtifactsLibrary`, `MemoryLibrary`, `NotesLibrary`,
-`SubagentsLibrary`). It is linked into the
-program as a plugin is, but trusted for nothing, and links the kernel's API
-(`caelumora-api`), the domain and other libraries, never the kernel, `caelumora-security` or
-`caelumora-store`: they are dev-dependencies of its tests alone, which build the kernel's world -
-for `caelumora-agents` its `testing` too, under `test-support` -, which `scripts/library-deps.sh`
-checks, run by the pre-commit hook. It implements `caelumora_api::library::Library` - a name for
-messages and `register` -, and the programs list it in `libraries()`, the agents' library first, and
-register each with `KernelBuilder::library` once their plugins registered. A library may be built
-with what only the program knows: `ProgramLibrary` of `caelumora-agents` with the file the program
-logs to, which a program lists only where it logs to a file (see
-[AGENT-TURN.md](AGENT-TURN.md#the-programs-log)). A library registers with
-a `LibraryBuilder`, a trait of the API the kernel implements, which offers what a library registers
+`caelumora-tool-mcp` (issue 325), `caelumora-tool-openapi` (issue 252), `caelumora-a2a` (issue 326),
+`caelumora-tool-workspace` (issue 428), `caelumora-compaction` (issue 464), `caelumora-tool-image`
+(issue 525), `caelumora-tool-attachment` (issue 533), `caelumora-tool-web` (issue 544), and the
+library sides of `caelumora-skills`, `caelumora-artifacts`, `caelumora-memory`, `caelumora-notes`
+and `caelumora-subagents` (`SkillsLibrary`, `ArtifactsLibrary`, `MemoryLibrary`, `NotesLibrary`,
+`SubagentsLibrary`). It is linked into the program as a plugin is, but trusted for nothing, and
+links the kernel's API (`caelumora-api`), the domain and other libraries, never the kernel,
+`caelumora-security` or `caelumora-store`: they are dev-dependencies of its tests alone, which build
+the kernel's world - for `caelumora-agents` its `testing` too, under `test-support` -, which
+`scripts/library-deps.sh` checks, run by the pre-commit hook. It implements
+`caelumora_api::library::Library` - a name for messages and `register` -, and the programs list it
+in `libraries()`, the agents' library first, and register each with `KernelBuilder::library` once
+their plugins registered. A library may be built with what only the program knows: `ProgramLibrary`
+of `caelumora-agents` with the file the program logs to, which a program lists only where it logs to
+a file (see [AGENT-TURN.md](AGENT-TURN.md#the-programs-log)). A library registers with a
+`LibraryBuilder`, a trait of the API the kernel implements, which offers what a library registers
 and nothing of the kernel - no store, no policy, no secret, no controller:
 
 *   its component kinds (`components()`, a `LibraryComponents`), marked as a library's;

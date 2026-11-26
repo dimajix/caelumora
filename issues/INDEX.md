@@ -265,7 +265,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [226](226-concurrent-tool-calls.md) | open | The tool calls of one step run one after the other, because every tool holds the turn while it runs, so a step of several slow calls takes the sum of their durations. |
 | [246](246-mcp-tool-hints.md) | done | An MCP server's hints on its tools - read-only, destructive - are ignored, so all tools of a server need approval alike. |
 | [247](247-tool-own-matcher.md) | done | A rule on tool calls can match an argument that is a language - a shell command, SQL - only by its text, which a chained command slips past. |
-| [252](252-openapi-tool.md) | in progress | A tool server that describes itself by OpenAPI - as most HTTP services and Open WebUI's tool servers do - cannot be reached; only MCP servers can. |
+| [252](252-openapi-tool.md) | done | A tool server that describes itself by OpenAPI - as most HTTP services and Open WebUI's tool servers do - cannot be reached; only MCP servers can. |
 | [254](254-commands-run-unbounded.md) | done | A command an agent's call hands back as running runs until the model ends it - past its turn, its session and the channel's access to the workspace. |
 | [267](267-move-file.md) | done | Agents cannot move or rename a file of the workspace, although both storages can, except by reading, writing and deleting it or through a shell. |
 | [273](273-publish-file.md) | done | An agent cannot point a user to a file of the workspace to download; it can only say in text where it lies. |

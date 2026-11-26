@@ -42,6 +42,7 @@ flowchart TD
         tool_attachment["caelumora-tool-attachment"]
         tool_image["caelumora-tool-image"]
         tool_mcp["caelumora-tool-mcp"]
+        tool_openapi["caelumora-tool-openapi"]
         tool_web["caelumora-tool-web"]
         tool_workspace["caelumora-tool-workspace"]
     end
@@ -72,7 +73,7 @@ flowchart TD
     decision & model_comfyui & model_ollama & model_systemone --> model
     decision & kernel & model & model_systemone & open_terminal & rest_server & store & store_json & store_postgres --> security
     store_home --> store_json
-    a2a & compaction & tool_attachment & tool_image & tool_mcp & tool_web & tool_workspace --> agents
+    a2a & compaction & tool_attachment & tool_image & tool_mcp & tool_openapi & tool_web & tool_workspace --> agents
     libraries --> api
     tool_workspace --> compaction
     libraries --> domain
@@ -138,17 +139,17 @@ The graph is not only what has grown, but holds rules of the design:
 A crate is named after its subject - `caelumora-skills`, `caelumora-compaction`,
 `caelumora-decision`, `caelumora-a2a`. Two kinds of crate are named by what they are first, then by
 their subject (issue 531): a backend of a service by the service - `caelumora-model-ollama` and
-`caelumora-model-comfyui` and `caelumora-model-systemone` of the models, the last after the
-contract it reaches, not after a provider, `caelumora-store-json` and `caelumora-store-postgres` of
-the stores -, and a library that brings an agent tools on a subject that is another's by `tool` -
+`caelumora-model-comfyui` and `caelumora-model-systemone` of the models, the last after the contract
+it reaches, not after a provider, `caelumora-store-json` and `caelumora-store-postgres` of the
+stores -, and a library that brings an agent tools on a subject that is another's by `tool` -
 `caelumora-tool-image` on the image models, `caelumora-tool-workspace` on the kernel's workspace,
 `caelumora-tool-attachment` on the attachments of a channel, `caelumora-tool-mcp` on MCP servers,
-`caelumora-tool-web` on the web. A plugin that brings a service of its own with its manager is
-named after its subject, though it brings tools as well, which are a part of it:
-`caelumora-skills`, `caelumora-artifacts`. The name of a crate's plugin or library, and the
-namespace of its texts, is the crate's name without `caelumora-`, with `_` for `-` (`tool_image`);
-its type names the subject before the kind, then `Plugin` or `Library` (`ImageToolLibrary`,
-`OllamaModelPlugin`).
+`caelumora-tool-openapi` on servers described by OpenAPI, `caelumora-tool-web` on the web. A plugin
+that brings a service of its own with its manager is named after its subject, though it brings tools
+as well, which are a part of it: `caelumora-skills`, `caelumora-artifacts`. The name of a crate's
+plugin or library, and the namespace of its texts, is the crate's name without `caelumora-`, with
+`_` for `-` (`tool_image`); its type names the subject before the kind, then `Plugin` or `Library`
+(`ImageToolLibrary`, `OllamaModelPlugin`).
 
 ## How the graph is written
 

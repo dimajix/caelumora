@@ -1,38 +1,24 @@
 //! The `mcp_server` component against an MCP server of the test's own, over streamable HTTP.
-#![expect(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    reason = "test code: what fails here fails the test that runs it"
-)]
+#![expect(clippy::unwrap_used, reason = "test code: what fails here fails the test that runs it")]
 
 use axum::Router;
 use caelumora_agents::library::AgentsLibrary;
-use caelumora_agents::testing::{agent_runtime, described_tools, offered_anywhere, tool_named};
-use caelumora_agents::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
-use caelumora_agents::turn::Turn;
-use caelumora_api::runtime::ActorRuntime;
-use caelumora_domain::actor::ActorId;
-use caelumora_domain::agent::{AgentChannelState, AgentId, Personality};
-use caelumora_domain::channel::Channel;
-use caelumora_domain::channel::ChannelId;
-use caelumora_domain::channel::ThreadId;
+use caelumora_agents::testing::{described_tools, executed_anywhere, offered_anywhere};
+use caelumora_agents::tool::{ToolError, ToolProvider};
+use caelumora_domain::agent::Personality;
 use caelumora_domain::component::{
     ComponentBundle, ComponentConfig, ComponentDescriptor, ComponentFailPolicy,
 };
 use caelumora_domain::confidentiality::{Classification, Confidentiality};
 use caelumora_domain::scope::Scope;
 use caelumora_domain::security::SecurityAttributes;
-use caelumora_domain::session::testing::bare_session;
-use caelumora_domain::session::SessionId;
 use caelumora_domain::tool::ToolDescription;
 use caelumora_domain::type_map::TypeKey;
-use caelumora_domain::value::name::{Name, ScopedName};
-use caelumora_domain::work::Work;
+use caelumora_domain::value::name::ScopedName;
 use caelumora_kernel::component::testing::{built, descriptor};
 use caelumora_kernel::component::BuildContext;
 use caelumora_kernel::component::BUNDLE_REF_KIND;
 use caelumora_kernel::kernel::Kernel;
-use caelumora_kernel::session::testing::detached_participant_in;
 use caelumora_kernel::testing::{asked_for, TestKernel, World};
 use caelumora_security::{Policies, SecurityContext};
 use caelumora_store::{EntityStores, Persistence};
@@ -147,42 +133,6 @@ async fn provider(params: Value) -> Arc<dyn ToolProvider> {
     built(&kernel, descriptor("test-echo", MCP_SERVER_KIND, params)).await.unwrap()
 }
 
-/// What `provider` gives for the call of its tool `name` with `params`, in
-/// a turn that reaches no channel.
-async fn executed(
-    provider: &dyn ToolProvider,
-    name: &str,
-    params: Value,
-) -> ToolResult<ToolOutput> {
-    let mut state = AgentChannelState::default();
-    let runtime = detached_actor_runtime(AgentId::default());
-    state.begin_turn(
-        ThreadId::line(runtime.channel_id()),
-        Work::new(Default::default(), None, Default::default(), Default::default()),
-    );
-    let mut turn = Turn::of(&mut state, ThreadId::line(runtime.channel_id()), runtime)
-        .expect("a turn was begun");
-    tool_named(provider, name).execute(&params, None, &mut turn).await
-}
-
-/// What a turn outside of a running session acts through: the runtime of
-/// the agent `agent` in a channel that is attached to no session, so it reaches none.
-fn detached_actor_runtime(agent: AgentId) -> Arc<dyn ActorRuntime> {
-    let session = bare_session(SessionId::new());
-    let channel = Channel::build(
-        ChannelId::new(),
-        session.id,
-        ActorId::None,
-        Name::new("detached").unwrap(),
-        Default::default(),
-        Classification::CHANNEL_DEFAULT,
-        None,
-    );
-    let kernel = kernel(&Persistence::in_memory());
-    let runtime = detached_participant_in(kernel, session, channel, ActorId::Agent(agent));
-    agent_runtime(runtime)
-}
-
 #[tokio::test]
 async fn discovers_and_calls_echo_tool_over_streamable_http() {
     let (addr, _server) = start_test_server().await;
@@ -213,9 +163,10 @@ async fn discovers_and_calls_echo_tool_over_streamable_http() {
         "what the server says of itself"
     );
 
-    let result = executed(provider.as_ref(), "test-echo__echo", json!({ "message": "hello mcp" }))
-        .await
-        .unwrap();
+    let result =
+        executed_anywhere(provider.as_ref(), "test-echo__echo", json!({ "message": "hello mcp" }))
+            .await
+            .unwrap();
     assert_eq!(result.value, json!("hello mcp"));
     assert!(result.classification.is_none(), "an MCP server does not classify its results");
 }
@@ -230,13 +181,13 @@ async fn an_answer_above_the_bound_is_kept_whole_beside_a_preview() {
     offered_anywhere(provider.as_ref()).await.unwrap();
 
     let short = json!({ "message": "hello mcp" });
-    let result = executed(provider.as_ref(), "test-echo__echo", short).await.unwrap();
+    let result = executed_anywhere(provider.as_ref(), "test-echo__echo", short).await.unwrap();
     assert_eq!(result.value, json!("hello mcp"), "as it came below the bound");
     assert!(result.files.is_empty());
 
     let message = "x".repeat(10_000);
     let long = json!({ "message": message });
-    let result = executed(provider.as_ref(), "test-echo__echo", long).await.unwrap();
+    let result = executed_anywhere(provider.as_ref(), "test-echo__echo", long).await.unwrap();
     let [kept] = result.files.as_slice() else { panic!("one file: {:?}", result.files) };
     assert_eq!((kept.name.as_str(), kept.bytes.as_ref()), ("test-echo.txt", message.as_bytes()));
     assert!(result.value["content"].as_str().unwrap().len() < message.len(), "a preview");
@@ -424,7 +375,7 @@ async fn a_tool_the_server_no_longer_knows_has_the_tools_discovered_again() {
     assert_eq!(offered_anywhere(provider.as_ref()).await.map(|tools| tools.len()), Ok(2));
 
     replaced.store(true, Ordering::SeqCst);
-    let failed = executed(provider.as_ref(), "test-echo__forget", json!({})).await;
+    let failed = executed_anywhere(provider.as_ref(), "test-echo__forget", json!({})).await;
     assert!(
         matches!(&failed, Err(ToolError::ExecutionFailed(why)) if why.contains("tool not found")),
         "{failed:?}"

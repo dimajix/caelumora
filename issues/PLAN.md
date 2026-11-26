@@ -98,7 +98,7 @@ Order: 58 → 166 → 55. Only 58 belongs to the first release.
 |---|---|---|
 | [226](226-concurrent-tool-calls.md) | M + M | Two steps. The first - tools read the turn and *return* their effects instead of holding `&mut Turn` - changes `ToolProvider::execute` for every provider, the file tools, `terminal_tool` and the skills' tools among them; every new tool makes it dearer. Running concurrently is the second step, in the agent's loop, and can wait. |
 | [290](290-tools-offered-by-the-turn.md) | M | Offer a model only the tools it may call where it is - a workspace's tools where there is one, those that change where its list grants writing. A `ToolProvider` that knows the turn, asked where the turn's tool sets are built; the call keeps its own check. |
-| [126](126-mcp-tools-discovered-once.md) | M | Refresh in the provider; an MCP server's set already says when it is unavailable. What remains is following a server that changes or comes back - the same question for 252 once it exists. |
+| [126](126-mcp-tools-discovered-once.md) | M | Refresh in the provider; an MCP server's set already says when it is unavailable. What remains is following a server that changes or comes back - the same question for an OpenAPI service. |
 
 247 is a tool too, but belongs to the workspace: see B1.
 
@@ -127,7 +127,6 @@ Sound issues whose time has not come. None of them changes what a user can do wi
 | [343](343-users-bring-their-own-secrets.md) | Secrets a user brings, in the vault `user`. After 310, and only once users write agents of their own that reach remote systems. |
 | [346](346-subscription-topics-for-every-kind.md) | Topics on the event bus for every kind. No use case yet; opened to be referred to. |
 | [139](139-mcp-result-classification.md) | Small, but no MCP server classifies its results yet. Do it when one does. |
-| [252](252-openapi-tool.md) | A generic OpenAPI tool; its questions are decided, and Kimai is the service it is built for. |
 | [124](124-observer-participants.md) | Nice for watching agents work among themselves; a participant who stays silent does the job meanwhile. |
 | [42](42-export-import-chats.md) | Useful for bug reports; the context panel covers reproducing for now. |
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | A real gap, but it needs finer `KnowledgeRef`s (as 58) and the audit log (140) first. |
@@ -161,8 +160,8 @@ Each milestone leaves the system usable; decisions come before the code that dep
 4.  **Sessions that last.** 58; 126.
 
 **This is the first release.** After it, roughly in this order: 140 · 237 (with 05 decided) · 166
-→ 55 · 226 (concurrency) · 238 · 342, 343 · 307 before 03 and 122 · 272 and 252 when a deployment
-asks · 124, 42 · and section C when a deployment asks - 332 with 03.
+→ 55 · 226 (concurrency) · 238 · 342, 343 · 307 before 03 and 122 · 272 when a deployment asks
+· 124, 42 · and section C when a deployment asks - 332 with 03.
 
 Not covered by any issue and worth one each:
 
@@ -192,5 +191,5 @@ The plan stands on assumptions the maintainer should confirm or correct:
 | B2 - context and memory | 55, 58, 166, 169 |
 | B3 - tools | 126, 226, 290 |
 | B4 - a team | 10, 25, 140, 142, 310 |
-| C - not now | 03, 04, 26, 27, 42, 122, 124, 139, 143, 181, 182, 237, 238, 252, 287, 307, 332, 342, 343, 346 |
+| C - not now | 03, 04, 26, 27, 42, 122, 124, 139, 143, 181, 182, 237, 238, 287, 307, 332, 342, 343, 346 |
 | D - questionable | 05, 57, 59, 173, 340 |

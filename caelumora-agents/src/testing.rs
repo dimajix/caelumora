@@ -10,7 +10,7 @@
 
 use crate::library::{register_components, AgentsLibrary};
 use crate::prompt::{NAMESPACE, PROMPTS};
-use crate::tool::{Tool, ToolProvider};
+use crate::tool::{Tool, ToolOutput, ToolProvider, ToolResult};
 use crate::turn::Turn;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -104,6 +104,27 @@ pub async fn offered_anywhere(provider: &dyn ToolProvider) -> Result<Vec<ToolDes
     };
     let offered = provider.offered(&turn.situation()).await?;
     Ok(offered.iter().map(|tool| tool.description().clone()).collect())
+}
+
+/// What the tool `name` of `provider` gives for a call with `params`, in a turn that reaches no
+/// channel, as `offered_anywhere` offers it: for a test of what a tool answers whatever the place,
+/// such as a remote one's.
+///
+/// # Panics
+/// If `provider` has no tool of that name.
+pub async fn executed_anywhere(
+    provider: &dyn ToolProvider,
+    name: &str,
+    params: Value,
+) -> ToolResult<ToolOutput> {
+    let mut state = AgentChannelState::default();
+    state.begin_turn(
+        ThreadId::default(),
+        Work::new(Default::default(), None, Default::default(), Default::default()),
+    );
+    let runtime = detached_actor_runtime(AgentId::new());
+    let mut turn = Turn::of(&mut state, ThreadId::default(), runtime).expect("a turn was begun");
+    tool_named(provider, name).execute(&params, None, &mut turn).await
 }
 
 /// The tools `provider` has now, as they are described: for a test of what a component gives.

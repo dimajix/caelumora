@@ -1,6 +1,6 @@
 # 252 — Tool servers described by OpenAPI cannot be reached
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** low
 **Area:** Tools and approvals
@@ -214,7 +214,9 @@ Agreed with the maintainer on 2026-11-26.
   unknown tool, OpenAPI's `info.description`.
 - **An operation without `operationId` is left out**, with a warning in the log. A name derived from
   method and path would be a rule of its own, and the common generators - FastAPI among them - set
-  an `operationId`.
+  an `operationId`. *Without the warning, decided with step 4: since `operations` is required, such
+  an operation cannot be chosen, and a warning at every reading of the document would only be
+  noise.*
 - **The filter is one optional list, `operations`,** of `operationId`s. Without it, every operation
   is offered, as MCP offers every tool; approval by default (`requires_approval: true`) and
   `destination` keep that safe, and a service of hundreds of operations needs the list. No tags and
@@ -222,7 +224,8 @@ Agreed with the maintainer on 2026-11-26.
 - **`operations` is a map, and required:** each operation offered is named by its `operationId`,
   with what holds for it alone - `{}` for nothing of its own -, and only what it names becomes a
   tool; a component without it, or with none in it, is not built. An operation the document does
-  not have is refused as the component is built. Unlike `mcp_server`, which offers every tool of
+  not have is refused as the component is built. *Found as the document is read instead, decided
+  with step 4 below.* Unlike `mcp_server`, which offers every tool of
   its server: a service described by OpenAPI has hundreds of operations, deleting ones among them,
   and what an agent may do with it is chosen, not filtered. What holds for an operation alone is,
   for now, `requires_approval`, `true` or `false`, over the component's `requires_approval` (`true`
@@ -239,6 +242,21 @@ Agreed with the maintainer on 2026-11-26.
     patch_stop_timesheet: { requires_approval: false }
     get_users: { requires_approval: true }
   ```
+- **Decided with step 4:**
+  - **An operation the document lacks is found as the document is read,** not as the component is
+    built - which reads no document: the tools are discovered in the name of whoever acts (issue
+    126), and a file is read when they are first offered too. The reading fails then, the log
+    naming what is missing: the tools read before stay, without any the tool set is unavailable,
+    in general terms, as for a document that cannot be read.
+  - **A request body is one property of its own, `body`,** whatever it is - an object, an array -,
+    never mixed in among the parameters: one rule, and no name of a body's field can collide with
+    a parameter's.
+  - **What a chosen operation needs and the component cannot give fails the reading** as a missing
+    operation does: a parameter in a header or a cookie, a body that is required and no JSON, a
+    parameter named `body`, two parameters of one name. The operator chose the operation and
+    learns from the log why it is not offered. Kimai needs none of it.
+  - **A parameter named with `[]`** (`users[]`) is given the model without the brackets, and an
+    array of values is sent as the name repeated (`users[]=1&users[]=2`).
 - **The document is read as `serde_json::Value`**, by our own reading of the parts needed - paths,
   their parameters, a JSON request body, `info.description` -, covering 3.0 and 3.1 without a new
   dependency. Resolving `$ref` is needed by the schema conversion for MCP anyway.
@@ -329,3 +347,17 @@ Agreed with the maintainer on 2026-11-26.
   destination; it offers, keeps the tools discovered before on a failure and logs. `McpServer` is
   `mcp_server`'s source, and `McpServerComponent` is gone; nothing changes in what MCP does but
   the wording of the two warnings.
+- **2026-11-26** — Step 4 done, and with it the issue: the component kind `openapi_server` in the
+  crate `caelumora-tool-openapi` (library `OpenApiToolLibrary`, `tool_openapi`), which
+  `caelumora-app` and `caelumora-tui` list. The server (`OpenApiServer`) is the `ToolSource` of a
+  `DiscoveredTools`; its document is read below the endpoint (`spec_path`, `openapi.json` by
+  default) or of a file (`spec_file`, read once, which takes no `refresh_secs`), as
+  `serde_json::Value`, the operations chosen with their parameters in the path and the query and a
+  JSON body as `body`. A call is one request with the endpoint's credential, resolved for its URL;
+  JSON comes back as JSON, text as text, nothing as its status, anything else and a status of
+  failure as a failure; a value of the path that is empty, `.` or `..` is refused, as it would
+  reach another path. Every one of the 99 operations of Kimai's document is read, as a probe
+  against `local/kimai-api.json` showed, which the repository does not hold. Documented in TOOLS.md
+  (*OpenAPI servers*), COMPONENTS.md and APPROVALS.md. `executed_anywhere` of
+  `caelumora_agents::testing` is the call of a tool in a turn that reaches no channel, which MCP's
+  tests had copied; `tracing`, which step 3 left unused in `caelumora-tool-mcp`, is gone.

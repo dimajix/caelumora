@@ -23,6 +23,7 @@ caelumora-memory = { workspace = true, default-features = true }
 caelumora-notes = { workspace = true, default-features = true }
 caelumora-subagents = { workspace = true, default-features = true }
 caelumora-tool-mcp.workspace = true
+caelumora-tool-openapi.workspace = true
 caelumora-a2a.workspace = true
 caelumora-open-terminal.workspace = true
 caelumora-store-json.workspace = true

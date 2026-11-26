@@ -15,7 +15,6 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
-tracing.workspace = true
 
 [dev-dependencies]
 caelumora-security = { workspace = true, features = ["test-support"] }

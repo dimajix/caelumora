@@ -88,6 +88,9 @@ drawn in [CRATES.md](CRATES.md):
 *   **`caelumora-tool-mcp`** - the tools of MCP servers, a library that brings nothing but its
     component kind `mcp_server`, and with it `rmcp` (issue 325). See
     [TOOLS.md](TOOLS.md#mcp-servers).
+*   **`caelumora-tool-openapi`** - the operations of servers described by OpenAPI, a library that
+    brings nothing but its component kind `openapi_server` (issue 252). See
+    [TOOLS.md](TOOLS.md#openapi-servers).
 *   **`caelumora-compaction`** - compaction of an agent's context (issue 464), a library that brings
     the component `compaction` - an activity of the agent and `/compact` -, the strategies, with the
     facet `CompactionStrategy` and the `KnowledgeRestorer` others serve, and their texts. See
@@ -180,9 +183,10 @@ agent side (issue [516](../issues/516-the-runtime-trusts-the-agents-linked-into-
 as a plugin is, but with a builder that offers nothing of the kernel (`Library`, `LibraryBuilder`).
 The agents are the essential one (issue 370): `caelumora-agents` registers the kinds of agent, whose
 actors the channel builds (`AgentKinds`), and the kinds of their components; without it, the program
-is a chat between users. `caelumora-tool-mcp` ([TOOLS.md](TOOLS.md#mcp-servers)), `caelumora-a2a`,
-`caelumora-compaction`, `caelumora-tool-workspace`, `caelumora-tool-image`,
-`caelumora-tool-attachment` and `caelumora-tool-web` bring component kinds alone; they build on the
+is a chat between users. `caelumora-tool-mcp` ([TOOLS.md](TOOLS.md#mcp-servers)),
+`caelumora-tool-openapi`, `caelumora-a2a`, `caelumora-compaction`, `caelumora-tool-workspace`,
+`caelumora-tool-image`, `caelumora-tool-attachment` and `caelumora-tool-web` bring component kinds
+alone; they build on the
 agents' library, and a library that defines facets of its own for others to serve is built on in
 turn: `caelumora-skills` and `caelumora-tool-workspace` serve the `KnowledgeRestorer` of
 `caelumora-compaction`. A service with a manager of its own that extends the kernel - skills,

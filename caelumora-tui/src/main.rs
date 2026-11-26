@@ -60,6 +60,7 @@ use caelumora_subagents::plugin::SubagentsPlugin;
 use caelumora_tool_attachment::library::AttachmentToolLibrary;
 use caelumora_tool_image::library::ImageToolLibrary;
 use caelumora_tool_mcp::library::McpToolLibrary;
+use caelumora_tool_openapi::library::OpenApiToolLibrary;
 use caelumora_tool_web::library::WebToolLibrary;
 use caelumora_tool_workspace::library::WorkspaceToolLibrary;
 use clap::{Parser, Subcommand, ValueEnum};
@@ -207,6 +208,7 @@ fn libraries(log: LogTarget) -> Vec<Box<dyn Library>> {
         Box::new(AgentsLibrary),
         Box::new(CompactionLibrary),
         Box::new(McpToolLibrary),
+        Box::new(OpenApiToolLibrary),
         Box::new(A2aLibrary),
         Box::new(WorkspaceToolLibrary),
         Box::new(ImageToolLibrary),

@@ -19,6 +19,7 @@ members = [
     "caelumora-artifacts",
     "caelumora-subagents",
     "caelumora-tool-mcp",
+    "caelumora-tool-openapi",
     "caelumora-a2a",
     "caelumora-open-terminal",
     "caelumora-store-json",
@@ -127,6 +128,7 @@ caelumora-compaction = { path = "caelumora-compaction" }
 caelumora-artifacts = { path = "caelumora-artifacts", default-features = false }
 caelumora-subagents = { path = "caelumora-subagents", default-features = false }
 caelumora-tool-mcp = { path = "caelumora-tool-mcp" }
+caelumora-tool-openapi = { path = "caelumora-tool-openapi" }
 caelumora-a2a = { path = "caelumora-a2a" }
 caelumora-open-terminal = { path = "caelumora-open-terminal" }
 caelumora-store-json = { path = "caelumora-store-json" }
