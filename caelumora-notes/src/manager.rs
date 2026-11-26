@@ -265,3 +265,151 @@ impl KeptBehind<Channel> for NotesManager {
         self.purge_all(Filter::eq(NotesField::Channel, channel)).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::channel::testing::bare_channel;
+    use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::event::EntityChange;
+    use caelumora_domain::ledger::Change;
+    use caelumora_domain::session::SessionId;
+    use caelumora_domain::user::UserId;
+    use caelumora_kernel::event::SubscriptionTopic;
+    use caelumora_security::confidentiality::ConfidentialityRules;
+    use caelumora_security::{OwnershipPolicy, Policies};
+    use caelumora_store::Persistence;
+    use serde_json::Value;
+    use std::future;
+    use std::sync::Mutex as StdMutex;
+
+    /// The change that notes `text` publicly as note `id`.
+    fn note(id: u32, text: &str) -> NoteChange {
+        let classification = Classification::CHANNEL_DEFAULT;
+        let change = Change::Add { id: NoteId(id), text: text.to_string(), classification };
+        NoteChange { kind: NoteKind::Public, change }
+    }
+
+    /// The changes `changes`, answered by a check that judges nothing.
+    fn judged(changes: Vec<NoteChange>) -> impl FnMut(AgentNotes) -> Ready {
+        move |_| future::ready(Ok(changes.clone()))
+    }
+
+    type Ready = future::Ready<StoreResult<Vec<NoteChange>>>;
+
+    /// The context of the work of `agent`, acting for `owner`.
+    fn work_of(agent: AgentId, owner: ActorId) -> SecurityContext {
+        SecurityContext::new(owner, Default::default(), Default::default()).next(
+            ActorId::Agent(agent),
+            owner,
+            owner,
+        )
+    }
+
+    /// A commit that finds the notes changed by another process meanwhile reads them again, judges
+    /// them again and applies its changes to them, so that neither is lost.
+    #[tokio::test]
+    async fn a_commit_outdated_by_another_process_is_judged_and_made_again() {
+        let policies = Policies::permitting_all();
+        let notes = Persistence::in_memory().entity_store::<AgentNotes>(&policies).unwrap();
+        let events = Arc::new(EventBus::new(&policies));
+        // Two processes, each with a keeper of its own, on one store.
+        let here = NotesManager::new(&notes, Arc::clone(&events));
+        let there = NotesManager::new(&notes, events);
+        let channel = bare_channel(SessionId::new());
+        let agent = AgentId::new();
+        let context = work_of(agent, ActorId::User(UserId::new()));
+        let at = (agent, channel.id);
+        let first = judged(vec![note(1, "first")]);
+        here.apply(&context, at, MessageId::new(), &channel, first).await.unwrap();
+
+        // What each judgement saw.
+        let seen: StdMutex<Vec<Vec<String>>> = StdMutex::new(Vec::new());
+        let commit = here.apply(&context, at, MessageId::new(), &channel, |notes| {
+            let texts = notes.public.current().into_iter().map(|n| n.text).collect();
+            let first_judgement = {
+                let mut seen = seen.lock().unwrap();
+                seen.push(texts);
+                seen.len() == 1
+            };
+            let (there, context, channel) = (&there, &context, &channel);
+            async move {
+                if first_judgement {
+                    // Another process commits while this one judges what it read before.
+                    let elsewhere = judged(vec![note(2, "elsewhere")]);
+                    there.apply(context, at, MessageId::new(), channel, elsewhere).await?;
+                }
+                Ok::<_, StoreError>(vec![note(3, "mine")])
+            }
+        });
+        commit.await.unwrap();
+
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [vec!["first".to_string()], vec!["first".to_string(), "elsewhere".to_string()]],
+            "judged again on the notes read again"
+        );
+        let stored = here.notes_of(&context, agent, channel.id).await.unwrap();
+        let texts: Vec<_> = stored.public.current().into_iter().map(|n| n.text).collect();
+        assert_eq!(texts, ["first", "elsewhere", "mine"], "neither commit lost");
+    }
+
+    /// Notes that are stored but that the work may not read are not taken for notes never made:
+    /// the commit fails as a conflict rather than making them again and again.
+    #[tokio::test]
+    async fn notes_the_work_may_not_read_are_a_conflict_not_made_again() {
+        let access_policy = Arc::new(OwnershipPolicy::new());
+        let policies = Policies::new(access_policy, Arc::new(ConfidentialityRules::default()));
+        let notes = Persistence::in_memory().entity_store::<AgentNotes>(&policies).unwrap();
+        let manager = NotesManager::new(&notes, Arc::new(EventBus::new(&policies)));
+        let channel = bare_channel(SessionId::new());
+        let agent = AgentId::new();
+        let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
+        let at = (agent, channel.id);
+        let hers = judged(vec![note(1, "hers")]);
+        manager.apply(&work_of(agent, alice), at, MessageId::new(), &channel, hers).await.unwrap();
+
+        let his = judged(vec![note(2, "his")]);
+        let refused =
+            manager.apply(&work_of(agent, bob), at, MessageId::new(), &channel, his).await;
+        assert!(matches!(refused, Err(StoreError::Conflict(_))), "{refused:?}");
+    }
+
+    /// What a commit stored is announced to whoever may read the notes' document - the agent's
+    /// owner -, without what it changed: made, then changed; nobody else hears of the document.
+    #[tokio::test]
+    async fn what_a_commit_stored_is_announced_to_the_owner_of_the_notes() {
+        let access_policy = Arc::new(OwnershipPolicy::new());
+        let policies = Policies::new(access_policy, Arc::new(ConfidentialityRules::default()));
+        let notes = Persistence::in_memory().entity_store::<AgentNotes>(&policies).unwrap();
+        let events = Arc::new(EventBus::new(&policies));
+        let manager = NotesManager::new(&notes, Arc::clone(&events));
+        let channel = bare_channel(SessionId::new());
+        let agent = AgentId::new();
+        let (alice, bob) = (UserId::new(), UserId::new());
+        let as_user = |user| {
+            SecurityContext::new(ActorId::User(user), Default::default(), Default::default())
+        };
+        let mut hers = events.subscribe(as_user(alice), vec![SubscriptionTopic::All]);
+        let mut his = events.subscribe(as_user(bob), vec![SubscriptionTopic::All]);
+        let context = work_of(agent, ActorId::User(alice));
+        for (id, text) in [(1, "first"), (2, "second")] {
+            let changes = judged(vec![note(id, text)]);
+            manager
+                .apply(&context, (agent, channel.id), MessageId::new(), &channel, changes)
+                .await
+                .unwrap();
+        }
+
+        let about_notes = |events: Vec<GlobalEvent>| -> Vec<EntityChange> {
+            events
+                .iter()
+                .filter_map(|event| event.about::<AgentNotes>().map(|(_, change)| change.clone()))
+                .collect()
+        };
+        let changes = about_notes(hers.drain().await);
+        assert_eq!(changes, [EntityChange::Created, EntityChange::Updated(Value::Null)]);
+        assert!(about_notes(his.drain().await).is_empty(), "nobody else hears of the document");
+    }
+}

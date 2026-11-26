@@ -416,3 +416,9 @@ that belong to the channel ([606](606-no-notes-belong-to-the-channel.md)): the c
 brings `/channel notes` is `agent_notes` (not `channel_notes`), the extension of the channel's view
 `AgentNotesBoard` (not `ChannelNotes`), that of the session's view `SessionAgentNotes` (not
 `SessionNotes`). The command keeps its name: it acts on a channel and shows what its agents noted.
+
+**2026-11-26** - Step 5, the tests step 4 left open: what a turn given up noted is not committed,
+and the number it reserved is not given again (an agent's command that fails); an agent knows its
+private notes of a channel its owner may not read, which the owner does not reach through the
+channels; the `NotesManager`'s commit outdated by another process judged again, notes the work may
+not read a conflict, what is stored announced to their owner alone.

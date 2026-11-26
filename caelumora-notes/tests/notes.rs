@@ -8,14 +8,19 @@
     reason = "test code: what fails here fails the test that runs it"
 )]
 
+use caelumora_agents::command::AgentCommand;
 use caelumora_agents::library::AgentsLibrary;
 use caelumora_agents::testing::{about_agent_commands, agent_runtime, calling, register_scripted};
+use caelumora_agents::turn::Turn;
 use caelumora_api::command::CommandError;
+use caelumora_api::command::{Command, CommandProvider, CommandResult};
+use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_api::reader::ViewError;
 use caelumora_domain::actor::{ActorEvent, ActorId};
 use caelumora_domain::agent::{AgentId, Personality};
 use caelumora_domain::channel::ChannelId;
 use caelumora_domain::command::CommandVisibility;
+use caelumora_domain::command::{CommandDescription, CommandOutput, CommandParameter};
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::{Classification, Confidentiality};
 use caelumora_domain::config::AppConfig;
@@ -24,6 +29,7 @@ use caelumora_domain::ledger::Change;
 use caelumora_domain::message::{Message, MessageId, MessageRole};
 use caelumora_domain::removal::Removal;
 use caelumora_domain::turn::{StagedChange, StagedChanges};
+use caelumora_domain::value::command_name::CommandName;
 use caelumora_kernel::channel::testing::as_command_error;
 use caelumora_kernel::session::{ChannelSpec, SessionLoop};
 use caelumora_kernel::testing::{
@@ -645,4 +651,120 @@ async fn an_agents_private_notes_are_shown_by_command_to_its_owner_alone() {
         "carried out for her alone: {answer:?}"
     );
     world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// A command of the agent's that notes what it is given in its turn - and with `fail`, notes and
+/// then fails, so that nothing of it may stay: what a turn stages of the notes, through the API a
+/// component stages by.
+#[derive(Debug)]
+struct Noting(CommandDescription);
+
+impl Command for Noting {
+    fn description(&self) -> &CommandDescription {
+        &self.0
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentCommand for Noting {
+    async fn execute(&self, args: &str, turn: &mut Turn<'_>) -> CommandResult<CommandOutput> {
+        let failed = |reason: String| CommandError::Failed { command: "jot".to_string(), reason };
+        let writer =
+            turn.writer::<dyn NotesWriter>().await.ok_or_else(|| failed("no notes".into()))?;
+        let id = writer.reserve_id(NoteKind::Public).await.map_err(|e| failed(e.to_string()))?;
+        let classification = turn.situation().label();
+        let change = Change::Add { id, text: format!("jotted {args}"), classification };
+        turn.stage(&NoteChange { kind: NoteKind::Public, change })
+            .map_err(|e| failed(e.to_string()))?;
+        if args == "fail" {
+            return Err(failed("it was told to".to_string()));
+        }
+        Ok(CommandOutput::private("Jotted."))
+    }
+}
+
+/// What a turn staged of the notes is committed only when the turn completes: of an agent's
+/// command carried out, what it noted stands; of one that failed - its turn given up -, nothing,
+/// and the number it reserved is not given again.
+#[tokio::test]
+async fn what_a_turn_given_up_noted_is_not_committed() {
+    let world = World::with(&[&NotesPlugin], &[&AgentsLibrary, &NotesLibrary], |registry| {
+        register_scripted(registry, "silent", vec![Message::new(Classification::PUBLIC)]);
+        registry.register(
+            ComponentKind::new("test_noting").provides::<dyn CommandProvider<dyn AgentCommand>>(),
+            |_descriptor, _context| {
+                let jot = Noting(CommandDescription {
+                    name: CommandName::fixed("jot"),
+                    aliases: Vec::new(),
+                    description: "Jots.".to_string(),
+                    parameters: vec![CommandParameter::optional("text")],
+                    owners_only: false,
+                });
+                let commands: Vec<Arc<dyn AgentCommand>> = vec![Arc::new(jot)];
+                let mut facets = ComponentFacets::empty();
+                facets.insert::<dyn CommandProvider<dyn AgentCommand>>(Arc::new(commands));
+                Ok(facets)
+            },
+        );
+    })
+    .await;
+    let jotting = personality_with(&world, "jotting", "silent", &["test_noting"]).await;
+    let helper = world.agent("helper", world.alice, &jotting).await;
+    let session = world.shared_session(&[helper], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let alice = main.user_actor(world.alice).unwrap();
+    let mut hers = alice.watch();
+    let texts = || async {
+        let notes = stored(&world, helper, main.id()).await;
+        notes.public.current().into_iter().map(|n| (n.id.0, n.text)).collect::<Vec<_>>()
+    };
+
+    alice.execute_command(None, "jot @helper this").await.expect("sent to the agent");
+    shown(&mut hers, "CommandExecuted").await;
+    assert_eq!(texts().await, [(1, "jotted this".to_string())], "committed with its turn");
+    alice.execute_command(None, "jot @helper fail").await.expect("sent to the agent");
+    shown(&mut hers, "CommandFailed").await;
+    assert_eq!(texts().await, [(1, "jotted this".to_string())], "nothing of the failed one");
+    alice.execute_command(None, "jot @helper again").await.expect("sent to the agent");
+    shown(&mut hers, "CommandExecuted").await;
+    let after = texts().await;
+    assert_eq!(after[1], (3, "jotted again".to_string()), "2 was reserved by the failed one");
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// An agent knows its private notes of a channel it left through itself, by the flow rule alone,
+/// also where its owner may not read that channel; its owner, reading through the channels, does
+/// not reach them there.
+#[tokio::test]
+async fn an_agent_knows_its_private_notes_of_a_channel_its_owner_may_not_read() {
+    let world = World::with(&[&NotesPlugin], &[&AgentsLibrary], |_| {}).await;
+    let global = world.personality("global", None, &[]).await;
+    let helper = world.agent("helper", world.bob, &global).await;
+    let session = world.shared_session(&[helper], &[]).await;
+    let hers = World::as_user(world.alice);
+    let main = Arc::clone(&session.channels()[0]);
+    let participants = vec![ActorId::User(world.alice), ActorId::Agent(helper)];
+    let spec = ChannelSpec { participants, components: quiet(), ..ChannelSpec::new("hers") };
+    let hers_alone = session.create_channel(&hers, spec).await.expect("hers to make");
+    noted(&world, helper, hers_alone.id(), NoteKind::Private, &["noted in hers"]).await;
+    noted(&world, helper, main.id(), NoteKind::Private, &["noted in main"]).await;
+    hers_alone.remove_participant(&hers, ActorId::Agent(helper)).await.unwrap();
+
+    let runtime = agent_runtime(participant_runtime_in(&main, ActorId::Agent(helper)));
+    let bob = ActorId::User(world.bob);
+    let reader = runtime.reader::<dyn NotesReader>(bob, main.classification()).await.unwrap();
+    let known: Vec<_> = reader.own_private_elsewhere().await.into_iter().map(|c| c.name).collect();
+    assert_eq!(known, ["hers"], "through itself, though bob may not read it");
+    let by_owner = world
+        .kernel
+        .views(Viewer::new(World::as_user(world.bob)))
+        .session(session.id())
+        .await
+        .unwrap()
+        .private_notes_of(helper)
+        .await
+        .expect("his agent");
+    let channels: Vec<_> = by_owner.iter().map(|found| found.channel.name().to_string()).collect();
+    assert_eq!(channels, ["main"], "bob reaches them through the channels he reads");
+    world.kernel.stop_session(&hers, session.id()).await.unwrap();
 }
