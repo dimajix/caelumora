@@ -1,6 +1,6 @@
 # An agent that runs elsewhere, reached over A2A (issue 179) - for instance
 # a Hermes Agent with its A2A plugin. Set the endpoint's `url` to where it
-# publishes its agent card, and keep its token in the secret local/HERMES_A2A_TOKEN. It sees
+# publishes its agent card, and keep its token in the secret agents/HERMES_A2A_TOKEN. It sees
 # only what its roles let it: an external agent that names none sees only
 # what is public. Its remote agent keeps its conversation, so it is told who
 # is in the channel, its language and its briefing once, and again only when
@@ -32,5 +32,5 @@ personalities:
         url: http://localhost:9900
         auth:
           type: bearer
-          secret: local/HERMES_A2A_TOKEN
+          secret: agents/HERMES_A2A_TOKEN
     fail_policy: FailClosed

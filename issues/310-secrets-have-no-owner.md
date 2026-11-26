@@ -237,3 +237,28 @@ rules out of the backends. To be aligned in an issue of its own, not here.
   configuration named by one; each vault's backend is made with `make_one`, since `make_named`
   takes no `VaultConfig`; `SecretError::InvalidVaults` names what `SecretManager::new` refuses, and
   `UnknownVault` names the reference, not the vault alone.
+- **2026-11-26** — Step 2: the ownership policy grants what a `Read` verb asks of what the system
+  owns to everyone - seeded skills are used so -, so one verb for skills and secrets would have
+  made a vault without `acl` everybody's, against *Decisions taken*. Decided with the maintainer:
+  secrets get a verb of their own, `caelumora_security::secret::USE` (`UseSecret`), with a new
+  requirement, `Requirement::Explicit(Grant::Read)` (first called `Granted`): granted by an entry
+  of the access list or by owning, not by the system's ownership as such. Skills keep their `USE`
+  in `caelumora-skills`;
+  "one verb for skills and secrets" is withdrawn. Weighed and set aside: one verb, with a vault
+  owned by nobody (`ActorId::None`), which the existing requirement would have decided alike - but
+  a vault is the system's, and an external policy would see it owned by none; and the ownership
+  policy no longer granting what the system owns for a kind's own verbs, which would have taken
+  seeded skills from everybody.
+- **2026-11-26** — Step 2 done: a vault carries the system's attributes with the access list its
+  configuration gives it (`acl`), and `SecretManager::resolve` asks `UseSecret` of each vault of the
+  way before it is read, a fallback only once the vault before did not have the key.
+  `ActionType::ReadSecret` is gone, and with it the policy's "always yes". The test kernel has the
+  vaults `test`, granted to everyone, and `withheld`, the system's alone; the agents' suite shows an
+  agent refused a secret of a vault its owner is not granted, in her name, whoever asked. A secret
+  is granted by the principal alone - an agent by its owner, not as the caller -, so that a context
+  whose caller is the system grants nothing. `examples/config.yaml` keeps `local` and `env`, where
+  the server's own secrets lie, the system's, and puts the agents' credentials into a vault of
+  their own, `agents`, granted to every user; the seed names them there.
+- **2026-11-26** — Decided with the maintainer: what `SecretManager::new` refuses - vaults that do
+  not fit together - is a `ConfigError::Invalid`, the error of sections that do not fit together,
+  not a `SecretError`, which says how reading fails; `SecretError::InvalidVaults` of step 1 is gone.

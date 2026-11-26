@@ -166,7 +166,8 @@ pub(crate) mod testing {
     use caelumora_api::model::ModelProfileProvider;
     use caelumora_domain::context::ModelProfile;
     use caelumora_domain::value::secret_ref::SecretRef;
-    use caelumora_security::{AccessPolicy, ActionType, SecurityContext};
+    use caelumora_security::secret::USE;
+    use caelumora_security::{AccessPolicy, ActionType, SecurityContext, Verb};
     use futures::stream;
     use futures::StreamExt;
     use std::collections::VecDeque;
@@ -174,19 +175,24 @@ pub(crate) mod testing {
     use tokio::sync::Semaphore;
 
     /// The secret a scripted remote agent reads with every call, so that in whose name it was
-    /// called is asked of the policy (`ReadSecret`), as a credential is.
+    /// called is asked of the policy (using its vault), as a credential is.
     const CALLED_AS: &str = "test/CALLED_AS";
 
     /// The access policy a test of a scripted remote agent runs with: it allows everything, and
-    /// keeps the context of every read of `CALLED_AS` - in whose name the remote agent was called
-    /// (issue 516).
+    /// keeps the context of every use of a secret - of `CALLED_AS`, in whose name the remote agent
+    /// was called (issue 516).
     #[derive(Debug, Default)]
     pub(crate) struct CallsRead(Mutex<Vec<SecurityContext>>);
 
     #[async_trait]
     impl AccessPolicy for CallsRead {
         async fn check(&self, context: &SecurityContext, action: ActionType<'_>) -> bool {
-            if matches!(action, ActionType::ReadSecret(CALLED_AS)) {
+            let using = matches!(
+                action,
+                ActionType::Entity { kind, verb: Verb::Custom(verb), .. }
+                    if kind == SecretRef::KIND && *verb == USE
+            );
+            if using {
                 self.0
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner())

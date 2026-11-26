@@ -34,7 +34,7 @@ use caelumora_agents::tool::sleep::SLEEP_KIND;
 use caelumora_agents::tool::{FixedTools, Tool, ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
 use caelumora_api::command::{Command, CommandError, CommandProvider, CommandResult};
-use caelumora_api::component::{ComponentFacets, ComponentKind};
+use caelumora_api::component::{ComponentFacets, ComponentKind, Params};
 use caelumora_api::model::{LanguageModelClient, ModelProfileProvider, ModelResult};
 use caelumora_api::reader::ViewError;
 use caelumora_api::workspace::WorkspaceError;
@@ -88,6 +88,7 @@ use caelumora_kernel::workspace::WorkspaceSpec;
 use futures::stream;
 use futures::stream::BoxStream;
 use futures::StreamExt;
+use serde::Deserialize;
 use serde_json::Value;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -2765,13 +2766,31 @@ struct RemoteAtWork {
     calls: Arc<Mutex<Vec<&'static str>>>,
     declared: Option<Classification>,
     gate: Option<Arc<Semaphore>>,
+    secret: SecretRef,
 }
 
+/// What a `remote_at_work` is configured with: the secret it reads as its credential, unless given
+/// `test/TOKEN`, of the vault granted to everyone.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RemoteAtWorkParams {
+    #[serde(default = "RemoteAtWorkParams::granted")]
+    secret: SecretRef,
+}
+
+impl RemoteAtWorkParams {
+    fn granted() -> SecretRef {
+        SecretRef::new("test/TOKEN").unwrap()
+    }
+}
+
+impl Params for RemoteAtWorkParams {}
+
 impl RemoteAtWork {
-    /// Records `call`, made with `secrets`, reading a token of them as a credential is read:
-    /// whether there is such a secret does not matter, in whose name it is asked does (issue 516).
+    /// Records `call`, made with `secrets`, reading its secret as a credential is read: whether
+    /// the vault has it does not matter, in whose name it is used does (issues 310, 516).
     async fn called(&self, call: &'static str, secrets: &dyn Secrets) {
-        let _ = secrets.resolve(&SecretRef::new("local/REMOTE_TOKEN").unwrap()).await;
+        let _ = secrets.resolve(&self.secret).await;
         self.calls.lock().unwrap().push(call);
     }
 }
@@ -2846,14 +2865,16 @@ async fn with_remote(
     World::with(&[], &[&AgentsLibrary], |registry| {
         registry.register(
             ComponentKind::new("remote_at_work")
+                .params::<RemoteAtWorkParams>()
                 .provides::<dyn ExternalAgent>()
                 .provides::<dyn ModelProfileProvider>(),
-            move |_, _| {
+            move |descriptor, _| {
                 let mut facets = ComponentFacets::empty();
                 let remote = Arc::new(RemoteAtWork {
                     calls: Arc::clone(&calls),
                     declared: declared.clone(),
                     gate: gate.clone(),
+                    secret: RemoteAtWorkParams::read(&descriptor.params)?.secret,
                 });
                 facets.insert::<dyn ExternalAgent>(Arc::<RemoteAtWork>::clone(&remote));
                 facets.insert::<dyn ModelProfileProvider>(remote);
@@ -2878,6 +2899,40 @@ async fn remote_personality(world: &World) -> Personality {
     };
     world.kernel.entity_stores().personalities.update(&World::system(), &mut remote).await.unwrap();
     remote
+}
+
+/// Issue 310: an agent uses a secret of a vault only where its owner is granted it - asked in
+/// her name, whoever asks the agent -, and a vault the configuration grants nobody is the system's
+/// alone: hermes, alice's, asked by bob, is refused the secret of such a vault, in her name. (The
+/// stand-in of the remote agent goes on without its credential; an A2A agent would fail the call.)
+#[tokio::test]
+async fn an_agent_is_refused_a_secret_of_a_vault_its_owner_is_not_granted() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let world = with_remote_at_work(&calls, None).await;
+    let mut remote = remote_personality(&world).await;
+    remote.components.component_nodes[0].params = serde_json::json!({ "secret": "withheld/TOKEN" });
+    world.kernel.entity_stores().personalities.update(&World::system(), &mut remote).await.unwrap();
+    let hermes = world.agent("hermes", world.alice, &remote).await;
+    let session = world.shared_session(&[hermes], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.kernel.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+
+    let (_, asked) = world
+        .asked(async {
+            main.user_actor(world.bob)
+                .expect("he takes part")
+                .send_message(None, Some("@hermes find it out".to_string()), None, Vec::new())
+                .await
+                .expect("and asks");
+            calls_made(&calls, 1).await;
+        })
+        .await;
+    let used: Vec<&String> = asked.iter().filter(|line| line.contains("UseSecret")).collect();
+    assert_eq!(
+        used,
+        ["alice as hermes, asked by bob: UseSecret(system's) no"],
+        "refused in her name, whoever asked"
+    );
 }
 
 /// Waits until `calls` holds `count` calls.
@@ -2942,11 +2997,10 @@ async fn with_a_task_bob_asked_for(
 async fn an_external_agents_task_is_followed_for_its_owner_as_whoever_asked_began_it() {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let (world, session, asked) = with_a_task_bob_asked_for(&calls).await;
-    let read_secret: Vec<&String> =
-        asked.iter().filter(|line| line.contains("ReadSecret")).collect();
+    let used: Vec<&String> = asked.iter().filter(|line| line.contains("UseSecret")).collect();
     assert_eq!(
-        read_secret,
-        ["alice as hermes, asked by bob: ReadSecret yes"],
+        used,
+        ["alice as hermes, asked by bob: UseSecret(system's) yes"],
         "with alice's credential, asked by bob"
     );
 
@@ -2965,11 +3019,10 @@ async fn an_external_agents_task_is_followed_for_its_owner_as_whoever_asked_bega
         })
         .await;
     assert_eq!(calls.lock().unwrap().as_slice(), ["send", "resume"]);
-    let read_secret: Vec<&String> =
-        asked.iter().filter(|line| line.contains("ReadSecret")).collect();
+    let used: Vec<&String> = asked.iter().filter(|line| line.contains("UseSecret")).collect();
     assert_eq!(
-        read_secret,
-        ["alice as hermes, asked by bob: ReadSecret yes"],
+        used,
+        ["alice as hermes, asked by bob: UseSecret(system's) yes"],
         "followed so too, whoever opened the session"
     );
     world.kernel.stop_session(&World::as_user(world.alice), reopened.id()).await.unwrap();
@@ -2993,11 +3046,10 @@ async fn a_task_resumed_after_a_restart_is_followed_as_whoever_asked_began_it_no
         .await;
     assert_eq!(resumed, 1, "the session with the open task is started again");
     assert_eq!(calls.lock().unwrap().as_slice(), ["send", "resume"]);
-    let read_secret: Vec<&String> =
-        asked.iter().filter(|line| line.contains("ReadSecret")).collect();
+    let used: Vec<&String> = asked.iter().filter(|line| line.contains("UseSecret")).collect();
     assert_eq!(
-        read_secret,
-        ["alice as hermes, asked by bob: ReadSecret yes"],
+        used,
+        ["alice as hermes, asked by bob: UseSecret(system's) yes"],
         "followed in the name it was begun in, and in no other"
     );
     world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
@@ -3020,11 +3072,10 @@ async fn deleting_a_session_cancels_its_external_agents_task_as_whoever_asked_be
         ["send", "cancel"],
         "cancelled before the session's task ended"
     );
-    let read_secret: Vec<&String> =
-        asked.iter().filter(|line| line.contains("ReadSecret")).collect();
+    let used: Vec<&String> = asked.iter().filter(|line| line.contains("UseSecret")).collect();
     assert_eq!(
-        read_secret,
-        ["alice as hermes, asked by bob: ReadSecret yes"],
+        used,
+        ["alice as hermes, asked by bob: UseSecret(system's) yes"],
         "in the name the task was begun in"
     );
 }
@@ -3102,11 +3153,10 @@ async fn an_agent_asked_by_several_while_it_answers_answers_once_as_asked_by_the
         ["send", "send"],
         "one call for all that was asked meanwhile"
     );
-    let read_secret: Vec<&String> =
-        asked.iter().filter(|line| line.contains("ReadSecret")).collect();
+    let used: Vec<&String> = asked.iter().filter(|line| line.contains("UseSecret")).collect();
     assert_eq!(
-        read_secret,
-        ["alice as hermes, asked by bob: ReadSecret yes"],
+        used,
+        ["alice as hermes, asked by bob: UseSecret(system's) yes"],
         "as asked by the last who asked"
     );
     world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
@@ -3222,7 +3272,7 @@ async fn lowering_a_channel_gives_up_an_external_agents_task_as_whoever_asked_be
     assert_eq!(
         his,
         [
-            "alice as hermes, asked by bob: ReadSecret yes",
+            "alice as hermes, asked by bob: UseSecret(system's) yes",
             "alice as hermes, asked by bob: Publish no"
         ],
         "cancelled, and asked whether it goes on, as he asked"

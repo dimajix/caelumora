@@ -17,8 +17,9 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 /// The ownership policy (issues 11, 23): what is yours you may do
 /// everything with, what an access list grants you you may read and use,
-/// what belongs to the system everybody may read and use - and nobody acts
-/// in someone else's name.
+/// what belongs to the system everybody may read and use - but for what a
+/// verb requires to be granted explicitly, a secret (issue 310) - and nobody
+/// acts in someone else's name.
 ///
 /// - The system itself (`SecurityContext::is_system`) may do everything; the system acting on
 ///   someone's behalf is judged as them (issue 477).
@@ -48,9 +49,11 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 ///   memory by the memory's owner, as the memory plugin asks it (issue 518).
 /// - A tool call of an agent is approved by the agent's owner and whom its
 ///   access list lets read it (issue 14).
+/// - Using a secret (`UseSecret`) is allowed to whom an entry of its vault's access list grants
+///   it - an agent by its owner -, and to nobody else but the system (issue 310).
 /// - Searching and listing are allowed; their results are narrowed to what
-///   the caller may read. Tool calls, secrets and commands are governed
-///   elsewhere for now (issues 12 and 23).
+///   the caller may read. Tool calls and commands are governed elsewhere for
+///   now (issues 12 and 23).
 ///
 /// What it decides of an entity, it decides by the `Admission` it gives for
 /// the verb (issue 332), which a store narrows a list by; the other actions
@@ -136,6 +139,12 @@ impl OwnershipPolicy {
             // the principal, or an agent taking part itself.
             Verb::Custom(custom) => match custom.requires {
                 Requirement::Grant(grant) => Self::granting_as_caller(context, grant),
+                // Using a secret (issue 310): what the system owns is not everyone's, and an
+                // agent is granted it by its owner alone, not as the caller.
+                Requirement::Explicit(grant) => Admission {
+                    systems: false,
+                    ..Self::granting(context, grant, &[context.principal_id])
+                },
                 Requirement::Owner => Self::owning(context),
             },
         }
@@ -243,10 +252,9 @@ impl AccessPolicy for OwnershipPolicy {
             // Leaving takes nothing from anyone: who may not leave would be held in a
             // conversation. Whose participant it is the kernel asks before.
             ActionType::LeaveChannel(_) | ActionType::LeaveSession(_) => true,
-            // Hooks for another policy (issue 24): what decides a call
-            // today is the tools offered and the place's rules; secrets
-            // have no owner to decide by yet (issue 310).
-            ActionType::CallTool(_) | ActionType::ReadSecret(_) => true,
+            // A hook for another policy (issue 24): what decides a call
+            // today is the tools offered and the place's rules.
+            ActionType::CallTool(_) => true,
         }
     }
 
@@ -319,6 +327,7 @@ impl Memberships for ReadOnce<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::secret::USE;
     use crate::testing::*;
     use crate::{AllowAllPolicy, CustomVerb, JOIN, WRITE};
     use caelumora_domain::agent::AgentId;
@@ -333,6 +342,7 @@ mod tests {
     use caelumora_domain::template::SessionTemplate;
     use caelumora_domain::value::command_name::CommandName;
     use caelumora_domain::value::name::ScopedName;
+    use caelumora_domain::value::secret_ref::SecretRef;
     use caelumora_domain::workspace::Workspace;
 
     /// A plugin's kind (issue 323), as skills are.
@@ -543,6 +553,27 @@ mod tests {
                 && !allows(bob, ActionType::update(SKILL, &hers)).await,
             "read, not changed"
         );
+    }
+
+    /// Issue 310: using a secret keeps what the system owns from everyone, which a verb that
+    /// requires reading grants them, and an agent is granted it by its owner alone.
+    #[tokio::test]
+    async fn what_the_system_owns_is_not_everyones_to_use_as_a_secret() {
+        let (alice, bob, carol) = (user(), user(), user());
+        let using = |attributes| ActionType::custom(SecretRef::KIND, &USE, attributes);
+        let systems = SecurityAttributes::systems();
+        let granted = SecurityAttributes::systems().granting(Subject::Actor(bob), Grant::Read);
+        assert!(!allows(carol, using(&systems)).await, "the system's, nobody else");
+        assert!(allows(bob, using(&granted)).await, "granted");
+        assert!(!allows(carol, using(&granted)).await, "not granted");
+        let hers = shared(alice, &[]);
+        assert!(allows(alice, using(&hers)).await, "its owner");
+        let agent = ActorId::Agent(AgentId::new());
+        let to_the_agent =
+            SecurityAttributes::systems().granting(Subject::Actor(agent), Grant::Read);
+        let as_agent = SecurityContext { caller_id: agent, ..context(carol) };
+        let policy = OwnershipPolicy::new();
+        assert!(!policy.check(&as_agent, using(&to_the_agent)).await, "not as the caller");
     }
 
     #[tokio::test]

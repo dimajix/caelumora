@@ -154,7 +154,6 @@ pub enum ActionType<'a> {
         channel: &'a SecurityAttributes,
     },
     CallTool(&'a ToolCall),
-    ReadSecret(&'a str),
 }
 
 impl<'a> ActionType<'a> {
@@ -211,7 +210,7 @@ impl<'a> ActionType<'a> {
     /// The action for the log: its kind and what identifies what it is
     /// about, never content - an act on an entity by its verb and kind
     /// (`GetSession`, `UseSkill`), a tool call by its function, not its
-    /// arguments; a secret by its name, not its value.
+    /// arguments.
     pub fn describe(&self) -> String {
         match self {
             ActionType::Entity { kind, verb, .. } => format!("{}{}", verb.name(), kind.title()),
@@ -242,7 +241,6 @@ impl<'a> ActionType<'a> {
                 format!("ExecuteAgentCommand(/{})", command.name)
             }
             ActionType::CallTool(call) => format!("CallTool({})", call.function_name),
-            ActionType::ReadSecret(key) => format!("ReadSecret({key})"),
         }
     }
 
@@ -268,7 +266,6 @@ impl<'a> ActionType<'a> {
             | ActionType::ShowAgentCommand { .. }
             | ActionType::ExecuteAgentCommand { .. } => "command",
             ActionType::CallTool(_) => "tool",
-            ActionType::ReadSecret(_) => "secret",
         };
         Refused { subject, action: self.describe() }
     }
@@ -331,8 +328,15 @@ pub struct CustomVerb {
 /// What a `CustomVerb` requires of the one who does it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Requirement {
-    /// What an entry of the access list grants, or owning the entity.
+    /// The right as reading or writing is granted: by an entry of the access list, by owning the
+    /// entity, and by whatever else a policy grants it for - the ownership policy, what the
+    /// system owns to everyone.
     Grant(Grant),
+    /// The right granted explicitly: by an entry of the access list that grants it to the
+    /// principal, or by owning the entity - never implied, by the system owning it or otherwise.
+    /// For what the system keeps to itself unless it grants it, a secret of the configuration
+    /// (issue 310).
+    Explicit(Grant),
     /// Owning the entity.
     Owner,
 }

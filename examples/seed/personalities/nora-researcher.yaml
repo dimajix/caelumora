@@ -1,5 +1,5 @@
 # A researcher (issue 544): the one personality that reaches the web - it searches with Tavily,
-# its key in the secret local/TAVILY_API_KEY, reads the pages it found, and downloads files into the
+# its key in the secret agents/TAVILY_API_KEY, reads the pages it found, and downloads files into the
 # session's workspace, as its skill `research` tells. Both web tools are cleared for what is public
 # alone, so it has them only in a public channel, as the template `research-session` makes one, with
 # a public workspace to go with it; in any other channel it answers from what it knows.
@@ -35,7 +35,7 @@ personalities:
         url: https://api.tavily.com
         auth:
           type: bearer
-          secret: local/TAVILY_API_KEY
+          secret: agents/TAVILY_API_KEY
     fail_policy: FailClosed
   - id: web-fetch
     kind: web_fetch

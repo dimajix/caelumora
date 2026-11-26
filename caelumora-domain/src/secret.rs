@@ -20,9 +20,6 @@ pub enum SecretError {
     /// A reference to a vault that is not configured.
     #[error("the vault of the secret '{0}' is not configured")]
     UnknownVault(SecretRef),
-    /// Vaults that cannot be used together, as the configuration names them: why, in a sentence.
-    #[error("the vaults of secrets are configured wrong: {0}")]
-    InvalidVaults(String),
     #[error("backend: {0}")]
     Backend(String),
 }
@@ -31,8 +28,8 @@ pub type SecretResult<T> = Result<T, SecretError>;
 
 /// The secrets that may be read in one name, bound to it by the kernel (issue 516): what a
 /// component that talks to a remote system resolves its credential by, without naming the name or
-/// holding the `SecretManager`. Each read is asked of the policy (`ReadSecret`) in the name it is
-/// bound to.
+/// holding the `SecretManager`. Each read is asked of the policy - whether the vault may be used -
+/// in the name it is bound to.
 #[async_trait]
 pub trait Secrets: Send + Sync {
     /// The secret `secret`.

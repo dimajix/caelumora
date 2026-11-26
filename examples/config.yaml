@@ -34,17 +34,28 @@ seed:
   - examples/seed
 
 # The vaults secrets come from, by name: a secret is named `vault/KEY`
-# (issue 310). A vault asks its `fallback` for a key it does not have.
-# Default: `local`, the file local/secrets.json, falling back to `env`, the
-# environment.
-#secrets:
-#  vaults:
-#    local:
-#      type: file
-#      path: "local/secrets.json"
-#      fallback: env
-#    env:
-#      type: env
+# (issue 310). A vault asks its `fallback` for a key it does not have, and
+# grants the use of its secrets by its `acl`, as an entity's access list
+# grants reading; without one, it is the system's alone and no agent may use
+# it. Default: `local`, the file local/secrets.json, falling back to `env`,
+# the environment, neither granted to anybody - where the server's own
+# secrets lie: the signing key of the sessions, a database's URL, the key of
+# a storage of workspaces. The agents' credentials lie apart, in `agents`,
+# granted here to every user, so that the agents of the seed reach their
+# remote sides; on a server shared with others, grant a vault of its own to
+# whom it is for.
+secrets:
+  vaults:
+    local:
+      type: file
+      path: "local/secrets.json"
+      fallback: env
+    env:
+      type: env
+    agents:
+      type: file
+      path: "local/agent-secrets.json"
+      acl: [{ subject: everyone, grant: read }]
 
 # Where the files of workspaces lie (issues 251, 253): storages by name, each
 # with its type. `local` keeps a directory per workspace under `root`.

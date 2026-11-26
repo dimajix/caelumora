@@ -240,7 +240,7 @@ An `mcp_server` component exposes the tools of a remote MCP server, reached over
 transport:
 
 ```json
-{ "id": "github-mcp", "kind": "mcp_server", "params": { "endpoint": { "url": "https://mcp.example.com/mcp", "auth": { "type": "bearer", "secret": "local/GITHUB_MCP_TOKEN" } } } }
+{ "id": "github-mcp", "kind": "mcp_server", "params": { "endpoint": { "url": "https://mcp.example.com/mcp", "auth": { "type": "bearer", "secret": "agents/GITHUB_MCP_TOKEN" } } } }
 ```
 
 The kind lives in the library `caelumora-tool-mcp` (issue 325), with `rmcp`, so that the kernel
@@ -262,7 +262,8 @@ the kind as before. What such a component kind may use of the kernel is said in
 *   **Description.** The parameter `description`, else what the server says of itself, else a
     generic text.
 *   **Credentials.** `auth.secret` names a secret by its vault and key, `vault/KEY`, resolved
-    through its vault (see [SECURITY.md](SECURITY.md#secrets)); it is never a literal credential.
+    through its vault, which has to grant its use to the agent's owner (see
+    [SECURITY.md](SECURITY.md#secrets)); it is never a literal credential.
 *   **Parameters.** `endpoint` (required: `url`, `auth` - optional, `bearer` -, `timeout_secs` -
     default 10 -, `refresh_secs` - default 300; see
     [COMPONENTS.md](COMPONENTS.md#remote-endpoints)), `requires_approval` (`true` by default,
@@ -398,7 +399,7 @@ provider, with the tool `search_web`:
     provider: tavily
     endpoint:
       url: https://api.tavily.com
-      auth: { type: bearer, secret: local/TAVILY_API_KEY }
+      auth: { type: bearer, secret: agents/TAVILY_API_KEY }
 ```
 
 *   **A provider.** There is no protocol for searching the web; every provider has an API of its

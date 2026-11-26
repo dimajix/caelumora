@@ -3,6 +3,7 @@
 
 use super::identifier::Identifier;
 use super::ValueError;
+use crate::store::EntityKind;
 
 /// What a reference looks like, in the error for one that does not.
 const EXPECTED: &str = "a vault and a key, written vault/KEY";
@@ -22,6 +23,10 @@ impl SecretRef {
     /// The vault of the principal - for an agent its owner's (issue 343) -, which no configuration
     /// may name.
     pub const USER_VAULT: &'static str = "user";
+
+    /// The kind the policy is asked to use a secret of (`caelumora_security::secret::USE`), with
+    /// the attributes of its vault.
+    pub const KIND: EntityKind = EntityKind::new("secret");
 
     /// `text` as a reference: a vault, a `/` and a key, neither empty.
     ///

@@ -1,12 +1,15 @@
 //! What tests decide by: the policies a test opens the stores by (`Policies::permitting_all`,
-//! `Policies::by_default_rules`, issue 449), for the tests of this crate and of others; and what
-//! this crate's tests share (`fixtures`).
+//! `Policies::by_default_rules`, issue 449), for the tests of this crate and of others; the backend
+//! of the test vaults (`NoSecrets`); and what this crate's tests share (`fixtures`).
 
 #[cfg(test)]
 pub(crate) use fixtures::*;
 
 use crate::confidentiality::ConfidentialityRules;
+use crate::secret::SecretProvider;
 use crate::{AccessPolicy, AllowAllPolicy, Policies};
+use async_trait::async_trait;
+use caelumora_domain::secret::SecretResult;
 use std::sync::Arc;
 
 /// The policies the tests open stores and kernels by, past their own API.
@@ -21,6 +24,17 @@ impl Policies {
     /// a test of what `access_policy` decides.
     pub fn by_default_rules(access_policy: Arc<dyn AccessPolicy>) -> Self {
         Self::new(access_policy, Arc::new(ConfidentialityRules::default()))
+    }
+}
+
+/// A backend of no secrets, for the vaults of the kernel's tests (`SecretManager::of_test_vaults`).
+#[derive(Debug)]
+pub(crate) struct NoSecrets;
+
+#[async_trait]
+impl SecretProvider for NoSecrets {
+    async fn get_secret(&self, _key: &str) -> SecretResult<Option<String>> {
+        Ok(None)
     }
 }
 

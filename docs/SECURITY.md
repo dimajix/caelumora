@@ -40,12 +40,14 @@ Security is a context that travels with every operation, and explicit checks aga
     and in this documentation: `GetSession`, `DeleteWorkspace`; a listing as `List(session)`.
 *   **A kind's own verb** - using a skill (`access::USE`, the plugin's own), writing a workspace's
     files or adding an artifact's version (`WRITE`, the kernel's, which any kind may use, issue
-    328) - is a `CustomVerb`, named likewise (`UseSkill`, `WriteWorkspace`). It says what it
-    *requires*, in a right every policy knows: what an entry grants (`Read`, `Write`), or owning the
-    entity. A policy decides it by that, so a kind can map a verb onto a right but never invent one;
-    a policy that decides one verb of one kind otherwise tells it by its kind and name. The verbs
-    every kind has, and the actions of the kernel that concern no single stored entity, a policy
-    decides one by one, so that a policy that forgets one does not compile.
+    328), using a secret (`secret::USE`, issue 310) - is a `CustomVerb`, named likewise
+    (`UseSkill`, `WriteWorkspace`, `UseSecret`). It says what it *requires*, in a right every
+    policy knows: what an entry grants (`Read`, `Write`) - with what the system owns, which is
+    everyone's to read, or without it (`Requirement::Explicit`) -, or owning the entity. A policy
+    decides it by that, so a kind can map a verb onto a right but never invent one; a policy that
+    decides one verb of one kind otherwise tells it by its kind and name. The verbs every kind has,
+    and the actions of the kernel that concern no single stored entity, a policy decides one by
+    one, so that a policy that forgets one does not compile.
 
 ### Who acts, for whom
 
@@ -193,7 +195,8 @@ themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name
     session, cancel or wake a channel, open a thread in it (`OpenThread`, issue 557), ask an agent
     in it to answer again (`RetryMessage`), answer
     the questions of an agent's call (`AnswerQuestion` - whether they were asked is the agent's to
-    check, not the policy's). What belongs to the system, everybody may read and use.
+    check, not the policy's). What belongs to the system, everybody may read and use - but a
+    secret, which its vault has to grant (see [Secrets](#secrets)).
 *   An agent reads (`Get`) what its owner may read, and what it takes part in itself - as the
     caller, a participant of the channel or session. Everything else it does, it does as its owner:
     changing, deleting, cancelling and the rest are the principal's.
@@ -211,10 +214,11 @@ themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name
 *   A command of the session is decided alike, by the channel it is run in (`ShowCommand`,
     `ExecuteCommand`): by whoever reads the channel, or for a command for the owners alone by the
     channel's owner.
-*   Calling a tool (`CallTool`) and reading a secret (`ReadSecret`) are always allowed. They stay
-    actions so that another policy can decide them; what decides a call here is the tools offered
-    and the rules of its place (see [APPROVALS.md](APPROVALS.md#rules-of-a-place)). A secret has no
-    owner to decide by yet, see [Secrets](#secrets).
+*   Calling a tool (`CallTool`) is always allowed. It stays an action so that another policy can
+    decide it; what decides a call here is the tools offered and the rules of its place (see
+    [APPROVALS.md](APPROVALS.md#rules-of-a-place)).
+*   Using a secret (`UseSecret`) is granted by an entry of its vault's access list alone, not by
+    the system's owning the vault (see [Secrets](#secrets)).
 *   Deleting an agent is its owner's. The channels it takes part in are not changed: it rests in
     them, and that its actors stop there - and start again once it is restored - is done in the
     kernel's name, a consequence of the deletion, not a change of channels owned by others. A
@@ -788,25 +792,29 @@ Component configuration - such as an `mcp_server`'s `auth.secret` - may need to 
 credentials without embedding them in persisted configuration. A secret is named by its vault and
 its key, `vault/KEY` (`SecretRef`); a key alone is no reference, so which credential is meant is
 never left to a search. A vault is a named entry of the `secrets` section: a `SecretProvider`, the
-backend its secrets come from, and what the core reads beside it - the vault it falls back to for a
-key it does not have, in turn. The fallback is followed only where the backend did not have the
-key; a backend that fails fails the lookup, so that a vault that is down never lets another
-credential be sent in its stead. Fallbacks that lead to a vault not configured or back to where
-they began, and a vault named `user` - the vault of whoever acts, issue
-[343](../issues/343-users-bring-their-own-secrets.md) -, keep the server from starting. Built in
-are the backends of a JSON key/value file, re-read on every lookup so that secrets can rotate
-without a restart, and of the process environment; a plugin may add others (see
+backend its secrets come from, and what the core reads beside it - whom it grants their use (`acl`)
+and the vault it falls back to for a key it does not have, in turn. The fallback is followed only
+where the backend did not have the key; a backend that fails fails the lookup, so that a vault that
+is down never lets another credential be sent in its stead. Fallbacks that lead to a vault not
+configured or back to where they began, and a vault named `user` - the vault of whoever acts, issue
+[343](../issues/343-users-bring-their-own-secrets.md) -, keep the server from starting. Built in are
+the backends of a JSON key/value file, re-read on every lookup so that secrets can rotate without a
+restart, and of the process environment; a plugin may add others (see
 [ARCHITECTURE.md](ARCHITECTURE.md#backends)). Every access to a backend is a read.
 
-Every lookup is checked with the `AccessPolicy` (`ReadSecret`) before any vault is asked -
-but a command of a workspace storage that hands on the program's environment (`environment:
-inherit`, for a program of one person, see [WORKSPACE.md](WORKSPACE.md#storages)) reads it without
-asking, what the provider `env` reads among it. A
-component of a library holds no `SecretManager`: it is handed the secrets that may be read in the
-name of the work it serves (`Secrets`, bound by the kernel, `ActorRuntime::secrets`, issue 516), and
-each read is checked in that name. The ownership policy allows every one: a secret is a key and a
-value, with no owner and no access list to decide by. So whoever writes a component that names a
-secret decides which credential it uses and where it is sent. Until secrets have an owner
-([310](../issues/310-secrets-have-no-owner.md)), only the seed and the configuration - whoever runs
-the server - may write personalities and components that name secrets; nothing may let users write
-them.
+Every lookup asks the `AccessPolicy` whether the vault may be used (`UseSecret`) before the vault
+is asked, and each fallback alike once the vault before did not have the key: a fallback refused is
+refused. A vault's attributes are the system's, with the access list the configuration gives it
+(`acl`): an entry granting `read` lets its subject use the vault's secrets, an agent by its owner;
+without one, the vault is the system's alone. What the system owns, which reading lets everyone
+read, is not everyone's here (`Requirement::Explicit`). The policy is given the
+vault's attributes, never the key. A command of a workspace storage that hands on the program's
+environment (`environment: inherit`, for a program of one person, see
+[WORKSPACE.md](WORKSPACE.md#storages)) reads it without asking, what the backend `env` reads among
+it. A component of a library holds no `SecretManager`: it is handed the secrets that may be read in
+the name of the work it serves (`Secrets`, bound by the kernel, `ActorRuntime::secrets`, issue
+516), and each read is checked in that name. Where a secret is sent is not yet bound to its vault,
+and naming one is not yet checked where a component is written
+([310](../issues/310-secrets-have-no-owner.md)): until then, only the seed and the configuration -
+whoever runs the server - may write personalities and components that name secrets; nothing may
+let users write them.

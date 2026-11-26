@@ -3,6 +3,7 @@ use crate::command::default_commands;
 use crate::component::ComponentConfig;
 use crate::confidentiality::Compartments;
 use crate::role::Roles;
+use crate::security::AclEntry;
 use crate::value::identifier::Identifier;
 use crate::value::secret_ref::SecretRef;
 use serde::de::DeserializeOwned;
@@ -104,15 +105,18 @@ impl Default for SecretsConfig {
 pub struct VaultConfig {
     #[serde(flatten)]
     pub backend: BackendConfig,
+    /// Whom the system grants the use of its secrets, by `read`; left out, nobody but the system.
+    #[serde(default)]
+    pub acl: Vec<AclEntry>,
     /// The vault asked for a key this one does not have; none if left out.
     #[serde(default)]
     pub fallback: Option<Identifier>,
 }
 
 impl VaultConfig {
-    /// The vault of `backend`, without a fallback.
+    /// The vault of `backend`, the system's alone, without a fallback.
     pub fn new(backend: BackendConfig) -> Self {
-        Self { backend, fallback: None }
+        Self { backend, acl: Vec::new(), fallback: None }
     }
 }
 
@@ -423,6 +427,7 @@ impl AppConfig {
 mod tests {
     use super::*;
     use crate::role::RoleId;
+    use crate::security::{Grant, Subject};
 
     #[test]
     fn a_store_backend_is_named_by_its_type() {
@@ -536,6 +541,7 @@ secrets:
     team:
       type: file
       path: "local/team.json"
+      acl: [{ subject: everyone, grant: read }]
       fallback: env
     env:
       type: env
@@ -545,6 +551,8 @@ secrets:
         let file = BackendConfig::new("file", serde_json::json!({ "path": "local/team.json" }));
         assert_eq!(team.backend, file, "the fallback is no parameter of the backend");
         assert_eq!(team.fallback.as_ref().map(Identifier::as_str), Some("env"));
+        let granted = [AclEntry { subject: Subject::Everyone, grant: Grant::Read }];
+        assert_eq!(team.acl, granted, "granted as an entity is");
         assert_eq!(
             config.secrets.vaults["env"],
             VaultConfig::new(BackendConfig::new("env", Value::Null))

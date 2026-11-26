@@ -1,12 +1,13 @@
 //! The secrets of a process (issues 310, 516): its named vaults (`Vault`), each a source of secrets
 //! (`SecretProvider`) with what the configuration gives it, and the `SecretManager` that asks the
-//! policy before a vault is read, in the name it is asked in. What is read, what names it and how
-//! reading fails are the domain's (`caelumora_domain::secret`).
+//! policy whether a vault may be used (`USE`) before it is read, in the name it is asked in. What
+//! is read, what names it and how reading fails are the domain's (`caelumora_domain::secret`).
 
-use crate::{AccessPolicy, ActionType, Enforcement, SecurityContext};
+use crate::{AccessPolicy, ActionType, CustomVerb, Enforcement, Requirement, SecurityContext};
 use async_trait::async_trait;
-use caelumora_domain::config::VaultConfig;
+use caelumora_domain::config::{ConfigError, ConfigResult, VaultConfig};
 use caelumora_domain::secret::{SecretError, SecretResult, Secrets};
+use caelumora_domain::security::{AclEntry, Grant, SecurityAttributes};
 use caelumora_domain::value::identifier::Identifier;
 use caelumora_domain::value::secret_ref::SecretRef;
 use std::collections::{BTreeMap, BTreeSet};
@@ -22,18 +23,38 @@ pub trait SecretProvider: Debug + Sync + Send {
     async fn get_secret(&self, key: &str) -> SecretResult<Option<String>>;
 }
 
+/// Using a secret (issue 310), asked of the attributes of the vault it is read of
+/// (`SecretRef::KIND`): granted by an entry of the vault's access list as reading is. Unlike
+/// reading, what the system owns is not everyone's (`Requirement::Explicit`): a vault the
+/// configuration grants nobody is the system's alone.
+pub const USE: CustomVerb =
+    CustomVerb { name: "Use", requires: Requirement::Explicit(Grant::Read) };
+
 /// A vault of secrets (issue 310): a backend, and beside it what the configuration gives it - the
-/// vault asked for a key it does not have. The backend knows nothing of it.
+/// system's attributes with whom it grants the use of its secrets, and the vault asked for a key it
+/// does not have. The backend knows nothing of them.
 #[derive(Debug)]
 pub struct Vault {
     provider: Arc<dyn SecretProvider>,
+    attributes: SecurityAttributes,
     fallback: Option<Identifier>,
 }
 
 impl Vault {
     /// The vault of `provider`, as `config` configures it.
     pub fn new(provider: Arc<dyn SecretProvider>, config: &VaultConfig) -> Self {
-        Self { provider, fallback: config.fallback.clone() }
+        Self::granting(provider, config.acl.clone(), config.fallback.clone())
+    }
+
+    /// The vault of `provider`, the system's, its use granted by `acl`, falling back to
+    /// `fallback`.
+    fn granting(
+        provider: Arc<dyn SecretProvider>,
+        acl: Vec<AclEntry>,
+        fallback: Option<Identifier>,
+    ) -> Self {
+        let attributes = SecurityAttributes { acl, ..SecurityAttributes::systems() };
+        Self { provider, attributes, fallback }
     }
 }
 
@@ -47,15 +68,15 @@ impl SecretManager {
     /// The manager of `vaults`, by their names, asking `access_policy`.
     ///
     /// # Errors
-    /// `SecretError::InvalidVaults` for a vault named `user` - the principal's, which no
-    /// configuration names (`SecretRef::USER_VAULT`) -, a fallback that is not configured, and
-    /// fallbacks that lead back to where they began.
+    /// `ConfigError::Invalid` - vaults that do not fit together - for a vault named `user` - the
+    /// principal's, which no configuration names (`SecretRef::USER_VAULT`) -, a fallback that is
+    /// not configured, and fallbacks that lead back to where they began.
     pub fn new(
         vaults: BTreeMap<Identifier, Vault>,
         access_policy: Arc<dyn AccessPolicy>,
-    ) -> SecretResult<Self> {
+    ) -> ConfigResult<Self> {
         if vaults.contains_key(SecretRef::USER_VAULT) {
-            return Err(SecretError::InvalidVaults(format!(
+            return Err(ConfigError::Invalid(format!(
                 "'{}' is the vault of whoever acts, which no configuration names",
                 SecretRef::USER_VAULT
             )));
@@ -65,12 +86,12 @@ impl SecretManager {
             let mut next = vaults.get(name).and_then(|vault| vault.fallback.as_ref());
             while let Some(fallback) = next {
                 if !vaults.contains_key(fallback) {
-                    return Err(SecretError::InvalidVaults(format!(
+                    return Err(ConfigError::Invalid(format!(
                         "the vault '{name}' falls back to '{fallback}', which is not configured"
                     )));
                 }
                 if !seen.insert(fallback) {
-                    return Err(SecretError::InvalidVaults(format!(
+                    return Err(ConfigError::Invalid(format!(
                         "the fallbacks of the vault '{name}' lead back to '{fallback}'"
                     )));
                 }
@@ -87,29 +108,32 @@ impl SecretManager {
     }
 
     /// The secret `secret`, read in the name of `context`: of its vault, or - where the vault does
-    /// not have the key - of its fallback, in turn.
+    /// not have the key - of its fallback, in turn. Each vault is asked only once the policy let
+    /// `context` use it (`USE`); a fallback refused is refused, though the vault before did not
+    /// have the key.
     ///
     /// # Errors
-    /// `PermissionDenied` if the policy refuses it, `UnknownVault` for a vault that is not
-    /// configured, `NotFound` if no vault of the way has the key, and the error of a backend that
-    /// fails - its fallback is not asked then, so that another credential is never sent in its
+    /// `PermissionDenied` if the policy refuses a vault of the way, `UnknownVault` for a vault that
+    /// is not configured, `NotFound` if no vault of the way has the key, and the error of a backend
+    /// that fails - its fallback is not asked then, so that another credential is never sent in its
     /// stead.
     pub async fn resolve(
         &self,
         context: &SecurityContext,
         secret: &SecretRef,
     ) -> SecretResult<String> {
-        self.access_policy
-            .require(context, ActionType::ReadSecret(secret.as_str()), |refused| {
-                SecretError::PermissionDenied { secret: secret.clone(), refused }
-            })
-            .await?;
-
         let mut name = secret.vault();
         loop {
             // Only the vault named can be missing: every fallback is configured (`new`).
             let vault =
                 self.vaults.get(name).ok_or_else(|| SecretError::UnknownVault(secret.clone()))?;
+            let using = ActionType::custom(SecretRef::KIND, &USE, &vault.attributes);
+            self.access_policy
+                .require(context, using, |refused| SecretError::PermissionDenied {
+                    secret: secret.clone(),
+                    refused,
+                })
+                .await?;
             if let Some(value) = vault.provider.get_secret(secret.key()).await? {
                 return Ok(value);
             }
@@ -125,8 +149,11 @@ impl SecretManager {
 /// The managers the tests of other crates read secrets by, past its own API.
 #[cfg(any(test, feature = "test-support"))]
 impl SecretManager {
-    /// The vault a test keeps its secrets in (`of_test_vault`): a test names them `test/KEY`.
+    /// The vault a test keeps its secrets in, granted to everyone: a test names them `test/KEY`.
     const TEST_VAULT: &'static str = "test";
+
+    /// The vault the kernel's tests keep from everybody but the system (`of_test_vaults`).
+    const WITHHELD_VAULT: &'static str = "withheld";
 
     /// A manager of no vaults, asking `access_policy`: every secret is unknown - for a test that
     /// reads none.
@@ -134,16 +161,44 @@ impl SecretManager {
         Self { vaults: BTreeMap::new(), access_policy }
     }
 
-    /// A manager of the one vault `test`, of `provider`, asking `access_policy` - for a test of
-    /// what resolves a secret, which names it `test/KEY`.
-    #[expect(clippy::expect_used, reason = "test code: the name of the vault is a literal")]
+    /// A manager of the one vault `test`, of `provider` and granted to everyone, asking
+    /// `access_policy` - for a test of what resolves a secret, which names it `test/KEY`.
     pub fn of_test_vault(
         provider: Arc<dyn SecretProvider>,
         access_policy: Arc<dyn AccessPolicy>,
     ) -> Self {
-        let name = Identifier::new(Self::TEST_VAULT).expect("`test` is an identifier");
-        let vault = Vault { provider, fallback: None };
-        Self { vaults: BTreeMap::from([(name, vault)]), access_policy }
+        let vaults =
+            BTreeMap::from([Self::test_vault(Self::TEST_VAULT, provider, Self::everyone())]);
+        Self { vaults, access_policy }
+    }
+
+    /// A manager of the vaults the kernel's tests use secrets of, asking `access_policy`: `test`,
+    /// granted to everyone, and `withheld`, the system's alone, neither of which has a key - for a
+    /// test of in whose name a secret is used, and whether it may be.
+    pub fn of_test_vaults(access_policy: Arc<dyn AccessPolicy>) -> Self {
+        use crate::testing::NoSecrets;
+        let vaults = BTreeMap::from([
+            Self::test_vault(Self::TEST_VAULT, Arc::new(NoSecrets), Self::everyone()),
+            Self::test_vault(Self::WITHHELD_VAULT, Arc::new(NoSecrets), Vec::new()),
+        ]);
+        Self { vaults, access_policy }
+    }
+
+    /// The access list that grants everyone the use of a vault.
+    fn everyone() -> Vec<AclEntry> {
+        use caelumora_domain::security::Subject;
+        vec![AclEntry { subject: Subject::Everyone, grant: Grant::Read }]
+    }
+
+    /// The vault `name` of `provider`, its use granted by `acl`.
+    #[expect(clippy::expect_used, reason = "test code: the names of the vaults are literals")]
+    fn test_vault(
+        name: &str,
+        provider: Arc<dyn SecretProvider>,
+        acl: Vec<AclEntry>,
+    ) -> (Identifier, Vault) {
+        let name = Identifier::new(name).expect("the name of a vault of the tests");
+        (name, Vault::granting(provider, acl, None))
     }
 }
 
@@ -164,8 +219,11 @@ impl Secrets for SecretsFor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::AllowAllPolicy;
+    use crate::testing::{context, user};
+    use crate::{AllowAllPolicy, OwnershipPolicy};
+    use caelumora_domain::actor::ActorId;
     use caelumora_domain::config::BackendConfig;
+    use caelumora_domain::security::{AclEntry, Subject};
     use serde_json::Value;
     use std::collections::HashMap;
 
@@ -207,21 +265,33 @@ mod tests {
         Arc::new(MapSecretProvider { entries })
     }
 
-    /// The vault `name` of `provider`, falling back to `fallback` if given.
+    /// The vault `name` of `provider`, the system's alone, falling back to `fallback` if given.
     fn vault(
         name: &str,
         provider: Arc<dyn SecretProvider>,
         fallback: Option<&str>,
     ) -> (Identifier, Vault) {
+        granted(name, provider, &[], fallback)
+    }
+
+    /// The vault `name` of `provider`, configured to grant its use to `who`, falling back to
+    /// `fallback` if given.
+    fn granted(
+        name: &str,
+        provider: Arc<dyn SecretProvider>,
+        who: &[ActorId],
+        fallback: Option<&str>,
+    ) -> (Identifier, Vault) {
+        let acl = who.iter().map(|w| AclEntry { subject: Subject::Actor(*w), grant: Grant::Read });
         let fallback = fallback.map(|f| Identifier::new(f).unwrap());
-        let config =
-            VaultConfig { fallback, ..VaultConfig::new(BackendConfig::new("test", Value::Null)) };
+        let backend = BackendConfig::new("test", Value::Null);
+        let config = VaultConfig { acl: acl.collect(), fallback, ..VaultConfig::new(backend) };
         (Identifier::new(name).unwrap(), Vault::new(provider, &config))
     }
 
     fn manager(
         vaults: impl IntoIterator<Item = (Identifier, Vault)>,
-    ) -> SecretResult<SecretManager> {
+    ) -> ConfigResult<SecretManager> {
         SecretManager::new(vaults.into_iter().collect(), Arc::new(AllowAllPolicy::new()))
     }
 
@@ -290,6 +360,48 @@ mod tests {
         assert!(
             manager([vault("a", holding(&[]), Some("b")), vault("b", holding(&[]), None)]).is_ok()
         );
+    }
+
+    #[tokio::test]
+    async fn a_vault_is_used_as_its_access_list_grants_and_its_fallback_only_once_granted_too() {
+        let (bob, carol) = (user(), user());
+        let vaults = [
+            granted("team", holding(&[("OWN", "team's")]), &[bob, carol], Some("ops")),
+            granted("ops", holding(&[("SHARED", "ops'")]), &[bob], None),
+            vault("system", holding(&[("KEY", "the system's")]), Some("open")),
+            granted("open", holding(&[("KEY", "open's")]), &[bob, carol], None),
+        ];
+        let manager =
+            SecretManager::new(vaults.into_iter().collect(), Arc::new(OwnershipPolicy::new()))
+                .unwrap();
+        let read = |actor: ActorId, text: &str| {
+            let manager = &manager;
+            let secret = secret(text);
+            async move { manager.resolve(&context(actor), &secret).await }
+        };
+        assert_eq!(read(carol, "team/OWN").await.unwrap(), "team's");
+        assert_eq!(read(bob, "team/SHARED").await.unwrap(), "ops'", "granted on the way");
+        let refused = read(carol, "team/SHARED").await;
+        assert!(
+            matches!(refused, Err(SecretError::PermissionDenied { .. })),
+            "not hers on the way"
+        );
+        assert!(matches!(
+            read(carol, "ops/SHARED").await,
+            Err(SecretError::PermissionDenied { .. })
+        ));
+        let withheld = read(bob, "system/KEY").await;
+        assert!(
+            matches!(withheld, Err(SecretError::PermissionDenied { .. })),
+            "nobody's but its own"
+        );
+        let past = read(carol, "system/OTHER").await;
+        assert!(
+            matches!(past, Err(SecretError::PermissionDenied { .. })),
+            "a vault refused is not passed over to a fallback granted"
+        );
+        let system = manager.resolve(&SecurityContext::system(), &secret("system/KEY")).await;
+        assert_eq!(system.unwrap(), "the system's");
     }
 
     #[tokio::test]

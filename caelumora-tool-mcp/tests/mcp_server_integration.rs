@@ -483,7 +483,7 @@ async fn a_server_gone_leaves_the_tools_discovered_before() {
 async fn the_tools_are_discovered_in_the_name_of_whoever_acts() {
     let world = World::with(&[], &[&AgentsLibrary, &McpToolLibrary], |_| {}).await;
     let mcp = ComponentDescriptor {
-        params: json!({ "endpoint": { "url": "http://127.0.0.1:1/mcp", "auth": { "type": "bearer", "secret": "local/MCP_TOKEN" } } }),
+        params: json!({ "endpoint": { "url": "http://127.0.0.1:1/mcp", "auth": { "type": "bearer", "secret": "test/MCP_TOKEN" } } }),
         ..ComponentDescriptor::new("tools", MCP_SERVER_KIND)
     };
     let personality = world.personality("working", None, &[]).await;
@@ -500,7 +500,7 @@ async fn the_tools_are_discovered_in_the_name_of_whoever_acts() {
 
     let (session, asked) = world.asked(world.shared_session(&[helper], &[])).await;
     assert!(
-        !asked.iter().any(|line| line.contains("ReadSecret")),
+        !asked.iter().any(|line| line.contains("UseSecret")),
         "nothing read while built: {asked:?}"
     );
 
@@ -512,14 +512,13 @@ async fn the_tools_are_discovered_in_the_name_of_whoever_acts() {
                 .send_message(None, Some("@helper do it".to_string()), None, Vec::new())
                 .await
                 .expect("sent");
-            asked_for(&world, "alice as helper, asked by bob: ReadSecret yes").await;
+            asked_for(&world, "alice as helper, asked by bob: UseSecret(system's) yes").await;
         })
         .await;
-    let read_secret: Vec<&String> =
-        asked.iter().filter(|line| line.contains("ReadSecret")).collect();
+    let used: Vec<&String> = asked.iter().filter(|line| line.contains("UseSecret")).collect();
     assert_eq!(
-        read_secret,
-        ["alice as helper, asked by bob: ReadSecret yes"],
+        used,
+        ["alice as helper, asked by bob: UseSecret(system's) yes"],
         "with alice's credential, asked by bob"
     );
     world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();

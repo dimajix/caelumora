@@ -273,8 +273,9 @@ pub fn attributes_of<'a>(action: &ActionType<'a>) -> Option<&'a SecurityAttribut
 
 /// A kernel of a test, built from its parts by the `KernelBuilder` (issue 375): each part has a
 /// default, and a test names only those it differs in -
-/// `TestKernel { plugins: vec![&Notes], ..Default::default() }`. Its secrets are always none, under
-/// its access policy.
+/// `TestKernel { plugins: vec![&Notes], ..Default::default() }`. Its secrets are always the vaults
+/// `test`, granted to everyone, and `withheld`, the system's alone, neither of which has a key
+/// (`SecretManager::of_test_vaults`), under its access policy.
 pub struct TestKernel<'a> {
     /// What the entities and the states are kept in: new, empty stores in memory, which the kernel
     /// opens by the two policies below.
@@ -325,7 +326,7 @@ impl TestKernel<'_> {
     /// # Errors
     /// As `KernelBuilder::new`, `plugin`, `library` and `build`.
     pub fn try_build(self) -> Result<Arc<Kernel>> {
-        let secrets = Arc::new(SecretManager::without_vaults(Arc::clone(&self.access_policy)));
+        let secrets = Arc::new(SecretManager::of_test_vaults(Arc::clone(&self.access_policy)));
         let mut builder = KernelBuilder::new(
             self.store,
             secrets,
