@@ -136,8 +136,8 @@ enables the `accept_any` provider for local development — it accepts any
 username and password and must never be enabled on a server reachable from a
 network. For real users, the `file` provider reads them, with hashed
 passwords, from a YAML file (see `docs/SECURITY.md`); `examples/users.yaml`
-is one to try it with, each user's password their name. Session tokens are signed with the secret `CAELUMORA_JWT_SECRET`
-(at least 32 bytes, e.g. in `local/secrets.json`); without it, every restart
+is one to try it with, each user's password their name. Session tokens are signed with the secret `local/CAELUMORA_JWT_SECRET`
+(at least 32 bytes, the key `CAELUMORA_JWT_SECRET` of `local/secrets.json` or of the environment); without it, every restart
 logs everybody out.
 
 Logging goes to stderr. Use `RUST_LOG` to select what is logged, e.g.

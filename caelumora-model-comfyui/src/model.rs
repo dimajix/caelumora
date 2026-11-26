@@ -391,7 +391,7 @@ mod tests {
         assert!(model.description().starts_with("fast and photorealistic"));
         let refused = |params: Value| model_with(params).unwrap_err().to_string();
         let authenticated = json!({
-            "endpoint": { "url": "http://x", "auth": { "type": "bearer", "secret": "T" } }
+            "endpoint": { "url": "http://x", "auth": { "type": "bearer", "secret": "local/T" } }
         });
         assert!(refused(authenticated).contains("endpoint.auth"));
         let unreadable =

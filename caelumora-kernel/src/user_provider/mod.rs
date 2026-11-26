@@ -1,11 +1,9 @@
 //! Sources of user identities and verification of their credentials (issue 25).
 //!
-//! A `UserProvider` is one source of users — a file, a database, a directory —
-//! and a `UserManager` holds an ordered chain of them, mirroring
-//! `SecretProvider` / `SecretManager`. Unlike the secret chain, a provider that
-//! fails does *not* fall through to the next one: for authentication, "the
-//! user file is broken" must never turn into "ask someone else" or into
-//! "no such user".
+//! A `UserProvider` is one source of users — a file, a database, a directory — and a `UserManager`
+//! holds an ordered chain of them. As with the fallbacks of a vault of secrets, a provider that
+//! fails does *not* fall through to the next one: for authentication, "the user file is broken"
+//! must never turn into "ask someone else" or into "no such user".
 
 pub mod accept_any;
 mod file;

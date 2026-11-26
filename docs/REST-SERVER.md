@@ -229,7 +229,7 @@ A JWT cannot be revoked, so its validity is bounded instead:
     regardless.
 *   The event streams end with the token they were opened with, so the bound holds for them too.
 
-The signing key is the secret named by `auth.jwt_secret`, resolved through the secret chain (see
+The signing key is the secret named by `auth.jwt_secret`, resolved in the system's name (see
 [SECURITY.md](SECURITY.md#secrets)). If it is missing, a random key is generated at startup, and
 every restart logs everybody out.
 

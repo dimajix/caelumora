@@ -155,7 +155,7 @@ mod tests {
             "provider": "tavily",
             "endpoint": {
                 "url": "https://api.tavily.com",
-                "auth": { "type": "bearer", "secret": "TAVILY_KEY" },
+                "auth": { "type": "bearer", "secret": "test/TAVILY_KEY" },
             },
         });
         params.as_object_mut().unwrap().extend(more.as_object().unwrap().clone());

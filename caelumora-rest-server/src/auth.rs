@@ -128,7 +128,7 @@ impl TokenService {
             encoding: EncodingKey::from_secret(key),
             decoding: DecodingKey::from_secret(key),
             validation,
-            key_id: config.jwt_secret.clone(),
+            key_id: config.jwt_secret.to_string(),
             lifetime: config.token_lifetime_secs as i64,
             max_session: config.max_session_secs as i64,
             secure_cookie: config.secure_cookie,
@@ -482,6 +482,7 @@ mod tests {
     use super::*;
     use axum::body;
     use axum::body::Body;
+    use caelumora_domain::value::secret_ref::SecretRef;
     use caelumora_kernel::event::EventBus;
     use caelumora_kernel::user_provider::accept_any::AcceptAnyUserProvider;
     use caelumora_kernel::user_provider::UserProvider;
@@ -575,9 +576,11 @@ mod tests {
         let other = TokenService::new(b"another key, also 32 bytes long!", &config()).unwrap();
         assert!(other.verify(&token).is_none(), "a token signed with another key must be rejected");
 
-        let rotated =
-            TokenService::new(KEY, &AuthConfig { jwt_secret: "NEW_KEY".to_string(), ..config() })
-                .unwrap();
+        let rotated = TokenService::new(
+            KEY,
+            &AuthConfig { jwt_secret: SecretRef::new("local/NEW_KEY").unwrap(), ..config() },
+        )
+        .unwrap();
         assert!(rotated.verify(&token).is_none(), "a token with another kid must be rejected");
     }
 

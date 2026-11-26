@@ -71,6 +71,7 @@ use caelumora_domain::turn::GivenUpReason;
 use caelumora_domain::user::UserId;
 use caelumora_domain::value::command_name::CommandName;
 use caelumora_domain::value::name::{Name, ScopedName};
+use caelumora_domain::value::secret_ref::SecretRef;
 use caelumora_domain::work::TurnId;
 use caelumora_domain::workspace::WorkspaceChoice;
 use caelumora_kernel::actor::user::ChannelWatch;
@@ -2770,7 +2771,7 @@ impl RemoteAtWork {
     /// Records `call`, made with `secrets`, reading a token of them as a credential is read:
     /// whether there is such a secret does not matter, in whose name it is asked does (issue 516).
     async fn called(&self, call: &'static str, secrets: &dyn Secrets) {
-        let _ = secrets.resolve("REMOTE_TOKEN").await;
+        let _ = secrets.resolve(&SecretRef::new("local/REMOTE_TOKEN").unwrap()).await;
         self.calls.lock().unwrap().push(call);
     }
 }

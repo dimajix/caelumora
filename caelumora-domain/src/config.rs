@@ -3,6 +3,8 @@ use crate::command::default_commands;
 use crate::component::ComponentConfig;
 use crate::confidentiality::Compartments;
 use crate::role::Roles;
+use crate::value::identifier::Identifier;
+use crate::value::secret_ref::SecretRef;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -71,23 +73,46 @@ impl BackendConfig {
     }
 }
 
-/// The chain of secret providers, each a backend (`dyn SecretProvider`).
-#[derive(Debug, Deserialize, Clone)]
+/// The vaults of secrets (issue 310), by the names a reference names them by (`SecretRef`).
+#[derive(Debug, Deserialize, Clone, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct SecretsConfig {
-    pub providers: Vec<BackendConfig>,
+    pub vaults: BTreeMap<Identifier, VaultConfig>,
 }
 
-/// Without a `secrets` section, secrets come from `local/secrets.json` and
-/// then from the environment.
+/// Without a `secrets` section, there are two vaults: `local`, the file `local/secrets.json`,
+/// which falls back to `env`, the environment.
 impl Default for SecretsConfig {
     fn default() -> Self {
+        let local = BackendConfig::new("file", serde_json::json!({ "path": "local/secrets.json" }));
+        let local =
+            VaultConfig { fallback: Some(Identifier::fixed("env")), ..VaultConfig::new(local) };
+        let env = VaultConfig::new(BackendConfig::new("env", Value::Null));
+        let vaults = [("local", local), ("env", env)];
         Self {
-            providers: vec![
-                BackendConfig::new("file", serde_json::json!({ "path": "local/secrets.json" })),
-                BackendConfig::new("env", Value::Null),
-            ],
+            vaults: vaults
+                .into_iter()
+                .map(|(name, vault)| (Identifier::fixed(name), vault))
+                .collect(),
         }
+    }
+}
+
+/// One vault of secrets (issue 310): its backend (`dyn SecretProvider`), written beside what the
+/// core reads of it, which the backend knows nothing of.
+#[derive(Debug, Deserialize, Clone, PartialEq)]
+pub struct VaultConfig {
+    #[serde(flatten)]
+    pub backend: BackendConfig,
+    /// The vault asked for a key this one does not have; none if left out.
+    #[serde(default)]
+    pub fallback: Option<Identifier>,
+}
+
+impl VaultConfig {
+    /// The vault of `backend`, without a fallback.
+    pub fn new(backend: BackendConfig) -> Self {
+        Self { backend, fallback: None }
     }
 }
 
@@ -121,12 +146,11 @@ pub struct UsersConfig {
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default, deny_unknown_fields)]
 pub struct AuthConfig {
-    /// Name of the secret holding the JWT signing key, resolved through the
-    /// secret chain. Also used as the token's `kid`, so rotating the key means
-    /// pointing this at a new secret. If the secret does not exist, the server
-    /// generates a random key at startup - which logs everybody out on every
+    /// The secret holding the JWT signing key, resolved in the system's name. Also used as the
+    /// token's `kid`, so rotating the key means pointing this at a new secret. If the secret does
+    /// not exist, the server generates a random key at startup - which logs everybody out on every
     /// restart.
-    pub jwt_secret: String,
+    pub jwt_secret: SecretRef,
     /// Lifetime of a token in seconds. A token is renewed once it is past half
     /// its lifetime; a session without requests for this long ends.
     pub token_lifetime_secs: u64,
@@ -141,7 +165,7 @@ pub struct AuthConfig {
 impl Default for AuthConfig {
     fn default() -> Self {
         Self {
-            jwt_secret: "CAELUMORA_JWT_SECRET".to_string(),
+            jwt_secret: SecretRef::fixed("local", "CAELUMORA_JWT_SECRET"),
             token_lifetime_secs: 15 * 60,
             max_session_secs: 12 * 60 * 60,
             secure_cookie: true,
@@ -427,7 +451,11 @@ persistence:
         ] {
             assert_eq!(config.persistence.entity_store, BackendConfig::new("memory", Value::Null));
             assert_eq!(config.persistence.state_store, BackendConfig::new("memory", Value::Null));
-            assert_eq!(config.secrets.providers, SecretsConfig::default().providers);
+            assert_eq!(config.secrets, SecretsConfig::default());
+            assert_eq!(
+                config.auth.jwt_secret,
+                SecretRef::new("local/CAELUMORA_JWT_SECRET").unwrap()
+            );
             assert!(config.users.providers.is_empty(), "no user provider unless configured");
         }
     }
@@ -492,21 +520,38 @@ persistence:
     }
 
     #[test]
+    fn the_default_vaults_are_local_falling_back_to_env() {
+        let vaults = SecretsConfig::default().vaults;
+        let names: Vec<_> = vaults.keys().map(|name| Identifier::new(name).unwrap()).collect();
+        assert_eq!(names, [Identifier::new("env").unwrap(), Identifier::new("local").unwrap()]);
+        assert_eq!(vaults["local"].fallback, Some(Identifier::new("env").unwrap()));
+        assert_eq!(vaults["env"].fallback, None);
+    }
+
+    #[test]
     fn test_load_config_secrets() {
         let yaml = r#"
 secrets:
-  providers:
-    - type: file
-      path: "local/secrets.json"
-    - type: env
+  vaults:
+    team:
+      type: file
+      path: "local/team.json"
+      fallback: env
+    env:
+      type: env
 "#;
         let config = AppConfig::from_yaml(yaml).unwrap();
+        let team = &config.secrets.vaults["team"];
+        let file = BackendConfig::new("file", serde_json::json!({ "path": "local/team.json" }));
+        assert_eq!(team.backend, file, "the fallback is no parameter of the backend");
+        assert_eq!(team.fallback.as_ref().map(Identifier::as_str), Some("env"));
         assert_eq!(
-            config.secrets.providers,
-            [
-                BackendConfig::new("file", serde_json::json!({ "path": "local/secrets.json" })),
-                BackendConfig::new("env", Value::Null),
-            ]
+            config.secrets.vaults["env"],
+            VaultConfig::new(BackendConfig::new("env", Value::Null))
+        );
+        assert!(
+            AppConfig::from_yaml("secrets:\n  vaults:\n    Team:\n      type: env\n").is_err(),
+            "a vault is named by an identifier"
         );
     }
 
@@ -545,11 +590,11 @@ logging:
 
         let yaml = r#"
 auth:
-  jwt_secret: "OTHER_KEY"
+  jwt_secret: "local/OTHER_KEY"
   token_lifetime_secs: 60
 "#;
         let config = AppConfig::from_yaml(yaml).unwrap();
-        assert_eq!(config.auth.jwt_secret, "OTHER_KEY");
+        assert_eq!(config.auth.jwt_secret.as_str(), "local/OTHER_KEY");
         assert_eq!(config.auth.token_lifetime_secs, 60);
         assert_eq!(config.auth.max_session_secs, 12 * 60 * 60, "unset fields keep their defaults");
     }

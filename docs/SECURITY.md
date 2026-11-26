@@ -737,7 +737,8 @@ record was deleted, and answers a new user under it.
 
 ### How the chain fails
 
-The user chain fails differently from the secret chain:
+The user chain fails as the fallbacks of a vault of secrets do (see [Secrets](#secrets)), and
+hides who exists:
 
 *   `Ok(None)` passes the question to the next provider.
 *   A rejected credential or a failing provider ends it. A broken user file must deny, never fall
@@ -784,13 +785,20 @@ password.
 ## Secrets
 
 Component configuration - such as an `mcp_server`'s `auth.secret` - may need to reference
-credentials without embedding them in persisted configuration. A `SecretProvider` is a pluggable
-source of secrets; the `SecretManager` tries its providers in turn and returns the first match.
-Built in are a JSON key/value file, re-read on every lookup so that secrets can rotate without a
-restart, and the process environment; the `secrets` section sets the chain, each provider a backend
-that a plugin may add (see [ARCHITECTURE.md](ARCHITECTURE.md#backends)).
+credentials without embedding them in persisted configuration. A secret is named by its vault and
+its key, `vault/KEY` (`SecretRef`); a key alone is no reference, so which credential is meant is
+never left to a search. A vault is a named entry of the `secrets` section: a `SecretProvider`, the
+backend its secrets come from, and what the core reads beside it - the vault it falls back to for a
+key it does not have, in turn. The fallback is followed only where the backend did not have the
+key; a backend that fails fails the lookup, so that a vault that is down never lets another
+credential be sent in its stead. Fallbacks that lead to a vault not configured or back to where
+they began, and a vault named `user` - the vault of whoever acts, issue
+[343](../issues/343-users-bring-their-own-secrets.md) -, keep the server from starting. Built in
+are the backends of a JSON key/value file, re-read on every lookup so that secrets can rotate
+without a restart, and of the process environment; a plugin may add others (see
+[ARCHITECTURE.md](ARCHITECTURE.md#backends)). Every access to a backend is a read.
 
-Every lookup is checked with the `AccessPolicy` (`ReadSecret`) before any provider is consulted -
+Every lookup is checked with the `AccessPolicy` (`ReadSecret`) before any vault is asked -
 but a command of a workspace storage that hands on the program's environment (`environment:
 inherit`, for a program of one person, see [WORKSPACE.md](WORKSPACE.md#storages)) reads it without
 asking, what the provider `env` reads among it. A

@@ -1,20 +1,28 @@
 //! What is read of a secret, and how reading one fails (issue 516): the secrets bound to one name
-//! (`Secrets`), which a component that talks to a remote system resolves its credential by. Where
-//! they come from, and who may read them, is `caelumora-security`'s (`SecretManager`, issue 517).
+//! (`Secrets`), which a component that talks to a remote system resolves its credential by, by
+//! what names it (`SecretRef`, issue 310). Where they come from, and who may read them, is
+//! `caelumora-security`'s (`SecretManager`, issue 517).
 
 use crate::security::Refused;
+use crate::value::secret_ref::SecretRef;
 use async_trait::async_trait;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SecretError {
     #[error("secret not found: {0}")]
-    NotFound(String),
-    #[error("access denied for secret: {key}")]
+    NotFound(SecretRef),
+    #[error("access denied for secret: {secret}")]
     PermissionDenied {
-        key: String,
+        secret: SecretRef,
         #[source]
         refused: Refused,
     },
+    /// A reference to a vault that is not configured.
+    #[error("the vault of the secret '{0}' is not configured")]
+    UnknownVault(SecretRef),
+    /// Vaults that cannot be used together, as the configuration names them: why, in a sentence.
+    #[error("the vaults of secrets are configured wrong: {0}")]
+    InvalidVaults(String),
     #[error("backend: {0}")]
     Backend(String),
 }
@@ -27,9 +35,9 @@ pub type SecretResult<T> = Result<T, SecretError>;
 /// bound to.
 #[async_trait]
 pub trait Secrets: Send + Sync {
-    /// The secret `key`.
+    /// The secret `secret`.
     ///
     /// # Errors
     /// As `SecretManager::resolve`.
-    async fn resolve(&self, key: &str) -> SecretResult<String>;
+    async fn resolve(&self, secret: &SecretRef) -> SecretResult<String>;
 }

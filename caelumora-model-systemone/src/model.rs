@@ -299,8 +299,8 @@ mod tests {
             model: params.model,
             keep_alive: params.keep_alive,
             destination: params.destination.unwrap_or(Classification::PUBLIC),
-            secret_manager: Arc::new(SecretManager::new(
-                vec![Arc::new(OneSecret)],
+            secret_manager: Arc::new(SecretManager::of_test_vault(
+                Arc::new(OneSecret),
                 Arc::new(AllowAllPolicy::new()),
             )),
         }
@@ -372,10 +372,10 @@ mod tests {
             )
         };
 
-        asked(&with("DECIDE")).await.unwrap();
+        asked(&with("test/DECIDE")).await.unwrap();
         assert_eq!(fake.asked()[0].1.as_deref(), Some("Bearer the-token"));
 
-        let missing = asked(&with("OTHER")).await.unwrap_err();
+        let missing = asked(&with("test/OTHER")).await.unwrap_err();
         assert!(matches!(missing, ModelError::Connection { .. }), "{missing}");
         assert_eq!(fake.asked().len(), 1, "nothing sent without it");
     }

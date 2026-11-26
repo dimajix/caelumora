@@ -414,14 +414,16 @@ mod tests {
     /// The component that reaches the agent at `url`, its card kept for
     /// `refresh_secs` - by default if `None`.
     fn component(url: &str, refresh_secs: Option<u64>) -> A2aAgent {
-        let params: A2aAgentParams = serde_json::from_value(json!({ "endpoint": { "url": url, "auth": { "type": "bearer", "secret": "HERMES_TOKEN" }, "timeout_secs": 2, "refresh_secs": refresh_secs } })).unwrap();
+        let params: A2aAgentParams = serde_json::from_value(json!({ "endpoint": { "url": url, "auth": { "type": "bearer", "secret": "test/HERMES_TOKEN" }, "timeout_secs": 2, "refresh_secs": refresh_secs } })).unwrap();
         A2aAgent::new("hermes".to_string(), params).unwrap()
     }
 
     /// The secrets a call is made with: `HERMES_TOKEN` among them, readable by anyone.
     fn secrets() -> Arc<dyn Secrets> {
-        let manager =
-            Arc::new(SecretManager::new(vec![Arc::new(Token)], Arc::new(AllowAllPolicy::new())));
+        let manager = Arc::new(SecretManager::of_test_vault(
+            Arc::new(Token),
+            Arc::new(AllowAllPolicy::new()),
+        ));
         Arc::new(manager.for_context(SecurityContext::default()))
     }
 

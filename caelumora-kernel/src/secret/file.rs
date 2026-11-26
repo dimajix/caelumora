@@ -14,10 +14,9 @@ use std::sync::Arc;
 
 /// Resolves secrets from a flat JSON object file (`{"KEY": "value", ...}`).
 ///
-/// The file is re-read on every lookup so secrets can be rotated without
-/// restarting the process. A missing file is treated as "not found" rather
-/// than an error, so this provider can be chained ahead of others without
-/// requiring the file to exist up front.
+/// The file is re-read on every lookup so secrets can be rotated without restarting the process. A
+/// missing file is treated as "not found" rather than an error, so that a vault of it falls back to
+/// another without the file having to exist.
 #[derive(Debug)]
 pub struct FileSecretProvider {
     path: PathBuf,

@@ -4,6 +4,7 @@
 use crate::PostgresStoreConfig;
 use crate::{DEFAULT_MAX_CONNECTIONS, DEFAULT_SCHEMA};
 use caelumora_domain::store::{StoreError, StoreResult};
+use caelumora_domain::value::secret_ref::SecretRef;
 use caelumora_security::secret::SecretManager;
 use caelumora_security::SecurityContext;
 use sqlx::migrate::Migrator;
@@ -26,7 +27,7 @@ static MIGRATOR: Migrator = sqlx::migrate!();
 /// start, when the backends are opened. Its connections find the tables of
 /// the schema by their names alone (`search_path`).
 pub(crate) struct Connection {
-    url_secret: String,
+    url_secret: SecretRef,
     schema: String,
     max_connections: u32,
     secrets: Arc<SecretManager>,
@@ -46,13 +47,13 @@ impl Connection {
     /// The connection the secret `url_secret` names, in `schema`, of at
     /// most `max_connections`, resolved by `secrets`.
     pub(crate) fn new(
-        url_secret: &str,
+        url_secret: &SecretRef,
         schema: &str,
         max_connections: u32,
         secrets: Arc<SecretManager>,
     ) -> Self {
         Self {
-            url_secret: url_secret.to_string(),
+            url_secret: url_secret.clone(),
             schema: schema.to_string(),
             max_connections,
             secrets,
@@ -89,7 +90,7 @@ impl Connection {
         })
     }
 
-    /// Resolves the secret, connects, makes the schema and applies the
+    /// Resolves the secret, in the system's name, connects, makes the schema and applies the
     /// migrations. No message names the URL: it holds the password.
     async fn connect(&self) -> StoreResult<PgPool> {
         let named = &self.url_secret;
@@ -143,7 +144,7 @@ impl Connection {
 /// entities and, later, of the states and the users (issues 04, 26).
 #[derive(Debug, Default)]
 pub(crate) struct Connections {
-    made: Mutex<HashMap<(String, String), Arc<Connection>>>,
+    made: Mutex<HashMap<(SecretRef, String), Arc<Connection>>>,
 }
 
 impl Connections {

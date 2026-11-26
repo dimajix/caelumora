@@ -32,6 +32,12 @@ impl Identifier {
         Ok(Self(text.to_string()))
     }
 
+    /// An identifier the code itself gives, such as a vault of the default secrets: taken
+    /// unchecked, so that it needs no error that cannot happen; each is checked by a test instead.
+    pub(crate) fn fixed(text: &'static str) -> Self {
+        Self(text.to_string())
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }

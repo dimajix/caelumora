@@ -382,7 +382,7 @@ mod tests {
         let config = &with_local_model(config.clone());
         let access_policy = Arc::new(AllowAllPolicy::new());
         let secrets =
-            Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));
+            Arc::new(SecretManager::without_vaults(Arc::<AllowAllPolicy>::clone(&access_policy)));
         let (rest_plugins, plugins) = (rest_plugins(), plugins());
         let plugins = all(&rest_plugins, &plugins);
         let mut builder = KernelBuilder::new(
@@ -698,7 +698,7 @@ mod tests {
         let config = AppConfig::load(example("config.yaml")).unwrap();
         let (rest_plugins, plugins) = (rest_plugins(), plugins());
         let backends = Backends::with_plugins(&all(&rest_plugins, &plugins));
-        let secrets = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
+        let secrets = Arc::new(SecretManager::without_vaults(Arc::new(AllowAllPolicy::new())));
         let services = Services::empty().with(secrets);
         let storages = backends
             .make_named::<dyn TerminalProvider>(

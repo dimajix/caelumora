@@ -229,6 +229,7 @@ mod tests {
     use caelumora_api::terminal::{ByteStream, TerminalReader};
     use caelumora_domain::remote::RemoteAuthConfig;
     use caelumora_domain::secret::SecretResult;
+    use caelumora_domain::value::secret_ref::SecretRef;
     use caelumora_domain::workspace::CommandStatus;
     use caelumora_kernel::secret::file::FileSecretProvider;
     use caelumora_kernel::terminal::DEFAULT_MAX_RUN_SECS;
@@ -251,15 +252,17 @@ mod tests {
                 Ok((key == "OPEN_TERMINAL_API_KEY").then(|| self.0.clone()))
             }
         }
-        Arc::new(SecretManager::new(
-            vec![Arc::new(Fixed(key.to_string()))],
+        Arc::new(SecretManager::of_test_vault(
+            Arc::new(Fixed(key.to_string())),
             Arc::new(AllowAllPolicy::new()),
         ))
     }
 
     fn endpoint(url: &str) -> RemoteEndpoint {
         RemoteEndpoint {
-            auth: Some(RemoteAuthConfig::Bearer { secret: "OPEN_TERMINAL_API_KEY".to_string() }),
+            auth: Some(RemoteAuthConfig::Bearer {
+                secret: SecretRef::new("test/OPEN_TERMINAL_API_KEY").unwrap(),
+            }),
             ..RemoteEndpoint::new(url)
         }
     }
@@ -572,7 +575,7 @@ mod tests {
         let file =
             FileSecretProvider::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../local/secrets.json"));
         let secrets =
-            Arc::new(SecretManager::new(vec![Arc::new(file)], Arc::new(AllowAllPolicy::new())));
+            Arc::new(SecretManager::of_test_vault(Arc::new(file), Arc::new(AllowAllPolicy::new())));
         let provider = SharedProvider::new(
             endpoint(&url),
             "/tmp/caelumora-workspaces",
@@ -645,7 +648,7 @@ mod tests {
 
     #[test]
     fn its_parameters_name_the_instance_and_where_it_has_the_storage() {
-        let params = |mount: &str| json!({ "endpoint": { "url": "http://open-terminal:8000", "auth": { "type": "bearer", "secret": "OPEN_TERMINAL_API_KEY" } }, "mount": mount });
+        let params = |mount: &str| json!({ "endpoint": { "url": "http://open-terminal:8000", "auth": { "type": "bearer", "secret": "test/OPEN_TERMINAL_API_KEY" } }, "mount": mount });
         let config =
             SharedStorageConfig::read(&params("/workspaces")).expect("a shared Open Terminal");
         assert_eq!(

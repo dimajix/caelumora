@@ -32,6 +32,7 @@ use crate::documents::PgDocuments;
 use async_trait::async_trait;
 use caelumora_domain::group::Group;
 use caelumora_domain::store::{EntityKind, StoreResult, Stored};
+use caelumora_domain::value::secret_ref::SecretRef;
 use caelumora_store::documents::{DocumentOf, DocumentStorage};
 use caelumora_store::history::HistoryStore;
 use caelumora_store::transcript::TranscriptStore;
@@ -49,7 +50,7 @@ use std::sync::{Arc, PoisonError, RwLock};
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PostgresStoreConfig {
-    pub url_secret: String,
+    pub url_secret: SecretRef,
     #[serde(default)]
     pub schema: Option<String>,
     #[serde(default)]

@@ -240,7 +240,7 @@ An `mcp_server` component exposes the tools of a remote MCP server, reached over
 transport:
 
 ```json
-{ "id": "github-mcp", "kind": "mcp_server", "params": { "endpoint": { "url": "https://mcp.example.com/mcp", "auth": { "type": "bearer", "secret": "GITHUB_MCP_TOKEN" } } } }
+{ "id": "github-mcp", "kind": "mcp_server", "params": { "endpoint": { "url": "https://mcp.example.com/mcp", "auth": { "type": "bearer", "secret": "local/GITHUB_MCP_TOKEN" } } } }
 ```
 
 The kind lives in the library `caelumora-tool-mcp` (issue 325), with `rmcp`, so that the kernel
@@ -261,8 +261,8 @@ the kind as before. What such a component kind may use of the kernel is said in
     change itself (`notifications/tools/list_changed`) is not heard (issue 433).
 *   **Description.** The parameter `description`, else what the server says of itself, else a
     generic text.
-*   **Credentials.** `auth.secret` names a secret, resolved through the secret chain (see
-    [SECURITY.md](SECURITY.md)); it is never a literal credential.
+*   **Credentials.** `auth.secret` names a secret by its vault and key, `vault/KEY`, resolved
+    through its vault (see [SECURITY.md](SECURITY.md#secrets)); it is never a literal credential.
 *   **Parameters.** `endpoint` (required: `url`, `auth` - optional, `bearer` -, `timeout_secs` -
     default 10 -, `refresh_secs` - default 300; see
     [COMPONENTS.md](COMPONENTS.md#remote-endpoints)), `requires_approval` (`true` by default,
@@ -398,13 +398,13 @@ provider, with the tool `search_web`:
     provider: tavily
     endpoint:
       url: https://api.tavily.com
-      auth: { type: bearer, secret: TAVILY_API_KEY }
+      auth: { type: bearer, secret: local/TAVILY_API_KEY }
 ```
 
 *   **A provider.** There is no protocol for searching the web; every provider has an API of its
     own. `provider` names whose the endpoint speaks - `tavily`, the one Caelumora knows so far -,
     and the endpoint's `auth` its key, which every provider wants: a component without is not
-    built. The key is resolved through the secret chain in the name of whoever asks the agent (see
+    built. The key is resolved through its vault in the name of whoever asks the agent (see
     [SECURITY.md](SECURITY.md)). A search goes through the proxy the environment names.
 *   **What it gives.** For a `query`, at most `max_results` pages - 5 unless given, 20 at most -,
     each with its title, its URL and a snippet of at most 1,000 characters; no answer of the

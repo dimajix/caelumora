@@ -196,8 +196,8 @@ impl Backends {
             .map(NamedBackends)
     }
 
-    /// The chain of backends of `T` that `configs` names, in its order;
-    /// `what` names one of them in messages - "secret provider".
+    /// The chain of backends of `T` that `configs` names, in its order; `what` names one of them in
+    /// messages - "user provider".
     ///
     /// # Errors
     /// `ComponentError::Backend` naming the first that cannot be made.
@@ -270,10 +270,13 @@ impl Backends {
 mod tests {
     use super::*;
     use crate::user_provider::{Credential, UserManager, UserProvider};
+    use caelumora_domain::config::VaultConfig;
     use caelumora_domain::role::{RoleId, Roles};
     use caelumora_domain::user::{User, UserId};
+    use caelumora_domain::value::identifier::Identifier;
+    use caelumora_domain::value::secret_ref::SecretRef;
     use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
-    use caelumora_security::secret::{SecretManager, SecretProvider};
+    use caelumora_security::secret::{SecretManager, SecretProvider, Vault};
     use caelumora_security::{AllowAllPolicy, Policies, SecurityContext};
     use caelumora_store::{EntityStores, Persistence};
     use serde::Deserialize;
@@ -459,27 +462,31 @@ mod tests {
         let file = dir.path().join("secrets.json");
         fs::write(&file, r#"{"CAELUMORA_TEST_BACKEND_FILE": "from-file"}"#).unwrap();
         env::set_var("CAELUMORA_TEST_BACKEND_ENV", "from-env");
-        let configs = [
-            BackendConfig::new("file", json!({ "path": file })),
-            BackendConfig::new("env", json!(null)),
+        let vault = |name: &str, backend: BackendConfig| {
+            let provider = Backends::built_in()
+                .make_one::<dyn SecretProvider>("vault", name, &backend, &Services::empty())
+                .unwrap();
+            (Identifier::new(name).unwrap(), Vault::new(provider, &VaultConfig::new(backend)))
+        };
+        let vaults = [
+            vault("file", BackendConfig::new("file", json!({ "path": file }))),
+            vault("env", BackendConfig::new("env", json!(null))),
         ];
-        let providers = Backends::built_in()
-            .make_chain::<dyn SecretProvider>("secret provider", &configs, &Services::empty())
-            .unwrap();
-        let secrets = SecretManager::new(providers, Arc::new(AllowAllPolicy::new()));
-        let context = SecurityContext::default();
-        assert_eq!(
-            secrets.resolve(&context, "CAELUMORA_TEST_BACKEND_FILE").await.unwrap(),
-            "from-file"
-        );
-        assert_eq!(
-            secrets.resolve(&context, "CAELUMORA_TEST_BACKEND_ENV").await.unwrap(),
-            "from-env"
-        );
+        let secrets =
+            SecretManager::new(vaults.into_iter().collect(), Arc::new(AllowAllPolicy::new()))
+                .unwrap();
+        let read = |text: &str| {
+            let secret = SecretRef::new(text).unwrap();
+            let secrets = &secrets;
+            async move { secrets.resolve(&SecurityContext::default(), &secret).await.unwrap() }
+        };
+        assert_eq!(read("file/CAELUMORA_TEST_BACKEND_FILE").await, "from-file");
+        assert_eq!(read("env/CAELUMORA_TEST_BACKEND_ENV").await, "from-env");
         env::remove_var("CAELUMORA_TEST_BACKEND_ENV");
-        let misspelt = Backends::built_in().make_chain::<dyn SecretProvider>(
-            "secret provider",
-            &[BackendConfig::new("env", json!({ "prefix": "X" }))],
+        let misspelt = Backends::built_in().make_one::<dyn SecretProvider>(
+            "vault",
+            "env",
+            &BackendConfig::new("env", json!({ "prefix": "X" })),
             &Services::empty(),
         );
         assert!(misspelt.is_err(), "env takes no parameters");

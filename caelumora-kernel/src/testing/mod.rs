@@ -325,7 +325,7 @@ impl TestKernel<'_> {
     /// # Errors
     /// As `KernelBuilder::new`, `plugin`, `library` and `build`.
     pub fn try_build(self) -> Result<Arc<Kernel>> {
-        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&self.access_policy)));
+        let secrets = Arc::new(SecretManager::without_vaults(Arc::clone(&self.access_policy)));
         let mut builder = KernelBuilder::new(
             self.store,
             secrets,

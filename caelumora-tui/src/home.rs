@@ -133,10 +133,14 @@ impl Home {
         Ok(json!({
             "security": { "type": "allow_all" },
             "users": { "providers": [{ "type": "accept_any" }] },
-            "secrets": { "providers": [
-                { "type": "file", "path": text_of(&self.config.join("secrets.json"))? },
-                { "type": "env" },
-            ] },
+            "secrets": { "vaults": {
+                "local": {
+                    "type": "file",
+                    "path": text_of(&self.config.join("secrets.json"))?,
+                    "fallback": "env",
+                },
+                "env": { "type": "env" },
+            } },
             "persistence": { "entity_store": home, "state_store": home },
             "content": { "storage": { "home": {
                 "type": HOME,

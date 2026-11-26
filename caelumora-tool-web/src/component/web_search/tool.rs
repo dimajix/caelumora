@@ -181,7 +181,7 @@ mod tests {
 
     fn secrets() -> Arc<dyn Secrets> {
         let manager =
-            Arc::new(SecretManager::new(vec![Arc::new(Key)], Arc::new(AllowAllPolicy::new())));
+            Arc::new(SecretManager::of_test_vault(Arc::new(Key), Arc::new(AllowAllPolicy::new())));
         Arc::new(manager.for_context(SecurityContext::default()))
     }
 
@@ -235,7 +235,7 @@ mod tests {
         tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
         let endpoint = serde_json::from_value(json!({
             "url": format!("http://127.0.0.1:{port}"),
-            "auth": { "type": "bearer", "secret": "TAVILY_KEY" },
+            "auth": { "type": "bearer", "secret": "test/TAVILY_KEY" },
         }))
         .unwrap();
         (endpoint, asked)

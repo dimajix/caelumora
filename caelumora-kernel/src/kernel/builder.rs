@@ -49,7 +49,7 @@ use caelumora_domain::store::{StoreResult, Stored};
 use caelumora_domain::turn::StagedChange;
 use caelumora_domain::type_map::{ErasedArc, TypeKey};
 use caelumora_security::confidentiality::ConfidentialityPolicy;
-use caelumora_security::secret::{SecretManager, SecretProvider};
+use caelumora_security::secret::{SecretManager, SecretProvider, Vault};
 use caelumora_security::{AccessPolicy, Policies};
 use caelumora_store::memberships::StoreMemberships;
 use caelumora_store::places::StorePlaces;
@@ -365,8 +365,8 @@ impl KernelBuilder {
     /// their kinds.
     ///
     /// # Errors
-    /// If a secret provider or a store cannot be made, a store cannot be
-    /// opened, or as `new` and `plugin`.
+    /// If a vault of secrets or a store cannot be made, the vaults cannot be used together, a store
+    /// cannot be opened, or as `new` and `plugin`.
     pub async fn from_config(config: &AppConfig, plugins: &[&dyn Plugin]) -> Result<Self> {
         let backends = Backends::with_plugins(plugins);
         // The policy is made before the store it guards, and bound to the kernel's once it exists.
@@ -376,13 +376,25 @@ impl KernelBuilder {
         let secret_services = Services::empty()
             .with(Arc::clone(&access_policy))
             .with(Arc::clone(policies.confidentiality()));
-        let secret_providers = backends.make_chain::<dyn SecretProvider>(
-            "secret provider",
-            &config.secrets.providers,
-            &secret_services,
-        )?;
-        let secret_manager =
-            Arc::new(SecretManager::new(secret_providers, Arc::clone(&access_policy)));
+        let vaults = config
+            .secrets
+            .vaults
+            .iter()
+            .map(|(name, vault)| {
+                let what = format!("vault of secrets '{name}'");
+                let provider = backends.make_one::<dyn SecretProvider>(
+                    &what,
+                    name.as_str(),
+                    &vault.backend,
+                    &secret_services,
+                )?;
+                Ok((name.clone(), Vault::new(provider, vault)))
+            })
+            .collect::<ComponentResult<_>>()?;
+        let secret_manager = Arc::new(
+            SecretManager::new(vaults, Arc::clone(&access_policy))
+                .context("Cannot make the vaults of secrets")?,
+        );
         // The stores, over the backends the configuration names (issue 446),
         // which may ask for the secrets (issue 447).
         let store_services = secret_services.with(Arc::clone(&secret_manager));
@@ -794,7 +806,7 @@ mod tests {
     #[tokio::test]
     async fn the_backends_the_configuration_names_are_made_when_the_kernel_is_built() {
         let dir = tempfile::tempdir().unwrap();
-        let yaml = format!("secrets:\n  providers: []\nworkspaces:\n  storage:\n    main:\n      type: local\n      root: \"{0}\"\ncontent:\n  storage:\n    kept:\n      type: local\n      root: \"{0}\"\nusers:\n  providers:\n    - type: accept_any\n", dir.path().display());
+        let yaml = format!("secrets:\n  vaults: {{}}\nworkspaces:\n  storage:\n    main:\n      type: local\n      root: \"{0}\"\ncontent:\n  storage:\n    kept:\n      type: local\n      root: \"{0}\"\nusers:\n  providers:\n    - type: accept_any\n", dir.path().display());
         let builder =
             KernelBuilder::from_config(&AppConfig::from_yaml(&yaml).unwrap(), &[]).await.unwrap();
         assert!(
@@ -816,7 +828,8 @@ mod tests {
             ("content:\n  storage:\n    kept:\n      type: s3\n", ["the storage of content 'kept' (s3)", "known are: local"]),
             ("content:\n  storage:\n    kept:\n      type: local\n", ["the storage of content 'kept' (local)", "root"]),
             ("users:\n  providers:\n    - type: accept_any\n      default_roles: [staff]\n", ["the user provider 1 (accept_any)", "staff"]),
-            ("secrets:\n  providers:\n    - type: env\n    - type: vault\n", ["the secret provider 2 (vault)", "known are: env, file"]),
+            ("secrets:\n  vaults:\n    team:\n      type: vault\n", ["the vault of secrets 'team' (vault)", "known are: env, file"]),
+            ("secrets:\n  vaults:\n    local:\n      type: env\n      fallback: team\n", ["vaults of secrets", "falls back to 'team'"]),
         ] {
             let refused = KernelBuilder::from_config(&AppConfig::from_yaml(yaml).unwrap(), &[]).await.map(|_| ()).expect_err(yaml);
             let message = format!("{refused:#}");

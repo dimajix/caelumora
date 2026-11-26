@@ -32,6 +32,7 @@ use caelumora_domain::tool::testing::make_tool_call;
 use caelumora_domain::tool::{ToolCall, ToolCallState, ToolSet};
 use caelumora_domain::user::UserId;
 use caelumora_domain::value::name::{Name, NameMatch, ScopedName};
+use caelumora_domain::value::secret_ref::SecretRef;
 use caelumora_domain::work::Work;
 use caelumora_kernel::backend::Backends;
 use caelumora_kernel::kernel::KernelBuilder;
@@ -50,12 +51,15 @@ use uuid::Uuid;
 /// The variable, read as a secret, that holds the URL of the test database.
 const URL_SECRET: &str = "CAELUMORA_TEST_POSTGRES_URL";
 
-/// The secrets of the tests: the environment.
+/// The secrets of the tests: the environment, as the vault `test`.
 fn secrets() -> Arc<SecretManager> {
-    Arc::new(SecretManager::new(
-        vec![Arc::new(EnvSecretProvider::new())],
-        Arc::new(AllowAllPolicy::new()),
-    ))
+    let env = Arc::new(EnvSecretProvider::new());
+    Arc::new(SecretManager::of_test_vault(env, Arc::new(AllowAllPolicy::new())))
+}
+
+/// The secret that holds the URL of the test database: `URL_SECRET` of the vault `test`.
+fn url_secret() -> SecretRef {
+    SecretRef::new(format!("test/{URL_SECRET}")).unwrap()
 }
 
 /// A schema of its own in the test database.
@@ -72,7 +76,7 @@ impl Database {
             return None;
         }
         let schema = format!("test_{}", Uuid::new_v4().simple());
-        Some(Self { connection: Arc::new(Connection::new(URL_SECRET, &schema, 4, secrets())) })
+        Some(Self { connection: Arc::new(Connection::new(&url_secret(), &schema, 4, secrets())) })
     }
 
     /// A backend over the schema - another for every call, as of another
@@ -246,10 +250,10 @@ async fn a_table_of_another_form_is_refused() {
 /// A secret that names nothing fails the opening, naming the secret.
 #[tokio::test]
 async fn a_secret_that_names_nothing_fails_the_start() {
-    let connection =
-        Arc::new(Connection::new("CAELUMORA_TEST_POSTGRES_NO_SUCH_URL", "public", 1, secrets()));
+    let secret = SecretRef::new("test/CAELUMORA_TEST_POSTGRES_NO_SUCH_URL").unwrap();
+    let connection = Arc::new(Connection::new(&secret, "public", 1, secrets()));
     let refused = PostgresStore::new(connection).open().await.expect_err("no URL");
-    assert!(refused.to_string().contains("'CAELUMORA_TEST_POSTGRES_NO_SUCH_URL'"), "{refused}");
+    assert!(refused.to_string().contains(&format!("'{secret}'")), "{refused}");
 }
 
 /// The backend is made from its parameters, refuses wrong ones naming the
@@ -260,7 +264,7 @@ fn the_backend_is_made_from_its_parameters() {
     let services = Services::empty().with(secrets());
     let postgres = BackendConfig::new(
         "postgres",
-        json!({ "url_secret": URL_SECRET, "schema": "caelumora", "max_connections": 2 }),
+        json!({ "url_secret": url_secret(), "schema": "caelumora", "max_connections": 2 }),
     );
     let made = backends
         .make_one::<dyn PersistenceBackend>("entity store", "entity_store", &postgres, &services)
@@ -356,7 +360,7 @@ async fn what_an_agent_waiting_for_an_approval_stored_survives_a_restart() {
     drop(before);
 
     let restarted = PostgresStore::new(Arc::new(Connection::new(
-        URL_SECRET,
+        &url_secret(),
         database.connection.schema(),
         2,
         secrets(),
@@ -831,7 +835,7 @@ async fn a_scan_hands_out_what_a_filter_meets() {
 async fn a_kernel_keeps_its_entities_and_its_states_in_postgres() {
     let Some(database) = Database::new() else { return };
     let yaml = format!(
-        "secrets:\n  providers:\n    - type: env\npersistence:\n  entity_store:\n    type: postgres\n    url_secret: {URL_SECRET}\n    schema: {}\n  state_store:\n    type: postgres\n    url_secret: {URL_SECRET}\n    schema: {}\n",
+        "secrets:\n  vaults:\n    test:\n      type: env\npersistence:\n  entity_store:\n    type: postgres\n    url_secret: test/{URL_SECRET}\n    schema: {}\n  state_store:\n    type: postgres\n    url_secret: test/{URL_SECRET}\n    schema: {}\n",
         database.connection.schema(), database.connection.schema(),
     );
     let config = AppConfig::from_yaml(&yaml).unwrap();

@@ -165,6 +165,7 @@ pub(crate) mod testing {
     use super::*;
     use caelumora_api::model::ModelProfileProvider;
     use caelumora_domain::context::ModelProfile;
+    use caelumora_domain::value::secret_ref::SecretRef;
     use caelumora_security::{AccessPolicy, ActionType, SecurityContext};
     use futures::stream;
     use futures::StreamExt;
@@ -174,7 +175,7 @@ pub(crate) mod testing {
 
     /// The secret a scripted remote agent reads with every call, so that in whose name it was
     /// called is asked of the policy (`ReadSecret`), as a credential is.
-    const CALLED_AS: &str = "CALLED_AS";
+    const CALLED_AS: &str = "test/CALLED_AS";
 
     /// The access policy a test of a scripted remote agent runs with: it allows everything, and
     /// keeps the context of every read of `CALLED_AS` - in whose name the remote agent was called
@@ -259,7 +260,7 @@ pub(crate) mod testing {
         /// Records `call`, made with `secrets`, reading `CALLED_AS` of them: whether there is such
         /// a secret does not matter, in whose name it is asked does.
         async fn called(&self, call: &'static str, secrets: &dyn Secrets) {
-            let _ = secrets.resolve(CALLED_AS).await;
+            let _ = secrets.resolve(&SecretRef::new(CALLED_AS).unwrap()).await;
             self.calls.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).push(call);
         }
 
@@ -351,6 +352,7 @@ pub(crate) mod testing {
 mod tests {
     use super::testing::ScriptedExternalAgent;
     use super::*;
+    use caelumora_domain::value::secret_ref::SecretRef;
     use caelumora_security::secret::SecretManager;
     use caelumora_security::{AllowAllPolicy, SecurityContext};
     use futures::StreamExt;
@@ -380,7 +382,7 @@ mod tests {
     fn a_failed_credential_does_not_name_its_secret() {
         let error = ExternalAgentError::Credential {
             endpoint: "https://agent.example".to_string(),
-            source: SecretError::NotFound("HERMES_TOKEN".to_string()),
+            source: SecretError::NotFound(SecretRef::new("local/HERMES_TOKEN").unwrap()),
         };
         assert!(!error.to_string().contains("HERMES_TOKEN"), "{error}");
         assert!(error.to_string().contains("https://agent.example"), "{error}");
@@ -397,7 +399,7 @@ mod tests {
         ]])
         .resuming(vec![vec![Ok(ExternalEvent::Completed)]]);
         let secrets = || -> Arc<dyn Secrets> {
-            let manager = SecretManager::new(Vec::new(), Arc::new(AllowAllPolicy::new()));
+            let manager = SecretManager::without_vaults(Arc::new(AllowAllPolicy::new()));
             Arc::new(Arc::new(manager).for_context(SecurityContext::default()))
         };
 

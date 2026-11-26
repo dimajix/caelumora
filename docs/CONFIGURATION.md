@@ -6,17 +6,17 @@ development, with every section and its default in comments.
 
 The TUI, a program of one person (issue 554), has defaults of its own where it is given no file:
 everything allowed (`allow_all`), the user of the system accepted (`accept_any`), the backends
-`home` for the stores and the content below `~/.local/share/caelumora`, its definitions and
-`secrets.json` in `~/.config/caelumora`, and the storage of workspaces `here` of type `directory` on
-the directory it was started in, with a shell and the person's environment; and the commands every
-session has by default, with `/workspace run` besides (the component `shell`, issue 587), which its
-`!` stands for, and `/channel notes` (the component `agent_notes`, issue 607). In that storage it
-finds or makes the project and the workspace of the directory, by the directory's name and a part of
-an id of its path, in the user's scope, and puts every session of the directory there.
-`~/.config/caelumora/config.yaml` lies over these defaults: a mapping key by key, at every depth,
-but a backend of another `type` whole; a list and anything else whole - a list of `commands` of its
-own has no `shell` unless it names it -; what says nothing (`null`) changes nothing. `--config`
-replaces them.
+`home` for the stores and the content below `~/.local/share/caelumora`, its definitions and the
+vault `local`, `secrets.json`, in `~/.config/caelumora`, and the storage of workspaces `here` of
+type `directory` on the directory it was started in, with a shell and the person's environment; and
+the commands every session has by default, with `/workspace run` besides (the component `shell`,
+issue 587), which its `!` stands for, and `/channel notes` (the component `agent_notes`, issue 607).
+In that storage it finds or makes the project and the workspace of the directory, by the directory's
+name and a part of an id of its path, in the user's scope, and puts every session of the directory
+there. `~/.config/caelumora/config.yaml` lies over these defaults: a mapping key by key, at every
+depth, but a backend of another `type` whole; a list and anything else whole - a list of `commands`
+of its own has no `shell` unless it names it -; what says nothing (`null`) changes nothing.
+`--config` replaces them.
 
 Every section may be left out and then takes its default. A key the configuration does not know is
 an error when it is read, at the top as within a section. The sections of the plugins lie under
@@ -49,15 +49,15 @@ The type names the factory registered for it, the kernel's or a plugin's (see
 registers, a parameter its backend does not know or one that does not fit are not refused when the
 file is read but when the kernel is built - still at start-up, before anything runs, with a message
 naming the backend: `the storage of workspaces 'files' (local)`, or for a chain its position,
-`the secret provider 2 (vault)`. An unknown type is answered with the types there are.
+`the user provider 2 (ldap)`. An unknown type is answered with the types there are.
 
 | Section | What it configures | Default |
 |---|---|---|
-| `persistence` | Where the `EntityStore` (`entity_store`) and the `StateStore` (`state_store`) keep their data, each a [backend](#backends): `type: json` with a `path`, and optionally `journal_floor`, the size in bytes a journal reaches before it is folded into its snapshot; `type: memory`; `type: postgres` with `url_secret` (the name of the secret holding the URL of the database) and optionally `schema` (`public`) and `max_connections` (10); or `type: home` with `config_dir`, `data_dir`, `definitions` (the kinds kept as files by their names, each with its `dir` and `format`, `yaml` or `markdown` with the field `body` it holds) and `within` (the kinds that lie beside the document of their id of another kind), the TUI's, see [STORAGE.md](STORAGE.md#in-a-home-directory). The two may differ. See [STORAGE.md](STORAGE.md). | `memory` for both - gone when the process ends; `journal_floor` 65536 |
+| `persistence` | Where the `EntityStore` (`entity_store`) and the `StateStore` (`state_store`) keep their data, each a [backend](#backends): `type: json` with a `path`, and optionally `journal_floor`, the size in bytes a journal reaches before it is folded into its snapshot; `type: memory`; `type: postgres` with `url_secret` (the secret holding the URL of the database, `vault/KEY`) and optionally `schema` (`public`) and `max_connections` (10); or `type: home` with `config_dir`, `data_dir`, `definitions` (the kinds kept as files by their names, each with its `dir` and `format`, `yaml` or `markdown` with the field `body` it holds) and `within` (the kinds that lie beside the document of their id of another kind), the TUI's, see [STORAGE.md](STORAGE.md#in-a-home-directory). The two may differ. See [STORAGE.md](STORAGE.md). | `memory` for both - gone when the process ends; `journal_floor` 65536 |
 | `seed` | Files of demo data - component bundles, personalities and session templates, and the sections of the plugins, `skills` among them - put into the stores at startup, only what they do not have yet, by id. A directory names every `.yaml` file in it and its subdirectories, in the order of their paths; the example's, `examples/seed`, holds one document per file. A section of a seed file that no plugin claims is an error. | none |
-| `secrets` | The chain of secret providers, each a [backend](#backends), tried in order: `type: file` with a `path` (a flat JSON key/value file), `type: env`. See [SECURITY.md](SECURITY.md#secrets). | `local/secrets.json`, then the environment |
+| `secrets` | The vaults of secrets under `vaults`, by the name a secret is named by (`vault/KEY`): each a [backend](#backends) - `type: file` with a `path` (a flat JSON key/value file), `type: env` - and optionally a `fallback`, the vault asked for a key it does not have. See [SECURITY.md](SECURITY.md#secrets). | `local` (`local/secrets.json`, falling back to `env`) and `env` (the environment) |
 | `users` | The chain of user providers, each a [backend](#backends): `type: file` with a `path`, a YAML file of users written by hand, with their ids, roles by name and Argon2 password hashes; or `type: accept_any`, a development stand-in that accepts any username, with any password - or none, from the TUI; it gives the users named under `roles` their roles and everybody else `default_roles`, by the roles' names. See [SECURITY.md](SECURITY.md#users). | none - nobody can log in |
-| `auth` | How the REST server keeps a browser logged in: `jwt_secret` (the name of the secret holding the signing key), `token_lifetime_secs`, `max_session_secs`, `secure_cookie`. See [REST-SERVER.md](REST-SERVER.md#authentication). | `CAELUMORA_JWT_SECRET`, 15 minutes, 12 hours, `true` |
+| `auth` | How the REST server keeps a browser logged in: `jwt_secret` (the secret holding the signing key, `vault/KEY`), `token_lifetime_secs`, `max_session_secs`, `secure_cookie`. See [REST-SERVER.md](REST-SERVER.md#authentication). | `local/CAELUMORA_JWT_SECRET`, 15 minutes, 12 hours, `true` |
 | `security` | The access policy: `type: ownership`, or `type: allow_all` for tests and single-user development - it allows every action, but what may flow where still follows `compartments` and `roles`. See [SECURITY.md](SECURITY.md). | `ownership` |
 | `roles` | The roles, each with an `id` - what is stored -, a `name` - what is written by hand - and the `clearances` it grants, a `level` and at most one `compartment`. Roles given by a user provider or named by a seed, and compartments named here, must be configured; the user provider's are checked when it is made. See [CONFIDENTIALITY.md](CONFIDENTIALITY.md#clearances). | none - clearances are not checked |
 | `compartments` | The compartments a classification may name, each with a `name` and the compartments it `reads`; the read relation is closed transitively. See [CONFIDENTIALITY.md](CONFIDENTIALITY.md). | none - every classification is general |

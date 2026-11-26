@@ -483,7 +483,7 @@ async fn a_server_gone_leaves_the_tools_discovered_before() {
 async fn the_tools_are_discovered_in_the_name_of_whoever_acts() {
     let world = World::with(&[], &[&AgentsLibrary, &McpToolLibrary], |_| {}).await;
     let mcp = ComponentDescriptor {
-        params: json!({ "endpoint": { "url": "http://127.0.0.1:1/mcp", "auth": { "type": "bearer", "secret": "MCP_TOKEN" } } }),
+        params: json!({ "endpoint": { "url": "http://127.0.0.1:1/mcp", "auth": { "type": "bearer", "secret": "local/MCP_TOKEN" } } }),
         ..ComponentDescriptor::new("tools", MCP_SERVER_KIND)
     };
     let personality = world.personality("working", None, &[]).await;

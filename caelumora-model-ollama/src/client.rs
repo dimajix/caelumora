@@ -1152,7 +1152,7 @@ mod tests {
             ("http://gpu:11434", Some(5))
         );
         let refused = OllamaModelConfig::read(
-            &json!({ "endpoint": { "url": "http://gpu:11434", "auth": { "type": "bearer", "secret": "TOKEN" } } }),
+            &json!({ "endpoint": { "url": "http://gpu:11434", "auth": { "type": "bearer", "secret": "local/TOKEN" } } }),
         );
         assert!(refused.is_err_and(|e| e.to_string().contains("not supported")));
     }

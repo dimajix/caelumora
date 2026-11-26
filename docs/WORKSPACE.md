@@ -93,7 +93,7 @@ their module docs (`caelumora-open-terminal/src/terminal.rs` for Open Terminal).
 `directory` is named by a link to that directory, so that it is found there after the program was
 started elsewhere; what works in it - its terminal, a command, the environment of one - is handed
 the directory itself, never the link, so that a path a model is shown is the one it works in. A
-storage's key is resolved through the secret chain in the system's name, since the storage is the
+storage's key is resolved through its vault in the system's name, since the storage is the
 operator's.
 
 A storage is a backend (issue 324, see [ARCHITECTURE.md](ARCHITECTURE.md#backends)): its provider is

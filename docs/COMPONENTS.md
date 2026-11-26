@@ -480,20 +480,21 @@ endpoint:
   url: https://agent.example
   auth:
     type: bearer
-    secret: AGENT_TOKEN
+    secret: local/AGENT_TOKEN
   timeout_secs: 30
   refresh_secs: 300
 ```
 
-`auth` names a secret, resolved for whoever acts on every use (see [SECURITY.md](SECURITY.md)). What
-`timeout_secs` bounds, and how long a component waits without it, the component says. So does it for
-`refresh_secs`: how long what it reads of its remote side - an MCP server's tools, an A2A agent's
-card - is kept before it is read again. That is read when it is first needed, in the name of whoever
-needs it, never while the component is built, and a read that fails is not kept (`ExpiringCache`,
-issue 126). An unknown field is refused, and so is a `url` that is no `http` or `https` URL, as the
-`params` are read and without naming it. In messages the endpoint is shown without credentials,
-query or fragment. A component that reaches paths below the endpoint's URL builds them with
-`RemoteEndpoint::url_of` - each segment encoded as one, the query kept -, never as text.
+`auth` names a secret by its vault and key, resolved for whoever acts on every use (see
+[SECURITY.md](SECURITY.md#secrets)). What `timeout_secs` bounds, and how long a component waits
+without it, the component says. So does it for `refresh_secs`: how long what it reads of its remote
+side - an MCP server's tools, an A2A agent's card - is kept before it is read again. That is read
+when it is first needed, in the name of whoever needs it, never while the component is built, and a
+read that fails is not kept (`ExpiringCache`, issue 126). An unknown field is refused, and so is a
+`url` that is no `http` or `https` URL, as the `params` are read and without naming it. In messages
+the endpoint is shown without credentials, query or fragment. A component that reaches paths below
+the endpoint's URL builds them with `RemoteEndpoint::url_of` - each segment encoded as one, the
+query kept -, never as text.
 
 ### The components
 

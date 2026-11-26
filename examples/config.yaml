@@ -17,11 +17,11 @@ persistence:
   # (default: 10) may be left out.
   #state_store:
   #  type: postgres
-  #  url_secret: CAELUMORA_POSTGRES_URL
+  #  url_secret: local/CAELUMORA_POSTGRES_URL
   #  schema: caelumora
   #entity_store:
   #  type: postgres
-  #  url_secret: CAELUMORA_POSTGRES_URL
+  #  url_secret: local/CAELUMORA_POSTGRES_URL
   #  schema: caelumora
   #  max_connections: 10
 
@@ -33,13 +33,18 @@ persistence:
 seed:
   - examples/seed
 
-# Where secrets come from, tried in order. Default: local/secrets.json, then
-# the environment.
+# The vaults secrets come from, by name: a secret is named `vault/KEY`
+# (issue 310). A vault asks its `fallback` for a key it does not have.
+# Default: `local`, the file local/secrets.json, falling back to `env`, the
+# environment.
 #secrets:
-#  providers:
-#    - type: file
+#  vaults:
+#    local:
+#      type: file
 #      path: "local/secrets.json"
-#    - type: env
+#      fallback: env
+#    env:
+#      type: env
 
 # Where the files of workspaces lie (issues 251, 253): storages by name, each
 # with its type. `local` keeps a directory per workspace under `root`.
@@ -69,7 +74,7 @@ workspaces:
       type: open_terminal_shared
       endpoint:
         url: "http://localhost:8000"
-        auth: { type: bearer, secret: OPEN_TERMINAL_API_KEY }
+        auth: { type: bearer, secret: local/OPEN_TERMINAL_API_KEY }
         timeout_secs: 10
       mount: "/home/user/workspaces"
       destination: { level: internal }

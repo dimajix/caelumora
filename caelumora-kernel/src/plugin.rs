@@ -52,6 +52,7 @@ mod tests {
         EntityKind, NoEntity, Revision, StoreError, StoreResult, Stored,
     };
     use caelumora_domain::type_map::TypeKey;
+    use caelumora_domain::value::secret_ref::SecretRef;
     use caelumora_security::secret::{SecretManager, SecretProvider};
     use caelumora_security::{Policies, SecurityContext};
     use caelumora_store::documents::{DocumentOf, DocumentStorage};
@@ -439,12 +440,16 @@ mod tests {
     #[tokio::test]
     async fn a_plugin_brings_a_backend_of_a_service_of_the_kernel() {
         let config = AppConfig::from_yaml(
-            "secrets:\n  providers:\n    - type: vault\n      secret: s3cr3t\n",
+            "secrets:\n  vaults:\n    remote:\n      type: vault\n      secret: s3cr3t\n",
         )
         .unwrap();
         let kernel = KernelBuilder::from_config(&config, &[&Vault]).await.unwrap().build().unwrap();
         assert_eq!(
-            kernel.secret_manager().resolve(&SecurityContext::system(), "ANY").await.unwrap(),
+            kernel
+                .secret_manager()
+                .resolve(&SecurityContext::system(), &SecretRef::new("remote/ANY").unwrap())
+                .await
+                .unwrap(),
             "s3cr3t",
             "made by the plugin's factory"
         );
@@ -452,7 +457,10 @@ mod tests {
             .await
             .map(|_| ())
             .expect_err("nobody brings it");
-        assert!(format!("{without:#}").contains("the secret provider 1 (vault)"), "{without:#}");
+        assert!(
+            format!("{without:#}").contains("the vault of secrets 'remote' (vault)"),
+            "{without:#}"
+        );
     }
 
     #[test]

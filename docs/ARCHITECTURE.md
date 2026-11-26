@@ -203,7 +203,7 @@ Details: [PLUGINS.md](PLUGINS.md).
 Some services of the kernel are served by one of a choice of **backends**, named in the
 configuration by their `type` (issue 324): the stores (`PersistenceBackend`, issue 446), the
 storages of workspaces (`TerminalProvider`), the storages of binary content (`ContentStorage`, issue
-282), the secret providers (`SecretProvider`) and the user providers (`UserProvider`); a plugin's
+282), the vaults of secrets (`SecretProvider`) and the user providers (`UserProvider`); a plugin's
 service may be served so too - the models of `caelumora-model` (`LanguageModelProvider`, issue 520;
 `ImageModelProvider`, issue 525; `DecisionModelProvider`, issue 551), which it makes of its section
 (`KernelBuilder::make_named`). A backend is made by the factory registered under its type for its
@@ -212,7 +212,7 @@ services it is given for what it needs. The kernel registers its own (`Backends:
 plugin adds one by registering its factory in `Plugin::backends`, which is asked before anything is
 made - so a new storage or provider is a crate linked into the program, and no edit of the kernel,
 as the Open Terminal storages of `caelumora-open-terminal` are (issue 327). The backends are made
-once, when the kernel is built (`KernelBuilder::from_config`): the secret providers first, which
+once, when the kernel is built (`KernelBuilder::from_config`): the vaults of secrets first, which
 need only the policies, then the stores, which may ask for the secrets - a database connects by
 one -, then the storages and the user providers with the secrets and the records of the users at
 hand. The stores' backends are opened last, once the plugins registered and opened the stores of

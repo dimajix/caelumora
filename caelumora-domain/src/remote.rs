@@ -8,6 +8,7 @@
 //! request writes it, and without being named, since it may carry a credential.
 
 use crate::secret::{SecretResult, Secrets};
+use crate::value::secret_ref::SecretRef;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer};
 use std::cmp::Reverse;
@@ -110,15 +111,14 @@ fn http_url<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Err
     }
 }
 
-/// How a component authenticates at its remote side, written in its
-/// `endpoint` as `auth`. A secret is named by its key, resolved through the
-/// `SecretManager` in the context of whoever acts, on every use - never
-/// kept.
+/// How a component authenticates at its remote side, written in its `endpoint` as `auth`. A secret
+/// is named by its vault and key (`SecretRef`, issue 310), resolved through the `SecretManager` in
+/// the context of whoever acts, on every use - never kept.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RemoteAuthConfig {
     /// A bearer token: the secret `secret`.
-    Bearer { secret: String },
+    Bearer { secret: SecretRef },
 }
 
 /// `url` without user name, password, query and fragment, for use in

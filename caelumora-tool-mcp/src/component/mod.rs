@@ -153,14 +153,16 @@ mod tests {
     fn parses_bearer_auth_config() {
         let value = json!({ "endpoint": {
             "url": "http://127.0.0.1:1234/mcp",
-            "auth": { "type": "bearer", "secret": "MY_TOKEN" },
+            "auth": { "type": "bearer", "secret": "local/MY_TOKEN" },
             "timeout_secs": 5
         } });
         let params: McpServerParams = serde_json::from_value(value).unwrap();
         assert_eq!(params.endpoint.url, "http://127.0.0.1:1234/mcp");
         assert_eq!(params.timeout(), Duration::from_secs(5));
         match params.endpoint.auth {
-            Some(RemoteAuthConfig::Bearer { secret }) => assert_eq!(secret, "MY_TOKEN"),
+            Some(RemoteAuthConfig::Bearer { secret }) => {
+                assert_eq!(secret.as_str(), "local/MY_TOKEN")
+            }
             _ => panic!("Expected Bearer auth"),
         }
     }
