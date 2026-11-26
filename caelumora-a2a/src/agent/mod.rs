@@ -310,10 +310,14 @@ mod tests {
     use axum::response::Response;
     use axum::routing::{get, post};
     use axum::{Json, Router};
-    use caelumora_agents::external::{ExternalEvent, Said};
-    use caelumora_domain::secret::SecretResult;
+    use caelumora_agents::external::{ExternalAgentError, ExternalEvent, Said};
+    use caelumora_domain::config::{BackendConfig, VaultConfig};
+    use caelumora_domain::secret::{SecretError, SecretResult};
+    use caelumora_domain::value::identifier::Identifier;
+    use caelumora_domain::value::origin::Origin;
     use caelumora_security::secret::SecretManager;
     use caelumora_security::secret::SecretProvider;
+    use caelumora_security::secret::Vault;
     use caelumora_security::AllowAllPolicy;
     use caelumora_security::SecurityContext;
     use serde_json::{json, Value};
@@ -698,6 +702,35 @@ mod tests {
             refused.contains("no JSON-RPC interface of A2A 1.x, only JSONRPC 0.3"),
             "{refused}"
         );
+    }
+
+    /// Issue 310: the credential goes to the interface the card names, so its vault's origins are
+    /// asked for that, not for the endpoint - a card that sends it elsewhere is refused it.
+    #[tokio::test]
+    async fn a_card_naming_an_interface_where_the_vault_does_not_send_its_credential_is_refused_it()
+    {
+        let (agent, stub) = agent("1.0", false, vec![]).await;
+        let card_url = stub.lock().unwrap().card["supportedInterfaces"][0]["url"].clone();
+        let endpoint = card_url.as_str().unwrap().trim_end_matches("/a2a").to_string();
+        let elsewhere = card_url.as_str().unwrap().replace("127.0.0.1", "localhost");
+        stub.lock().unwrap().card["supportedInterfaces"][0]["url"] = json!(elsewhere);
+        let origins = Some(vec![Origin::new(&endpoint).unwrap()]);
+        let backend = BackendConfig::new("test", Value::Null);
+        let config = VaultConfig { origins, ..VaultConfig::new(backend) };
+        let vaults = [(Identifier::new("test").unwrap(), Vault::new(Arc::new(Token), &config))];
+        let manager =
+            SecretManager::new(vaults.into_iter().collect(), Arc::new(AllowAllPolicy::new()));
+        let secrets = Arc::new(manager.unwrap()).for_context(SecurityContext::default());
+
+        let refused = agent.send(Arc::new(secrets), None, hello()).await.err().expect("refused");
+        assert!(
+            matches!(
+                &refused,
+                ExternalAgentError::Credential { source: SecretError::NotSentTo { .. }, .. }
+            ),
+            "{refused:?}"
+        );
+        assert!(stub.lock().unwrap().asked.is_empty(), "nothing sent there");
     }
 
     #[tokio::test]

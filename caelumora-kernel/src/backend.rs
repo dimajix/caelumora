@@ -478,7 +478,8 @@ mod tests {
         let read = |text: &str| {
             let secret = SecretRef::new(text).unwrap();
             let secrets = &secrets;
-            async move { secrets.resolve(&SecurityContext::default(), &secret).await.unwrap() }
+            let context = SecurityContext::default();
+            async move { secrets.resolve(&context, &secret, None).await.unwrap() }
         };
         assert_eq!(read("file/CAELUMORA_TEST_BACKEND_FILE").await, "from-file");
         assert_eq!(read("env/CAELUMORA_TEST_BACKEND_ENV").await, "from-env");

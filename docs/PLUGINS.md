@@ -271,7 +271,10 @@ plugin or a library depends on:
     `caelumora_api::error::describe_request_error`, `describe_chain` (issue 326) -, what it reads
     of its remote side kept for a time (`caelumora_api::cache::ExpiringCache`), and the `Secrets`
     its credential is read of (`RemoteEndpoint::bearer_token`): the work's, from its
-    `Situation` (`secrets`), or handed to an `ExternalAgent` with every call (issue 516).
+    `Situation` (`secrets`), or handed to an `ExternalAgent` with every call (issue 516). A
+    credential is read for the URL of the request it goes with, which its vault's origins have to
+    hold (issue 310) - where that is not the endpoint's, as an A2A agent's card may name another,
+    for that URL.
 *   **The domain's types** of what it handles: `ToolDescription`, `RemoteEndpoint`,
     `Classification`, ...
 

@@ -262,8 +262,8 @@ the kind as before. What such a component kind may use of the kernel is said in
 *   **Description.** The parameter `description`, else what the server says of itself, else a
     generic text.
 *   **Credentials.** `auth.secret` names a secret by its vault and key, `vault/KEY`, resolved
-    through its vault, which has to grant its use to the agent's owner (see
-    [SECURITY.md](SECURITY.md#secrets)); it is never a literal credential.
+    through its vault, which has to grant its use to the agent's owner and let it be sent to the
+    endpoint's origin (see [SECURITY.md](SECURITY.md#secrets)); it is never a literal credential.
 *   **Parameters.** `endpoint` (required: `url`, `auth` - optional, `bearer` -, `timeout_secs` -
     default 10 -, `refresh_secs` - default 300; see
     [COMPONENTS.md](COMPONENTS.md#remote-endpoints)), `requires_approval` (`true` by default,
@@ -405,8 +405,9 @@ provider, with the tool `search_web`:
 *   **A provider.** There is no protocol for searching the web; every provider has an API of its
     own. `provider` names whose the endpoint speaks - `tavily`, the one Caelumora knows so far -,
     and the endpoint's `auth` its key, which every provider wants: a component without is not
-    built. The key is resolved through its vault in the name of whoever asks the agent (see
-    [SECURITY.md](SECURITY.md)). A search goes through the proxy the environment names.
+    built. The key is resolved through its vault in the name of whoever asks the agent, to be sent
+    to the endpoint's origin (see [SECURITY.md](SECURITY.md#secrets)). A search goes through the
+    proxy the environment names.
 *   **What it gives.** For a `query`, at most `max_results` pages - 5 unless given, 20 at most -,
     each with its title, its URL and a snippet of at most 1,000 characters; no answer of the
     provider's own, nor the content of the pages, which the agent reads with `fetch_page` where it

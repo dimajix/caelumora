@@ -3,8 +3,8 @@
 //! cannot hold anything else, wherever it comes from. One file per subject: `name` (`Name`,
 //! `ScopedName`), `identifier` (`Identifier`, issue 512), `command_name` (`CommandName`, issue
 //! 560), `language` (`Language`), `time_zone` (`TimeZone`), `secret_ref` (`SecretRef`, issue
-//! 310), `text` (`Text<R>`, free text with a rule: `Summary`, `Briefing`, `Introduction`,
-//! `Description`, `FileName`).
+//! 310), `origin` (`Origin`, issue 310), `text` (`Text<R>`, free text with a rule: `Summary`,
+//! `Briefing`, `Introduction`, `Description`, `FileName`).
 //!
 //! What they share is here: one error, `ValueError`, naming the field, and `impl_value!`, which
 //! gives every such type the same API next to its own `new` and `as_str` - `FIELD`, `optional`,
@@ -110,6 +110,7 @@ pub mod command_name;
 pub mod identifier;
 pub mod language;
 pub mod name;
+pub mod origin;
 pub mod secret_ref;
 pub mod text;
 pub mod time_zone;

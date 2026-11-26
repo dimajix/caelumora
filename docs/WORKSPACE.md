@@ -94,7 +94,7 @@ their module docs (`caelumora-open-terminal/src/terminal.rs` for Open Terminal).
 started elsewhere; what works in it - its terminal, a command, the environment of one - is handed
 the directory itself, never the link, so that a path a model is shown is the one it works in. A
 storage's key is resolved through its vault in the system's name, since the storage is the
-operator's.
+operator's, to be sent to the storage's origin.
 
 A storage is a backend (issue 324, see [ARCHITECTURE.md](ARCHITECTURE.md#backends)): its provider is
 made by the factory registered for its `type`, which reads and checks its parameters. The kernel

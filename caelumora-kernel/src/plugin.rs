@@ -447,7 +447,7 @@ mod tests {
         assert_eq!(
             kernel
                 .secret_manager()
-                .resolve(&SecurityContext::system(), &SecretRef::new("remote/ANY").unwrap())
+                .resolve(&SecurityContext::system(), &SecretRef::new("remote/ANY").unwrap(), None)
                 .await
                 .unwrap(),
             "s3cr3t",

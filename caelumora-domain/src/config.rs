@@ -5,6 +5,7 @@ use crate::confidentiality::Compartments;
 use crate::role::Roles;
 use crate::security::AclEntry;
 use crate::value::identifier::Identifier;
+use crate::value::origin::Origin;
 use crate::value::secret_ref::SecretRef;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -108,15 +109,19 @@ pub struct VaultConfig {
     /// Whom the system grants the use of its secrets, by `read`; left out, nobody but the system.
     #[serde(default)]
     pub acl: Vec<AclEntry>,
+    /// Where its secrets may be sent: the origins of the URLs they go to - none, only to what the
+    /// server uses itself and sends nowhere -; left out, anywhere.
+    #[serde(default)]
+    pub origins: Option<Vec<Origin>>,
     /// The vault asked for a key this one does not have; none if left out.
     #[serde(default)]
     pub fallback: Option<Identifier>,
 }
 
 impl VaultConfig {
-    /// The vault of `backend`, the system's alone, without a fallback.
+    /// The vault of `backend`, the system's alone, its secrets sent anywhere, without a fallback.
     pub fn new(backend: BackendConfig) -> Self {
-        Self { backend, acl: Vec::new(), fallback: None }
+        Self { backend, acl: Vec::new(), origins: None, fallback: None }
     }
 }
 
@@ -542,6 +547,7 @@ secrets:
       type: file
       path: "local/team.json"
       acl: [{ subject: everyone, grant: read }]
+      origins: ["https://api.tavily.com"]
       fallback: env
     env:
       type: env
@@ -553,6 +559,11 @@ secrets:
         assert_eq!(team.fallback.as_ref().map(Identifier::as_str), Some("env"));
         let granted = [AclEntry { subject: Subject::Everyone, grant: Grant::Read }];
         assert_eq!(team.acl, granted, "granted as an entity is");
+        let tavily = Origin::new("https://api.tavily.com").unwrap();
+        assert_eq!(team.origins, Some(vec![tavily]));
+        assert_eq!(config.secrets.vaults["env"].origins, None, "anywhere");
+        let with_url = "secrets:\n  vaults:\n    team:\n      type: env\n      origins: [\"https://api.tavily.com/search\"]\n";
+        assert!(AppConfig::from_yaml(with_url).is_err(), "an origin, not a URL");
         assert_eq!(
             config.secrets.vaults["env"],
             VaultConfig::new(BackendConfig::new("env", Value::Null))

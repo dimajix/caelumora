@@ -792,29 +792,33 @@ Component configuration - such as an `mcp_server`'s `auth.secret` - may need to 
 credentials without embedding them in persisted configuration. A secret is named by its vault and
 its key, `vault/KEY` (`SecretRef`); a key alone is no reference, so which credential is meant is
 never left to a search. A vault is a named entry of the `secrets` section: a `SecretProvider`, the
-backend its secrets come from, and what the core reads beside it - whom it grants their use (`acl`)
-and the vault it falls back to for a key it does not have, in turn. The fallback is followed only
-where the backend did not have the key; a backend that fails fails the lookup, so that a vault that
-is down never lets another credential be sent in its stead. Fallbacks that lead to a vault not
-configured or back to where they began, and a vault named `user` - the vault of whoever acts, issue
-[343](../issues/343-users-bring-their-own-secrets.md) -, keep the server from starting. Built in are
-the backends of a JSON key/value file, re-read on every lookup so that secrets can rotate without a
-restart, and of the process environment; a plugin may add others (see
-[ARCHITECTURE.md](ARCHITECTURE.md#backends)). Every access to a backend is a read.
+backend its secrets come from, and what the core reads beside it - whom it grants their use (`acl`),
+where they may be sent (`origins`) and the vault it falls back to for a key it does not have, in
+turn. The fallback is followed only where the backend did not have the key; a backend that fails
+fails the lookup, so that a vault that is down never lets another credential be sent in its stead.
+Fallbacks that lead to a vault not configured or back to where they began, and a vault named `user`,
+the vault of whoever acts (issue [343](../issues/343-users-bring-their-own-secrets.md)), keep the
+server from starting. Built in are the backends of a JSON key/value file, re-read on every lookup so
+that secrets can rotate without a restart, and of the process environment; a plugin may add others
+(see [ARCHITECTURE.md](ARCHITECTURE.md#backends)). Every access to a backend is a read.
 
-Every lookup asks the `AccessPolicy` whether the vault may be used (`UseSecret`) before the vault
-is asked, and each fallback alike once the vault before did not have the key: a fallback refused is
+Every lookup asks the `AccessPolicy` whether the vault may be used (`UseSecret`) before the vault is
+asked, and each fallback alike once the vault before did not have the key: a fallback refused is
 refused. A vault's attributes are the system's, with the access list the configuration gives it
 (`acl`): an entry granting `read` lets its subject use the vault's secrets, an agent by its owner;
 without one, the vault is the system's alone. What the system owns, which reading lets everyone
-read, is not everyone's here (`Requirement::Explicit`). The policy is given the
-vault's attributes, never the key. A command of a workspace storage that hands on the program's
-environment (`environment: inherit`, for a program of one person, see
+read, is not everyone's here (`Requirement::Explicit`). The policy is given the vault's attributes,
+never the key. Then the vault's origins are checked: a secret is resolved to be sent to a URL, and a
+vault that names `origins` lets it go only where the URL's origin - its scheme, host and port - is
+among them - an empty list lets them go nowhere, to what the server uses itself alone -; one
+without, anywhere. What the server uses itself, sent nowhere - the signing key of its tokens, a
+database's URL, which is the secret itself - is resolved with no URL. A refused origin, like a
+refused use, is not passed over to a fallback. A command of a workspace storage that hands on the
+program's environment (`environment: inherit`, for a program of one person, see
 [WORKSPACE.md](WORKSPACE.md#storages)) reads it without asking, what the backend `env` reads among
 it. A component of a library holds no `SecretManager`: it is handed the secrets that may be read in
-the name of the work it serves (`Secrets`, bound by the kernel, `ActorRuntime::secrets`, issue
-516), and each read is checked in that name. Where a secret is sent is not yet bound to its vault,
-and naming one is not yet checked where a component is written
-([310](../issues/310-secrets-have-no-owner.md)): until then, only the seed and the configuration -
-whoever runs the server - may write personalities and components that name secrets; nothing may
-let users write them.
+the name of the work it serves (`Secrets`, bound by the kernel, `ActorRuntime::secrets`, issue 516),
+and each read is checked in that name. Naming a secret is not yet checked where a component is
+written ([310](../issues/310-secrets-have-no-owner.md)): until then, only the seed and the
+configuration - whoever runs the server - may write personalities and components that name secrets;
+nothing may let users write them.

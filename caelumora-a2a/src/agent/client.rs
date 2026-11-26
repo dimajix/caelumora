@@ -165,8 +165,10 @@ impl A2aClient {
 
     /// Reads the agent card and chooses its JSON-RPC interface of A2A 1.x.
     async fn discover(&self, secrets: &dyn Secrets) -> ExternalAgentResult<Interface> {
-        let mut request = self.http.get(self.card_url()?).timeout(self.timeout);
-        if let Some(token) = self.token(secrets).await? {
+        let url = self.card_url()?;
+        let token = self.token(secrets, url.as_str()).await?;
+        let mut request = self.http.get(url).timeout(self.timeout);
+        if let Some(token) = token {
             request = request.bearer_auth(token);
         }
         let response = request.send().await.map_err(|e| self.connection(e))?;
@@ -193,9 +195,12 @@ impl A2aClient {
         })
     }
 
-    async fn token(&self, secrets: &dyn Secrets) -> ExternalAgentResult<Option<String>> {
+    /// The credential of its endpoint, to be sent to `url`: its agent card, or the interface the
+    /// card names, which may lie elsewhere than the endpoint - its vault's origins decide (issue
+    /// 310).
+    async fn token(&self, secrets: &dyn Secrets, url: &str) -> ExternalAgentResult<Option<String>> {
         self.endpoint
-            .bearer_token(secrets)
+            .bearer_token(secrets, url)
             .await
             .map_err(|source| ExternalAgentError::Credential { endpoint: self.shown(), source })
     }
@@ -252,7 +257,7 @@ impl A2aClient {
         } else {
             request.timeout(self.timeout)
         };
-        if let Some(token) = self.token(secrets).await? {
+        if let Some(token) = self.token(secrets, &interface.url).await? {
             request = request.bearer_auth(token);
         }
         match timeout(self.timeout, request.send()).await {

@@ -266,7 +266,9 @@ pub(crate) mod testing {
         /// Records `call`, made with `secrets`, reading `CALLED_AS` of them: whether there is such
         /// a secret does not matter, in whose name it is asked does.
         async fn called(&self, call: &'static str, secrets: &dyn Secrets) {
-            let _ = secrets.resolve(&SecretRef::new(CALLED_AS).unwrap()).await;
+            let _ = secrets
+                .resolve(&SecretRef::new(CALLED_AS).unwrap(), "https://remote.example")
+                .await;
             self.calls.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).push(call);
         }
 

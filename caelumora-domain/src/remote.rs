@@ -86,15 +86,23 @@ impl RemoteEndpoint {
         self.refresh_secs.map_or(default, Duration::from_secs)
     }
 
-    /// The bearer token `auth` names, resolved of `secrets`, in the name they are bound to; `None`
-    /// without authentication. A secret is resolved on every use, never kept.
+    /// The bearer token `auth` names, resolved of `secrets`, in the name they are bound to, to be
+    /// sent to `sent_to` - the URL of the request it goes with, which its vault's origins have to
+    /// hold (issue 310) -; `None` without authentication. A secret is resolved on every use, never
+    /// kept.
     ///
     /// # Errors
     /// Whatever resolving the secret reports.
-    pub async fn bearer_token(&self, secrets: &dyn Secrets) -> SecretResult<Option<String>> {
+    pub async fn bearer_token(
+        &self,
+        secrets: &dyn Secrets,
+        sent_to: &str,
+    ) -> SecretResult<Option<String>> {
         match &self.auth {
             None => Ok(None),
-            Some(RemoteAuthConfig::Bearer { secret }) => Ok(Some(secrets.resolve(secret).await?)),
+            Some(RemoteAuthConfig::Bearer { secret }) => {
+                Ok(Some(secrets.resolve(secret, sent_to).await?))
+            }
         }
     }
 }

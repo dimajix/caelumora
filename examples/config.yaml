@@ -56,6 +56,9 @@ secrets:
       type: file
       path: "local/agent-secrets.json"
       acl: [{ subject: everyone, grant: read }]
+      # Where its secrets may be sent, the origins of the URLs they go to;
+      # left out, anywhere. E.g.:
+      #origins: ["https://api.tavily.com", "https://mcp.example.com"]
 
 # Where the files of workspaces lie (issues 251, 253): storages by name, each
 # with its type. `local` keeps a directory per workspace under `root`.

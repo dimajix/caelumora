@@ -7,8 +7,9 @@ use crate::{AccessPolicy, ActionType, CustomVerb, Enforcement, Requirement, Secu
 use async_trait::async_trait;
 use caelumora_domain::config::{ConfigError, ConfigResult, VaultConfig};
 use caelumora_domain::secret::{SecretError, SecretResult, Secrets};
-use caelumora_domain::security::{AclEntry, Grant, SecurityAttributes};
+use caelumora_domain::security::{Grant, SecurityAttributes};
 use caelumora_domain::value::identifier::Identifier;
+use caelumora_domain::value::origin::Origin;
 use caelumora_domain::value::secret_ref::SecretRef;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Debug;
@@ -31,30 +32,39 @@ pub const USE: CustomVerb =
     CustomVerb { name: "Use", requires: Requirement::Explicit(Grant::Read) };
 
 /// A vault of secrets (issue 310): a backend, and beside it what the configuration gives it - the
-/// system's attributes with whom it grants the use of its secrets, and the vault asked for a key it
-/// does not have. The backend knows nothing of them.
+/// system's attributes with whom it grants the use of its secrets, the origins they may be sent to,
+/// and the vault asked for a key it does not have. The backend knows nothing of them.
 #[derive(Debug)]
 pub struct Vault {
     provider: Arc<dyn SecretProvider>,
     attributes: SecurityAttributes,
+    /// `None`: anywhere.
+    origins: Option<Vec<Origin>>,
     fallback: Option<Identifier>,
 }
 
 impl Vault {
     /// The vault of `provider`, as `config` configures it.
     pub fn new(provider: Arc<dyn SecretProvider>, config: &VaultConfig) -> Self {
-        Self::granting(provider, config.acl.clone(), config.fallback.clone())
+        let attributes =
+            SecurityAttributes { acl: config.acl.clone(), ..SecurityAttributes::systems() };
+        let (origins, fallback) = (config.origins.clone(), config.fallback.clone());
+        Self { provider, attributes, origins, fallback }
     }
 
-    /// The vault of `provider`, the system's, its use granted by `acl`, falling back to
-    /// `fallback`.
-    fn granting(
-        provider: Arc<dyn SecretProvider>,
-        acl: Vec<AclEntry>,
-        fallback: Option<Identifier>,
-    ) -> Self {
-        let attributes = SecurityAttributes { acl, ..SecurityAttributes::systems() };
-        Self { provider, attributes, fallback }
+    /// Whether `secret` of it may be sent to `sent_to`, the URL of a request - anything that is
+    /// sent nowhere (`None`) may, also of a vault whose origins are none.
+    ///
+    /// # Errors
+    /// `SecretError::NotSentTo` if its origins do not hold the URL's, or it is no URL.
+    fn require_sent_to(&self, secret: &SecretRef, sent_to: Option<&str>) -> SecretResult<()> {
+        let (Some(origins), Some(url)) = (&self.origins, sent_to) else {
+            return Ok(());
+        };
+        match Origin::of(url) {
+            Some(origin) if origins.contains(&origin) => Ok(()),
+            origin => Err(SecretError::NotSentTo { secret: secret.clone(), origin }),
+        }
     }
 }
 
@@ -107,20 +117,22 @@ impl SecretManager {
         SecretsFor { manager: Arc::clone(self), context }
     }
 
-    /// The secret `secret`, read in the name of `context`: of its vault, or - where the vault does
+    /// The secret `secret`, read in the name of `context` to be sent to `sent_to` - the URL of a
+    /// request, `None` for what the server uses itself -: of its vault, or - where the vault does
     /// not have the key - of its fallback, in turn. Each vault is asked only once the policy let
-    /// `context` use it (`USE`); a fallback refused is refused, though the vault before did not
-    /// have the key.
+    /// `context` use it (`USE`) and its origins hold `sent_to`'s; a fallback refused is refused,
+    /// though the vault before did not have the key.
     ///
     /// # Errors
-    /// `PermissionDenied` if the policy refuses a vault of the way, `UnknownVault` for a vault that
-    /// is not configured, `NotFound` if no vault of the way has the key, and the error of a backend
-    /// that fails - its fallback is not asked then, so that another credential is never sent in its
-    /// stead.
+    /// `PermissionDenied` if the policy refuses a vault of the way, `NotSentTo` if one of them may
+    /// not be sent there, `UnknownVault` for a vault that is not configured, `NotFound` if no vault
+    /// of the way has the key, and the error of a backend that fails - its fallback is not asked
+    /// then, so that another credential is never sent in its stead.
     pub async fn resolve(
         &self,
         context: &SecurityContext,
         secret: &SecretRef,
+        sent_to: Option<&str>,
     ) -> SecretResult<String> {
         let mut name = secret.vault();
         loop {
@@ -134,6 +146,7 @@ impl SecretManager {
                     refused,
                 })
                 .await?;
+            vault.require_sent_to(secret, sent_to)?;
             if let Some(value) = vault.provider.get_secret(secret.key()).await? {
                 return Ok(value);
             }
@@ -168,7 +181,7 @@ impl SecretManager {
         access_policy: Arc<dyn AccessPolicy>,
     ) -> Self {
         let vaults =
-            BTreeMap::from([Self::test_vault(Self::TEST_VAULT, provider, Self::everyone())]);
+            BTreeMap::from([Self::test_vault(Self::TEST_VAULT, provider, Self::granted())]);
         Self { vaults, access_policy }
     }
 
@@ -178,27 +191,35 @@ impl SecretManager {
     pub fn of_test_vaults(access_policy: Arc<dyn AccessPolicy>) -> Self {
         use crate::testing::NoSecrets;
         let vaults = BTreeMap::from([
-            Self::test_vault(Self::TEST_VAULT, Arc::new(NoSecrets), Self::everyone()),
-            Self::test_vault(Self::WITHHELD_VAULT, Arc::new(NoSecrets), Vec::new()),
+            Self::test_vault(Self::TEST_VAULT, Arc::new(NoSecrets), Self::granted()),
+            Self::test_vault(Self::WITHHELD_VAULT, Arc::new(NoSecrets), Self::withheld()),
         ]);
         Self { vaults, access_policy }
     }
 
-    /// The access list that grants everyone the use of a vault.
-    fn everyone() -> Vec<AclEntry> {
-        use caelumora_domain::security::Subject;
-        vec![AclEntry { subject: Subject::Everyone, grant: Grant::Read }]
+    /// What configures a vault of the tests besides its backend: the system's alone, its secrets
+    /// sent anywhere.
+    fn withheld() -> VaultConfig {
+        use caelumora_domain::config::BackendConfig;
+        VaultConfig::new(BackendConfig { kind: "test".to_string(), params: Default::default() })
     }
 
-    /// The vault `name` of `provider`, its use granted by `acl`.
+    /// What configures a vault of the tests granted to everyone.
+    fn granted() -> VaultConfig {
+        use caelumora_domain::security::{AclEntry, Subject};
+        let everyone = AclEntry { subject: Subject::Everyone, grant: Grant::Read };
+        VaultConfig { acl: vec![everyone], ..Self::withheld() }
+    }
+
+    /// The vault `name` of `provider`, configured as `config`.
     #[expect(clippy::expect_used, reason = "test code: the names of the vaults are literals")]
     fn test_vault(
         name: &str,
         provider: Arc<dyn SecretProvider>,
-        acl: Vec<AclEntry>,
+        config: VaultConfig,
     ) -> (Identifier, Vault) {
         let name = Identifier::new(name).expect("the name of a vault of the tests");
-        (name, Vault::granting(provider, acl, None))
+        (name, Vault::new(provider, &config))
     }
 }
 
@@ -211,8 +232,8 @@ pub struct SecretsFor {
 
 #[async_trait]
 impl Secrets for SecretsFor {
-    async fn resolve(&self, secret: &SecretRef) -> SecretResult<String> {
-        self.manager.resolve(&self.context, secret).await
+    async fn resolve(&self, secret: &SecretRef, sent_to: &str) -> SecretResult<String> {
+        self.manager.resolve(&self.context, secret, Some(sent_to)).await
     }
 }
 
@@ -223,6 +244,7 @@ mod tests {
     use crate::{AllowAllPolicy, OwnershipPolicy};
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::config::BackendConfig;
+    use caelumora_domain::remote::{RemoteAuthConfig, RemoteEndpoint};
     use caelumora_domain::security::{AclEntry, Subject};
     use serde_json::Value;
     use std::collections::HashMap;
@@ -265,13 +287,29 @@ mod tests {
         Arc::new(MapSecretProvider { entries })
     }
 
+    /// What configures a vault besides its backend: falling back to `fallback` if given, the
+    /// system's alone, its secrets sent anywhere.
+    fn falling_back(fallback: Option<&str>) -> VaultConfig {
+        let fallback = fallback.map(|f| Identifier::new(f).unwrap());
+        VaultConfig { fallback, ..VaultConfig::new(BackendConfig::new("test", Value::Null)) }
+    }
+
+    /// The vault `name` of `provider`, configured as `config`.
+    fn configured(
+        name: &str,
+        provider: Arc<dyn SecretProvider>,
+        config: VaultConfig,
+    ) -> (Identifier, Vault) {
+        (Identifier::new(name).unwrap(), Vault::new(provider, &config))
+    }
+
     /// The vault `name` of `provider`, the system's alone, falling back to `fallback` if given.
     fn vault(
         name: &str,
         provider: Arc<dyn SecretProvider>,
         fallback: Option<&str>,
     ) -> (Identifier, Vault) {
-        granted(name, provider, &[], fallback)
+        configured(name, provider, falling_back(fallback))
     }
 
     /// The vault `name` of `provider`, configured to grant its use to `who`, falling back to
@@ -283,10 +321,19 @@ mod tests {
         fallback: Option<&str>,
     ) -> (Identifier, Vault) {
         let acl = who.iter().map(|w| AclEntry { subject: Subject::Actor(*w), grant: Grant::Read });
-        let fallback = fallback.map(|f| Identifier::new(f).unwrap());
-        let backend = BackendConfig::new("test", Value::Null);
-        let config = VaultConfig { acl: acl.collect(), fallback, ..VaultConfig::new(backend) };
-        (Identifier::new(name).unwrap(), Vault::new(provider, &config))
+        configured(name, provider, VaultConfig { acl: acl.collect(), ..falling_back(fallback) })
+    }
+
+    /// The vault `name` of `provider`, its secrets sent to `origins` alone, falling back to
+    /// `fallback` if given.
+    fn bound(
+        name: &str,
+        provider: Arc<dyn SecretProvider>,
+        origins: &[&str],
+        fallback: Option<&str>,
+    ) -> (Identifier, Vault) {
+        let origins = origins.iter().map(|o| Origin::new(o).unwrap()).collect();
+        configured(name, provider, VaultConfig { origins: Some(origins), ..falling_back(fallback) })
     }
 
     fn manager(
@@ -307,11 +354,11 @@ mod tests {
         ])
         .unwrap();
         let context = SecurityContext::default();
-        assert_eq!(manager.resolve(&context, &secret("ops/KEY")).await.unwrap(), "ops'");
-        assert_eq!(manager.resolve(&context, &secret("team/KEY")).await.unwrap(), "team's");
-        let unknown = manager.resolve(&context, &secret("dev/KEY")).await.unwrap_err();
+        assert_eq!(manager.resolve(&context, &secret("ops/KEY"), None).await.unwrap(), "ops'");
+        assert_eq!(manager.resolve(&context, &secret("team/KEY"), None).await.unwrap(), "team's");
+        let unknown = manager.resolve(&context, &secret("dev/KEY"), None).await.unwrap_err();
         assert!(matches!(unknown, SecretError::UnknownVault(s) if s.vault() == "dev"));
-        let user = manager.resolve(&context, &secret("user/KEY")).await.unwrap_err();
+        let user = manager.resolve(&context, &secret("user/KEY"), None).await.unwrap_err();
         assert!(matches!(user, SecretError::UnknownVault(_)), "found nowhere until issue 343");
     }
 
@@ -324,9 +371,12 @@ mod tests {
         ])
         .unwrap();
         let context = SecurityContext::default();
-        assert_eq!(manager.resolve(&context, &secret("local/OWN")).await.unwrap(), "local's");
-        assert_eq!(manager.resolve(&context, &secret("local/SHARED")).await.unwrap(), "env's");
-        let missing = manager.resolve(&context, &secret("local/MISSING")).await.unwrap_err();
+        assert_eq!(manager.resolve(&context, &secret("local/OWN"), None).await.unwrap(), "local's");
+        assert_eq!(
+            manager.resolve(&context, &secret("local/SHARED"), None).await.unwrap(),
+            "env's"
+        );
+        let missing = manager.resolve(&context, &secret("local/MISSING"), None).await.unwrap_err();
         assert!(matches!(missing, SecretError::NotFound(s) if s.as_str() == "local/MISSING"));
     }
 
@@ -337,7 +387,7 @@ mod tests {
             vault("env", holding(&[("KEY", "env's")]), None),
         ])
         .unwrap();
-        let failed = manager.resolve(&SecurityContext::default(), &secret("local/KEY")).await;
+        let failed = manager.resolve(&SecurityContext::default(), &secret("local/KEY"), None).await;
         assert!(matches!(failed, Err(SecretError::Backend(_))), "{failed:?}");
     }
 
@@ -377,7 +427,7 @@ mod tests {
         let read = |actor: ActorId, text: &str| {
             let manager = &manager;
             let secret = secret(text);
-            async move { manager.resolve(&context(actor), &secret).await }
+            async move { manager.resolve(&context(actor), &secret, None).await }
         };
         assert_eq!(read(carol, "team/OWN").await.unwrap(), "team's");
         assert_eq!(read(bob, "team/SHARED").await.unwrap(), "ops'", "granted on the way");
@@ -400,8 +450,57 @@ mod tests {
             matches!(past, Err(SecretError::PermissionDenied { .. })),
             "a vault refused is not passed over to a fallback granted"
         );
-        let system = manager.resolve(&SecurityContext::system(), &secret("system/KEY")).await;
+        let system = manager.resolve(&SecurityContext::system(), &secret("system/KEY"), None).await;
         assert_eq!(system.unwrap(), "the system's");
+    }
+
+    #[tokio::test]
+    async fn a_secret_is_sent_only_where_every_vault_of_the_way_lets_it_be_sent() {
+        let api = ["https://api.example"];
+        let manager = manager([
+            bound("api", holding(&[("KEY", "api's")]), &api, None),
+            vault("local", holding(&[]), Some("api")),
+            bound("agents", holding(&[]), &api, Some("env")),
+            vault("env", holding(&[("KEY", "env's")]), None),
+            bound("broken", Arc::new(FailingSecretProvider), &api, None),
+            bound("own", holding(&[("KEY", "own")]), &[], None),
+        ])
+        .unwrap();
+        let read = |text: &str, sent_to: Option<&'static str>| {
+            let manager = &manager;
+            let secret = secret(text);
+            async move { manager.resolve(&SecurityContext::default(), &secret, sent_to).await }
+        };
+        let refused_at = |result: SecretResult<String>| match result {
+            Err(SecretError::NotSentTo { origin, .. }) => Some(origin.map(|o| o.to_string())),
+            _ => None,
+        };
+        assert_eq!(read("api/KEY", Some("https://api.example/v1?q=1")).await.unwrap(), "api's");
+        assert_eq!(read("api/KEY", None).await.unwrap(), "api's", "sent nowhere");
+        let elsewhere = read("api/KEY", Some("https://user:pw@elsewhere.example/x")).await;
+        let origin = Some(Some("https://elsewhere.example".to_string()));
+        assert_eq!(refused_at(elsewhere), origin, "named by its origin alone");
+        let no_url = read("api/KEY", Some("ftp://files.example/key")).await;
+        assert_eq!(refused_at(no_url), Some(None), "no http or https URL");
+        let past = read("local/KEY", Some("https://elsewhere.example")).await;
+        assert!(refused_at(past).is_some(), "a fallback's origins hold on the way");
+        let widened = read("agents/KEY", Some("https://elsewhere.example")).await;
+        assert!(refused_at(widened).is_some(), "nor does a fallback widen them");
+        let broken = read("broken/KEY", Some("https://elsewhere.example")).await;
+        assert!(refused_at(broken).is_some(), "refused before its backend is asked");
+        assert_eq!(read("own/KEY", None).await.unwrap(), "own", "no origins: the server's own");
+        assert!(refused_at(read("own/KEY", Some("https://api.example")).await).is_some());
+
+        // An endpoint's credential goes with its request, where that goes.
+        let secrets = Arc::new(manager).for_context(SecurityContext::default());
+        let endpoint = RemoteEndpoint {
+            auth: Some(RemoteAuthConfig::Bearer { secret: secret("api/KEY") }),
+            ..RemoteEndpoint::new("https://api.example/a2a")
+        };
+        let token = endpoint.bearer_token(&secrets, "https://api.example/v1").await.unwrap();
+        assert_eq!(token.as_deref(), Some("api's"));
+        let refused = endpoint.bearer_token(&secrets, "https://elsewhere.example/v1").await;
+        assert!(matches!(refused, Err(SecretError::NotSentTo { .. })), "{refused:?}");
     }
 
     #[tokio::test]
@@ -409,8 +508,10 @@ mod tests {
         let vaults = [vault("local", holding(&[("KEY", "value")]), None)];
         let manager =
             SecretManager::new(vaults.into_iter().collect(), Arc::new(DenyAllPolicy)).unwrap();
-        let err =
-            manager.resolve(&SecurityContext::default(), &secret("local/KEY")).await.unwrap_err();
+        let err = manager
+            .resolve(&SecurityContext::default(), &secret("local/KEY"), None)
+            .await
+            .unwrap_err();
         assert!(matches!(err, SecretError::PermissionDenied { .. }));
     }
 }

@@ -84,7 +84,8 @@ impl McpServer {
     /// the name `secrets` are bound to, within the endpoint's timeout.
     async fn discover(&self, secrets: &dyn Secrets) -> McpResult<Discovered> {
         let discover = async {
-            let auth_header = self.params.endpoint.bearer_token(secrets).await?;
+            let endpoint = &self.params.endpoint;
+            let auth_header = endpoint.bearer_token(secrets, &endpoint.url).await?;
             discover_tools(&self.descriptor_id, &self.params, auth_header).await
         };
         time::timeout(self.params.timeout(), discover).await.unwrap_or_else(|_| {
@@ -355,7 +356,8 @@ impl Tool for McpTool {
         let secrets = turn.situation().secrets();
 
         let call_result: McpResult<ToolOutput> = async {
-            let auth_header = server.params.endpoint.bearer_token(&*secrets).await?;
+            let endpoint = &server.params.endpoint;
+            let auth_header = endpoint.bearer_token(&*secrets, &endpoint.url).await?;
 
             let service = connect(&server.params.endpoint, auth_header).await?;
             let mut request = CallToolRequestParams::new(self.remote_name.clone());

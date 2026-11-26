@@ -91,7 +91,8 @@ impl TokenService {
     /// What `secrets` reports other than a missing secret, and what `new`
     /// reports.
     pub async fn from_secret(secrets: &SecretManager, config: &AuthConfig) -> Result<Self> {
-        let key = match secrets.resolve(&SecurityContext::system(), &config.jwt_secret).await {
+        let key = match secrets.resolve(&SecurityContext::system(), &config.jwt_secret, None).await
+        {
             Ok(key) => key.into_bytes(),
             Err(SecretError::NotFound(_)) => {
                 tracing::warn!(

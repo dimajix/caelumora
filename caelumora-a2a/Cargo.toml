@@ -23,7 +23,7 @@ tracing.workspace = true
 uuid = { workspace = true, features = ["v4", "serde"] }
 
 [dev-dependencies]
-caelumora-security.workspace = true
+caelumora-security = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true, features = ["full"] }
 axum.workspace = true
 

@@ -90,11 +90,14 @@ impl SearchWebTool {
         query: &str,
         max_results: usize,
     ) -> Result<Vec<Found>, SearchError> {
-        // `register` builds no component whose endpoint names no key.
+        // `register` builds no component whose endpoint names no key. It goes below the endpoint's
+        // URL (`RemoteEndpoint::url_of`), to its origin.
         let key =
-            self.endpoint.bearer_token(secrets).await?.ok_or_else(|| SearchError::Failed {
-                endpoint: self.endpoint.shown(),
-                reason: "its endpoint names no key".to_string(),
+            self.endpoint.bearer_token(secrets, &self.endpoint.url).await?.ok_or_else(|| {
+                SearchError::Failed {
+                    endpoint: self.endpoint.shown(),
+                    reason: "its endpoint names no key".to_string(),
+                }
             })?;
         match self.provider {
             Provider::Tavily => {

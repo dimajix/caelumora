@@ -94,11 +94,13 @@ impl Connection {
     /// migrations. No message names the URL: it holds the password.
     async fn connect(&self) -> StoreResult<PgPool> {
         let named = &self.url_secret;
-        let url = self.secrets.resolve(&SecurityContext::system(), named).await.map_err(|e| {
-            StoreError::Backend(format!(
-                "the URL of the database cannot be resolved from the secret '{named}': {e}"
-            ))
-        })?;
+        // Sent nowhere (`None`): the secret is the URL itself, not what a request carries to it.
+        let url =
+            self.secrets.resolve(&SecurityContext::system(), named, None).await.map_err(|e| {
+                StoreError::Backend(format!(
+                    "the URL of the database cannot be resolved from the secret '{named}': {e}"
+                ))
+            })?;
         let options = PgConnectOptions::from_str(&url)
             .map_err(|_| {
                 StoreError::Backend(format!("the secret '{named}' holds no URL of a database"))

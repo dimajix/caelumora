@@ -262,3 +262,23 @@ rules out of the backends. To be aligned in an issue of its own, not here.
 - **2026-11-26** — Decided with the maintainer: what `SecretManager::new` refuses - vaults that do
   not fit together - is a `ConfigError::Invalid`, the error of sections that do not fit together,
   not a `SecretError`, which says how reading fails; `SecretError::InvalidVaults` of step 1 is gone.
+- **2026-11-26** — Step 3 done: a vault names where its secrets may be sent (`origins`, each an
+  `Origin`, a value with rules: scheme, host and port, written as the URL standard writes an
+  origin), anywhere if left out, nowhere but to the server itself if empty.
+  `SecretManager::resolve` takes `sent_to`, `None` for what the server sends nowhere - the signing
+  key, a database's URL, which is the secret itself; every vault of the way is checked, after
+  `UseSecret` and before its backend is asked, and a refused origin is not passed over to a
+  fallback (`SecretError::NotSentTo`). The review found the A2A agent sending its credential to
+  the interface its card names, which the endpoint's origin did not stand for. Decided with the
+  maintainer, deviating from the plan: `RemoteEndpoint::bearer_token(secrets, sent_to)` takes the
+  URL of the request the credential goes with, and every component passes its own - the A2A
+  agent its card's and its interface's; `Secrets::resolve(secret, sent_to: &str)` takes no `None`,
+  since a component's credential always goes somewhere, which leaves no component a way past the
+  origins; and the origins of every vault of the way count, not only of the one that answers, so
+  that a vault that restricts them is never widened by its fallback - as `UseSecret` is asked of
+  each (*Decisions taken*, "Rights and origins are those of the vault that answers", holds for
+  rights so, and is replaced for origins). Not in the security suite: the origin is no question
+  asked in someone's name; the security crate's tests hold it, and the A2A agent's own test of a
+  card that names an interface elsewhere. The crates whose tests use the test vaults now ask for
+  the feature `test-support` of `caelumora-security` themselves, which they had relied on the
+  workspace for.

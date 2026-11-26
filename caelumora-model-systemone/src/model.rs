@@ -163,12 +163,12 @@ impl DecisionModelProvider for SystemOneModel {
             .endpoint
             .url_of(&PATH)
             .ok_or_else(|| self.unreachable("the endpoint is no URL".to_string()))?;
-        let mut request = self.http.post(url).json(&body);
         let token = self
             .endpoint
-            .bearer_token(&self.secret_manager.for_context(asking.clone()))
+            .bearer_token(&self.secret_manager.for_context(asking.clone()), url.as_str())
             .await
             .map_err(|e| self.unreachable(format!("its credential is not available: {e}")))?;
+        let mut request = self.http.post(url).json(&body);
         if let Some(token) = token {
             request = request.bearer_auth(token);
         }

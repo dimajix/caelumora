@@ -4,6 +4,7 @@
 //! `caelumora-security`'s (`SecretManager`, issue 517).
 
 use crate::security::Refused;
+use crate::value::origin::Origin;
 use crate::value::secret_ref::SecretRef;
 use async_trait::async_trait;
 
@@ -20,6 +21,13 @@ pub enum SecretError {
     /// A reference to a vault that is not configured.
     #[error("the vault of the secret '{0}' is not configured")]
     UnknownVault(SecretRef),
+    /// A secret its vault does not let be sent where it was to be sent: to the origin of the URL,
+    /// or - `None` - to what is no `http` or `https` URL.
+    #[error(
+        "the secret '{secret}' may not be sent to {}",
+        .origin.as_ref().map_or("what is no http or https URL", Origin::as_str)
+    )]
+    NotSentTo { secret: SecretRef, origin: Option<Origin> },
     #[error("backend: {0}")]
     Backend(String),
 }
@@ -32,9 +40,10 @@ pub type SecretResult<T> = Result<T, SecretError>;
 /// in the name it is bound to.
 #[async_trait]
 pub trait Secrets: Send + Sync {
-    /// The secret `secret`.
+    /// The secret `secret`, to be sent to `sent_to`, the URL of the request it goes with: a
+    /// component's credential always goes somewhere (issue 310).
     ///
     /// # Errors
     /// As `SecretManager::resolve`.
-    async fn resolve(&self, secret: &SecretRef) -> SecretResult<String>;
+    async fn resolve(&self, secret: &SecretRef, sent_to: &str) -> SecretResult<String>;
 }

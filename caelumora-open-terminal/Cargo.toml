@@ -30,6 +30,7 @@ default = ["docker"]
 docker = ["dep:bollard", "dep:tokio-util", "dep:uuid"]
 
 [dev-dependencies]
+caelumora-security = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true, features = ["full"] }
 axum = { workspace = true, features = ["multipart"] }
 bytes.workspace = true

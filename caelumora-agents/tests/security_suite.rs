@@ -2790,7 +2790,7 @@ impl RemoteAtWork {
     /// Records `call`, made with `secrets`, reading its secret as a credential is read: whether
     /// the vault has it does not matter, in whose name it is used does (issues 310, 516).
     async fn called(&self, call: &'static str, secrets: &dyn Secrets) {
-        let _ = secrets.resolve(&self.secret).await;
+        let _ = secrets.resolve(&self.secret, "https://remote.example").await;
         self.calls.lock().unwrap().push(call);
     }
 }

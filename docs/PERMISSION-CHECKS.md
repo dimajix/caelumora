@@ -198,7 +198,7 @@ message can be changed, taken back, reclassified or answered again the channel d
 | Commands shown (`CommandExecutor::visible`, `/help`, completion) | per command `ShowCommand` (U,3) | R5 | - | left out |
 | A command of an agent asked for (`UserActor::request_command`) | whom it names: the agents' commands as the issuer sees them (`ChannelLoop::commands_of`: `ShowAgentCommand`, U,3) | R5 | at the door (*What enters a channel*) | `Unknown`, `InvalidArguments` |
 | An agent carries a command out (`AgentBody::carry_out`) | nothing: admitted at the door (issue 516) | - | - | `CommandFailed` for one it does not carry out |
-| A secret (`SecretManager::resolve`) | `UseSecret` of its vault (1), and of each fallback asked - T at a call, of the secrets the kernel binds to the work (`ActorRuntime::secrets`, issue 516), C as a component of the kernel is built, S for a storage | R4 | - | `SecretError::PermissionDenied` |
+| A secret (`SecretManager::resolve`) | `UseSecret` of its vault (1), and of each fallback asked - T at a call, of the secrets the kernel binds to the work (`ActorRuntime::secrets`, issue 516), C as a component of the kernel is built, S for a storage | R4 | - | `SecretError::PermissionDenied`; `NotSentTo` where a vault of the way may not send it to the URL's origin |
 | An extension handed out (`ActorRuntime::reader`, `writer`: a skill's, an artifact's, the workspace's, where the stores keep the work's session and channel) | `may_read_session` (T,1), as the work's session is reached; what the face asks it asks as it is used | reach | at each use | none handed out (`None`) |
 
 ### What an agent reads beyond its channel

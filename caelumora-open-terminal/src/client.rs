@@ -110,20 +110,24 @@ impl Client {
         build: impl FnOnce(RequestBuilder) -> RequestBuilder,
     ) -> TerminalResult<Response> {
         *self.used.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Instant::now();
-        let mut request = self
-            .http
-            .request(method, self.url(segments, query)?)
-            .timeout(self.endpoint.timeout_or(DEFAULT_TIMEOUT) + wait);
+        let url = self.url(segments, query)?;
         let key = match &self.key {
             // The storage is the operator's, configured as the server's
             // own keys are: its key is read in the system's name.
-            Key::Endpoint(secrets) => self.endpoint.bearer_token(&secrets.for_context(SecurityContext::system())).await.map_err(|e| {
-                warn!(endpoint = %self.endpoint.shown(), "The key of an Open Terminal storage could not be read: {e}");
-                TerminalError::Unavailable("the storage's key could not be read".to_string())
-            })?,
+            Key::Endpoint(secrets) => {
+                let secrets = secrets.for_context(SecurityContext::system());
+                self.endpoint.bearer_token(&secrets, url.as_str()).await.map_err(|e| {
+                    warn!(endpoint = %self.endpoint.shown(), "The key of an Open Terminal storage could not be read: {e}");
+                    TerminalError::Unavailable("the storage's key could not be read".to_string())
+                })?
+            }
             #[cfg(feature = "docker")]
             Key::Made(key) => Some(key.clone()),
         };
+        let mut request = self
+            .http
+            .request(method, url)
+            .timeout(self.endpoint.timeout_or(DEFAULT_TIMEOUT) + wait);
         if let Some(key) = key {
             request = request.bearer_auth(key);
         }
