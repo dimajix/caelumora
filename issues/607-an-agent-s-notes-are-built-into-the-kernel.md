@@ -1,6 +1,6 @@
 # 607 — An agent's notes are built into the kernel, not brought as a system service
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** medium
 **Area:** Context and knowledge
@@ -422,3 +422,5 @@ and the number it reserved is not given again (an agent's command that fails); a
 private notes of a channel its owner may not read, which the owner does not reach through the
 channels; the `NotesManager`'s commit outdated by another process judged again, notes the work may
 not read a conflict, what is stored announced to their owner alone.
+
+**2026-11-26** - Step 5 accepted by the maintainer and committed. Done.
