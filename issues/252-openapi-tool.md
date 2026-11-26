@@ -319,3 +319,13 @@ Agreed with the maintainer on 2026-11-26.
   reference is cut by what it points to, not by how it is written, and a reading follows at most
   `MAX_REFERENCES` (1000) references - a document of definitions that refer to each other is read
   again on every way to them, which grows without end otherwise.
+- **2026-11-26** — Step 3 done: the discovered tool set is `DiscoveredTools` in
+  `caelumora_agents::tool`, named beside `FixedTools` - `ToolSet` is the domain's name for what a
+  provider is described as -, over a `ToolSource` - what a protocol plugs in: how its tools are
+  discovered (`discover`, failing with `Undiscovered` - why in general terms and in full), the
+  cache of what was discovered (`discovered`, which a tool may invalidate), what a discovery says
+  of the source (`described`), and the tools made of it (`tools`). The set keeps the description
+  as configured, else as the source says, else a text the component gives (`unnamed`), and the
+  destination; it offers, keeps the tools discovered before on a failure and logs. `McpServer` is
+  `mcp_server`'s source, and `McpServerComponent` is gone; nothing changes in what MCP does but
+  the wording of the two warnings.

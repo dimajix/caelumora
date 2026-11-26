@@ -1,7 +1,7 @@
 //! The tools of `mcp_server` (issues 32, 126, 161, 188, 194, 246, 584): those of the component's
-//! MCP server, each an `McpTool` made of what was discovered, their set described as configured
-//! or as the server describes itself, and unavailable - with why, in general terms - if the server
-//! could not be asked for them.
+//! MCP server, which is their `ToolSource` (issue 252), each an `McpTool` made of what was
+//! discovered; the server describes itself by its `instructions`, and says in general terms why its
+//! tools could not be discovered (`Undiscovered`).
 //!
 //! Tools are namespaced as `"{descriptor_id}__{remote_tool_name}"` to avoid collisions with
 //! built-in tools or other MCP servers, since an agent's tools are found by name across all its
@@ -13,14 +13,13 @@
 //! credential it resolves of the secrets of whoever asks it (`Situation::secrets`, issue 516). What
 //! a tool answers above the component's bound is kept whole beside a preview (issue 552).
 
-use super::{Discovered, McpServer, McpServerComponent, McpServerParams};
+use super::{Discovered, McpServer, McpServerParams};
 use async_trait::async_trait;
-use caelumora_agents::situation::Situation;
 use caelumora_agents::tool::{
-    cut_to_preview, Tool, ToolError, ToolOutput, ToolProvider, ToolResult,
+    cut_to_preview, Tool, ToolError, ToolOutput, ToolResult, ToolSource, Undiscovered,
 };
 use caelumora_agents::turn::Turn;
-use caelumora_domain::confidentiality::Classification;
+use caelumora_api::cache::ExpiringCache;
 use caelumora_domain::question::Answers;
 use caelumora_domain::remote::RemoteEndpoint;
 use caelumora_domain::secret::{SecretError, Secrets};
@@ -33,7 +32,6 @@ use rmcp::{RoleClient, ServiceExt};
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::time;
-use tracing::warn;
 
 #[derive(Debug, thiserror::Error)]
 enum McpError {
@@ -51,19 +49,19 @@ enum McpError {
 
 type McpResult<T> = Result<T, McpError>;
 
-impl McpError {
-    /// Why the server's tools are unavailable after this error, in general
-    /// terms for the model and the user (issue 32) - never the error, which
-    /// may name hosts. That is in the log.
-    fn unavailable(&self) -> String {
-        match self {
+impl From<McpError> for Undiscovered {
+    /// Why the server's tools could not be discovered after `error`: in general terms for the
+    /// model and the user (issue 32) - never the error, which may name hosts -, and the error for
+    /// the log.
+    fn from(error: McpError) -> Self {
+        let reason = match error {
             McpError::Connect(..) => "its server cannot be reached",
             McpError::ListTools(..) => "its server did not list its tools",
             McpError::Timeout(_) => "its server did not answer in time",
             McpError::ToolCallFailed(_) => "its server failed",
             McpError::Secret(_) => "its credentials are not available",
-        }
-        .to_string()
+        };
+        Self { reason: reason.to_string(), cause: error.to_string() }
     }
 }
 
@@ -79,21 +77,49 @@ fn read_only(annotations: Option<&ToolAnnotations>) -> bool {
 /// offered as `<component id>__<remote name>`.
 const NAME_SEPARATOR: &str = "__";
 
-impl McpServer {
-    /// The server's tools and what it says of itself, discovered in
-    /// the name `secrets` are bound to, within the endpoint's timeout.
-    async fn discover(&self, secrets: &dyn Secrets) -> McpResult<Discovered> {
+#[async_trait]
+impl ToolSource for McpServer {
+    type Discovery = Discovered;
+
+    /// The server's tools and what it says of itself, discovered in the name `secrets` are bound
+    /// to, within the endpoint's timeout.
+    async fn discover(&self, secrets: &dyn Secrets) -> Result<Discovered, Undiscovered> {
         let discover = async {
             let endpoint = &self.params.endpoint;
             let auth_header = endpoint.bearer_token(secrets, &endpoint.url).await?;
             discover_tools(&self.descriptor_id, &self.params, auth_header).await
         };
-        time::timeout(self.params.timeout(), discover).await.unwrap_or_else(|_| {
-            Err(McpError::Timeout(format!(
-                "Timed out discovering tools from MCP server at '{}'",
-                self.params.endpoint.shown()
-            )))
-        })
+        let discovered =
+            time::timeout(self.params.timeout(), discover).await.unwrap_or_else(|_| {
+                Err(McpError::Timeout(format!(
+                    "Timed out discovering tools from MCP server at '{}'",
+                    self.params.endpoint.shown()
+                )))
+            });
+        discovered.map_err(Undiscovered::from)
+    }
+
+    fn discovered(&self) -> &ExpiringCache<Discovered> {
+        &self.discovered
+    }
+
+    /// What the server says of itself in its `instructions`, if it does.
+    fn described(discovery: &Discovered) -> Option<&str> {
+        discovery.instructions.as_deref()
+    }
+
+    fn tools(self: &Arc<Self>, discovery: &Discovered) -> Vec<Arc<dyn Tool>> {
+        discovery
+            .tools
+            .iter()
+            .map(|(remote_name, description)| {
+                Arc::new(McpTool {
+                    description: description.clone(),
+                    remote_name: remote_name.clone(),
+                    server: Arc::clone(self),
+                }) as Arc<dyn Tool>
+            })
+            .collect()
     }
 }
 
@@ -215,74 +241,6 @@ impl McpServer {
     }
 }
 
-#[async_trait]
-impl ToolProvider for McpServerComponent {
-    fn description(&self) -> String {
-        let server = &self.server;
-        server
-            .params
-            .description
-            .clone()
-            .or_else(|| {
-                server.discovered.current().and_then(|discovered| discovered.instructions.clone())
-            })
-            .unwrap_or_else(|| format!("The tools of the MCP server '{}'.", server.descriptor_id))
-    }
-
-    /// Its tools as last discovered; none before they were.
-    fn tools(&self) -> Vec<Arc<dyn Tool>> {
-        self.server
-            .discovered
-            .current()
-            .map(|discovered| self.tools_of(&discovered))
-            .unwrap_or_default()
-    }
-
-    /// Its tools wherever it is asked, discovered again in the name of
-    /// whoever acts there if what was discovered is outdated. A server that
-    /// cannot be asked leaves the tools discovered before (issue 126), or,
-    /// without any, its tool set unavailable (issue 32) - and is asked again
-    /// the next time.
-    async fn offered(&self, situation: &Situation<'_>) -> Result<Vec<Arc<dyn Tool>>, String> {
-        let server = &self.server;
-        let secrets = situation.secrets();
-        match server.discovered.get(|| server.discover(&*secrets)).await {
-            Ok(discovered) => Ok(self.tools_of(&discovered)),
-            Err(e) => match server.discovered.current() {
-                Some(discovered) => {
-                    warn!("MCP tool component '{}' failed to discover its tools again ({}); keeping those discovered before", server.descriptor_id, e);
-                    Ok(self.tools_of(&discovered))
-                }
-                None => {
-                    warn!("MCP tool component '{}' failed to connect/discover tools ({}); no tools available", server.descriptor_id, e);
-                    Err(e.unavailable())
-                }
-            },
-        }
-    }
-
-    fn destination(&self) -> Option<Classification> {
-        Some(self.server.params.destination.clone().unwrap_or(Classification::PUBLIC))
-    }
-}
-
-impl McpServerComponent {
-    /// The tools of what was `discovered`, each reaching the server.
-    fn tools_of(&self, discovered: &Discovered) -> Vec<Arc<dyn Tool>> {
-        discovered
-            .tools
-            .iter()
-            .map(|(remote_name, description)| {
-                Arc::new(McpTool {
-                    description: description.clone(),
-                    remote_name: remote_name.clone(),
-                    server: Arc::clone(&self.server),
-                }) as Arc<dyn Tool>
-            })
-            .collect()
-    }
-}
-
 /// A tool of the MCP server, offered as `<component id>__<remote name>` and called by its remote
 /// name.
 #[derive(Debug)]
@@ -348,7 +306,6 @@ mod tests {
     use super::*;
     use caelumora_agents::testing::prompts;
     use caelumora_agents::tool::{ApprovalMode, KeepWholeAbove};
-    use caelumora_domain::confidentiality::Confidentiality;
     use rmcp::model::ContentBlock;
     use serde_json::json;
 
@@ -513,19 +470,5 @@ mod tests {
                 "{approval:?}: read-only, writing, without readOnlyHint, without annotations"
             );
         }
-    }
-
-    /// Issue 180: the server is cleared for what is configured, public unless configured.
-    #[test]
-    fn the_server_is_cleared_for_what_is_configured_and_public_unless() {
-        let provider = McpServerComponent::new("github-mcp".to_string(), unconfigured(), prompts());
-        assert_eq!(provider.destination(), Some(Classification::PUBLIC));
-        let internal = Classification::general(Confidentiality::Internal);
-        let cleared = McpServerComponent::new(
-            "github-mcp".to_string(),
-            McpServerParams { destination: Some(internal.clone()), ..unconfigured() },
-            prompts(),
-        );
-        assert_eq!(cleared.destination(), Some(internal));
     }
 }

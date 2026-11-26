@@ -15,12 +15,15 @@ it runs (`questions`). A component gives an agent tools through the facet `ToolP
 hands out its tools as objects and answers for them as a set: what they are for, which of them it
 offers in a turn and why it offers none (`offered`, in general terms, never with the error), and
 where their arguments go (`destination`). A provider that decides none of this beyond a description
-and a destination is `FixedTools`, the tools its component made as it was built; one whose offer
-depends on its tools holds each with what it is offered by, never choosing among them by their
-names. A parameter written in a language - a bash command line, `ToolParameters::shell` - says so;
-the model is not told of it, but the default `matcher` derives from it a rule on the words a command
-begins with ([APPROVALS.md](APPROVALS.md#rules-on-commands)). A tool that knows more of what makes
-two calls alike says better than the default.
+and a destination is `FixedTools`, the tools its component made as it was built; one whose tools
+are discovered of its remote side - an MCP server - is a `DiscoveredTools` over its `ToolSource`,
+which plugs in how they are discovered and made, while the set keeps them for a time and decides
+what is offered when discovering fails ([MCP servers](#mcp-servers)); one whose offer depends on its
+tools holds each with what it is offered by, never choosing among them by their names. A parameter
+written in a language - a bash command line, `ToolParameters::shell` - says so; the model is not
+told of it, but the default `matcher` derives from it a rule on the words a command begins with
+([APPROVALS.md](APPROVALS.md#rules-on-commands)). A tool that knows more of what makes two calls
+alike says better than the default.
 
 What a call does, as its tool describes it, is the call's: the agent stamps it on the call as the
 executor admits it (`ToolCall::description`, issue 586), whoever decides on the call is shown it,

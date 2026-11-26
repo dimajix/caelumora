@@ -1,12 +1,12 @@
 //! The component kind `mcp_server` (issues 78, 126, 180, 534): what it is configured with - one
 //! remote MCP server, how its tools are approved and classified, what it is cleared for -; the
-//! tools of that server, discovered as they are offered, are `tool`'s, and the component is their
-//! `ToolProvider`.
+//! tools of that server, discovered as they are offered, are `tool`'s, and their `ToolProvider` is
+//! a `DiscoveredTools` over the server (issue 252).
 
 mod tool;
 
 use caelumora_agents::prompt::{texts_of, writing_for_the_model};
-use caelumora_agents::tool::{ApprovalMode, KeepWholeAbove, ToolProvider};
+use caelumora_agents::tool::{ApprovalMode, DiscoveredTools, KeepWholeAbove, ToolProvider};
 use caelumora_api::cache::ExpiringCache;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents, Params};
 use caelumora_domain::confidentiality::Classification;
@@ -84,16 +84,10 @@ struct Discovered {
     instructions: Option<String>,
 }
 
-/// A component of the kind `mcp_server`: the tools of one remote MCP server, reached over the
-/// Streamable HTTP transport, as one tool set.
-#[derive(Debug)]
-struct McpServerComponent {
-    server: Arc<McpServer>,
-}
-
-/// One remote MCP server as the component and each of its tools reach it (issue 584): how it is
-/// configured, what was discovered of it, and the texts its results give. What was discovered is
-/// kept as descriptions, not as tools, which hold the server.
+/// One remote MCP server, reached over the Streamable HTTP transport, as the component's tool set
+/// and each of its tools reach it (issue 584): how it is configured, what was discovered of it,
+/// and the texts its results give. What was discovered is kept as descriptions, not as tools, which
+/// hold the server.
 #[derive(Debug)]
 struct McpServer {
     descriptor_id: String,
@@ -104,14 +98,6 @@ struct McpServer {
     prompts: PromptTexts,
 }
 
-impl McpServerComponent {
-    /// The component `descriptor_id` configured by `params`, its texts from `prompts`; its tools
-    /// are not discovered yet.
-    fn new(descriptor_id: String, params: McpServerParams, prompts: PromptTexts) -> Self {
-        Self { server: Arc::new(McpServer::new(descriptor_id, params, prompts)) }
-    }
-}
-
 impl McpServer {
     /// The server of the component `descriptor_id` configured by `params`, its texts from
     /// `prompts`; nothing is discovered of it yet.
@@ -119,6 +105,22 @@ impl McpServer {
         let discovered = ExpiringCache::new(params.refresh());
         Self { descriptor_id, params, discovered, prompts }
     }
+}
+
+/// The tools of the component `descriptor_id` configured by `params`, its texts from `prompts`:
+/// described as configured, else as the server says of itself, else by a text naming the
+/// component, and cleared for its `destination`, public unless configured; its tools are not
+/// discovered yet.
+fn provider(
+    descriptor_id: String,
+    params: McpServerParams,
+    prompts: PromptTexts,
+) -> DiscoveredTools<McpServer> {
+    let description = params.description.clone();
+    let unnamed = format!("The tools of the MCP server '{descriptor_id}'.");
+    let destination = params.destination.clone().unwrap_or(Classification::PUBLIC);
+    let server = McpServer::new(descriptor_id.clone(), params, prompts);
+    DiscoveredTools::new(descriptor_id, Arc::new(server), description, unnamed, destination)
 }
 
 /// Registers the component kind `mcp_server`, which writes for the agent's model.
@@ -134,7 +136,7 @@ pub(crate) fn register(registry: &mut LibraryComponents<'_>) {
             let prompts = texts_of(&context).await?;
             let params = McpServerParams::read(&descriptor.params)?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(McpServerComponent::new(
+            facets.insert::<dyn ToolProvider>(Arc::new(provider(
                 descriptor.id.clone(),
                 params,
                 prompts,
@@ -147,6 +149,8 @@ pub(crate) fn register(registry: &mut LibraryComponents<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_agents::testing::prompts;
+    use caelumora_domain::confidentiality::Confidentiality;
     use caelumora_domain::remote::RemoteAuthConfig;
     use serde_json::{json, Value};
 
@@ -202,13 +206,19 @@ mod tests {
         assert!(refused.contains("requires_approval must be"), "names the field: {refused}");
     }
 
-    /// Issue 180: what the server is cleared for is read from the params.
+    /// Issue 180: the server is cleared for what is configured, public unless configured.
     #[test]
-    fn a_destination_is_read_from_the_params() {
-        let configured: McpServerParams = serde_json::from_value(
-            json!({ "endpoint": { "url": "http://mcp.example" }, "destination": { "level": "confidential" } }),
-        )
-        .unwrap();
-        assert!(configured.destination.is_some(), "read from the params");
+    fn the_server_is_cleared_for_what_is_configured_and_public_unless() {
+        let cleared = |params: Value| {
+            let params = serde_json::from_value(params).unwrap();
+            provider("github-mcp".to_string(), params, prompts()).destination()
+        };
+        let endpoint = json!({ "url": "http://mcp.example" });
+        let unconfigured = cleared(json!({ "endpoint": endpoint }));
+        assert_eq!(unconfigured, Some(Classification::PUBLIC));
+        let destination = json!({ "level": "confidential" });
+        let configured = cleared(json!({ "endpoint": endpoint, "destination": destination }));
+        let confidential = Classification::general(Confidentiality::Confidential);
+        assert_eq!(configured, Some(confidential));
     }
 }

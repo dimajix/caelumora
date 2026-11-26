@@ -260,8 +260,9 @@ plugin or a library depends on:
     it, or, of a system service, as the extension it reads or writes by: a reader its situation
     hands out (`Situation::reader`), a writer its turn (`Turn::writer`).
 *   **The facets it offers**, with what their signatures name: for tools `ToolProvider`, `Tool`
-    and `FixedTools`, `ToolOutput`, `ToolError` and `ToolResult`, `ApprovalMode`, and the `Turn` a
-    call is made in;
+    and `FixedTools` - or, for tools discovered of its remote side, `DiscoveredTools` over its
+    `ToolSource`, with `Undiscovered` -, `ToolOutput`, `ToolError` and `ToolResult`,
+    `ApprovalMode`, and the `Turn` a call is made in;
     for an external agent `ExternalAgent`, `OutboundMessage` and `Said`, `ExternalEvent`,
     `ExternalStream`, `ExternalAgentError` and `ExternalAgentResult`; for a user command of a
     session, which only a plugin brings, `CommandProvider<dyn ChannelCommand>`, the

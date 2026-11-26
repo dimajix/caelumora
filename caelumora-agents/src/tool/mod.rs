@@ -1,13 +1,14 @@
 //! Tools (issues 52, 584): a tool (`Tool`), the facet that gives an agent tools (`ToolProvider`,
-//! `FixedTools`), the `ToolExecutor` that runs an agent's tool calls with the tools of its
-//! providers and with the checks the kernel keeps to itself (issues 127, 280), what tools share - a
-//! text given a page at a time (`page_of`, issue 282), or kept whole beside a preview
-//! (`KeepWholeAbove`, issue 552) -, and the built-in tool components, one file per component kind.
-//! A component that offers tools along with another facet - a prompt part, say - stays in
-//! `components`.
+//! `FixedTools`, and `DiscoveredTools` for tools discovered of a remote side), the `ToolExecutor`
+//! that runs an agent's tool calls with the tools of its providers and with the checks the kernel
+//! keeps to itself (issues 127, 280), what tools share - a text given a page at a time (`page_of`,
+//! issue 282), or kept whole beside a preview (`KeepWholeAbove`, issue 552) -, and the built-in
+//! tool components, one file per component kind. A component that offers tools along with another
+//! facet - a prompt part, say - stays in `components`.
 
 pub mod ask_user;
 pub mod calculator;
+mod discovered;
 pub mod echo;
 mod kept;
 mod page;
@@ -15,6 +16,7 @@ mod providers;
 pub mod sleep;
 pub mod turn_end;
 
+pub use discovered::{DiscoveredTools, ToolSource, Undiscovered};
 pub use kept::{cut_to_preview, KeepWholeAbove};
 pub use page::{page_of, page_parameters, TextPage, TextPosition};
 

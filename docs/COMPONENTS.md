@@ -426,7 +426,8 @@ Components follow one convention:
     `TurnContextProvider`), even where it contributes beside it. A kind that gives nothing but
     commands has no struct: it contributes the list of them (`help`, `participant`, `agent`,
     `channel`, `shell`); one that gives nothing but tools neither: it contributes them as
-    `FixedTools` (`calculator`, `web_fetch`).
+    `FixedTools` (`calculator`, `web_fetch`), or, discovered of its remote side, as a
+    `DiscoveredTools` over the remote side as its `ToolSource` (`mcp_server`).
 *   **Commands:** each command is a type of its own (issue 583), named after it with `Command`
     (`CompactCommand`, `NotesCommand`), which holds its `CommandDescription`, made in its `new`,
     and what it needs to be carried out - the `…Component` it belongs to, a service
@@ -438,8 +439,8 @@ Components follow one convention:
     component are made together, as struct literals in the one function that makes them all
     (`tools`), where their descriptions share what builds them; a tool has a `new` only where that
     function lies in another module than the tool. Its component gives them as `FixedTools`, or,
-    where it decides which of them a turn is offered, as a `ToolProvider` of its own that holds
-    each with what it is offered by.
+    discovered of its remote side, as a `DiscoveredTools`, or, where it decides which of them a
+    turn is offered, as a `ToolProvider` of its own that holds each with what it is offered by.
 *   **Names:** every tool and command name is a constant (`CALCULATE_TOOL_NAME`).
 *   **Texts:** what a prompt part says is a text of the prompt catalogue, its key a constant
     (`TEXT`), rendered from the texts the component takes when it is made, in the variant of its
