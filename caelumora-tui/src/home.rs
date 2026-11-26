@@ -15,11 +15,12 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// The default session's template and the personality of its assistant, written on a first start,
-/// each where its kind's directory is not there yet.
-const FIRST_FILES: [(&str, &str, &str); 2] = [
-    ("templates", "default.yaml", include_str!("../defaults/default.yaml")),
-    ("personalities", "assistant.yaml", include_str!("../defaults/assistant.yaml")),
+/// The files of a first start by the directory of their kind - the default session's template and
+/// the personality of its assistant -, those of a kind written together where its directory is not
+/// there yet.
+const FIRST_FILES: [(&str, &[(&str, &str)]); 2] = [
+    ("templates", &[("default.yaml", include_str!("../defaults/default.yaml"))]),
+    ("personalities", &[("assistant.yaml", include_str!("../defaults/assistant.yaml"))]),
 ];
 
 /// The commands of a session of the program unless its configuration says otherwise: those every
@@ -169,22 +170,24 @@ impl Home {
             .with_context(|| format!("{} over the defaults is no configuration", own.display()))
     }
 
-    /// Writes the default session's template and its assistant's personality, each where the
-    /// directory of its kind is not there yet: so that a person who wrote a `config.yaml` first
+    /// Writes the files of a first start (`FIRST_FILES`), those of a kind together where the
+    /// directory of the kind is not there yet: so that a person who wrote a `config.yaml` first
     /// still gets them, and what the person changed or removed stays so.
     ///
     /// # Errors
-    /// If a file cannot be written.
+    /// If a directory or a file cannot be written.
     pub(crate) fn first_start(&self) -> Result<()> {
-        for (kind, file, text) in FIRST_FILES {
+        for (kind, files) in FIRST_FILES {
             let dir = self.config.join(kind);
             if dir.exists() {
                 continue;
             }
-            let path = dir.join(file);
-            let write = || format!("cannot write {}", path.display());
-            fs::create_dir_all(&dir).with_context(write)?;
-            fs::write(&path, text).with_context(write)?;
+            fs::create_dir_all(&dir).with_context(|| format!("cannot write {}", dir.display()))?;
+            for (file, text) in files {
+                let path = dir.join(file);
+                fs::write(&path, text)
+                    .with_context(|| format!("cannot write {}", path.display()))?;
+            }
         }
         Ok(())
     }
