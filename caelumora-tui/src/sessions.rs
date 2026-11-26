@@ -88,6 +88,11 @@ impl Sessions {
         Self { kernel, procedures, owner, views, place, template }
     }
 
+    /// The views the sessions are read through, in their owner's name.
+    pub(crate) fn views(&self) -> &Views {
+        &self.views
+    }
+
     /// The sessions of the directory the viewer may read, newest first by the last message heard
     /// in a channel they read, a session without one by when it was made.
     ///

@@ -32,7 +32,7 @@ use caelumora_decision::plugin::DecisionPlugin;
 use caelumora_domain::config::AppConfig;
 use caelumora_kernel::controller::UserController;
 use caelumora_kernel::event::EventBus;
-use caelumora_kernel::kernel::KernelBuilder;
+use caelumora_kernel::kernel::{Kernel, KernelBuilder};
 use caelumora_kernel::plugin::Plugin;
 use caelumora_kernel::procedure::follower::SessionFollower;
 use caelumora_kernel::procedure::session;
@@ -226,6 +226,59 @@ fn libraries(log: LogTarget) -> Vec<Box<dyn Library>> {
     libraries
 }
 
+/// The kernel of the program, built from `config` with its plugins and libraries, the agents told
+/// where `log` lies (`libraries`), and seeded as `config` says.
+///
+/// # Errors
+/// As `KernelBuilder::from_config`, `library` and `build`, and `Kernel::seed`.
+async fn kernel_of(config: &AppConfig, log: LogTarget) -> Result<Arc<Kernel>> {
+    let plugins = plugins();
+    let plugins: Vec<&dyn Plugin> = plugins.iter().map(Box::as_ref).collect();
+    let mut builder = KernelBuilder::from_config(config, &plugins).await?;
+    for library in libraries(log) {
+        builder.library(library.as_ref())?;
+    }
+    let kernel = builder.build()?;
+    kernel.seed(&config.seed).await?;
+    Ok(kernel)
+}
+
+/// The sessions the terminal reaches in `kernel`, built from `config`, for the user named `user`,
+/// in the directory `here`, started from `template` where none is named - and that user's
+/// controller. The user is the one the providers know by that name, recorded with their roles as
+/// a login records them (issue 306); the sessions are read in their context, their controller's
+/// (issue 304), and lie in the project and workspace of `here`, if the program works there.
+///
+/// # Errors
+/// If no user providers are configured, the user cannot be authenticated, or their controller,
+/// project or workspace cannot be had.
+async fn sessions_for(
+    kernel: &Arc<Kernel>,
+    config: &AppConfig,
+    here: &Path,
+    user: &str,
+    template: String,
+) -> Result<(Arc<UserController>, Sessions)> {
+    let users = kernel.user_manager();
+    if users.is_empty() {
+        anyhow::bail!("No user providers are configured (`users` section), so the terminal can act for nobody. See examples/config.yaml.");
+    }
+    let owner = users
+        .authenticate(user, &Credential::Trusted)
+        .await
+        .map_err(|e| anyhow::anyhow!("The terminal cannot act for '{user}': {e}"))?
+        .id;
+    let controller = kernel.controller_manager().user_controller(owner).await?;
+    let security = controller.security_context(Default::default(), Default::default());
+    let place = match config.workspaces.storage.contains_key(HERE) {
+        true => Some(place_of(kernel, &security, owner, here).await?),
+        false => None,
+    };
+    let views = kernel.views(Viewer::new(security));
+    let sessions = Sessions::new(Arc::clone(kernel), owner, views, place, template);
+    Ok((controller, sessions))
+}
+
 #[expect(clippy::print_stdout, reason = "the TUI writes the conversation to the terminal")]
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -250,44 +303,16 @@ async fn main() -> Result<()> {
     // Into a file by default: log lines on the terminal would break the prompt.
     let log = init(&config.logging, LogTarget::File(home.log()), "info")?;
 
-    let plugins = plugins();
-    let plugins: Vec<&dyn Plugin> = plugins.iter().map(Box::as_ref).collect();
-    let mut builder = KernelBuilder::from_config(&config, &plugins).await?;
-    for library in libraries(log) {
-        builder.library(library.as_ref())?;
-    }
-    let kernel = builder.build()?;
-    kernel.seed(&config.seed).await?;
-
-    // Whom the terminal acts for: the user the providers know by that name,
-    // recorded with their roles as a login records them (issue 306).
-    let users = kernel.user_manager();
-    if users.is_empty() {
-        anyhow::bail!("No user providers are configured (`users` section), so the terminal can act for nobody. See examples/config.yaml.");
-    }
+    let kernel = kernel_of(&config, log).await?;
     let user =
         args.user.clone().or_else(|| env::var("USER").ok()).unwrap_or_else(|| "user".to_string());
-    let owner = users
-        .authenticate(&user, &Credential::Trusted)
-        .await
-        .map_err(|e| anyhow::anyhow!("The terminal cannot act for '{user}': {e}"))?
-        .id;
-    // The session is this terminal user's own; their context, with their
-    // roles, is their controller's (issue 304).
-    let controller = kernel.controller_manager().user_controller(owner).await?;
-    let security = controller.security_context(Default::default(), Default::default());
+    let (controller, sessions) =
+        sessions_for(&kernel, &config, &here, &user, args.template.clone()).await?;
+    let views = sessions.views().clone();
 
     // Whether the agents of the running sessions exist, and the delegations let go in them,
     // followed as long as the terminal runs.
     let _followed = SessionFollower::spawn(&kernel);
-    // Where the program was started, its project and workspace, if it works there.
-    let place = match config.workspaces.storage.contains_key(HERE) {
-        true => Some(place_of(&kernel, &security, owner, &here).await?),
-        false => None,
-    };
-    let views = kernel.views(Viewer::new(security));
-    let sessions =
-        Sessions::new(Arc::clone(&kernel), owner, views.clone(), place, args.template.clone());
     let opening = match args.invocation() {
         Invocation::List => {
             for line in listing(&sessions.list().await?, None) {
