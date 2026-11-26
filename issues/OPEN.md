@@ -28,6 +28,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [27](27-ldap-user-backend.md) | open | medium | feature | Where identities are managed in a directory, the system has no way to authenticate against it or read its groups. |
 | [559](559-labels-of-what-an-agent-writes-are-its-word.md) | open | medium | question | The kernel bounds what the agent side writes only by the place it writes to; below that, the labels of its messages, of the content it keeps and of what it stages are the word of a library that is trusted for nothing, so that a misbehaving one can put what it read under a lower label. |
 | [604](604-the-personalities-of-sub-agents-are-the-agent-side-s-word.md) | open | medium | feature | Which personalities an agent may start a sub-agent of is listed on its component `subagents`, but only the tool checks the list, on the agent side, which is trusted for nothing; the kernel's writer starts an agent of any internal personality its owner finds, as long as the limits of issue 597 hold. |
+| [608](608-a-component-a-user-writes-acts-with-the-servers-position.md) | open | medium | question | Whoever may write a component decides what the server does with its own position - which hosts it sends requests to from inside its network, which files it reads with its own rights - and nothing but the absence of routes keeps users from writing components. |
 
 ## Audit
 
