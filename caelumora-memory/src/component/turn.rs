@@ -24,11 +24,11 @@ impl TurnMemory {
     /// Remembers `text`, classified as the turn has seen so far (`Situation::label`, issue 168):
     /// committed when the turn completes. Returns its number.
     ///
-    /// Unlike a note's, the number is reserved at once by the plugin, which keeps the agent's
-    /// numbers (`MemoryWriter::reserve_id`), instead of being derived from the memory and the
-    /// turn's staged changes: several actors of one agent - in other channels and sessions -
-    /// remember at the same time, and would otherwise hand out the same number. Deliberately the
-    /// one exception to "commit, don't write" (issue 19).
+    /// As a note's, the number is reserved at once by the plugin, which keeps the agent's numbers
+    /// (`MemoryWriter::reserve_id`), instead of being derived from the memory and the turn's staged
+    /// changes: several actors of one agent - in other channels and sessions - remember at the same
+    /// time, and would otherwise hand out the same number. Deliberately the exception to "commit,
+    /// don't write" (issues 19, 607).
     ///
     /// # Errors
     /// `ExecutionFailed` where the memory cannot be reached - a turn in no session -, no number

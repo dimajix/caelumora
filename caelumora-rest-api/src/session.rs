@@ -1,5 +1,4 @@
-//! Sessions: making, describing and listing them, their participants and the notes kept in
-//! them.
+//! Sessions: making, describing and listing them, and their participants.
 
 use crate::channel::ChannelResponse;
 use crate::project::ProjectResponse;
@@ -8,8 +7,6 @@ use caelumora_domain::actor::ActorId;
 use caelumora_domain::approval::ApprovalRule;
 use caelumora_domain::channel::{ChannelId, HistoryAccess};
 use caelumora_domain::confidentiality::Classification;
-use caelumora_domain::digest::Digest;
-use caelumora_domain::note::Note;
 use caelumora_domain::privacy::PrivacyConfig;
 use caelumora_domain::project::ProjectId;
 use caelumora_domain::security::Grant;
@@ -197,16 +194,6 @@ pub struct JoinSessionRequest {
     pub participant: Option<ActorId>,
     #[serde(default)]
     pub channel: Option<ChannelId>,
-}
-
-/// The private notes one agent wrote in one channel of a session (issue
-/// 233), with the digest of their chain.
-#[derive(Debug, Serialize)]
-pub struct PrivateNotesResponse {
-    pub channel_id: ChannelId,
-    pub channel_name: String,
-    pub notes: Vec<Note>,
-    pub digest: Option<Digest>,
 }
 
 /// A session with its channels: an entry of the global snapshot, and what

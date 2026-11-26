@@ -21,15 +21,12 @@ use caelumora_domain::component::ComponentConfig;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::confidentiality::{Place, Reading};
 use caelumora_domain::content::{ContentId, ContentRef};
-use caelumora_domain::digest::Digest;
 use caelumora_domain::history::{HistoryEntry, HistoryField, HistoryPage, Reader};
 use caelumora_domain::message::{Message, MessageId, TokenUsage};
-use caelumora_domain::note::Note;
 use caelumora_domain::query::Filter;
 use caelumora_domain::removal::Removal;
 use caelumora_domain::snapshot::{
-    ChannelParticipantSnapshot, ChannelSnapshot, Detail, PublishedNotes, ThreadSnapshot, Unread,
-    Waiting,
+    ChannelParticipantSnapshot, ChannelSnapshot, Detail, ThreadSnapshot, Unread, Waiting,
 };
 use caelumora_domain::store::{StoreError, StoreResultExt};
 use caelumora_domain::tool::ToolSet;
@@ -82,8 +79,10 @@ impl ChannelView {
         &self.session
     }
 
-    /// The document, as it was when the channel was reached.
-    pub(crate) fn document(&self) -> &Arc<Channel> {
+    /// The document, as it was when the channel was reached - from its running loop where it runs,
+    /// from the store where it does not: what a plugin's writer asks the policy and announces
+    /// against, running or not (issue 607).
+    pub fn document(&self) -> &Arc<Channel> {
         &self.channel
     }
 
@@ -500,27 +499,6 @@ impl ChannelView {
     fn readable_items(&self, filter: Option<Filter<HistoryField>>) -> Option<Filter<HistoryField>> {
         let compartments = self.views().confidentiality().compartments();
         Filter::all_given([Filter::readable(&self.reading, compartments), filter])
-    }
-
-    /// The notes every agent of the channel published (issue 17), read from
-    /// their states in the store: notes of finished turns only; of a
-    /// channel read entry by entry, those released to where the viewer
-    /// reads from.
-    ///
-    /// # Errors
-    /// `Failed` if an agent's state cannot be read; `NoChannelNamed` if
-    /// nothing of a channel read entry by entry can be.
-    pub async fn notes(&self) -> ViewResult<Vec<PublishedNotes>> {
-        let mut published = Vec::new();
-        for participant in self.participants().await {
-            if let Some(notes) = participant.notes().await? {
-                published.push(notes);
-            }
-        }
-        if self.reading != Reading::Whole && published.iter().all(|p| p.notes.is_empty()) {
-            return Err(self.nothing_released());
-        }
-        Ok(published)
     }
 
     /// The approvals the channel's agents wait for (issue 172), read from
@@ -1031,25 +1009,6 @@ impl ParticipantView {
         !self.former && self.owner().unwrap_or(self.id()) == self.views().context().principal_id
     }
 
-    /// The notes the participant published in the channel (issue 17), with the
-    /// digest of their chain - of a channel read entry by entry, those
-    /// released to where the viewer reads from; `None` for a participant that
-    /// is no agent.
-    ///
-    /// # Errors
-    /// `Failed` if the agent's state cannot be read.
-    pub async fn notes(&self) -> ViewResult<Option<PublishedNotes>> {
-        let Some(agent) = self.state.agent() else { return Ok(None) };
-        let state = agent.stored().await?;
-        let notes = self.channel.released(state.notes.current());
-        Ok(Some(PublishedNotes {
-            agent: self.id(),
-            name: self.name().map(Name::to_string).unwrap_or_default(),
-            notes,
-            digest: state.notes.digest(),
-        }))
-    }
-
     /// What the agent participant's model calls in the channel used (issue 573), as its state
     /// holds it - what its snapshot carries with `Detail::USAGE`, without the questions behind the
     /// snapshot's other fields. `None` for a participant that is no agent, for one whose calls
@@ -1074,22 +1033,8 @@ impl ParticipantView {
         }
     }
 
-    /// The private notes the participant wrote in the channel (issue 51), with
-    /// the digest of their chain, for a viewer who may read what it saw
-    /// (`ReadAgentContext`) - of a channel read entry by entry, those
-    /// released to where the viewer reads from (issue 133).
-    ///
-    /// # Errors
-    /// `NoContext` if the participant is no agent, `Forbidden` if the viewer may
-    /// not read what it saw, `Failed` if its state cannot be read.
-    pub async fn private_notes(&self) -> ViewResult<(Vec<Note>, Option<Digest>)> {
-        let agent = self.readable_agent().await?;
-        let (notes, digest) = agent.private_notes().await?;
-        Ok((self.channel.released(notes), digest))
-    }
-
-    /// What the participant saw in the channel (issue 41): its transcript, its
-    /// private notes, the context of each of its messages, the turns it
+    /// What the participant saw in the channel (issue 41): its transcript,
+    /// the context of each of its messages, the turns it
     /// gave up - of an external agent, what the remote agent was given
     /// (issue 179) - for a viewer who may read its context
     /// (`ReadAgentContext`) and the channel as a whole.
@@ -1109,6 +1054,16 @@ impl ParticipantView {
             });
         }
         agent.context().await
+    }
+
+    /// Refuses unless the viewer may read what the agent participant saw (`ReadAgentContext`): for
+    /// what a plugin keeps of an agent where only that viewer reads it - its private notes.
+    ///
+    /// # Errors
+    /// `NoContext` if the participant is no agent, `Forbidden` if the viewer may not read what it
+    /// saw.
+    pub async fn require_read_context(&self) -> ViewResult<()> {
+        self.readable_agent().await.map(|_| ())
     }
 
     /// The participant as an agent whose context the viewer may read.
@@ -1243,15 +1198,5 @@ impl ParticipantView {
             owner,
             owner_name,
         }
-    }
-}
-
-impl ChannelView {
-    /// Of `notes`, those the viewer may read (`may_read_entry`).
-    fn released(&self, notes: Vec<Note>) -> Vec<Note> {
-        if self.reading == Reading::Whole {
-            return notes;
-        }
-        notes.into_iter().filter(|note| self.may_read_entry(&note.classification)).collect()
     }
 }

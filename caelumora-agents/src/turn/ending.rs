@@ -23,9 +23,6 @@ pub(crate) struct CommittedTurn {
     /// The messages that are not internal: the turn's answer, for
     /// `TurnFinished`.
     pub(crate) final_messages: Vec<Message>,
-    /// Whether the agent's state in the channel changed, to be announced
-    /// once stored.
-    pub(crate) channel_state_changed: bool,
     /// What its answer is sent with: the context the turn had (issue 85).
     pub(crate) answering: Answering,
     /// The tool calls that had no result when it ended, answered as not
@@ -71,9 +68,8 @@ impl Turn<'_> {
         // Every part is used up exactly once; what it said is its answer
         // (issue 417), whatever a compaction left of it in the transcript
         // (issue 284).
-        let TurnState { staged, notes, private_notes, answer: final_messages, .. } = turn;
-        let channel_state_changed =
-            self.agent_channel_state.finish_turn(self.thread, turn_id, notes, private_notes);
+        let TurnState { staged, answer: final_messages, .. } = turn;
+        self.agent_channel_state.finish_turn(self.thread, turn_id);
         let after = self.agent_channel_state.last_message.unwrap_or_default();
         for kind in staged.kinds() {
             let committed = self
@@ -88,7 +84,7 @@ impl Turn<'_> {
                 );
             }
         }
-        CommittedTurn { final_messages, channel_state_changed, answering, abandoned_calls }
+        CommittedTurn { final_messages, answering, abandoned_calls }
     }
 
     /// Gives the turn up after it failed or was stopped, for `reason`
@@ -157,7 +153,6 @@ impl Turn<'_> {
 mod tests {
     use super::*;
     use crate::message::testing::given_up_turns;
-    use crate::notes::NoteKind;
     use crate::turn::tests::message;
     use caelumora_domain::actor::ActorEvent;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
@@ -175,9 +170,8 @@ mod tests {
     use tokio::sync::mpsc;
 
     /// A turn begun on `state`, whose model called `tool` with `arguments`;
-    /// the call ran if `ran`, and a note was staged.
+    /// the call ran if `ran`.
     fn a_turn_that_called<'a>(state: &'a mut AgentChannelState, tool: &str, ran: bool) -> Turn<'a> {
-        use caelumora_domain::note::{NoteChange, NoteId};
         let mut turn = Turn::begun(AgentId::default(), state);
         let call = ToolCall {
             id: Some("1".to_string()),
@@ -203,14 +197,6 @@ mod tests {
             tool_results: vec![result],
             ..Message::new(Classification::CHANNEL_DEFAULT)
         });
-        turn.stage_note(
-            NoteKind::Public,
-            NoteChange::Add {
-                id: NoteId(1),
-                text: "noted".to_string(),
-                classification: Classification::CHANNEL_DEFAULT,
-            },
-        );
         turn
     }
 
@@ -227,7 +213,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_turn_given_up_keeps_what_it_said_and_nothing_it_staged_is_applied() {
+    async fn a_turn_given_up_keeps_what_it_said() {
         let mut state = a_state_with("mail bob");
         let turn = a_turn_that_called(&mut state, "send_mail", false);
         turn.give_up(GivenUpReason::Left, &Discard).await;
@@ -246,7 +232,6 @@ mod tests {
         let turns = given_up_turns(&state, ThreadId::default());
         assert_eq!(turns.len(), 1);
         assert_eq!((turns[0].1.clone(), turns[0].2.len()), (GivenUpReason::Left, 2));
-        assert!(state.notes.current().is_empty(), "the note it staged is not taken over");
     }
 
     /// What the model of the next turn begun on `state` is given.

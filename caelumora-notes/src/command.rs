@@ -1,23 +1,31 @@
-//! The built-in `/channel notes` command (issue 574): what the agents noted in a channel, read as
-//! the channel's, as a notice board is read.
+//! The command `/channel notes` (issues 574, 607): what the agents noted in a channel, read as the
+//! channel's, as a notice board is read - of the component `agent_notes`, which a session's
+//! components name (the seed's bundle `session-basics`).
 
-use crate::command::{command_error, ChannelCommand, CommandContext};
+use crate::view::AgentNotesBoard;
 use async_trait::async_trait;
-use caelumora_api::command::{Command, CommandResult};
+use caelumora_api::command::{Command, CommandProvider, CommandResult};
+use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_domain::command::{
     CommandDescription, CommandOutput, CommandParameter, ParameterKind,
 };
 use caelumora_domain::value::command_name::CommandName;
+use caelumora_kernel::command::{command_error, ChannelCommand, CommandContext};
+use caelumora_kernel::component::ComponentRegistry;
+use std::sync::Arc;
 
 const NOTES_COMMAND_NAME: &str = "channel notes";
 
+/// The kind of the component that brings `/channel notes`.
+pub const AGENT_NOTES_KIND: &str = "agent_notes";
+
 /// `/channel notes [channel]`: what is noted in a channel.
 #[derive(Debug)]
-pub(super) struct NotesCommand(CommandDescription);
+struct NotesCommand(CommandDescription);
 
 impl NotesCommand {
     /// The command, as `/help` tells it.
-    pub(super) fn new() -> Self {
+    fn new() -> Self {
         Self(CommandDescription {
             name: CommandName::fixed(NOTES_COMMAND_NAME),
             aliases: Vec::new(),
@@ -41,12 +49,12 @@ impl Command for NotesCommand {
 impl ChannelCommand for NotesCommand {
     /// Runs `/channel notes` with `args`: of the channel the command was issued in, or of the one
     /// of the session `args` names (`CommandContext::channel_view_or_named`), the notes its agents
-    /// published (`ChannelView::notes`), by their authors, each note with its number. A user reads
-    /// a channel whole or not at all, so none is left out. Only the issuer is answered.
+    /// published (`AgentNotesBoard::notes`), by their authors, each note with its number. A user
+    /// reads a channel whole or not at all, so none is left out. Only the issuer is answered.
     ///
     /// # Errors
     /// `CommandError::InvalidArguments` if the session has no channel of that name the issuer may
-    /// read; `CommandError::Failed` if the session, the channel or an agent's state cannot be read.
+    /// read; `CommandError::Failed` if the session, the channel or an agent's notes cannot be read.
     async fn execute(
         &self,
         args: &str,
@@ -67,4 +75,18 @@ impl ChannelCommand for NotesCommand {
         }
         Ok(CommandOutput::private(format!("Noted in {}:\n{}", channel.name(), text.trim_end())))
     }
+}
+
+/// Registers the kind `agent_notes` with `registry`: a session's component that brings
+/// `/channel notes`.
+pub(crate) fn register(registry: &mut ComponentRegistry) {
+    registry.register(
+        ComponentKind::new(AGENT_NOTES_KIND).provides::<dyn CommandProvider<dyn ChannelCommand>>(),
+        |_descriptor, _context| {
+            let mut facets = ComponentFacets::empty();
+            let commands: Vec<Arc<dyn ChannelCommand>> = vec![Arc::new(NotesCommand::new())];
+            facets.insert::<dyn CommandProvider<dyn ChannelCommand>>(Arc::new(commands));
+            Ok(facets)
+        },
+    );
 }

@@ -349,12 +349,7 @@ mod tests {
             .unwrap()
             .work
             .turn_id;
-        state.finish_turn(
-            ThreadId::line(world.session.channels()[0].id()),
-            given,
-            Vec::new(),
-            Vec::new(),
-        );
+        state.finish_turn(ThreadId::line(world.session.channels()[0].id()), given);
         drop(workspace_turn(world, state));
         state.said(
             ThreadId::line(world.session.channels()[0].id()),
@@ -371,12 +366,7 @@ mod tests {
             .unwrap()
             .work
             .turn_id;
-        state.finish_turn(
-            ThreadId::line(world.session.channels()[0].id()),
-            answered,
-            Vec::new(),
-            Vec::new(),
-        );
+        state.finish_turn(ThreadId::line(world.session.channels()[0].id()), answered);
         state.perceive(ThreadId::line(world.session.channels()[0].id()), vec![heard("u2")]);
     }
 
@@ -667,12 +657,7 @@ mod tests {
             .unwrap()
             .work
             .turn_id;
-        state.finish_turn(
-            ThreadId::line(world.session.channels()[0].id()),
-            answered,
-            Vec::new(),
-            Vec::new(),
-        );
+        state.finish_turn(ThreadId::line(world.session.channels()[0].id()), answered);
         state.perceive(ThreadId::line(world.session.channels()[0].id()), vec![heard("u2")]);
         let strategy = Arc::new(Scripted::default());
         let compactor = compactor(&strategy, Vec::new());

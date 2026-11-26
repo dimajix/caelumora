@@ -410,6 +410,7 @@ pub(crate) mod testing {
     use caelumora_kernel::kernel::Kernel;
     use caelumora_kernel::testing::TestKernel;
     use caelumora_kernel::view::Viewer;
+    use caelumora_notes::plugin::NotesPlugin;
     use caelumora_security::SecurityContext;
     use caelumora_store::testing::record_users;
     use serde_json::json;
@@ -454,7 +455,9 @@ pub(crate) mod testing {
             storage: [(HERE.to_string(), BackendConfig::new("local", params))].into(),
         };
         let config = AppConfig { workspaces, commands, ..Default::default() };
-        let kernel = TestKernel { config, ..Default::default() }.build();
+        // The notes bring `/channel notes`, which the program's commands name (`home::commands`).
+        let kernel =
+            TestKernel { config, plugins: vec![&NotesPlugin], ..Default::default() }.build();
         let user = make_user("owner");
         record_users(kernel.entity_stores(), &[&user]).await;
         let owner =

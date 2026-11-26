@@ -17,12 +17,11 @@ use caelumora_api::staging::{CommitError, CommitResult};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::{Agent, AgentChannelState, Personality};
 use caelumora_domain::approval::{ApprovalRule, ApprovalRuleId, RuleDecision};
-use caelumora_domain::channel::{self, Channel, ChannelId, ThreadId, ThreadOrigin};
+use caelumora_domain::channel::{ChannelId, ThreadId, ThreadOrigin};
 use caelumora_domain::component::ComponentConfig;
 use caelumora_domain::confidentiality::{Classification, Place};
 use caelumora_domain::content::{ContentId, ContentRef};
 use caelumora_domain::context::ModelProfile;
-use caelumora_domain::event::{Announcing, GlobalEvent};
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::prompt_catalogue::PromptCatalogue;
 use caelumora_domain::question::{QuestionError, Questions};
@@ -33,8 +32,7 @@ use caelumora_domain::tool::{ToolCall, ToolContent};
 use caelumora_domain::turn::StagedChanges;
 use caelumora_domain::type_map::{ErasedArc, TypeKey};
 use caelumora_domain::value::time_zone::TimeZone;
-use caelumora_security::confidentiality::ConfidentialityQuestions;
-use caelumora_security::{ActionType, Enforcement, Reclassified, SecurityContext};
+use caelumora_security::{ActionType, Enforcement, SecurityContext};
 use chrono::Utc;
 use std::collections::BTreeSet;
 use std::fmt::Debug;
@@ -233,17 +231,6 @@ impl ActorRuntime for AgentRuntime {
         self.participant.session_controller().load().effective_time_zone()
     }
 
-    fn announce_channel_state_changed(&self) {
-        let Some(channel) = self.participant.channel_loop() else { return };
-        let address = (self.participant.session_id, self.participant.channel_id);
-        let changed = GlobalEvent::custom::<Channel>(
-            &address,
-            channel::AGENT_STATE_CHANGED,
-            &self.agent.id(),
-        );
-        self.kernel.event_bus().announce(changed, &*channel.channel());
-    }
-
     async fn load_channel_state(&self) -> StoreResult<AgentChannelState> {
         let (agent, channel) = (self.agent.id(), self.participant.channel_id);
         self.kernel.state_store().get_agent_channel_state(agent, channel).await
@@ -383,25 +370,6 @@ impl ActorRuntime for AgentRuntime {
     ) -> bool {
         let context = &self.acting_for(initiator);
         self.kernel.confidentiality().may_publish(context, classification, into)
-    }
-
-    async fn may_reclassify_note(
-        &self,
-        initiator: ActorId,
-        classification: &Classification,
-        within: &Classification,
-    ) -> bool {
-        let context = &self.acting_for(initiator);
-        let author = self.participant.actor;
-        let attributes = self.participant.channel().security_attributes.clone();
-        let target = Reclassified::Note { author, attributes: &attributes };
-        let reclassify = ActionType::Reclassify(target);
-        self.kernel.access_policy().require(context, reclassify, |_| ()).await.is_ok()
-            && self
-                .kernel
-                .confidentiality()
-                .require_publish(context, classification, within, || ())
-                .is_ok()
     }
 
     fn secrets(&self, initiator: ActorId) -> Arc<dyn Secrets> {

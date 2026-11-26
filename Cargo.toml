@@ -14,6 +14,7 @@ members = [
     "caelumora-rest-server",
     "caelumora-skills",
     "caelumora-memory",
+    "caelumora-notes",
     "caelumora-compaction",
     "caelumora-artifacts",
     "caelumora-subagents",
@@ -121,6 +122,7 @@ caelumora-rest-api = { path = "caelumora-rest-api" }
 caelumora-rest-server = { path = "caelumora-rest-server" }
 caelumora-skills = { path = "caelumora-skills", default-features = false }
 caelumora-memory = { path = "caelumora-memory", default-features = false }
+caelumora-notes = { path = "caelumora-notes", default-features = false }
 caelumora-compaction = { path = "caelumora-compaction" }
 caelumora-artifacts = { path = "caelumora-artifacts", default-features = false }
 caelumora-subagents = { path = "caelumora-subagents", default-features = false }

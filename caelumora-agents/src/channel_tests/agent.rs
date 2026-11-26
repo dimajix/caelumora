@@ -620,11 +620,6 @@ async fn an_agent_whose_turn_outlasts_its_inbox_hears_all_of_it_afterwards() {
     expected.extend((1..SAID).map(|n| format!("message {n}")));
     expected.push("after the command".to_string());
     assert_eq!(heard, expected, "all of it, once, in order, as it stands");
-    assert_eq!(
-        state.notes.current().iter().map(|n| n.text.as_str()).collect::<Vec<_>>(),
-        ["marked during"],
-        "the command carried out"
-    );
     let seen = model.seen.lock().unwrap().clone();
     assert!(
         seen[1].iter().any(|c| c.contains("after the command")),
@@ -971,11 +966,6 @@ async fn behind_a_barrier_an_agent_hearing_during_a_turn_waits_for_what_the_hist
         contents_of(&state, ThreadId::line(channel.id()), MessageRole::User),
         heard,
         "all of it, once, in order"
-    );
-    assert_eq!(
-        state.notes.current().iter().map(|n| n.text.as_str()).collect::<Vec<_>>(),
-        ["marked during"],
-        "the command carried out"
     );
     let seen = model.seen.lock().unwrap().clone();
     assert!(

@@ -22,10 +22,8 @@ use crate::approval::{ApprovalRequest, ApprovalRule};
 use crate::channel::{ChannelId, Opening, ThreadId};
 use crate::command::CommandDescription;
 use crate::confidentiality::Classification;
-use crate::digest::Digest;
 use crate::group::GroupId;
 use crate::message::{MessageId, TokenUsage};
-use crate::note::Note;
 use crate::privacy::PrivacyConfig;
 use crate::project::ProjectId;
 use crate::question::QuestionRequest;
@@ -228,16 +226,6 @@ pub struct Waiting {
     /// The requests of questions put to them that are open: each of one call, which may ask
     /// several questions.
     pub questions: usize,
-}
-
-/// The notes one agent published in a channel.
-#[derive(Debug, Clone, PartialEq)]
-pub struct PublishedNotes {
-    pub agent: ActorId,
-    pub name: String,
-    pub notes: Vec<Note>,
-    /// The digest of the agent's note chain: the state of knowledge read.
-    pub digest: Option<Digest>,
 }
 
 /// A participant of a channel as the viewer sees it.

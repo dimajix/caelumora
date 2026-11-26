@@ -498,8 +498,8 @@ The `StateStore` (in `caelumora-store`) stores the runtime state of channels and
     in it, from which it builds them again as it starts, each with how it was opened - where, by
     whom, its circle (issue 602) - and what was delegated into it and is not done (`threads`,
     `Opening`, `Delegation`, issue 557).
-*   **`AgentChannelState`**: an agent in one channel, of either kind - transcript, notes, prompt
-    texts and tool sets, whether it sleeps, and its part of each thread: the turn under way at its
+*   **`AgentChannelState`**: an agent in one channel, of either kind - transcript, prompt texts
+    and tool sets, whether it sleeps, and its part of each thread: the turn under way at its
     step and the tokens its calls used (`AgentThreadState`, issue 602, see
     [AGENT-TURN.md](AGENT-TURN.md));
     its transcript, its prompt texts and its tool sets kept apart (see [Transcripts](#transcripts),

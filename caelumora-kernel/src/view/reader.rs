@@ -3,8 +3,8 @@
 
 use super::{ChannelView, ParticipantView, SessionView};
 use async_trait::async_trait;
+use caelumora_api::reader::ViewResult;
 use caelumora_api::reader::{ChannelReader, ParticipantReader, SessionReader};
-use caelumora_api::reader::{PrivateNotesElsewhere, ViewResult};
 use caelumora_api::terminal::ByteStream;
 use caelumora_domain::actor::{ActorDescription, ActorId};
 use caelumora_domain::chain::Position;
@@ -17,7 +17,6 @@ use caelumora_domain::privacy::SessionPrivacy;
 use caelumora_domain::project::ProjectId;
 use caelumora_domain::query::Filter;
 use caelumora_domain::session::SessionId;
-use caelumora_domain::snapshot::PublishedNotes;
 use caelumora_domain::value::language::Language;
 use caelumora_domain::value::name::Name;
 use caelumora_domain::value::text::{Briefing, Summary};
@@ -59,10 +58,6 @@ impl SessionReader for SessionView {
     async fn channels(&self) -> Vec<Box<dyn ChannelReader>> {
         let channels = SessionView::channels(self).await;
         channels.into_iter().map(|channel| Box::new(channel) as Box<dyn ChannelReader>).collect()
-    }
-
-    async fn own_private_notes(&self) -> Vec<PrivateNotesElsewhere> {
-        SessionView::own_private_notes(self).await
     }
 
     async fn privacy_of(&self, id: SessionId) -> ViewResult<Option<SessionPrivacy>> {
@@ -139,10 +134,6 @@ impl ChannelReader for ChannelView {
         id: ContentId,
     ) -> ViewResult<(ContentRef, u64, ByteStream)> {
         ChannelView::attachment_content(self, message, id).await
-    }
-
-    async fn notes(&self) -> ViewResult<Vec<PublishedNotes>> {
-        ChannelView::notes(self).await
     }
 }
 

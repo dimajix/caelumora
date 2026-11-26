@@ -20,8 +20,8 @@ use caelumora_rest_api::actor::ActorPath;
 use caelumora_rest_api::deleted::{DeletedResponse, ListOptions};
 use caelumora_rest_api::session::{
     AddSessionParticipantRequest, CandidateResponse, CandidatesQuery, CreateSessionRequest,
-    DescriptionRequest, JoinSessionRequest, PrivateNotesResponse, RenameSessionRequest,
-    SessionPrivacyRequest, SessionResponse, SessionSnapshot,
+    DescriptionRequest, JoinSessionRequest, RenameSessionRequest, SessionPrivacyRequest,
+    SessionResponse, SessionSnapshot,
 };
 use std::sync::Arc;
 
@@ -85,31 +85,6 @@ pub(super) async fn get_session(
     user: AuthenticatedUser,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
     Ok(Json(session_response(&state, &user, session_id).await?))
-}
-
-/// The private notes agent `aid` wrote in the channels of session `id` the
-/// user may read (issue 233), sorted by the channel's name, for whoever may
-/// read what it saw (`ReadAgentContext`); none for a user.
-pub(super) async fn agent_private_notes(
-    State(state): State<Arc<AppState>>,
-    Path((session_id, ActorPath(actor_id))): Path<(SessionId, ActorPath)>,
-    user: AuthenticatedUser,
-) -> Result<Json<Vec<PrivateNotesResponse>>, ApiError> {
-    // A user keeps no private notes, as it counts no calls (`get_participant_usage`).
-    let Some(agent) = actor_id.as_agent_id() else { return Ok(Json(Vec::new())) };
-    let session = views(&state, &user).session(session_id).await?;
-    let found = session.private_notes_of(agent).await?;
-    Ok(Json(
-        found
-            .into_iter()
-            .map(|(channel, notes, digest)| PrivateNotesResponse {
-                channel_id: channel.id(),
-                channel_name: channel.name().to_string(),
-                notes,
-                digest,
-            })
-            .collect(),
-    ))
 }
 
 /// Restores the deleted session `id` (issue 164) and answers it as `GET`

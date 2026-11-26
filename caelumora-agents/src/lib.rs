@@ -1,7 +1,7 @@
 //! What an agent does in a channel (issue 370): both kinds of agent - one whose mind is a model run
 //! here (`actor::agent`), one whose mind runs elsewhere (`actor::external_agent`) - with what they
 //! share (their body, how they take in what they hear, the commands they carry out), the turn of an
-//! agent run here (`turn`, `work`, `memory`, `notes`), and the facets their components serve: tools
+//! agent run here (`turn`), and the facets their components serve: tools
 //! (`tool`), prompt parts and contexts (`prompt`), message stages (`message`), an agent that runs
 //! elsewhere (`external`), an agent's commands (`command`) and what it does of its own accord
 //! (`activity`) - compacting its context, which the library `caelumora-compaction` provides -, with
@@ -22,7 +22,6 @@ pub mod error;
 pub mod external;
 pub mod library;
 pub mod message;
-pub(crate) mod notes;
 pub mod program;
 pub mod prompt;
 pub mod situation;

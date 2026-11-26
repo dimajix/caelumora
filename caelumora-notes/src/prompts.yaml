@@ -1,0 +1,95 @@
+# The texts of an agent's notes (issues 17, 51, 57, 607), namespace `notes`: templates of
+# `minijinja`, rendered by `PromptCatalogue`; the conventions are those of the agents' file
+# (`caelumora-agents/src/prompts.yaml`). Names of tools are values.
+
+# `notes`: the agent's `own` notes and those of the `others` by `name`, each
+# note by `id` and `text`; the tools `write`, `update` and `revoke`.
+notes: |
+  [Notes in this channel]
+  What its participants noted to remember.
+  {% if own %}
+  Your notes (change them with `{{ write }}`, `{{ update }}` and `{{ revoke }}`):
+  {% for note in own %}
+  - #{{ note.id }}: {{ note.text }}
+  {% endfor %}
+  {% endif %}
+  {% for other in others %}
+  Notes of {{ other.name }}:
+  {% for note in other.notes %}
+  - #{{ note.id }}: {{ note.text }}
+  {% endfor %}
+  {% endfor %}
+
+# `private_notes`: those of this channel (`own`, by `id` and `text`) and the
+# texts of those of other channels (`elsewhere`, by `name`), which cannot be
+# changed here and so go unnumbered (issue 60); the tools `write`, `update`
+# and `revoke`.
+private_notes: |
+  [Your private notes]
+  No other participant sees them; only the person responsible for you can inspect them. Do not quote or reveal them in your answers.
+  {% if own %}
+  In this channel (change them with `{{ write }}`, `{{ update }}` and `{{ revoke }}`):
+  {% for note in own %}
+  - #{{ note.id }}: {{ note.text }}
+  {% endfor %}
+  {% endif %}
+  {% for channel in elsewhere %}
+  From channel {{ channel.name }} (change them only there):
+  {% for text in channel.notes %}
+  - {{ text }}
+  {% endfor %}
+  {% endfor %}
+# The descriptions of the tools, under the kind of the component that offers them, as in the
+# agents' file.
+tools:
+  notes:
+    description: "Notes in this channel: what you want to remember here, and what the others noted."
+    write_note: >-
+      Note something worth remembering in this channel - a fact, a decision, a preference of the
+      user. Every participant of the channel is shown your notes from now on, you included. Keep a
+      note short and self-contained, and update one rather than writing a second on the same thing.
+    write_note.text: What to note
+    update_note: >-
+      Change what one of your own notes in this channel says, by its number, when it is no longer
+      quite right. Give its whole new text; it keeps its number.
+    update_note.id: The number of your note
+    update_note.text: Its new text
+    revoke_note: >-
+      Revoke one of your own notes in this channel, by its number, when it is no longer true or no
+      longer needed.
+    revoke_note.id: The number of your note
+    reclassify_note: >-
+      Change how one of your notes in this channel is classified, by its number: its level and the
+      compartments it is meant for, never above this channel. Releasing it - a lower level, or
+      further compartments - makes it readable by a wider circle; a user has to approve it.
+    reclassify_note.id: The number of your note
+    read_notes: >-
+      Read what the agents of another channel of this session noted. Without a channel, lists every
+      channel you may read with its notes - also how to find out which channels there are. The notes
+      of your own channel are already shown to you. Notes of another channel come without numbers:
+      they can only be updated, revoked or reclassified in that channel.
+    read_notes.channel: The name of the channel; omit it for all channels
+
+  private_notes:
+    description: >-
+      Your private notes: what only you should remember across your channels of this session.
+    write_private_note: >-
+      Note something privately - no other participant sees it; only the person responsible for you
+      can inspect it. Do not quote or reveal your private notes in your answers. You are shown your
+      private notes from now on, in this channel and in your other channels of this session where
+      that reveals nothing to someone who may not know it. Keep a note short and self-contained, and
+      update one rather than writing a second on the same thing.
+    write_private_note.text: What to note
+    update_private_note: >-
+      Change what one of your private notes of this channel says, by its number. Give its whole new
+      text; it keeps its number.
+    update_private_note.id: The number of your private note
+    update_private_note.text: Its new text
+    revoke_private_note: Revoke one of your private notes of this channel, by its number.
+    revoke_private_note.id: The number of your private note
+    reclassify_private_note: >-
+      Change how one of your private notes of this channel is classified, by its number: its level
+      and the compartments it is meant for, never above this channel. It decides in which of your
+      other channels you are shown it. Releasing it - a lower level, or further compartments - makes
+      it readable by a wider circle; a user has to approve it.
+    reclassify_private_note.id: The number of your private note

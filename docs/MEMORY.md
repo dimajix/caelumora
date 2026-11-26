@@ -19,13 +19,14 @@ All three kinds of memory work alike:
 *   **Only the author changes them.** An agent notes, updates, revokes, remembers and forgets only
     its own entries.
 *   **Commit, don't write.** A tool stages its change on the turn; the change is applied when the
-    turn is taken over, and a turn that fails leaves none.
+    turn is taken over, and a turn that fails leaves none. The one thing written at once is the
+    number of a new entry, which its plugin reserves (below).
 *   **What the turn sees** is the entries as they stand with the turn's own staged changes in them.
     An entry revoked in the turn that wrote it is revoked like any other: both changes are taken
     over, and its number is used up.
-*   **The logic is a wrapper around the turn.** `Turn` knows nothing of notes or memory;
-    `AgentNotes` and the memory's `TurnMemory` hold the logic, and the components use them. What
-    may be recalled of the memory, and which of a turn's changes are applied, its plugin decides.
+*   **The logic is a wrapper around the turn.** `Turn` knows nothing of notes or memory; the
+    notes' `TurnNotes` and the memory's `TurnMemory` hold the logic, and the components use them.
+    What may be read of them, and which of a turn's changes are applied, their plugins decide.
 *   **Every read is recorded** as knowledge (see [Recording what was
     read](#recording-what-was-read)).
 *   **Written without approval.** What an entry says may rest on a claim the model did not verify -
@@ -40,38 +41,54 @@ All three kinds of memory work alike:
 The `notes` component lets an agent note what it wants to remember in a channel. Its tools
 `write_note`, `update_note` and `revoke_note` change the agent's own notes; its prompt part gives
 the model the notes of every agent in the channel. Notes belong to the agent that wrote them and are
-published in the channel.
+published in the channel. The notes, public and private, are a system service of their own, brought
+by `caelumora-notes` - a plugin that keeps and decides, and a library with the components `notes`
+and `private_notes` -, which a program lists as it lists the memory (issue 607).
 
-*   **Where they live.** Each agent keeps its notes per channel, in its `AgentChannelState`. Every
-    entry records the message it follows and the digest of the agent's transcript.
+*   **Where they live.** The notes of an agent in a channel are one document of the plugin's kind
+    (`notes`), kept under the agent and the channel (`AgentNotesId::of`) and owned by the agent's
+    owner; it holds both chains, the public and the private one. Every entry records the message it
+    follows. It goes when its agent is purged, and when its channel is purged with its session
+    (`KeptBehind`, see [PLUGINS.md](PLUGINS.md#what-a-plugin-is)).
+*   **Reached as a system service.** A work reads its agent's chains in its channel, and what it
+    may read of the notes elsewhere, through the `NotesReader` of its situation; a turn stages its
+    changes (`Turn::stage`, a `NoteChange`), which the plugin commits when the turn completes
+    through the `NotesWriter` it paired with them (see
+    [PLUGINS.md](PLUGINS.md#what-a-system-service-offers-an-agents-work)).
 *   **Updating** replaces the text of an entry that stands, which keeps its number and its place.
     The new text carries the label of the turn that wrote it, as a new entry does: a release of the
     old text does not carry over. The entry stands where it was updated.
-*   **Numbers.** Notes are numbered per agent, counting up, and a number is never given again, so
-    that a model can repeat it to update or revoke.
+*   **Numbers.** Notes are numbered per agent and chain, counting up, and a number is never given
+    again, so that a model can repeat it to update or revoke. The number of a new note is reserved
+    at once by the plugin (`NotesWriter::reserve_id`), which counts on from the notes as stored:
+    the agent's turns in the channel's threads note at the same time - one set aside, waiting for a
+    person, while another is taken -, and would otherwise give the same number.
 *   **Changed where they were written.** The tools change notes of the turn's channel only; the
     chain of another channel is written by the agent's actor there. A number names a note in one
     chain, so numbers are shown only for notes of the turn's channel: notes of other channels are
     listed without them, public and private alike.
-*   **Taken over after the answer.** Staged changes are pushed into the chain when the turn is taken
-    over, after the turn's last message in the history. The agent then stores its channel state and
-    announces it (`channel::AGENT_STATE_CHANGED`) - without content - before `TurnFinished` ends the
-    turn, so that whoever reacts to the end of the turn reads the state it left.
-*   **Reading.** Others read published notes from the agents' stored states, so only notes of
-    finished turns are ever seen.
+*   **Committed after the answer.** The plugin commits a turn's changes when the turn is taken over,
+    after its last message in the history and before `TurnFinished` ends it, so that whoever reacts
+    to the end of the turn reads the notes it left. It checks each, all or none: of the chains of
+    the work's agent in the work's channel alone, a new note of a number reserved and never given, a
+    note changed one that stands, each classified within the work, a reclassification as the policy
+    lets its author (`Reclassified::Note`). What is stored is announced to whoever reads the
+    channel, as its `NOTES_CHANGED`, without content.
+*   **Reading.** Others read published notes as they are stored, so only notes of finished turns
+    are ever seen.
 *   **Prompt part.** A part before the turn's input unless its `position` says otherwise, empty
     when nothing is noted: the agent's own notes first, then those of the other agents of the
     channel.
 *   **Read as the channel's.** Though each note is its author's, what is noted in a channel is read
     as the channel's, as a notice board is: whoever reads the channel reads the notes of its agents
-    (`ChannelView::notes`), nothing asked of the agents themselves. Clients read them per agent over
-    REST as they open the channel, and again when the global stream announces a change (see
+    (`AgentNotesBoard`, an extension of the channel's view), nothing asked of the agents themselves.
+    Clients read them per agent over REST as they open the channel, and again when the global
+    stream announces a change (see
     [WEB-UI.md](WEB-UI.md#participants-moderator-and-notes)); `/channel notes` shows them (see
     [COMMANDS.md](COMMANDS.md)).
 *   **Taken along.** Only the agents taking part in a channel are read there: the notes of one that
     leaves, is removed or is deleted - resting in the channel - are no longer read as the
-    channel's. They are kept in its state and read again when it returns or is restored; purged,
-    they go with its state
+    channel's. They are kept and read again when it returns or is restored; purged, they go with it
     ([581](../issues/581-the-notes-of-an-agent-that-left-fall-off-the-board.md)). Its notes are
     what it holds while it takes part, and only it could revoke them.
 
@@ -87,7 +104,7 @@ public notes.
     the agent its private notes of this channel and of every other channel of the session it takes
     or took part in, as far as they may be copied into this one (see
     [reading other channels](#reading-other-channels)). It reaches them through the agent itself,
-    not through the channels. A note carries
+    not through the channels (`NotesReader::own_private_elsewhere`). A note carries
     [the turn's label](CONFIDENTIALITY.md#what-a-turn-writes-as), stamped when it is written, and is
     read note by note; `reclassify_private_note` changes it (see
     [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reclassification)).
@@ -155,16 +172,17 @@ skills.
     owner -, made as `Created`, changed as `Updated`.
     Where a change was made - the channel, and the privacy its session has then -
     the plugin derives from the place of the work, never from what the agent side tells.
-*   **Numbers.** Unlike a note's, the number of a new entry is reserved at once by the plugin, which
+*   **Numbers.** As a note's, the number of a new entry is reserved at once by the plugin, which
     counts on from the memory as stored, since turns in several channels may remember at the same
-    time. This is deliberately the one exception to "commit, don't write".
+    time - deliberately the exception to "commit, don't write".
 
 ## Reading other channels
 
 Components read what other channels know through the readers of the situation they are given
 (`Situation::session`, a `SessionReader`, see [SECURITY.md](SECURITY.md#views)): the agent's
-session, its channels and their notes and histories, and the agent's own private notes of the other
-channels.
+session, its channels and their histories; and through the `NotesReader`, the notes of the channels
+and the agent's own private notes of the other channels, which the notes' plugin reads by the same
+rules.
 
 *   **From the own channel.** The agent reads as a viewer *from a place*: its channel, the
     classification its turn began with and its session's privacy.
@@ -197,10 +215,11 @@ channels.
 
 Every read is recorded as a `KnowledgeRef` - and what a tool wrote, which the agent knows as it
 wrote it: the channel and its session, so that knowledge from another session can be told, and what
-was read there (`KnowledgeSource`) with its digest - an agent's notes or the agent's own private
-notes in the channel, the channel's history up to where and from where, an entity - a skill loaded
-into the turn as a whole, a file or directory of the session's workspace by its place within it,
-its path, the agent's memory once per channel its recalled entries were written in.
+was read there (`KnowledgeSource`) with its digest - what an agent keeps (`Actor`), by the kind
+that keeps it: its notes in the channel, the part `private` its private notes there, its memory
+once per channel its recalled entries were written in; the channel's history up to where and from
+where; an entity - a skill loaded into the turn as a whole, a file or directory of the session's
+workspace by its place within it, its path.
 
 A read is recorded with the turn (`Turn::record_knowledge`) and goes into the `ContextRef` of every
 message produced after it. A `PromptProvider` returns the knowledge its part contains with the part,
@@ -224,7 +243,7 @@ The words for what an agent remembers are used in one sense each.
 | **Transcript** | The sequence of messages an agent's context is built from: its own messages in full, with tool calls and internal steps, and what others said as it received them; may be compacted. Not the history, which is the channel's public record. | agent in channel | session |
 | **Prompt part** | Text given besides the conversation - the system prompt, notes - transient, recorded by digest, or given into the transcript where it changed, and then a message of it (see [AGENT-TURN.md](AGENT-TURN.md#prompt-parts)). | turn, or agent in channel as the transcript | transient, or as the transcript |
 | **Context** | What one call of the model is given: prompt parts, the transcript and the tools offered - "context" in the usual LLM sense; reconstructable through `ContextRef` ("what the agent saw"). | one call | transient |
-| **Turn state** | The working state of a turn: plan, pending tool calls, the changes staged to the agent's state in the channel and for its memory. | agent in channel | turn |
+| **Turn state** | The working state of a turn: plan, pending tool calls, the changes staged for its notes and its memory. | agent in channel | turn |
 | **Notes** | Entries in an agent's public note chain of one channel, published there, with provenance; only the author writes and revokes. | agent in channel | session |
 | **Session memory** | The union of the public note chains of all agents in all channels of a session - a view, not a store. | session | session |
 | **Agent memory** | An alternative to private notes, chosen per personality: what an agent remembers across its channels and sessions, each entry recalled only where its label may be read. | agent | beyond the session |
@@ -237,7 +256,8 @@ done, a document a user owns and edits, which an agent loads into a turn - where
 transcript as any message does - and may write for its owner.
 
 Two technical words are not tiers: **state** is the container the `StateStore` keeps (history,
-context, turn state and notes live *in* state), as opposed to **entities** in the `EntityStore`; and
+context and turn state live *in* state), as opposed to **entities** in the `EntityStore` - the
+notes and the memory among them; and
 the structs named `…Context` (`SecurityContext`, `EventContext`, `ComponentContext`,
 `CommandContext`, `Turn`) are *operation contexts*, the circumstances an operation runs in,
 unrelated to the model's context. In prose, "context" alone always means the model's context; the

@@ -36,8 +36,8 @@ use caelumora_rest_api::actor::ActorPath;
 use caelumora_rest_api::channel::{
     AddParticipantRequest, AnswerQuestionsRequest, ChannelParticipantResponse, ChannelResponse,
     ChannelSnapshot, CommandReplyResponse, CreateChannelRequest, ExecuteCommandRequest,
-    MessageRequest, OpenThreadRequest, PublishedNotesResponse, ReadRequest, SendApprovalRequest,
-    ThreadParticipantRequest, ThreadResponse, TurnRequest,
+    MessageRequest, OpenThreadRequest, ReadRequest, SendApprovalRequest, ThreadParticipantRequest,
+    ThreadResponse, TurnRequest,
 };
 use caelumora_rest_api::context::{
     AgentComponentsResponse, AgentToolsResponse, KnowledgeRefResponse, MessageContextResponse,
@@ -217,24 +217,6 @@ pub(super) async fn get_message(
 ) -> Result<Json<Message>, ApiError> {
     let channel = channel_view(&state, &user, session_id, channel_id).await?;
     Ok(Json(channel.message(message_id).await?))
-}
-
-/// The notes every agent of the channel published (issue 17) - what a client reads as it opens the
-/// channel, and again on the channel's `channel::AGENT_STATE_CHANGED` (issue 65).
-pub(super) async fn get_notes(
-    State(state): State<Arc<AppState>>,
-    Path((session_id, channel_id)): Path<(SessionId, ChannelId)>,
-    user: AuthenticatedUser,
-) -> Result<Json<Vec<PublishedNotesResponse>>, ApiError> {
-    let channel = channel_view(&state, &user, session_id, channel_id).await?;
-    let notes = channel.notes().await.map_err(|e| {
-        ApiError::internal(
-            "notes_failed",
-            &format!("reading the notes of channel {}", channel_id),
-            &e.into(),
-        )
-    })?;
-    Ok(Json(notes.into_iter().map(Into::into).collect()))
 }
 
 /// Follows a channel live (issues 104, 386): only as one of its
@@ -910,11 +892,8 @@ async fn knowledge_response(
     let channel_deleted = matches!(reached, Reached::Gone(_));
     let channel = reached.there();
     let (source, agent_id, digest, history_start) = match knowledge.source {
-        KnowledgeSource::Notes { agent, digest } => {
-            ("notes", Some(ActorId::Agent(agent)), digest, None)
-        }
-        KnowledgeSource::PrivateNotes { agent, digest } => {
-            ("private_notes", Some(ActorId::Agent(agent)), digest, None)
+        KnowledgeSource::Actor { actor, kind, digest, .. } => {
+            (kind.name(), Some(actor), digest, None)
         }
         KnowledgeSource::History { digest, from } => ("history", None, digest, from),
         KnowledgeSource::Entity { kind, digest, .. } => (kind.name(), None, digest, None),

@@ -14,7 +14,6 @@ use crate::confidentiality::Classification;
 use crate::content::ContentRef;
 use crate::context::KnowledgeRef;
 use crate::message::Message;
-use crate::note::NoteChange;
 use crate::plan::PlanState;
 use crate::prompt_catalogue::KERNEL;
 use crate::question::QuestionRequest;
@@ -131,15 +130,10 @@ pub struct TurnState {
     /// its actor whenever it stores - a turn cut off in the middle stands at the step that was to
     /// come next.
     pub step: ActorState,
-    /// What the turn staged for system services - the agent's memory -, committed by the kernel
-    /// when the turn completes (issue 518).
+    /// What the turn staged for system services - the agent's memory, its notes -, committed by
+    /// the kernel when the turn completes (issues 518, 607).
     #[serde(default, skip_serializing_if = "StagedChanges::is_empty")]
     pub staged: StagedChanges,
-    /// Changes to the agent's notes in this channel, applied when the turn
-    /// completes (issue 65).
-    pub notes: Vec<NoteChange>,
-    /// Changes to its private notes in this channel, likewise (issue 51).
-    pub private_notes: Vec<NoteChange>,
     /// The tool calls of the current step, with their approvals and results.
     pub tool_calls: Vec<ToolCallState>,
     /// What came to the turn while the calls of its step ran, in order:

@@ -321,7 +321,6 @@ fn session_routes() -> Router<Arc<AppState>> {
             "/sessions/{id}/project",
             routing::put(projects::put_into_project).delete(projects::take_out_of_project),
         )
-        .route("/sessions/{id}/actors/{aid}/private_notes", get(sessions::agent_private_notes))
         .route(
             "/sessions/{id}/channels",
             get(channels::list_channels).post(channels::create_channel),
@@ -380,7 +379,6 @@ fn session_routes() -> Router<Arc<AppState>> {
         .route("/sessions/{id}/channels/{cid}/approvals", post(channels::send_approval))
         .route("/sessions/{id}/channels/{cid}/questions/{qid}", post(channels::answer_questions))
         .route("/sessions/{id}/channels/{cid}/cancel", post(channels::cancel_channel))
-        .route("/sessions/{id}/channels/{cid}/notes", get(channels::get_notes))
         .route("/sessions/{id}/channels/{cid}/participants", post(channels::add_participant))
         .route(
             "/sessions/{id}/channels/{cid}/participants/{aid}",

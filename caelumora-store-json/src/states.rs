@@ -372,10 +372,10 @@ mod tests {
     use caelumora_domain::actor::ActorState;
     use caelumora_domain::chain::Position;
     use caelumora_domain::channel::ThreadId;
-    use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::content::testing::make_content_ref;
     use caelumora_domain::history::Reader;
     use caelumora_domain::message::testing::{id, make_message};
-    use caelumora_domain::note::{NoteChange, NoteId};
+    use caelumora_domain::message::Message;
     use caelumora_domain::turn::TurnState;
     use caelumora_store::history::HistoryStore;
     use caelumora_store::suite;
@@ -481,19 +481,15 @@ mod tests {
 
     /// A state with messages `from..to` in its transcript, taken in as an
     /// agent takes them in from its channel's history - moving where it
-    /// stands in it (issue 440) -, and a note published for each in its
-    /// document, which grows with them.
+    /// stands in it (issue 440) -, each with an attachment its transcript
+    /// numbers, which grows its document with them.
     fn said(state: &mut AgentChannelState, from: u128, to: u128) {
         for n in from..to {
-            state.transcript.push(ThreadId::default(), make_message(id(n)));
+            let attached = make_content_ref(&format!("{n}.txt"), n.to_string().as_bytes());
+            let message = Message { attachments: vec![attached], ..make_message(id(n)) };
+            state.perceive(ThreadId::default(), vec![message]);
             state.last_message = Some(id(n));
             state.heard.took(Position::new(n as u64));
-            let note = NoteChange::Add {
-                id: NoteId(n as u32),
-                text: format!("note {n}"),
-                classification: Classification::CHANNEL_DEFAULT,
-            };
-            state.notes.push(note, Default::default(), id(n));
         }
     }
 

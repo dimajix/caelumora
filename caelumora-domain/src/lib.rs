@@ -21,7 +21,6 @@ pub mod kept;
 pub mod ledger;
 pub mod mention;
 pub mod message;
-pub mod note;
 pub mod plan;
 pub mod privacy;
 pub mod project;

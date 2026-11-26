@@ -2,6 +2,11 @@ session_templates:
 - id: e195e4bf-89e7-46d9-a666-0d56a3d10bbb
   name: sassy-session
   description: Sassy user+assistant session
+  components:
+  - id: session-basics
+    kind: ref
+    params:
+      name: session-basics
   participants:
   - User:
       name: user

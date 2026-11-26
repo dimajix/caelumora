@@ -6,9 +6,7 @@
 //! provides them (`caelumora_api::command`, `caelumora_api::model`).
 
 pub mod channel_history;
-pub mod notes;
 pub mod planning;
-pub mod private_notes;
 
 use caelumora_api::component::LibraryComponents;
 
@@ -16,6 +14,4 @@ use caelumora_api::component::LibraryComponents;
 pub fn register_all(registry: &mut LibraryComponents<'_>) {
     channel_history::register(registry);
     planning::register(registry);
-    notes::register(registry);
-    private_notes::register(registry);
 }

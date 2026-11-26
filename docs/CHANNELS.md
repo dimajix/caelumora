@@ -1006,10 +1006,11 @@ The channel starts the new actor's task, tells the moderator and rebuilds the me
 that becomes ambiguous is logged.
 
 A removed actor leaves at once - an agent without finishing its turn, which it gives up and says
-so - and its state is kept, for the record and for a later return; what it noted there is no longer
-read as the channel's (see [MEMORY.md](MEMORY.md#notes)). The approver answers a leaving
-agent's pending approvals as denied, so that nothing keeps waiting, and decides the others again,
-since who may approve them changed. The approver itself is no participant and is never removed.
+so - and its state is kept, for the record and for a later return, as are its notes; what it noted
+there is no longer read as the channel's (see [MEMORY.md](MEMORY.md#notes)). The approver answers a
+leaving agent's pending approvals as denied, so that nothing keeps waiting, and decides the others
+again, since who may approve them changed. The approver itself is no participant and is never
+removed.
 
 Whoever lets a participant go waits until `run` answers that its actor has ended, at most a little
 past the grace (`LEAVE_GRACE`), holding the participant: who takes them in again waits for that

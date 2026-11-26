@@ -374,3 +374,45 @@ not `Holder`, which names the holder of a scope already; and it is not sealed - 
 takes an exception of the lints (`unreachable_pub`, `private_bounds`), and the orphan rule already
 keeps a plugin from making another of the kernel's kinds one: what it may make one is a type of its
 own, behind which nothing would be removed.
+
+**2026-11-25** - Decided with the maintainer before step 4:
+- `NotesReader::own(kind)` hands out the chain (`&NoteChain`), not the notes standing: a new
+  note's number skips the revoked ones too, which only the chain knows.
+- What a turn read of an actor's records is a variant of its own, `KnowledgeSource::Actor { actor,
+  kind, place, digest }`: the actor whose records they are, the kind of what keeps them (`notes`,
+  `memory`), the part read (`private` for the private chain) and its digest - not an `Entity`,
+  which is any document. The REST answer names the agent as it named the author of notes; the web
+  UI tells private notes by the place. The memory records its reads so too, so that one kind of
+  thing has one form. For the notes of a channel ([606](606-no-notes-belong-to-the-channel.md)) a
+  `KnowledgeSource::Channel` is to follow.
+- The kernel opens `SessionView::channels_taken_part_in` and `Views::may_copy_from` for the
+  private notes of other channels, read through the agent as before.
+- `NOTE_PRESENTATION` moves to `caelumora_agents::tool`, shared by the notes and the memory;
+  `NOTE_LIST_PRESENTATION` goes with the notes.
+
+**2026-11-25** - Step 4 done: the notes moved into `caelumora-notes`. The domain, the API, the
+kernel and the agents' library name none of the notes' types; a turn stages them as every system
+service's change (`NoteChange`), committed by the plugin's writer, checked; the board and an agent's
+private notes are extensions of the views (`ChannelNotes`, `SessionNotes`); the routes, the
+command `/channel notes` (the component `channel_notes`, in the seed's bundle `session-basics`
+and the terminal's commands) and the texts (namespace `notes`) are the crate's; a change is
+announced as the channel's `notes_changed`. `KnowledgeSource::Actor` records what was read of an
+agent's notes and memory. Two departures: the crate has no error type of its own (`NotesError`) -
+the views answer `ViewError`, the writer `CommitError`, and nothing else fails -, and the kernel
+also opens `ParticipantView::require_read_context`, for the private notes its owner reads through
+the channels. Stored data to delete: every agent's channel state; the histories, transcripts and
+channel states of every channel in which an agent read notes, private notes or its memory.
+
+**2026-11-26** - Decided with the maintainer after the review of step 4: the plugin reserves the
+number of a new note at once (`NotesWriter::reserve_id`), as the memory's, since an agent's turns
+in a channel's threads note at the same time and a number derived from the stored chain could be
+given twice, refusing the later turn's commit whole; and the writer asks the policy with the
+channel's attributes and announces against the channel's document as the view holds it
+(`ChannelView::document`, now public), running or not, so that a turn committed as its channel
+stops loses nothing.
+
+**2026-11-26** - Renamed with the maintainer, so that "channel notes" stays free for the notes
+that belong to the channel ([606](606-no-notes-belong-to-the-channel.md)): the component that
+brings `/channel notes` is `agent_notes` (not `channel_notes`), the extension of the channel's view
+`AgentNotesBoard` (not `ChannelNotes`), that of the session's view `SessionAgentNotes` (not
+`SessionNotes`). The command keeps its name: it acts on a channel and shows what its agents noted.

@@ -1,0 +1,10 @@
+# What every session of these templates has beside the commands of the configuration (issue 607):
+# `/channel notes`, which the notes plugin brings. A session made from a template that includes it
+# keeps the `ref`, and gets what is added here when it starts next.
+component_bundles:
+- id: 07918678-a0c1-4a6d-baa4-c175e0343669
+  name: session-basics
+  components:
+  - id: agent-notes
+    kind: agent_notes
+    fail_policy: FailClosed

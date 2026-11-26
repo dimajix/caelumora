@@ -429,7 +429,7 @@ mod tests {
     use caelumora_domain::actor::{ActorEvent, Envelope, EventContext};
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::approval::ApprovalRuleId;
-    use caelumora_domain::channel::{HistoryAccess, ThreadId, AGENT_STATE_CHANGED, LEFT};
+    use caelumora_domain::channel::{HistoryAccess, ThreadId, LEFT};
     use caelumora_domain::message::Message;
     use caelumora_domain::question::testing::make_question_request;
     use caelumora_domain::session::SessionId;
@@ -972,7 +972,7 @@ mod tests {
         let late = spec("late", vec![owner.caller_id]);
         let late = session_loop.create_channel(&owner, late).await.expect("the owner creates it");
         let main = (session_loop.id(), channels.talked_in().expect("one talked in").channel_id());
-        let busy = GlobalEvent::custom::<Channel>(&main, AGENT_STATE_CHANGED, &AgentId::new());
+        let busy = GlobalEvent::custom::<Channel>(&main, LEFT, &ActorId::Agent(AgentId::new()));
         kernel.event_bus().publish_past_capacity(&busy);
         kernel.event_bus().subscribe_all().settled().await;
         assert!(channels.followed(late.id()).is_none(), "not followed yet");

@@ -67,9 +67,6 @@ use caelumora_domain::confidentiality::{
 use caelumora_domain::config::AppConfig;
 use caelumora_domain::config::{BackendConfig, ContentConfig, WorkspacesConfig};
 use caelumora_domain::event::GlobalEvent;
-use caelumora_domain::ledger::Change;
-use caelumora_domain::message::MessageId;
-use caelumora_domain::note::NoteOrigin;
 use caelumora_domain::privacy::SessionPrivacy;
 use caelumora_domain::project::ProjectId;
 use caelumora_domain::query::Query;
@@ -652,22 +649,6 @@ impl World {
         self.kernel.entity_stores().agents.create(&Self::system(), &mut agent).await.unwrap();
         self.access_policy.names.lock().unwrap().insert(ActorId::Agent(agent.id), name.to_string());
         agent.id
-    }
-
-    /// Notes `texts` as `agent`'s in `channel`, each numbered by its chain, at the channel's
-    /// default classification, as its turns would have published them.
-    pub async fn note(&self, agent: AgentId, channel: ChannelId, texts: &[&str]) {
-        let states = self.kernel.state_store();
-        let mut state = states.get_agent_channel_state(agent, channel).await.unwrap();
-        for text in texts {
-            let added = Change::Add {
-                id: state.notes.next_id(),
-                text: (*text).to_string(),
-                classification: Classification::CHANNEL_DEFAULT,
-            };
-            state.notes.push(added, NoteOrigin::default(), MessageId::default());
-        }
-        states.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
     }
 
     /// A session of alice with bob in it, and a channel "main" of both of

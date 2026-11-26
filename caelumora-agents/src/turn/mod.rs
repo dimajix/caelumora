@@ -6,9 +6,10 @@
 //! part of its thread (`AgentThreadState::turn`, issues 85, 602) - the context and prompt parts the
 //! model is given and where they came from, pending tool calls and the plan, the changes not yet
 //! taken over; what it says goes into the transcript and the history at once (issue 260) -, and
-//! stages what it changes of a system service - the agent's memory -, which the kernel commits when
-//! it completes (issue 518). What those states hold is the business of wrappers such as
-//! `crate::notes::AgentNotes`, and of the components of the services. A turn is begun on the
+//! stages what it changes of a system service - the agent's notes, its memory -, which the kernel
+//! commits when it completes (issues 518, 607). What those states hold is the business of the
+//! components of the services and the wrappers they use (the notes' `TurnNotes`, the memory's
+//! `TurnMemory`). A turn is begun on the
 //! agent's state (`AgentChannelState::begin_turn`); a `Turn` is had only while one is under way
 //! (`Turn::of`), and ending it uses it up.
 //!
@@ -36,7 +37,6 @@ mod tool_calls;
 
 pub(crate) use ending::CommittedTurn;
 
-use crate::notes::NoteKind;
 use crate::situation::Situation;
 use anyhow::Result;
 use caelumora_api::actor::Answering;
@@ -51,7 +51,6 @@ use caelumora_domain::content::{ContentId, ContentRef};
 use caelumora_domain::context::KnowledgeRef;
 use caelumora_domain::digest::Digest;
 use caelumora_domain::message::{CallMeasures, Message, MessageId, MessageRole};
-use caelumora_domain::note::NoteChange;
 use caelumora_domain::prompt_catalogue::PromptError;
 use caelumora_domain::tool::{ToolContent, ToolDescription};
 use caelumora_domain::turn::{StagedChange, TurnState};
@@ -137,14 +136,6 @@ impl<'a> Turn<'a> {
     /// turn's name (`ActorRuntime::can_keep_content`, issue 553).
     pub fn can_keep_content(&self, classification: &Classification, files: &[ToolContent]) -> bool {
         self.runtime.can_keep_content(self.situation().initiator(), classification, files)
-    }
-
-    /// Whether a note of the agent in its channel, public or private, may be reclassified, in the
-    /// turn's name, as `classification`, never above the turn's channel as it began
-    /// (`ActorRuntime::may_reclassify_note`, issue 516): what the turn stages then.
-    pub async fn may_reclassify_note(&self, classification: &Classification) -> bool {
-        let (initiator, within) = (self.situation().initiator(), self.situation().classification());
-        self.runtime.may_reclassify_note(initiator, classification, &within).await
     }
 
     /// Which turn this is (issue 235).
@@ -342,19 +333,6 @@ impl<'a> Turn<'a> {
     /// (`ToolOutput::knowledge`), which the `ToolExecutor` records (issue 538).
     pub(crate) fn record_knowledge(&mut self, reference: KnowledgeRef) {
         self.current_mut().work.record_knowledge(reference);
-    }
-
-    /// Stages `change` to the agent's notes of `kind` in this channel,
-    /// applied when the turn completes (`commit`).
-    pub fn stage_note(&mut self, kind: NoteKind, change: NoteChange) {
-        kind.staged_mut(self.current_mut()).push(change);
-    }
-
-    /// The changes to the agent's notes of `kind` staged in this turn so
-    /// far. A change taken back within the turn is taken back by another
-    /// change, not dropped (issue 156).
-    pub fn staged_notes(&self, kind: NoteKind) -> &[NoteChange] {
-        kind.staged(self.current())
     }
 
     /// Records what state the turn should land on once `Reflecting` finishes,

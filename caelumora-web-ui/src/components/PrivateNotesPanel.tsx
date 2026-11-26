@@ -11,7 +11,7 @@ import type {ChannelParticipant, PrivateNotes} from '../types';
 import {api} from '../api';
 import {actorPath, agentIdOf} from '../actor';
 import {ApiRequestError, reportError} from '../errors';
-import {changedAgentState, onGlobalEvent} from '../globalEvents';
+import {changedNotes, onGlobalEvent} from '../globalEvents';
 import {classificationDescription, classificationLabel} from '../confidentiality';
 import {Timestamp} from './Timestamp';
 
@@ -43,7 +43,7 @@ export const PrivateNotesPanel: React.FC<PrivateNotesPanelProps> = ({sessionId, 
       });
     void load();
     const unsubscribe = onGlobalEvent(event => {
-      const changed = changedAgentState(event);
+      const changed = changedNotes(event);
       if (changed?.sessionId === sessionId && changed.agentId === agent) void load();
     });
     return () => { current = false; unsubscribe(); };

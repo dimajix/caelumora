@@ -148,23 +148,21 @@ export function waitingChanged(event: GlobalEvent): {sessionId: string; channelI
 }
 
 /**
- * The channel whose state of an agent changed, for a channel's
- * `agent_state_changed` (issue 65) - its notes, say; `null` for any other
- * event. The event carries no content: whoever shows the notes fetches them
- * again.
+ * The channel in which the notes of an agent changed, for a channel's `notes_changed` (issues 65,
+ * 607); `null` for any other event. The event carries no content: whoever shows the notes fetches
+ * them again.
  */
-export function changedChannel(event: GlobalEvent): string | null {
-  return changedAgentState(event)?.channelId ?? null;
+export function notesChangedIn(event: GlobalEvent): string | null {
+  return changedNotes(event)?.channelId ?? null;
 }
 
 /**
- * Whose state changed where, for a channel's `agent_state_changed`; `null`
- * for any other event - for what follows one agent across a session (issue
- * 233).
+ * Whose notes changed where, for a channel's `notes_changed`; `null` for any other event - for what
+ * follows one agent across a session (issue 233).
  */
-export function changedAgentState(event: GlobalEvent): {sessionId: string; channelId: string; agentId: string} | null {
+export function changedNotes(event: GlobalEvent): {sessionId: string; channelId: string; agentId: string} | null {
   const channel = channelEvent(event);
-  const agentId = channel && dataOf(channel.change, 'agent_state_changed');
+  const agentId = channel && dataOf(channel.change, 'notes_changed');
   if (!channel || typeof agentId !== 'string') return null;
   return {sessionId: channel.sessionId, channelId: channel.channelId, agentId};
 }

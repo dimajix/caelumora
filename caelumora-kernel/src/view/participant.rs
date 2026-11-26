@@ -3,7 +3,7 @@
 //! `ParticipantState` that fits; whether the viewer may see something, and which of it is released
 //! to them, stays the participant view's, in one place for every kind.
 //!
-//! Only agents have a state in the channel worth reading - notes, approvals
+//! Only agents have a state in the channel worth reading - approvals
 //! waited for, what they saw. That is the `AgentParticipant` a participant state
 //! hands out if it is an agent, so that no other kind has to answer for
 //! what it does not have. Both kinds of agent keep the same state (issue
@@ -19,8 +19,6 @@ use caelumora_api::reader::{ViewError, ViewResult};
 use caelumora_domain::actor::{ActorDescription, ActorId};
 use caelumora_domain::agent::{Agent, AgentChannelState, AgentId, Personality};
 use caelumora_domain::channel::{ChannelId, Participant};
-use caelumora_domain::digest::Digest;
-use caelumora_domain::note::Note;
 use caelumora_domain::prompt_catalogue::PromptCatalogue;
 use caelumora_domain::security::SecurityAttributes;
 use caelumora_domain::store::{StoreError, StoreResultExt};
@@ -287,8 +285,8 @@ impl ParticipantState for AgentParticipantState {
 }
 
 /// An agent participant's state in the channel, of either kind (issues 179,
-/// 206): its notes, its turn, what it saw. Of an external agent, which
-/// writes no notes and has no turn, those parts are empty.
+/// 206): its turn, what it saw. Of an external agent, which has no turn,
+/// that part is empty.
 #[derive(Debug)]
 pub(super) struct AgentParticipant(StateRef);
 
@@ -302,12 +300,6 @@ impl AgentParticipant {
             .get_agent_channel_state(place.agent, place.channel)
             .await
             .map_err(|e| place.failed(e))
-    }
-
-    /// The notes only it reads (issue 51), with the digest of their chain.
-    pub(super) async fn private_notes(&self) -> ViewResult<(Vec<Note>, Option<Digest>)> {
-        let state = self.stored().await?;
-        Ok((state.private_notes.current(), state.private_notes.digest()))
     }
 
     /// What it saw (issue 41), its view of its channel's history beginning

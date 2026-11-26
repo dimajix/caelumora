@@ -78,11 +78,8 @@ impl AgentBody {
         };
         let event = match carried_out {
             Ok(answer) => {
-                let committed = turn.commit(false, output).await;
+                turn.commit(false, output).await;
                 self.store(state).await;
-                if committed.channel_state_changed {
-                    self.runtime.announce_channel_state_changed();
-                }
                 info!("Agent {} {} carried out /{} for {}", agent_id, name, command, issuer);
                 let to = (answer.visibility == CommandVisibility::Private).then_some(issuer);
                 ActorEvent::CommandExecuted {

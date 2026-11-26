@@ -14,17 +14,14 @@ use caelumora_domain::chain::Position;
 use caelumora_domain::channel::ChannelId;
 use caelumora_domain::confidentiality::{Classification, Place};
 use caelumora_domain::content::{ContentId, ContentRef};
-use caelumora_domain::digest::Digest;
 use caelumora_domain::group::GroupId;
 use caelumora_domain::history::{HistoryField, HistoryPage};
 use caelumora_domain::message::{Message, MessageId};
-use caelumora_domain::note::Note;
 use caelumora_domain::privacy::SessionPrivacy;
 use caelumora_domain::project::ProjectId;
 use caelumora_domain::query::Filter;
 use caelumora_domain::security::Refused;
 use caelumora_domain::session::SessionId;
-use caelumora_domain::snapshot::PublishedNotes;
 use caelumora_domain::value::language::Language;
 use caelumora_domain::value::name::Name;
 use caelumora_domain::value::text::{Briefing, Summary};
@@ -60,10 +57,6 @@ pub trait SessionReader: Send + Sync {
 
     /// The channels of the session the reader may read.
     async fn channels(&self) -> Vec<Box<dyn ChannelReader>>;
-
-    /// The reader's private notes in the session's other channels (issue 255), as far as they may
-    /// be copied to where it reads from; channels with none of them are left out.
-    async fn own_private_notes(&self) -> Vec<PrivateNotesElsewhere>;
 
     /// How session `id` stands for the flow rule now, `None` if it is gone (issue 134).
     async fn privacy_of(&self, id: SessionId) -> ViewResult<Option<SessionPrivacy>>;
@@ -125,9 +118,6 @@ pub trait ChannelReader: Send + Sync {
         message: MessageId,
         id: ContentId,
     ) -> ViewResult<(ContentRef, u64, ByteStream)>;
-
-    /// The notes its participants published there, as far as the reader may read them.
-    async fn notes(&self) -> ViewResult<Vec<PublishedNotes>>;
 }
 
 /// A participant of a channel as an agent's work sees it (`ParticipantView`).
@@ -214,15 +204,3 @@ impl ViewError {
 }
 
 pub type ViewResult<T> = result::Result<T, ViewError>;
-
-/// An agent's private notes in another channel of its session, as far as
-/// they may be read where it reads from (`SessionView::own_private_notes`):
-/// what of that channel it knows itself - no view of the channel, which it
-/// may no longer reach.
-#[derive(Debug, Clone)]
-pub struct PrivateNotesElsewhere {
-    pub channel: ChannelId,
-    pub name: String,
-    pub notes: Vec<Note>,
-    pub digest: Option<Digest>,
-}

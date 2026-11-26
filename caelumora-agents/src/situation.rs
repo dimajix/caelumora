@@ -117,8 +117,8 @@ impl<'a> Situation<'a> {
     }
 
     /// The agent's session as the work reads it from its channel (issue
-    /// 163): the root of what it may read elsewhere - the other channels'
-    /// notes and histories, its own private notes there - at the
+    /// 163): the root of what it may read elsewhere - the other channels and
+    /// their histories - at the
     /// classification the work began with (issue 67). `None` while it is not
     /// attached to its channel, or once the session is gone.
     ///
@@ -146,7 +146,7 @@ impl<'a> Situation<'a> {
     }
 
     /// The agent's channel as the work reads it from there (`ActorRuntime::channel`, issue 399):
-    /// its participants, its notes, at the classification the work began with. `None` where the
+    /// its participants, its history, at the classification the work began with. `None` where the
     /// work reaches no session.
     ///
     /// # Errors

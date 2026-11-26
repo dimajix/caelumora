@@ -484,10 +484,10 @@ asks what, in whose name and by which reason is mapped, check by check, in
     `CommandExecutor`, a secret the `SecretManager`, a skill the `SkillManager`, an answer to an
     approval request the approver, which holds the request: the channel lets it in by its form
     alone (rule 3), and the approver asks whether its sender may approve the calls of the agent
-    that asked as it counts it (issues 312, 567). A component owns the acts on what it keeps -
-    reclassifying a note - and asks for those itself, in the turn's context; reading beyond its
-    channel it leaves to the views, and what a system service keeps - an entry of the agent's
-    memory - to the service, which decides as its writer commits it.
+    that asked as it counts it (issues 312, 567). A component reading beyond its channel leaves it
+    to the views, and what a system service keeps - an agent's note, an entry of its memory - to
+    the service, which decides as its writer commits it, and asks a reclassification of its writer
+    in the turn's context.
 5.  **Offering is not permitting.** The views, a snapshot's flags, the filters of lists, the
     approver's choice of whom to wait for, the visible commands and the event bus ask to decide what
     to show or whom to wait for, never to permit; the act asks again when it is done, and that is no
@@ -655,7 +655,8 @@ question, in the viewer's name:
     confidentiality rules (see [MEMORY.md](MEMORY.md#reading-other-channels)).
 *   A session reaches the channels the viewer may read - a user cleared for their classification, an
     agent also by its own taking part and as far as they may be copied into its channel - and, for
-    an agent, its own private notes of the session's other channels through itself.
+    an agent, the channels it takes or took part in through itself, of which the notes' plugin reads
+    its own private notes (`channels_taken_part_in`).
 *   A channel reaches its participants, also an agent that took part and left, so that what it saw
     stays readable.
 *   A participant answers what may be read of it: an agent's context to whom may read it

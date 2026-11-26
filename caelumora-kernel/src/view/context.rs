@@ -1,8 +1,8 @@
 //! What an agent saw in a channel (issue 41): its state there, as stored,
 //! for a viewer who may read its context (`ReadAgentContext`). Agents run
 //! here and external agents (issue 179) keep the same state (issue 206) and
-//! are read by the same view; what an external agent cannot have - notes,
-//! given-up turns - its state holds nothing of, and the context of one of
+//! are read by the same view; what an external agent cannot have - given-up
+//! turns - its state holds nothing of, and the context of one of
 //! its answers is what the remote agent was given in the call that produced
 //! it (issue 205).
 
@@ -12,12 +12,10 @@ use caelumora_domain::chain::Position;
 use caelumora_domain::channel::ChannelId;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::{ContextResolver, ResolvedContext};
-use caelumora_domain::digest::Digest;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_domain::history::History;
 use caelumora_domain::history::{HistoryField, HistoryPage, Reader};
 use caelumora_domain::message::MessageId;
-use caelumora_domain::note::Note;
 use caelumora_domain::prompt_catalogue::{PromptCatalogue, PromptError};
 use caelumora_domain::query::Filter;
 use caelumora_domain::store::StoreError;
@@ -135,12 +133,6 @@ impl AgentContextView {
     /// the remote agent is given with the next call (issue 205).
     pub fn transcript(&self) -> &Transcript {
         &self.state.transcript
-    }
-
-    /// The agent's private notes in the channel (issue 51), with the digest
-    /// of their chain.
-    pub fn private_notes(&self) -> (Vec<Note>, Option<Digest>) {
-        (self.state.private_notes.current(), self.state.private_notes.digest())
     }
 
     /// What the agent's model saw when it produced the message `message`:

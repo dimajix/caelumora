@@ -63,7 +63,7 @@ import {ClassificationDialog} from './ClassificationDialog';
 import {LanguageDialog} from './LanguageDialog';
 import {ApprovalRulesDialog} from './ApprovalRulesDialog';
 import {languageLabel} from '../language';
-import {approvalRulesChangedChannel, changedChannel, descriptionChangedChannel, languageChangedChannel, languageChangedSession, joinedOrLeftChannel, onGlobalEvent, profileApprovalRules, reclassifiedChannel, saidInChannel, startedChannel} from '../globalEvents';
+import {approvalRulesChangedChannel, descriptionChangedChannel, languageChangedChannel, languageChangedSession, joinedOrLeftChannel, notesChangedIn, onGlobalEvent, profileApprovalRules, reclassifiedChannel, saidInChannel, startedChannel} from '../globalEvents';
 import {markRead} from '../unread';
 import {api} from '../api';
 import type {Page} from '../page';
@@ -393,7 +393,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
 
   // The notes are fetched as the channel is opened, again whenever its stream begins anew -
   // `streamStarts` counts its snapshots, which carry none (issue 607) -, and whenever the global
-  // stream announces a changed state of an agent in this channel, without content (issue 65).
+  // stream announces a change of an agent's notes in this channel, without content (issue 65).
   useEffect(() => {
     let cancelled = false;
     const load = () => {
@@ -403,7 +403,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     };
     load();
     const stop = onGlobalEvent(event => {
-      if (changedChannel(event) === channelId) load();
+      if (notesChangedIn(event) === channelId) load();
     });
     return () => { cancelled = true; stop(); };
   }, [sessionId, channelId, streamStarts]);

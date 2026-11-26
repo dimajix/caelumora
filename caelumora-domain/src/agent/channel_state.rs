@@ -1,10 +1,9 @@
-//! An agent in one channel as it is kept: its `AgentChannelState` - its transcript, its notes, its
-//! part of each thread - and the changes by which a store records it (`AgentChannelStateChange`).
+//! An agent in one channel as it is kept: its `AgentChannelState` - its transcript, its part of
+//! each thread - and the changes by which a store records it (`AgentChannelStateChange`).
 
 use super::{AgentThreadState, AttachmentIndex};
 use crate::actor::{ActorEvent, ActorId};
 use crate::approval::ApprovalRequest;
-use crate::chain::Stored;
 use crate::channel::{ThreadId, ThreadOrigin};
 use crate::confidentiality::Classification;
 use crate::content::ContentId;
@@ -16,9 +15,7 @@ use crate::digest::Digest;
 use crate::external_agent::RemoteState;
 use crate::history::{Heard, HistoryEntry};
 use crate::kept::Kept;
-use crate::ledger::LedgerEntry;
 use crate::message::{executed_calls, CallMeasures, Message, MessageId, MessageRole, TokenUsage};
-use crate::note::{NoteChain, NoteChange, NoteOrigin, Notes};
 use crate::prompt_catalogue::PromptCatalogue;
 use crate::question::QuestionRequest;
 use crate::store;
@@ -42,7 +39,7 @@ use tracing::warn;
 /// An agent in one channel, of either kind (issue 206): what it heard and said, what it was given,
 /// its part of each thread it took part in (issue 602), and the part only its kind keeps - the
 /// turns under way of an agent run here, what an external agent keeps of the remote side. What an
-/// external agent cannot have - notes, prompt parts, tool sets, a turn - stays empty.
+/// external agent cannot have - prompt parts, tool sets, a turn - stays empty.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentChannelState {
     /// The agent's part of each thread it took part in (issue 602): its turn there, where it stands
@@ -64,11 +61,6 @@ pub struct AgentChannelState {
     /// with the state and read on its own (`TranscriptStore`).
     #[serde(skip)]
     pub transcript: Transcript,
-    /// The notes the agent published in this channel (issue 17).
-    pub notes: NoteChain,
-    /// The agent's private notes in this channel, which only it reads - and
-    /// only where the channel's confidentiality allows (issue 51).
-    pub private_notes: NoteChain,
     /// The prompt parts the agent was given in this channel - the system
     /// prompt, notes, ... - by digest, each kept once: what the `FrameRef`s
     /// of its contexts point to (issues 06, 47). Written by the store apart
@@ -792,33 +784,12 @@ impl AgentChannelState {
         }
     }
 
-    /// Takes the turn `turn_id` over (issues 06, 17, 258): its changes to
-    /// the agent's `notes` and `private_notes` here, anchored at the last
-    /// message it took in (`last_message`), and its end,
-    /// `TurnFinished`, after what it said on the branch of `thread` - which
-    /// is in the transcript already (`said`, issue 260). What the turn carried out, and how it
-    /// ended, the channel's history records from what the agent sends.
-    /// Returns whether there were changes to the notes.
-    pub fn finish_turn(
-        &mut self,
-        thread: ThreadId,
-        turn_id: TurnId,
-        notes: Vec<NoteChange>,
-        private_notes: Vec<NoteChange>,
-    ) -> bool {
-        // What branching (issue 08) will find the changes by: the turn's
-        // last message, and the transcript as the turn left it.
-        let after = self.last_message.unwrap_or_default();
-        let origin = NoteOrigin { transcript: self.transcript.digest(thread) };
-        let changed = !notes.is_empty() || !private_notes.is_empty();
-        for change in notes {
-            self.notes.push(change, origin.clone(), after);
-        }
-        for change in private_notes {
-            self.private_notes.push(change, origin.clone(), after);
-        }
+    /// Takes the turn `turn_id` over (issues 06, 258): its end, `TurnFinished`, after what it said
+    /// on the branch of `thread` - which is in the transcript already (`said`, issue 260). What the
+    /// turn carried out, and how it ended, the channel's history records from what the agent sends;
+    /// what it staged for a system service, its notes among it, the kernel commits.
+    pub fn finish_turn(&mut self, thread: ThreadId, turn_id: TurnId) {
         self.transcript.record(thread, TranscriptEntry::TurnFinished { turn_id, at: Utc::now() });
-        changed
     }
 
     /// Records that the turn `turn_id` was given up for `reason` (issue
@@ -889,8 +860,6 @@ pub enum RetryRefused {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentChannelStateChange {
-    Notes(Stored<LedgerEntry<Notes>>),
-    PrivateNotes(Stored<LedgerEntry<Notes>>),
     /// Its part of every thread, whole (issue 602): each changed in place at every step of its turn
     /// (`prepare_resume`, the turn's own methods), and bounded by a turn per thread.
     Threads(BTreeMap<ThreadId, AgentThreadState>),
@@ -913,14 +882,13 @@ impl Journaled for AgentChannelState {
     type Change = AgentChannelStateChange;
 
     fn changes(&self) -> Vec<Self::Change> {
-        let mut changes: Vec<Self::Change> = Vec::new();
-        changes.extend(self.notes.changes().map(AgentChannelStateChange::Notes));
-        changes.extend(self.private_notes.changes().map(AgentChannelStateChange::PrivateNotes));
-        changes.push(AgentChannelStateChange::Threads(self.threads.clone()));
-        changes.push(AgentChannelStateChange::Asleep(self.asleep));
-        changes.push(AgentChannelStateChange::Remote(self.remote.clone()));
-        changes.push(AgentChannelStateChange::LastMessage(self.last_message));
-        changes.push(AgentChannelStateChange::Heard(self.heard.clone()));
+        let mut changes = vec![
+            AgentChannelStateChange::Threads(self.threads.clone()),
+            AgentChannelStateChange::Asleep(self.asleep),
+            AgentChannelStateChange::Remote(self.remote.clone()),
+            AgentChannelStateChange::LastMessage(self.last_message),
+            AgentChannelStateChange::Heard(self.heard.clone()),
+        ];
         if !self.attachments.changes().is_empty() {
             changes.push(AgentChannelStateChange::Attachments(self.attachments.changes().to_vec()));
         }
@@ -930,15 +898,11 @@ impl Journaled for AgentChannelState {
     /// The transcript, the prompt parts and the tool sets are marked stored
     /// by the store that wrote them.
     fn mark_stored(&mut self) {
-        self.notes.mark_stored();
-        self.private_notes.mark_stored();
         self.attachments.mark_stored();
     }
 
     fn apply(&mut self, change: Self::Change) -> Result<(), String> {
         match change {
-            AgentChannelStateChange::Notes(change) => self.notes.apply(change)?,
-            AgentChannelStateChange::PrivateNotes(change) => self.private_notes.apply(change)?,
             AgentChannelStateChange::Threads(threads) => self.threads = threads,
             AgentChannelStateChange::Asleep(asleep) => self.asleep = asleep,
             AgentChannelStateChange::Remote(remote) => self.remote = remote,
@@ -960,7 +924,6 @@ mod tests {
     use crate::context::{ContextResolver, KnowledgeSource};
     use crate::digest;
     use crate::message::testing::{id, make_message};
-    use crate::note::NoteId;
     use crate::prompt_catalogue::testing::kernel_catalogue;
     use crate::question::{Addressee, Question, Questions};
     use crate::store::testing::{replayed, stored};
@@ -1296,17 +1259,8 @@ mod tests {
             ["3"],
             "its answer, without the step"
         );
-        let note = NoteChange::Add {
-            id: NoteId(1),
-            text: "sums".to_string(),
-            classification: Classification::CHANNEL_DEFAULT,
-        };
-
         *turn_slot(&mut state) = None;
-        assert!(
-            state.finish_turn(ThreadId::default(), turn_id, vec![note], Vec::new()),
-            "a note changed"
-        );
+        state.finish_turn(ThreadId::default(), turn_id);
         assert_eq!(
             state.transcript.entries(ThreadId::default()).count(),
             4,
@@ -1323,7 +1277,6 @@ mod tests {
             "what the turn keeps is the turn's, what was heard no turn's"
         );
         assert_eq!(state.last_message, Some(answer.id), "where its changes were made");
-        assert_eq!(state.notes.current().len(), 1);
     }
 
     /// Issue 537: the parts of prompt components stand in the transcript as given where they
@@ -1361,7 +1314,7 @@ mod tests {
             "the turn's"
         );
         assert_eq!(state.take_told().len(), 2, "each told the channel as given");
-        state.finish_turn(ThreadId::default(), turn_id, Vec::new(), Vec::new());
+        state.finish_turn(ThreadId::default(), turn_id);
 
         let before = state.transcript.end();
         state.perceive(ThreadId::default(), vec![said("again", Classification::PUBLIC)]);
@@ -1591,7 +1544,7 @@ mod tests {
         let first = public("Collect.");
         assert!(state.given(ThreadId::default(), first.clone(), Some(skill.clone())), "given");
         let turn_id = state.turn(ThreadId::default()).unwrap().work.turn_id;
-        state.finish_turn(ThreadId::default(), turn_id, Vec::new(), Vec::new());
+        state.finish_turn(ThreadId::default(), turn_id);
         begin(&mut state, Vec::new());
         state.take_told();
 
@@ -1817,7 +1770,7 @@ mod tests {
         };
         let sent = state.said(ThreadId::default(), answer.clone());
         let first = turn_slot(&mut state).take().unwrap().work.turn_id;
-        state.finish_turn(ThreadId::default(), first, Vec::new(), Vec::new());
+        state.finish_turn(ThreadId::default(), first);
         let answered = state
             .transcript
             .entries(ThreadId::default())
@@ -2005,7 +1958,7 @@ mod tests {
         );
 
         let turn = turn_slot(&mut state).take().unwrap().work.turn_id;
-        state.finish_turn(ThreadId::default(), turn, Vec::new(), Vec::new());
+        state.finish_turn(ThreadId::default(), turn);
         assert_eq!(
             state.thread(ThreadId::default()).and_then(|part| part.used).map(|u| u.context_tokens),
             Some(3),
@@ -2119,7 +2072,7 @@ mod tests {
         assert!(turn.work.context.frame.tools.is_none(), "a command turn offers its model nothing");
 
         *turn_slot(&mut state) = None;
-        assert!(!state.finish_turn(ThreadId::default(), turn_id, Vec::new(), Vec::new()));
+        state.finish_turn(ThreadId::default(), turn_id);
         assert!(
             matches!(state.transcript.last(ThreadId::default()).map(|n| &n.entry), Some(TranscriptEntry::TurnFinished { turn_id: t, .. }) if *t == turn_id)
         );
@@ -2202,7 +2155,7 @@ mod tests {
         let mut state = a_state_that_heard("hello", Classification::CHANNEL_DEFAULT);
         begin(&mut state, Vec::new());
         let turn = turn_slot(&mut state).take().expect("a turn was begun").work.turn_id;
-        state.finish_turn(ThreadId::default(), turn, Vec::new(), Vec::new());
+        state.finish_turn(ThreadId::default(), turn);
         assert_eq!(
             state.answers_again_after(ThreadId::default(), turn),
             Err(RetryRefused::Ended),
@@ -2421,24 +2374,6 @@ mod tests {
                 ..make_message(id(2))
             }],
         );
-        state.notes.push(
-            NoteChange::Add {
-                id: NoteId(1),
-                text: "noted".to_string(),
-                classification: Classification::CHANNEL_DEFAULT,
-            },
-            Default::default(),
-            id(2),
-        );
-        state.private_notes.push(
-            NoteChange::Add {
-                id: NoteId(1),
-                text: "mine".to_string(),
-                classification: Classification::CHANNEL_DEFAULT,
-            },
-            Default::default(),
-            id(2),
-        );
         state.asleep = true;
         let step = ActorState::WaitingForUser;
         *turn_slot(&mut state) = Some(TurnState { step, model_calls: 3, ..TurnState::default() });
@@ -2452,8 +2387,6 @@ mod tests {
         let parts: Vec<&str> = changes
             .iter()
             .map(|c| match c {
-                AgentChannelStateChange::Notes(_) => "notes",
-                AgentChannelStateChange::PrivateNotes(_) => "private_notes",
                 AgentChannelStateChange::Threads(_) => "threads",
                 AgentChannelStateChange::Asleep(_) => "asleep",
                 AgentChannelStateChange::Remote(_) => "remote",
@@ -2462,7 +2395,7 @@ mod tests {
                 AgentChannelStateChange::Attachments(_) => "attachments",
             })
             .collect();
-        assert_eq!(parts, ["notes", "private_notes", "threads", "asleep", "remote", "last_message", "heard", "attachments"], "what was added, then the small parts whole; the transcript, the prompt parts and the tool sets are the store's to write");
+        assert_eq!(parts, ["threads", "asleep", "remote", "last_message", "heard", "attachments"], "the small parts whole, then what was added; the transcript, the prompt parts and the tool sets are the store's to write");
         replayed(&state, &mut copy);
         assert!(
             !copy.attachments.is_empty(),

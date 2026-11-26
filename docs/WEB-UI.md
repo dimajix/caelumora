@@ -583,9 +583,9 @@ takes part in, not only this one, until it is restored.
     each set with why it is unavailable where it is, each tool marked where a call needs approval,
     is shown to its owner only, or has its results classified.
 *   **The private notes** (`can_read_context`) are what the agent noted for itself in every channel
-    of the session the user may read, this channel first, fetched again whenever the agent's state
-    in the session changes. Who may read an agent's context sees them there anyway; the panel shows
-    them current and on their own.
+    of the session the user may read, this channel first, fetched again whenever the agent's notes
+    change in one of the session's channels (`notes_changed`). Who may read an agent's context sees
+    them there anyway; the panel shows them current and on their own.
 
 Below the participants, "Former participants" lists who took part and left, with history and private
 notes where `can_read_context`, so that what a removed agent did - the turn it gave up when removed

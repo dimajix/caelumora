@@ -12,7 +12,6 @@ use crate::activity::{ActivityError, ActivityProvider};
 use crate::command::AgentCommand;
 use crate::library::AgentsLibrary;
 use crate::message::{EmitOutProcessor, MessageProcessor, PerceiveInProcessor, ProcessingError};
-use crate::notes::{AgentNotes, NoteKind};
 use crate::prompt::{ContextError, PositionParams, Prompt, PromptPosition, PromptProvider};
 use crate::situation::Situation;
 use crate::testing::Scripted;
@@ -572,8 +571,7 @@ impl Tool for Asking {
 }
 
 /// A component whose agent carries out `/mark [text]` (issue 269), also by its short form `/mk`
-/// (issue 560): it notes "marked <text>" and answers the issuer alone - with `fail`, it notes and
-/// then fails, so that nothing of it may stay.
+/// (issue 560): it answers the issuer alone - with `fail`, it fails.
 #[derive(Debug)]
 struct Marking(CommandDescription);
 
@@ -597,8 +595,7 @@ impl Command for Marking {
 
 #[async_trait::async_trait]
 impl AgentCommand for Marking {
-    async fn execute(&self, args: &str, turn: &mut Turn<'_>) -> CommandResult<CommandOutput> {
-        AgentNotes::note(turn, NoteKind::Public, format!("marked {args}"));
+    async fn execute(&self, args: &str, _turn: &mut Turn<'_>) -> CommandResult<CommandOutput> {
         if args == "fail" {
             return Err(CommandError::Failed {
                 command: "mark".to_string(),

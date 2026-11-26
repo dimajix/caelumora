@@ -3,7 +3,7 @@
 //! `KnowledgeRef`, `KnowledgeSource`), and the references a turn keeps (`ContextRef`, `FrameRef`).
 
 use super::ModelProfile;
-use crate::agent::AgentId;
+use crate::actor::ActorId;
 use crate::chain::Position;
 use crate::channel::ChannelId;
 use crate::confidentiality::Classification;
@@ -127,12 +127,17 @@ pub struct KnowledgeRef {
 /// What a [`KnowledgeRef`] read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum KnowledgeSource {
-    /// The notes an agent published in the channel; the digest of its note
-    /// chain, `None` while it had none.
-    Notes { agent: AgentId, digest: Option<Digest> },
-    /// An agent's private notes in the channel (issue 51), read by that
-    /// agent; the digest of its private note chain.
-    PrivateNotes { agent: AgentId, digest: Option<Digest> },
+    /// What an actor keeps and was read of it (issues 17, 51, 62, 607): its notes in the channel,
+    /// its private notes there, its memory, read once for every channel its entries were written
+    /// in - by the kind of the document that keeps it, the part of it read (`private`, of the
+    /// notes) and the digest of what was read, `None` while it held nothing.
+    Actor {
+        actor: ActorId,
+        kind: EntityKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        place: Option<String>,
+        digest: Option<Digest>,
+    },
     /// The channel's history; the digest of it when it was read - up to
     /// where - and, for a reader who joined later with a limit, the position
     /// their view began at (issues 72, 417). `None`: all of it.
@@ -146,10 +151,7 @@ pub enum KnowledgeSource {
     /// directory by its path as `place` (issue 538) - the workspace's top directory an empty one -,
     /// with the digest of a file's content as it was read - `None` for a listing or a search -; a
     /// skill (issue 22), loaded into the turn whole, without a place, with the digest of its body
-    /// as it was loaded (the skills plugin's `skill::digest`); an agent's memory (issues 62, 518),
-    /// read by that agent, with the digest of its chain, recorded once for every channel the
-    /// entries recalled were written in, so that knowledge from another session can be told (issue
-    /// 134).
+    /// as it was loaded (the skills plugin's `skill::digest`).
     Entity {
         kind: EntityKind,
         id: Uuid,
@@ -160,6 +162,12 @@ pub enum KnowledgeSource {
 }
 
 impl KnowledgeSource {
+    /// That `place` of what `actor` keeps in a document of kind `T` was read - all of it without a
+    /// place -, as `digest` says (issue 607).
+    pub fn kept_by<T: Stored>(actor: ActorId, place: Option<&str>, digest: Option<Digest>) -> Self {
+        Self::Actor { actor, kind: T::KIND, place: place.map(str::to_string), digest }
+    }
+
     /// That the entity of kind `T` with `id` was read as a whole, as `digest` says.
     pub fn entity<T: Stored>(id: T::Id, digest: Option<Digest>) -> Self {
         Self::Entity { kind: T::KIND, id: id.into(), place: None, digest }
@@ -214,11 +222,12 @@ impl KnowledgeSource {
         }
     }
 
-    /// Where within its entity what was read lies (`within`); `None` for an entity read as a
-    /// whole, and for knowledge of anything else.
+    /// Where within its entity what was read lies (`within`), or what part of what an actor keeps
+    /// (`kept_by`); `None` for an entity or an actor's records read as a whole, and for knowledge
+    /// of anything else.
     pub fn place(&self) -> Option<&str> {
         match self {
-            Self::Entity { place, .. } => place.as_deref(),
+            Self::Entity { place, .. } | Self::Actor { place, .. } => place.as_deref(),
             _ => None,
         }
     }

@@ -2,6 +2,11 @@ session_templates:
 - id: 28e4c2ed-13c2-4161-addf-7a6521d2d986
   name: external-session
   description: An assistant of ours and an agent that runs elsewhere, each answering when @-mentioned
+  components:
+  - id: session-basics
+    kind: ref
+    params:
+      name: session-basics
   participants:
   - User:
       name: user

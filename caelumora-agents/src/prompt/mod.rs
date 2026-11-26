@@ -289,9 +289,7 @@ pub fn register_all(registry: &mut LibraryComponents<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::components::notes::NOTES_KIND;
     use crate::components::planning::PLANNING_KIND;
-    use crate::components::private_notes::PRIVATE_NOTES_KIND;
     use crate::library::AgentsLibrary;
     use crate::prompt::channel_briefing::CHANNEL_BRIEFING_KIND;
     use crate::prompt::channel_language::CHANNEL_LANGUAGE_KIND;
@@ -388,8 +386,6 @@ mod tests {
             (CHANNEL_BRIEFING_KIND, Start),
             (TOOL_SETS_KIND, Start),
             (PLANNING_KIND, Start),
-            (NOTES_KIND, BeforeTurnInput),
-            (PRIVATE_NOTES_KIND, BeforeTurnInput),
         ];
         for (kind, default) in kinds {
             assert_eq!(position(kind, Value::Null).await.unwrap(), default, "{kind}: its default");

@@ -5433,9 +5433,8 @@ async fn a_command_of_the_session_is_seen_and_run_by_whoever_reads_the_channel()
             "bob: ShowCommand(alice's) yes",
             "bob: ExecuteCommand(alice's) yes",
             // What /help lists, one for each command: /agent create, delete, list, usage,
-            // wakeup, /channel briefing, create, delete, describe, join, leave, list, notes,
-            // rename, summary, /help, /participant add, list, nudge, remove.
-            "bob: ShowCommand(alice's) yes",
+            // wakeup, /channel briefing, create, delete, describe, join, leave, list, rename,
+            // summary, /help, /participant add, list, nudge, remove.
             "bob: ShowCommand(alice's) yes",
             "bob: ShowCommand(alice's) yes",
             "bob: ShowCommand(alice's) yes",
@@ -6023,49 +6022,6 @@ async fn agent_usage_asks_what_reading_the_channel_asks() {
             "/{line}: {asked:#?}"
         );
     }
-    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
-}
-
-/// `/channel notes` (issue 574) asks nothing reading the channel does not ask: bob, who reads
-/// alice's channel, is shown what her agent noted in it, as the web UI shows it him; of a channel
-/// he may not read, he is told what he is told of one that does not exist.
-#[tokio::test]
-async fn channel_notes_asks_what_reading_the_channel_asks() {
-    // Agents that run, so that they take part.
-    let answering = ScriptedAgents(Script::Answers("ok".to_string()));
-    let world = World::with(&[], &[&answering], |_| {}).await;
-    let hers = world.personality("hers", Some(world.alice), &[]).await;
-    let helper = world.agent("helper", world.alice, &hers).await;
-    let session = world.shared_session(&[helper], &[]).await;
-    let main = Arc::clone(&session.channels()[0]);
-    world.note(helper, main.id(), &["noted for all"]).await;
-    world.kernel.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
-    let private = ChannelSpec { components: quiet(), ..ChannelSpec::new("private") };
-    session.create_channel(&World::as_user(world.alice), private).await.expect("hers to make");
-    let bob = main.user_actor(world.bob).unwrap();
-
-    for line in ["channel notes", "channel notes main"] {
-        let (reply, asked) = world.asked(bob.execute_command(None, line)).await;
-        let told = reply.expect("his to read").output.expect("answered to him");
-        assert!(told.contains("helper:\n- #1 noted for all"), "/{line}: {told}");
-        assert_eq!(
-            asked,
-            checks(&[
-                "bob: ShowCommand(alice's) yes",
-                "bob: ExecuteCommand(alice's) yes",
-                // Reading the channel, as its view does.
-                "bob: GetSession(alice's) yes",
-                "bob: GetChannel(alice's) yes",
-                "bob: Cleared(bob) yes",
-            ]),
-            "/{line}: {asked:#?}"
-        );
-    }
-    assert_eq!(
-        unusable(&bob, "channel notes", "private").await,
-        unusable(&bob, "channel notes", "nowhere").await,
-        "one he may not read, as one that does not exist"
-    );
     world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

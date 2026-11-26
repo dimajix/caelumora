@@ -90,11 +90,6 @@ async fn an_agent_carries_out_a_command_in_a_turn_of_its_own_and_answers_the_iss
     );
 
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
-    assert_eq!(
-        state.notes.current().iter().map(|n| n.text.as_str()).collect::<Vec<_>>(),
-        ["marked twice"],
-        "what it staged is applied"
-    );
     assert!(state.turns().next().is_none(), "the turn is over");
     assert!(
         matches!(state.transcript.last(line).map(|node| &node.entry), Some(TranscriptEntry::TurnFinished { turn_id: t, .. }) if Some(*t) == turn_id),
@@ -149,10 +144,7 @@ async fn a_command_its_issuer_may_see_but_not_ask_for_is_rejected_at_the_door() 
         "not hers to ask for"
     );
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
-    assert!(
-        state.notes.current().is_empty() && state.turns().next().is_none(),
-        "nothing reached the agent"
-    );
+    assert!(state.turns().next().is_none(), "nothing reached the agent");
     let recorded = channel.history_entries().await.split_off(before);
     assert!(
         matches!(recorded.as_slice(), [HistoryEntry::EventRejected { .. }]),
@@ -186,7 +178,6 @@ async fn a_command_that_fails_is_told_to_the_issuer_and_leaves_nothing_behind() 
     assert!(reason.contains("it was told to"), "{reason}");
 
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
-    assert!(state.notes.current().is_empty(), "nothing it staged is applied");
     assert!(state.turns().next().is_none());
     assert_eq!(
         state.transcript.end(),
@@ -273,7 +264,7 @@ async fn a_command_of_an_agent_is_issued_in_a_thread_it_takes_part_in() {
 
 #[tokio::test]
 async fn a_sleeping_agent_carries_out_a_command_and_sleeps_on() {
-    let Stuck { channel, context, agent, helper, running, .. } = with_a_marking_agent(true).await;
+    let Stuck { channel, context, helper, running, .. } = with_a_marking_agent(true).await;
     let actor = channel.user_actor(alice_of(&context)).unwrap();
     let mut watch = actor.watch();
 
@@ -286,8 +277,6 @@ async fn a_sleeping_agent_carries_out_a_command_and_sleeps_on() {
     );
     assert!(started.is_some(), "she is told it began, asleep or not");
     assert!(states.is_empty(), "shown asleep all along (issue 299): {states:?}");
-    let state = channel.stored_agent_channel_state(agent).await.unwrap();
-    assert_eq!(state.notes.current().len(), 1);
     assert_eq!(helper.state(), ActorState::Sleeping, "a command wakes nobody");
     running.abort();
 }

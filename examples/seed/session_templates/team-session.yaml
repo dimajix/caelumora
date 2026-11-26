@@ -12,6 +12,11 @@ session_templates:
 - id: b6f36657-cb30-4fac-8873-c216b46bbf2c
   name: team-session
   description: A coder, a reviewer and a planner; a decision model chooses who answers
+  components:
+  - id: session-basics
+    kind: ref
+    params:
+      name: session-basics
   summary: Software work with a small team
   briefing: |-
     The user works on software with a small team: a coder, a reviewer and a planner. Each answers

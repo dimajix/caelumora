@@ -129,9 +129,10 @@ function knowledgeLabel(knowledge: KnowledgeRef, sessionId: string): string {
   const agent = knowledge.agent_name ?? 'an agent';
   switch (knowledge.source) {
     case 'notes':
-      return `Notes of ${agent} in ${channel}`;
-    case 'private_notes':
-      return `Private notes of ${agent} in ${channel}`;
+      // What an agent keeps (issue 607): its private notes are the part `private` of its notes.
+      return knowledge.place === 'private'
+        ? `Private notes of ${agent} in ${channel}`
+        : `Notes of ${agent} in ${channel}`;
     case 'memory':
       // The agent's own memory (issue 518): the context shown is the agent's.
       return `Its memory, from ${channel}`;

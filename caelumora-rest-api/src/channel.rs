@@ -12,7 +12,6 @@ use caelumora_domain::command::CommandDescription;
 use caelumora_domain::confidentiality::{Classification, Confidentiality};
 use caelumora_domain::content::ContentId;
 use caelumora_domain::message::{Message, MessageId, TokenUsage};
-use caelumora_domain::note::Note;
 use caelumora_domain::question::{QuestionRequest, Response};
 use caelumora_domain::removal::Removal;
 use caelumora_domain::snapshot;
@@ -63,20 +62,6 @@ impl ChannelSnapshot {
             pending_approvals,
             pending_questions,
         }
-    }
-}
-
-/// The notes one agent published in a channel.
-#[derive(Debug, Serialize)]
-pub struct PublishedNotesResponse {
-    pub agent_id: ActorId,
-    pub name: String,
-    pub notes: Vec<Note>,
-}
-
-impl From<snapshot::PublishedNotes> for PublishedNotesResponse {
-    fn from(published: snapshot::PublishedNotes) -> Self {
-        Self { agent_id: published.agent, name: published.name, notes: published.notes }
     }
 }
 

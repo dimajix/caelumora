@@ -27,7 +27,7 @@ pub trait MemoryReader: Send + Sync {
 #[async_trait]
 pub trait MemoryWriter: Committing<MemoryChange> {
     /// A number for a new entry, never handed out before: reserved at once, since the agent's
-    /// turns elsewhere remember at the same time - the one exception to staging.
+    /// turns elsewhere remember at the same time - the exception to staging, as for notes.
     ///
     /// # Errors
     /// If the memory cannot be read to count on from it.

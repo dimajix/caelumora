@@ -2,6 +2,11 @@ session_templates:
 - id: 9ea5159d-3f05-466b-8d4f-6fa3078aad60
   name: user-driven-session
   description: Two assistants that both answer you, but not each other
+  components:
+  - id: session-basics
+    kind: ref
+    params:
+      name: session-basics
   participants:
   - User:
       name: user

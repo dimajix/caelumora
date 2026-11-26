@@ -693,17 +693,13 @@ mod tests {
             SecurityAttributes::systems(),
         );
         bus.publish(
-            GlobalEvent::custom::<Channel>(
-                &(session, channel),
-                channel::AGENT_STATE_CHANGED,
-                &agent,
-            ),
+            GlobalEvent::custom::<Channel>(&(session, channel), channel::LEFT, &agent),
             SecurityAttributes::systems(),
         );
 
         assert_eq!(
             described(sessions.drain().await),
-            ["channel joined", "channel agent_state_changed"],
+            ["channel joined", "channel left"],
             "its session"
         );
         assert!(others.drain().await.is_empty(), "no other session");
@@ -776,17 +772,13 @@ mod tests {
             attributes.clone(),
         );
         bus.publish(
-            GlobalEvent::custom::<Channel>(
-                &(session, channel),
-                channel::AGENT_STATE_CHANGED,
-                &AgentId::new(),
-            ),
+            GlobalEvent::custom::<Channel>(&(session, channel), channel::LEFT, &AgentId::new()),
             attributes,
         );
 
         assert_eq!(
             described(alices.drain().await),
-            ["channel Created", "channel joined", "channel agent_state_changed"],
+            ["channel Created", "channel joined", "channel left"],
             "asked as reading the channel (issue 304), the session's as reading it"
         );
     }

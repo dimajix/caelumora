@@ -10,7 +10,7 @@ use super::{
 use crate::memory::MemoryId;
 use crate::NAMESPACE;
 use async_trait::async_trait;
-use caelumora_agents::components::notes::NOTE_PRESENTATION;
+use caelumora_agents::tool::NOTE_PRESENTATION;
 use caelumora_agents::tool::{
     classification_argument, described, id_argument, reclassify_parameters, text_argument,
     tool_text, FixedTools, Tool, ToolError, ToolOutput, ToolResult,

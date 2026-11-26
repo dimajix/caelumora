@@ -1,6 +1,7 @@
 //! The built-in command group `channel` (issue 560): the commands on the channels of a session -
-//! `channel list`, `describe`, `notes`, `create`, `delete`, `join`, `leave`, `rename`, `summary`
-//! and `briefing` -, contributed by one component, one file per command. Those that change or
+//! `channel list`, `describe`, `create`, `delete`, `join`, `leave`, `rename`, `summary` and
+//! `briefing` -, contributed by one component, one file per command; `channel notes` is the notes
+//! plugin's (issue 607). Those that change or
 //! leave a channel act on the one they are issued in; those that make, delete or join one name it.
 
 mod briefing;
@@ -10,7 +11,6 @@ mod describe;
 mod join;
 mod leave;
 mod list;
-mod notes;
 mod rename;
 mod summary;
 
@@ -21,14 +21,13 @@ use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_domain::command::CHANNEL_GROUP_KIND;
 use std::sync::Arc;
 
-/// The commands of the group `channel`: `/channel list`, `/channel describe`, `/channel notes`,
-/// `/channel create`, `/channel delete`, `/channel join`, `/channel leave`, `/channel rename`,
-/// `/channel summary` and `/channel briefing`.
+/// The commands of the group `channel`: `/channel list`, `/channel describe`, `/channel create`,
+/// `/channel delete`, `/channel join`, `/channel leave`, `/channel rename`, `/channel summary` and
+/// `/channel briefing`.
 fn commands() -> Vec<Arc<dyn ChannelCommand>> {
     vec![
         Arc::new(list::ListCommand::new()),
         Arc::new(describe::DescribeCommand::new()),
-        Arc::new(notes::NotesCommand::new()),
         Arc::new(create::CreateCommand::new()),
         Arc::new(delete::DeleteCommand::new()),
         Arc::new(join::JoinCommand::new()),

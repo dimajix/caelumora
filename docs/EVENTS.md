@@ -21,9 +21,10 @@ entity's id as text, `within` the id of the entity it lies in, and `change` an `
     `session::STARTED` and `STOPPED`, a channel's `STARTED`, `STOPPED` - as its session stops,
     before the session's, or as it is deleted or taken back as its founders cannot join, since a
     channel does not stop by itself (issue 593) -, `JOINED` and `LEFT` - with the `ActorId` of who
-    joined or left -, `AGENT_STATE_CHANGED`, with the agent's id, and `SAID`, with a message others
-    hear as it was said and its thread (`Said`: of the line, or of another where it mentions a
-    user, issue 557; see [CHANNELS.md](CHANNELS.md#what-is-new-to-a-user)), and `WAITING_CHANGED`,
+    joined or left -, the notes' `NOTES_CHANGED`, with the agent's id (issue 607), and `SAID`, with
+    a message others hear as it was said and its thread (`Said`: of the line, or of another where
+    it mentions a user, issue 557; see [CHANNELS.md](CHANNELS.md#what-is-new-to-a-user)), and
+    `WAITING_CHANGED`,
     with the `ActorId` of the user for whom what waits in the channel changed (issue 594; see
     [CHANNELS.md](CHANNELS.md#what-waits-for-a-user)), and `DELEGATION_LET_GO`, with the thread
     whose delegation was let go, to be closed with the agent it owns (issue 598; see

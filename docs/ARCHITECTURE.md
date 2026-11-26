@@ -76,6 +76,11 @@ drawn in [CRATES.md](CRATES.md):
     is: the memory of each agent as a document of its kind, its keeper, the reader and the writer of
     an agent's work, and the component `agent_memory` (issue 518). See
     [MEMORY.md](MEMORY.md#agent-memory).
+*   **`caelumora-notes`** - an agent's notes in a channel, public and private, a plugin and a
+    library built as `caelumora-memory` is: the notes of each agent in each channel as a document
+    of its kind, their keeper, the reader and the writer of an agent's work, the board of a
+    channel and an agent's private notes as extensions of the views, `/channel notes`, and the
+    components `notes` and `private_notes` (issue 607). See [MEMORY.md](MEMORY.md#notes).
 *   **`caelumora-subagents`** - sub-agents, a plugin and a library built as `caelumora-memory` is:
     the writer of an agent's work that starts an agent on a brief in a thread of its own, asks it
     again and ends it, made of the kernel's threads and delegating, and the component `subagents`
@@ -166,7 +171,8 @@ lists of its kind one on `ChannelView`. Which plugins are in is the program's ch
 the model; the kernel knows none. A plugin is one crate; one that brings a library beside it is cut
 into layers by Cargo features rather than crates. The first is `caelumora-skills`
 ([SKILLS.md](SKILLS.md#where-the-code-lives)), the second `caelumora-artifacts`, which depends on
-the kernel's workspaces, the third `caelumora-memory`, the fourth `caelumora-subagents`;
+the kernel's workspaces, the third `caelumora-memory`, the fourth `caelumora-subagents`, the fifth
+`caelumora-notes`;
 `caelumora-decision` brings a component of a channel alone, and `caelumora-open-terminal`,
 `caelumora-store-json`, `caelumora-store-home` and `caelumora-store-postgres` bring backends alone.
 What runs an agent or serves its facets is no plugin but a **library** of the
@@ -312,8 +318,8 @@ The path of one message shows how the parts fit together:
 4.  The answer is published.** What the agent sends is stripped of what only its owner may see,
     delivered to the others through the channel, and the turn is committed: the messages go into the
     agent's transcript, the channel records them in full for the agent and as published for the
-    others, the changes staged to its notes are applied to its state in the channel, what it staged
-    for system services is committed by their writers, and everything is stored.
+    others, what it staged for system services - its notes, its memory - is committed by their
+    writers, and everything is stored.
 5.  **Observers are told.** The channel's events reach the participants' live streams; changes to
     entities are announced on the event bus, which the web UI follows.
 
@@ -397,13 +403,14 @@ Details: [SKILLS.md](SKILLS.md).
 
 ## Reading what is there
 
-What is in the system is read through one navigation, the **views** (`caelumora_kernel::view`):
-from a session to its channels, from a channel to its history, notes and participants, from an agent
-among them to what it saw - its transcript, its private notes, the context of each of its messages,
-the turns it gave up. Each step asks its own access question, in the name of whoever reads; a node
-is data that was allowed to be reached and decides nothing, so an operation still checks its own
-permission. The views read what is stored - through the running loop where there is one - so running
-and stopped sessions are read alike and reading starts nothing.
+What is in the system is read through one navigation, the **views** (`caelumora_kernel::view`): from
+a session to its channels, from a channel to its history and participants, from an agent among them
+to what it saw - its transcript, the context of each of its messages, the turns it gave up -; a
+plugin extends the views with what it keeps - a channel's notes, an agent's private notes. Each step
+asks its own access question, in the name of whoever reads; a node is data that was allowed to be
+reached and decides nothing, so an operation still checks its own permission. The views read what is
+stored - through the running loop where there is one - so running and stopped sessions are read
+alike and reading starts nothing.
 
 Two kinds of viewer walk the same steps: a user, who reads what they may read and are cleared for,
 and an agent, which reads from its channel by the confidentiality rules, through the `Turn` its

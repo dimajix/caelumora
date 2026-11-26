@@ -46,6 +46,8 @@ use caelumora_model::plugin::ModelPlugin;
 use caelumora_model_comfyui::plugin::ComfyUiModelPlugin;
 use caelumora_model_ollama::plugin::{with_local_model, OllamaModelPlugin};
 use caelumora_model_systemone::plugin::SystemOneModelPlugin;
+use caelumora_notes::library::NotesLibrary;
+use caelumora_notes::plugin::NotesPlugin;
 use caelumora_open_terminal::plugin::OpenTerminalPlugin;
 use caelumora_skills::library::SkillsLibrary;
 use caelumora_skills::plugin::SkillsPlugin;
@@ -183,6 +185,7 @@ fn plugins() -> Vec<Box<dyn Plugin>> {
         Box::new(SkillsPlugin),
         Box::new(ArtifactsPlugin),
         Box::new(MemoryPlugin),
+        Box::new(NotesPlugin),
         Box::new(SubagentsPlugin),
         Box::new(OpenTerminalPlugin),
         Box::new(ModelPlugin),
@@ -212,6 +215,7 @@ fn libraries(log: LogTarget) -> Vec<Box<dyn Library>> {
         Box::new(SkillsLibrary),
         Box::new(ArtifactsLibrary),
         Box::new(MemoryLibrary),
+        Box::new(NotesLibrary),
         Box::new(SubagentsLibrary),
     ];
     if let LogTarget::File(log) = log {

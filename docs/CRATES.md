@@ -19,6 +19,7 @@ flowchart TD
         skills["caelumora-skills"]
         artifacts["caelumora-artifacts"]
         memory["caelumora-memory"]
+        notes["caelumora-notes"]
         subagents["caelumora-subagents"]
     end
 
@@ -61,9 +62,10 @@ flowchart TD
     both --> domain
     both -. "kernel" .-> kernel
     artifacts & rest_server & skills --> rest_api
-    artifacts & skills -. "server" .-> rest_server
+    notes -. "server" .-> rest_api
+    artifacts & notes & skills -. "server" .-> rest_server
     both -. "kernel" .-> security
-    artifacts & memory & skills -. "kernel" .-> store
+    artifacts & memory & notes & skills -. "kernel" .-> store
     plugins --> api
     plugins --> domain
     plugins --> kernel
@@ -94,7 +96,7 @@ those it takes with other features than their default ones.
 | Program | Depends on |
 |---|---|
 | `caelumora-app` | every crate of the graph but `caelumora-rest-api`, `caelumora-rest-client`, `caelumora-security`, `caelumora-store` and `caelumora-store-home` |
-| `caelumora-tui` | every crate of the graph but `caelumora-rest-api`, `caelumora-rest-client`, `caelumora-rest-server` and `caelumora-store`; `caelumora-artifacts`, `caelumora-memory`, `caelumora-skills` and `caelumora-subagents` with `kernel` and `library` alone |
+| `caelumora-tui` | every crate of the graph but `caelumora-rest-api`, `caelumora-rest-client`, `caelumora-rest-server` and `caelumora-store`; `caelumora-artifacts`, `caelumora-memory`, `caelumora-notes`, `caelumora-skills` and `caelumora-subagents` with `kernel` and `library` alone |
 <!-- crate-graph.sh: end -->
 
 Until issue [522](../issues/522-two-crates-named-model.md), `caelumora-domain` was named

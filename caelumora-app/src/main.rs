@@ -30,6 +30,8 @@ use caelumora_model::plugin::ModelPlugin;
 use caelumora_model_comfyui::plugin::ComfyUiModelPlugin;
 use caelumora_model_ollama::plugin::{with_local_model, OllamaModelPlugin};
 use caelumora_model_systemone::plugin::SystemOneModelPlugin;
+use caelumora_notes::library::NotesLibrary;
+use caelumora_notes::plugin::NotesPlugin;
 use caelumora_open_terminal::plugin::OpenTerminalPlugin;
 use caelumora_rest_server::auth::{Auth, TokenService};
 use caelumora_rest_server::error::{self, ApiError};
@@ -200,10 +202,10 @@ async fn signalled() {
     }
 }
 
-/// The plugins of the program that serve routes (issue 323), which it builds its kernel and its API
-/// with.
+/// The plugins of the program that serve routes (issues 323, 607), which it builds its kernel and
+/// its API with.
 fn rest_plugins() -> Vec<Box<dyn RestPlugin>> {
-    vec![Box::new(SkillsPlugin), Box::new(ArtifactsPlugin)]
+    vec![Box::new(SkillsPlugin), Box::new(ArtifactsPlugin), Box::new(NotesPlugin)]
 }
 
 /// The plugins of the program that bring no routes (issues 03, 327, 403, 446, 518, 525), which only
@@ -224,7 +226,7 @@ fn plugins() -> Vec<Box<dyn Plugin>> {
 }
 
 /// The libraries of the program, of the agent side (issues 325, 326, 329, 428, 464, 516, 518, 525,
-/// 533, 544) - first the essential one, the agents' (issue 370).
+/// 533, 544, 607) - first the essential one, the agents' (issue 370).
 fn libraries() -> Vec<Box<dyn Library>> {
     vec![
         Box::new(AgentsLibrary),
@@ -238,6 +240,7 @@ fn libraries() -> Vec<Box<dyn Library>> {
         Box::new(SkillsLibrary),
         Box::new(ArtifactsLibrary),
         Box::new(MemoryLibrary),
+        Box::new(NotesLibrary),
         Box::new(SubagentsLibrary),
     ]
 }

@@ -20,7 +20,7 @@ mod tool;
 mod turn;
 
 use crate::extension::{MemoryReader, MemoryWriter};
-use crate::memory::{AgentMemory, AgentMemoryId, Memory};
+use crate::memory::{AgentMemory, Memory};
 use async_trait::async_trait;
 use caelumora_agents::command::AgentCommand;
 use caelumora_agents::prompt::{
@@ -31,6 +31,7 @@ use caelumora_agents::situation::Situation;
 use caelumora_agents::tool::ToolProvider;
 use caelumora_api::command::CommandProvider;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_domain::actor::ActorId;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
@@ -87,8 +88,8 @@ impl PromptProvider for AgentMemoryComponent {
         }
         // Once for every channel the entries come from, so that knowledge
         // from another session can be told (issue 134); the agent's own, so private.
-        let id = AgentMemoryId::of(situation.agent_id());
-        let source = KnowledgeSource::entity::<AgentMemory>(id, memory.digest());
+        let agent = ActorId::Agent(situation.agent_id());
+        let source = KnowledgeSource::kept_by::<AgentMemory>(agent, None, memory.digest());
         let mut knowledge: Vec<KnowledgeRef> = Vec::new();
         for entry in recalled {
             if !knowledge.iter().any(|k| k.channel == entry.origin.channel) {
@@ -147,7 +148,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
 mod tests {
     use super::*;
     use crate::library::MemoryLibrary;
-    use crate::memory::{AgentMemory, MemoryChange, MemoryId};
+    use crate::memory::{AgentMemory, AgentMemoryId, MemoryChange, MemoryId};
     use crate::plugin::MemoryPlugin;
     use crate::NAMESPACE;
     use crate::PROMPTS;

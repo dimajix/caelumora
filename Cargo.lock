@@ -488,6 +488,7 @@ dependencies = [
  "caelumora-model-comfyui",
  "caelumora-model-ollama",
  "caelumora-model-systemone",
+ "caelumora-notes",
  "caelumora-open-terminal",
  "caelumora-rest-server",
  "caelumora-security",
@@ -751,6 +752,29 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "caelumora-notes"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "caelumora-agents",
+ "caelumora-api",
+ "caelumora-domain",
+ "caelumora-kernel",
+ "caelumora-rest-api",
+ "caelumora-rest-server",
+ "caelumora-security",
+ "caelumora-store",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -1091,6 +1115,7 @@ dependencies = [
  "caelumora-model-comfyui",
  "caelumora-model-ollama",
  "caelumora-model-systemone",
+ "caelumora-notes",
  "caelumora-open-terminal",
  "caelumora-security",
  "caelumora-skills",

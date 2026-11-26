@@ -1660,19 +1660,20 @@ export interface KnowledgeRef {
    */
   channel_deleted: boolean;
   /**
-   * What was read: `notes`, `private_notes`, `history`, `memory`, or an entity
-   * by its kind (issue 323) - a `workspace`'s files (issue 251), a `skill`
-   * loaded (issue 22), or a kind of a plugin.
+   * What was read: `history`; what an agent keeps, by the kind that keeps it - its `notes`, the
+   * part `private` its private notes (issue 607), its `memory` -; or an entity by its kind (issue
+   * 323) - a `workspace`'s files (issue 251), a `skill` loaded (issue 22), or a kind of a plugin.
    */
   source: string;
   /** The entity read, for a kind. */
   entity_id?: string;
   /**
    * Where within the entity what was read lies - for a `workspace` the path of the file or
-   * directory read (issue 538); absent for an entity read as a whole.
+   * directory read (issue 538) -, or what part of what an agent keeps - `private` of its notes;
+   * absent for an entity or an agent's records read as a whole.
    */
   place?: string;
-  /** Whose notes or memory, for `notes`, `private_notes` and `memory`. */
+  /** Whose notes or memory, for what an agent keeps. */
   agent_id: ActorId | null;
   agent_name: string | null;
   digest: string | null;

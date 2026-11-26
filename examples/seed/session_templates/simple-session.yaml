@@ -2,6 +2,11 @@ session_templates:
 - id: 94a2df67-0bde-4906-adb1-40e936b463e9
   name: simple-session
   description: Simple user+assistant session
+  components:
+  - id: session-basics
+    kind: ref
+    params:
+      name: session-basics
   summary: A quiz with Jonathan
   briefing: |-
     The user came to be quizzed. Ask one question at a time and wait for the answer before the

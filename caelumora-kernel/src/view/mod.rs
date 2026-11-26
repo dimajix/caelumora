@@ -854,7 +854,7 @@ impl Views {
     /// 304): an agent reading entry by entry. A viewer without a place - a
     /// user - reads whole channels by their clearance and nothing entry by
     /// entry, so nothing may be copied for them so.
-    pub(crate) fn may_copy_from(&self, from: &Place) -> bool {
+    pub fn may_copy_from(&self, from: &Place) -> bool {
         let Some(into) = &self.viewer.from else { return false };
         self.policies.confidentiality().may_copy_information(self.viewer.context(), from, into)
     }
@@ -1192,7 +1192,6 @@ mod tests {
             ["later"],
             "what it is given next, not what it was given or answered"
         );
-        assert_eq!(seen.private_notes(), (Vec::new(), None), "an external agent writes none");
         assert!(!seen
             .history_page_of(None, 100, None)
             .await
@@ -1211,17 +1210,6 @@ mod tests {
             Some(Classification::CHANNEL_DEFAULT),
             "its answer is in its history"
         );
-        assert_eq!(participant.private_notes().await.unwrap(), (Vec::new(), None));
-        assert!(
-            participant.notes().await.unwrap().expect("an agent").notes.is_empty(),
-            "it writes none"
-        );
-        assert!(for_alice
-            .notes()
-            .await
-            .unwrap()
-            .iter()
-            .all(|published| published.notes.is_empty()));
         assert!(
             !participant.may_retry().await,
             "it runs elsewhere and does not answer again (issue 242)"
@@ -1845,9 +1833,7 @@ mod tests {
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn what_a_channel_holds_is_read_through_its_nodes_and_a_participants_context_by_who_may()
     {
-        use caelumora_domain::ledger::Change;
         use caelumora_domain::message::{Message, MessageId, MessageRole};
-        use caelumora_domain::note::{NoteId, NoteOrigin};
 
         let kernel = owned_kernel(Default::default());
 
@@ -1897,26 +1883,8 @@ mod tests {
         state.history.enter(joined(ActorId::Agent(helper.id)));
         state.history.push(&context, second.clone());
         kernel.state_store().put_channel_state(channel.id, &mut state).await.unwrap();
-        // What the agent noted and saw.
+        // What the agent saw.
         let mut agent_state = AgentChannelState::default();
-        agent_state.notes.push(
-            Change::Add {
-                id: NoteId(1),
-                text: "noted".to_string(),
-                classification: Classification::CHANNEL_DEFAULT,
-            },
-            NoteOrigin::default(),
-            MessageId::default(),
-        );
-        agent_state.private_notes.push(
-            Change::Add {
-                id: NoteId(1),
-                text: "mine".to_string(),
-                classification: Classification::CHANNEL_DEFAULT,
-            },
-            NoteOrigin::default(),
-            MessageId::default(),
-        );
         agent_state.transcript.push(ThreadId::default(), first.clone());
         kernel
             .state_store()
@@ -1979,16 +1947,9 @@ mod tests {
             "not before where his view begins"
         );
         assert_eq!(for_bob.message(second.id).await.unwrap().id, second.id);
-        let notes = for_alice.notes().await.unwrap();
-        assert_eq!(notes.len(), 1);
-        assert_eq!(
-            (notes[0].agent, notes[0].name.as_str(), notes[0].notes[0].text.as_str()),
-            (ActorId::Agent(helper.id), "Helper", "noted")
-        );
 
         let agent = for_alice.participant(ActorId::Agent(helper.id)).await.unwrap();
         let seen = agent.context().await.expect("alice made the agent");
-        assert_eq!(seen.private_notes().0[0].text, "mine");
         assert_eq!(seen.transcript().messages(ThreadId::default()).len(), 1);
         assert!(
             matches!(seen.context_of(first.id).await, Err(AgentContextError::NotRecorded { .. })),
@@ -2021,14 +1982,12 @@ mod tests {
     /// may read it or it takes part in it itself (issue 264): bob's agent,
     /// which left alice's channel "hers", does not reach it from "team" -
     /// though what it holds is classified as "team" is - but still knows
-    /// what it wrote there itself, its private notes, through itself.
+    /// that it took part there, through itself (`channels_taken_part_in`).
     #[tokio::test]
     async fn an_agent_does_not_reach_a_channel_its_owner_may_not_read_but_knows_what_it_wrote_there(
     ) {
         use caelumora_domain::channel::FormerParticipant;
-        use caelumora_domain::ledger::Change;
         use caelumora_domain::message::{Message, MessageId};
-        use caelumora_domain::note::{NoteId, NoteOrigin};
         use caelumora_domain::privacy::SessionPrivacy;
         use caelumora_domain::removal::Removal;
 
@@ -2066,23 +2025,6 @@ mod tests {
             }],
         );
         kernel.state_store().put_channel_state(hers.id, &mut state).await.unwrap();
-        let mut agent_state = AgentChannelState::default();
-        let note = |text: &str| Change::Add {
-            id: NoteId(1),
-            text: text.to_string(),
-            classification: hers.classification.clone(),
-        };
-        agent_state.notes.push(note("noted for all"), NoteOrigin::default(), MessageId::default());
-        agent_state.private_notes.push(
-            note("noted for itself"),
-            NoteOrigin::default(),
-            MessageId::default(),
-        );
-        kernel
-            .state_store()
-            .put_agent_channel_state(helper.id, hers.id, &mut agent_state)
-            .await
-            .unwrap();
 
         let context = SecurityContext::new(ActorId::User(bob.id), session.id, team.id).next(
             ActorId::Agent(helper.id),
@@ -2111,92 +2053,18 @@ mod tests {
             from_team.all_channels().await.iter().all(|c| c.id() != hers.id),
             "nor entry by entry"
         );
-        let own: Vec<_> = from_team
-            .own_private_notes()
+        let known: Vec<String> = from_team
+            .channels_taken_part_in(ActorId::Agent(helper.id))
             .await
-            .into_iter()
-            .map(|found| (found.name, found.notes[0].text.clone()))
-            .collect();
-        assert_eq!(
-            own,
-            [("hers".to_string(), "noted for itself".to_string())],
-            "what it wrote there itself, by the flow rule alone"
-        );
-    }
-
-    #[tokio::test]
-    async fn an_agents_private_notes_are_read_from_every_channel_of_the_session_by_who_may() {
-        use caelumora_domain::ledger::Change;
-        use caelumora_domain::message::MessageId;
-        use caelumora_domain::note::{NoteId, NoteOrigin};
-
-        let kernel = owned_kernel(Default::default());
-
-        let stores = kernel.entity_stores();
-        let (alice, bob) = (make_user("alice"), make_user("bob"));
-        let helper = an_agent_of(stores, ActorId::User(alice.id)).await;
-        let mut session = make_session("hers", alice.id);
-        session.participants = record_users(kernel.entity_stores(), &[&alice, &bob]).await;
-        session.participants.push(Participant::Agent(helper.id));
-        let template = main_channel(&session);
-        session.channels.clear();
-        let mut channel_of = |name: &str| {
-            let channel = like(&template, name);
-            session.channels.push(channel.id);
-            channel
-        };
-        let (zeta, quiet, alpha) = (channel_of("zeta"), channel_of("quiet"), channel_of("alpha"));
-        let session =
-            stored(&kernel, session, &mut [zeta.clone(), quiet.clone(), alpha.clone()]).await;
-        for (channel, text) in [(&zeta, "noted in zeta"), (&alpha, "noted in alpha")] {
-            let mut state = AgentChannelState::default();
-            state.private_notes.push(
-                Change::Add {
-                    id: NoteId(1),
-                    text: text.to_string(),
-                    classification: Classification::CHANNEL_DEFAULT,
-                },
-                NoteOrigin::default(),
-                MessageId::default(),
-            );
-            kernel
-                .state_store()
-                .put_agent_channel_state(helper.id, channel.id, &mut state)
-                .await
-                .unwrap();
-        }
-
-        let read = |viewer: Viewer| {
-            let kernel = &kernel;
-            async move {
-                kernel
-                    .views(viewer)
-                    .session(session.id)
-                    .await
-                    .unwrap()
-                    .private_notes_of(helper.id)
-                    .await
-            }
-        };
-        let found = read(as_user(alice.id)).await.expect("alice made the agent");
-        let found: Vec<_> = found
             .iter()
-            .map(|(channel, notes, _)| (channel.name().as_str(), notes[0].text.as_str()))
+            .map(|channel| channel.name.to_string())
             .collect();
-        assert_eq!(
-            found,
-            [("alpha", "noted in alpha"), ("zeta", "noted in zeta")],
-            "by the channels' names, without one noting nothing"
-        );
-        let refused = read(as_user(bob.id)).await.expect_err("not bob's to read");
-        assert!(matches!(refused, ViewError::Forbidden { .. }), "{refused}");
+        assert_eq!(known, ["team", "hers"], "but knows where it took part, through itself");
     }
 
     #[tokio::test]
     async fn an_agent_whose_personality_is_gone_keeps_its_name_and_its_state() {
-        use caelumora_domain::ledger::Change;
-        use caelumora_domain::message::MessageId;
-        use caelumora_domain::note::{NoteId, NoteOrigin};
+        use caelumora_domain::message::Message;
 
         let kernel = owned_kernel(Default::default());
 
@@ -2212,15 +2080,9 @@ mod tests {
         // What it kept while it ran: the same state, whatever its kind was
         // (issue 206).
         let mut kept = AgentChannelState::default();
-        kept.notes.push(
-            Change::Add {
-                id: NoteId(1),
-                text: "kept".to_string(),
-                classification: Classification::CHANNEL_DEFAULT,
-            },
-            NoteOrigin::default(),
-            MessageId::default(),
-        );
+        let heard =
+            Message { content: Some("kept".to_string()), ..Message::new(Classification::PUBLIC) };
+        kept.transcript.push(ThreadId::default(), heard);
         kernel
             .state_store()
             .put_agent_channel_state(helper.id, channel.id, &mut kept)
@@ -2248,83 +2110,9 @@ mod tests {
             None,
             "its personality introduced it"
         );
-        let notes = participant.notes().await.unwrap().expect("still an agent");
-        assert_eq!(
-            notes.notes.iter().map(|n| n.text.as_str()).collect::<Vec<_>>(),
-            ["kept"],
-            "what it kept is read"
-        );
-        assert_eq!(
-            for_alice.notes().await.unwrap().len(),
-            1,
-            "and counts among the channel's notes"
-        );
-        assert!(participant.context().await.is_ok(), "as what it saw");
-    }
-
-    #[tokio::test]
-    async fn an_agent_that_no_longer_takes_part_takes_its_notes_off_the_board() {
-        use caelumora_domain::channel::FormerParticipant;
-        use caelumora_domain::ledger::Change;
-        use caelumora_domain::message::MessageId;
-        use caelumora_domain::note::{NoteId, NoteOrigin};
-
-        let kernel = owned_kernel(Default::default());
-
-        let stores = kernel.entity_stores();
-        let alice = make_user("alice");
-        let owner = ActorId::User(alice.id);
-        let leaver = stored_agent(stores, "Leaver", make_personality("leaver"), owner).await;
-        let rester = stored_agent(stores, "Rester", make_personality("rester"), owner).await;
-        let mut session = make_session("hers", alice.id);
-        session.participants = record_users(kernel.entity_stores(), &[&alice]).await;
-        session.participants.extend([Participant::Agent(leaver.id), Participant::Agent(rester.id)]);
-        // The leaver left; the rester takes part until it is deleted, and then rests here.
-        let mut channel = main_channel(&session);
-        channel.participants.retain(|p| p.actor_id() != ActorId::Agent(leaver.id));
-        channel.former = vec![FormerParticipant {
-            participant: Participant::Agent(leaver.id),
-            left: Removal::now(owner),
-        }];
-        let session = stored(&kernel, session, slice::from_mut(&mut channel)).await;
-        for (agent, text) in
-            [(leaver.id, "noted before it left"), (rester.id, "noted by the rester")]
-        {
-            let mut state = AgentChannelState::default();
-            state.notes.push(
-                Change::Add {
-                    id: NoteId(1),
-                    text: text.to_string(),
-                    classification: Classification::CHANNEL_DEFAULT,
-                },
-                NoteOrigin::default(),
-                MessageId::default(),
-            );
-            kernel
-                .state_store()
-                .put_agent_channel_state(agent, channel.id, &mut state)
-                .await
-                .unwrap();
-        }
-        let board = || async {
-            let channel =
-                kernel.views(as_user(alice.id)).channel(session.id, channel.id).await.unwrap();
-            let notes = channel.notes().await.unwrap();
-            notes.into_iter().map(|published| published.agent).collect::<Vec<_>>()
-        };
-
-        assert_eq!(board().await, [ActorId::Agent(rester.id)], "the leaver took its notes along");
-        let for_alice =
-            kernel.views(as_user(alice.id)).channel(session.id, channel.id).await.unwrap();
-        let kept = for_alice.participant(ActorId::Agent(leaver.id)).await.unwrap();
-        let kept = kept.notes().await.unwrap().expect("an agent");
-        assert_eq!(kept.notes[0].text, "noted before it left", "kept in its own state");
-
-        let system = SecurityContext::system();
-        assert!(stores.agents.delete(&system, rester.id, &Removal::now(owner)).await.unwrap());
-        assert_eq!(board().await, [], "resting, the rester took its notes along too");
-        stores.agents.restore(&system, rester.id).await.unwrap();
-        assert_eq!(board().await, [ActorId::Agent(rester.id)], "and brings them back restored");
+        let seen = participant.context().await.expect("as what it saw");
+        let kept = seen.transcript().messages(ThreadId::default());
+        assert_eq!(kept[0].content.as_deref(), Some("kept"), "what it kept is read");
     }
 
     #[tokio::test]
@@ -2463,9 +2251,7 @@ mod tests {
         use caelumora_domain::confidentiality::{Compartment, Compartments, Confidentiality};
         use caelumora_domain::content::testing::make_content_ref;
         use caelumora_domain::content::ContentRef;
-        use caelumora_domain::ledger::Change;
         use caelumora_domain::message::{Message, MessageId, MessageRole};
-        use caelumora_domain::note::{NoteId, NoteOrigin};
         use caelumora_domain::privacy::SessionPrivacy;
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
@@ -2505,7 +2291,7 @@ mod tests {
                 .expect("it is recorded")
         };
         let hers = ActorId::User(alice.id);
-        // Said and noted in secret: one of each released to everyone.
+        // Said in secret: one released to everyone.
         let said = |t: &str, classification: &Classification| Message {
             id: MessageId::new(),
             role: MessageRole::User,
@@ -2534,27 +2320,6 @@ mod tests {
         let ended = ActorEvent::TurnGivenUp { turn_id: TurnId::new(), reason: GivenUpReason::Left };
         state.history.enter(in_line(&secret, ActorId::Agent(helper.id), ended));
         kernel.state_store().put_channel_state(secret.id, &mut state).await.unwrap();
-        let mut agent_state = AgentChannelState::default();
-        let note = |id, text: &str, classification: &Classification| Change::Add {
-            id: NoteId(id),
-            text: text.to_string(),
-            classification: classification.clone(),
-        };
-        agent_state.notes.push(
-            note(1, "noted secretly", &secret.classification),
-            NoteOrigin::default(),
-            MessageId::default(),
-        );
-        agent_state.notes.push(
-            note(2, "noted openly", &public.classification),
-            NoteOrigin::default(),
-            MessageId::default(),
-        );
-        kernel
-            .state_store()
-            .put_agent_channel_state(helper.id, secret.id, &mut agent_state)
-            .await
-            .unwrap();
         let mut state = kernel.state_store().get_channel_state(team.id).await.unwrap();
         let message = Message { sender_id: hers, ..said("internal", &team.classification) };
         state.history.enter(in_line(&team, hers, ActorEvent::CompleteMessageGenerated(message)));
@@ -2640,11 +2405,6 @@ mod tests {
             minutes,
             "read as a whole: every one"
         );
-        let notes = secret_from_team.notes().await.unwrap();
-        assert_eq!(
-            notes[0].notes.iter().map(|n| n.text.as_str()).collect::<Vec<_>>(),
-            ["noted openly"]
-        );
         let refused = secret_from_team
             .participant(ActorId::Agent(helper.id))
             .await
@@ -2658,7 +2418,6 @@ mod tests {
             matches!(whole(&hr_from_team).await, Err(ViewError::NoChannelNamed(name)) if name == "hr"),
             "nothing released: as if it did not exist"
         );
-        assert!(matches!(hr_from_team.notes().await, Err(ViewError::NoChannelNamed(_))));
         assert!(matches!(
             hr_from_team.history_page(None, 10).await,
             Err(ViewError::NoChannelNamed(_))

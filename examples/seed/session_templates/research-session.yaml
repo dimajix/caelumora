@@ -10,6 +10,11 @@ session_templates:
 - id: bcdb3270-79d5-4386-84e1-4f7a15183db9
   name: research-session
   description: A researcher who looks up your questions on the web
+  components:
+  - id: session-basics
+    kind: ref
+    params:
+      name: session-basics
   summary: Questions looked up on the web
   briefing: |-
     The user has questions to be looked up on the web. Answer with what the pages found say, and

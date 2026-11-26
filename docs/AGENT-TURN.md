@@ -200,9 +200,9 @@ deciding right after whom to ask, leaves the sleeping out; the run loop is notif
 
 ## The `Turn`
 
-The agent's state in its channel is its `AgentChannelState` - history, transcript, notes, the texts
-of its prompt parts; its memory across channels the memory plugin keeps, a system service the turn
-reaches through its reader and its writer (see [MEMORY.md](MEMORY.md#agent-memory)). A `Turn` is the
+The agent's state in its channel is its `AgentChannelState` - history, transcript, the texts of its
+prompt parts; its notes and its memory across channels plugins keep, system services the turn
+reaches through their readers and writers (see [MEMORY.md](MEMORY.md)). A `Turn` is the
 handle to the state in its channel while a turn is under way, and only then: between turns the actor
 works on the state itself, and taking a turn over or giving it up uses the handle up.
 
@@ -237,8 +237,8 @@ are now - the same for a turn, a command turn and an external agent's exchange. 
 model is given its context (`Work::given_as`) and hands the work to the state, which adds only what
 the state knows: the transcript the turn begins with (`AgentChannelState::begin_turn`).
 
-The rest is the turn's own: the changes staged to the agent's state in the channel and for system
-services, the tool calls, the plan, the state a tool requested.
+The rest is the turn's own: the changes staged for system services, the tool calls, the plan, the
+state a tool requested.
 
 **The turn's situation** (`Turn::situation`, issue 399) is what is read of it: where the piece of
 work stands and what it sees from there - who works, in which channel and session, in whose name,
@@ -269,10 +269,10 @@ situation's to hand out (`Situation::reader`, the skills' `SkillReader`), what i
 asking `GetSession` as `session` does, `None` where the work reaches no session or may not read it,
 and asked for where it is used. All are reached through the actor's `ActorRuntime`, which the
 situation and the turn hold and which their components never see: they are given their methods
-(issue 370). What a turn changes of a system service - the agent's memory - it stages by the kind of
-the change (`Turn::stage`, a `StagedChange`), kept with its working state, and the kernel hands it
-to the writer bound to commit that kind when the turn completes (`ActorRuntime::commit_staged`,
-issue 518).
+(issue 370). What a turn changes of a system service - the agent's notes, its memory - it stages by
+the kind of the change (`Turn::stage`, a `StagedChange`), kept with its working state, and the
+kernel hands it to the writer bound to commit that kind when the turn completes
+(`ActorRuntime::commit_staged`, issues 518, 607): one way to stage for all of them.
 
 ### Beginning and ending a turn
 
@@ -280,9 +280,9 @@ issue 518).
     and the publication hold for the whole turn, so that what it reads, publishes and remembers is
     judged alike even if the channel's level changes meanwhile.
 *   **Taking a turn over** (`Turn::commit`) records its end, `TurnFinished`, after its messages -
-    which are in the transcript and history since they were said - applies the changes it staged
-    to its notes, has the kernel commit what it staged for system services, kind by kind - what
-    cannot be committed is logged and lost, not the turn -, and clears the working state.
+    which are in the transcript and history since they were said - has the kernel commit what it
+    staged for system services, kind by kind - what cannot be committed is logged and lost, not the
+    turn -, and clears the working state.
 *   **Giving a turn up** (`Turn::give_up`) - failed, left, asked for again, at the limit of model
     calls - unsays nothing: its messages stay where they were said, and its end follows,
     `TurnGivenUp` with the reason. Nothing it staged is applied. What its tools did stays done;

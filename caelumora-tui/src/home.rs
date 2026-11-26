@@ -8,6 +8,7 @@ use caelumora_domain::command::default_commands;
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::config::{parse_yaml, AppConfig};
 use caelumora_kernel::command::SHELL_KIND;
+use caelumora_notes::command::AGENT_NOTES_KIND;
 use caelumora_store_home::HOME;
 use serde_json::{json, Value};
 use std::env;
@@ -22,10 +23,12 @@ const FIRST_FILES: [(&str, &str, &str); 2] = [
 ];
 
 /// The commands of a session of the program unless its configuration says otherwise: those every
-/// session has by default, and `/workspace run` besides (issue 587), which `!` stands for.
+/// session has by default, `/workspace run` besides (issue 587), which `!` stands for, and
+/// `/channel notes` of the notes (issue 607).
 pub(crate) fn commands() -> ComponentConfig {
     let mut commands = default_commands();
     commands.component_nodes.push(ComponentDescriptor::new("shell", SHELL_KIND));
+    commands.component_nodes.push(ComponentDescriptor::new("agent-notes", AGENT_NOTES_KIND));
     commands
 }
 
@@ -211,8 +214,8 @@ mod tests {
         assert_eq!(config.persistence.entity_store.kind, "home", "and the other sections");
     }
 
-    /// Issue 587: a session has the commands every session has by default, and `/workspace run`,
-    /// which `!` stands for.
+    /// Issue 587: a session has the commands every session has by default, `/workspace run`, which
+    /// `!` stands for, and `/channel notes` (issue 607).
     #[test]
     fn a_session_runs_commands_in_the_directory_by_default() {
         let dir = tempfile::tempdir().unwrap();
@@ -223,7 +226,7 @@ mod tests {
             config.commands.component_nodes.iter().map(|c| c.kind.as_str()).collect();
         let defaults = default_commands();
         let by_default = defaults.component_nodes.iter().map(|c| c.kind.as_str());
-        for kind in by_default.chain([SHELL_KIND]) {
+        for kind in by_default.chain([SHELL_KIND, AGENT_NOTES_KIND]) {
             assert!(kinds.contains(&kind), "{kind} in {kinds:?}");
         }
     }

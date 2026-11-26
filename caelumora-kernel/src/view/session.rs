@@ -6,14 +6,10 @@ use super::{AgentView, ChannelView, Views};
 use crate::channel::{ChannelError, ResolvedParticipant};
 use crate::session::{ChannelRun, Found, SessionError, SessionLoop};
 use anyhow::Error;
-use caelumora_api::reader::PrivateNotesElsewhere;
 use caelumora_api::reader::{ViewError, ViewResult};
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::agent::AgentId;
 use caelumora_domain::channel::{Channel, ChannelField, ChannelId, Participant};
 use caelumora_domain::confidentiality::{Place, Reading};
-use caelumora_domain::digest::Digest;
-use caelumora_domain::note::Note;
 use caelumora_domain::privacy::SessionPrivacy;
 use caelumora_domain::project::ProjectId;
 use caelumora_domain::query::{Filter, Query};
@@ -465,6 +461,22 @@ impl SessionView {
         }
     }
 
+    /// The documents of the session's channels `actor` takes or took part in, in the session's
+    /// order, read in the kernel's name: what an agent reaches through itself - its own knowledge
+    /// of them, its private notes there (issues 264, 607) -, not through the channels, so that no
+    /// `GetChannel` is asked and it keeps them also of a channel it left and its owner may not
+    /// read. A channel whose document cannot be read is left out.
+    pub async fn channels_taken_part_in(&self, actor: ActorId) -> Vec<Arc<Channel>> {
+        let mut found = Vec::new();
+        for (channel, _) in self.channel_documents().await {
+            let takes_part = channel.participants.iter().any(|p| p.actor_id() == actor);
+            if takes_part || channel.former.iter().any(|f| f.participant.actor_id() == actor) {
+                found.push(channel);
+            }
+        }
+        found
+    }
+
     /// The session's channel documents, in its order, each with its loop if
     /// it runs. A channel whose document cannot be read is left out.
     async fn channel_documents(&self) -> Vec<Document> {
@@ -490,100 +502,6 @@ impl SessionView {
                 channels
             }
         }
-    }
-
-    /// The private notes the viewing agent wrote in the session's other
-    /// channels (issues 51, 264), each with its channel and the digest of
-    /// its chain, sorted by the channel's name: its own knowledge, reached
-    /// through itself rather than through the channels - no `GetChannel` is
-    /// asked, so that it keeps them also of a channel it left and its owner
-    /// may not read. Each note is read as far as it may be copied into the
-    /// viewer's place. Of every channel it takes or took part in; channels
-    /// without any are left out, as is its own. None for a viewer that is
-    /// no agent reading from a place; a state that cannot be read is
-    /// logged and left out.
-    pub async fn own_private_notes(&self) -> Vec<PrivateNotesElsewhere> {
-        let ActorId::Agent(agent) = self.views.context().caller_id else { return Vec::new() };
-        let Some(here) = self.views.viewer().place().map(|place| place.channel) else {
-            return Vec::new();
-        };
-        let mut found = Vec::new();
-        for (channel, _) in self.channel_documents().await {
-            let actor = ActorId::Agent(agent);
-            let took_part = channel.participants.iter().any(|p| p.actor_id() == actor)
-                || channel.former.iter().any(|f| f.participant.actor_id() == actor);
-            if channel.id == here || !took_part {
-                continue;
-            }
-            let state = match self.views.states().get_agent_channel_state(agent, channel.id).await {
-                Ok(state) => state,
-                Err(e) => {
-                    warn!(
-                        "Reading the private notes of agent {} in channel {} failed: {}",
-                        agent, channel.id, e
-                    );
-                    continue;
-                }
-            };
-            let mut notes = Vec::new();
-            for note in state.private_notes.current() {
-                let from = Place {
-                    channel: channel.id,
-                    classification: note.classification.clone(),
-                    session: self.privacy(),
-                };
-                if self.views.may_copy_from(&from) {
-                    notes.push(note);
-                }
-            }
-            if !notes.is_empty() {
-                found.push(PrivateNotesElsewhere {
-                    channel: channel.id,
-                    name: channel.name.to_string(),
-                    notes,
-                    digest: state.private_notes.digest(),
-                });
-            }
-        }
-        found.sort_by(|l, r| l.name.cmp(&r.name));
-        found
-    }
-
-    /// The private notes agent `agent` wrote in the channels of the session
-    /// the viewer reaches (`all_channels`, issues 51 and 233), each with
-    /// its channel and the digest of its chain, sorted by the channel's
-    /// name; channels without any are left out. Each is read as
-    /// `ParticipantView::private_notes` reads it: for a viewer who may read what
-    /// the agent saw, of a channel read entry by entry what was released.
-    /// A channel whose notes cannot be read is left out, so that one broken
-    /// state does not hide the others.
-    ///
-    /// # Errors
-    /// `Forbidden` if the viewer may not read what the agent saw.
-    pub async fn private_notes_of(
-        &self,
-        agent: AgentId,
-    ) -> ViewResult<Vec<(ChannelView, Vec<Note>, Option<Digest>)>> {
-        let mut found = Vec::new();
-        for channel in self.all_channels().await {
-            // Not a participant there: nothing noted there.
-            let Ok(participant) = channel.participant(ActorId::Agent(agent)).await else {
-                continue;
-            };
-            match participant.private_notes().await {
-                Ok((notes, digest)) if !notes.is_empty() => found.push((channel, notes, digest)),
-                Ok(_) => {}
-                Err(e @ ViewError::Forbidden { .. }) => return Err(e),
-                Err(e) => warn!(
-                    "Reading the private notes of agent {} in channel {} failed: {}",
-                    agent,
-                    channel.id(),
-                    e
-                ),
-            }
-        }
-        found.sort_by(|(l, ..), (r, ..)| l.name().as_str().cmp(r.name().as_str()));
-        Ok(found)
     }
 
     /// The channels of the session the viewer deleted and may read as such (issue 164). One may be

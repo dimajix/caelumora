@@ -8,7 +8,6 @@
 //! said is written as the model is given the times of its own channel's (issue 424): in the turn's
 //! time zone, in the same form.
 
-use crate::components::notes::READ_NOTES_TOOL_NAME;
 use crate::prompt::{texts_of, writing_for_the_model, NAMESPACE};
 use crate::tool::{
     arguments, described, tool_text, FixedTools, Tool, ToolError, ToolOutput, ToolProvider,
@@ -51,7 +50,7 @@ struct ReadHistoryTool {
 /// `PromptError` if one of them cannot be had.
 fn tools(prompts: &PromptTexts) -> Result<FixedTools, PromptError> {
     // What its texts are told.
-    let values = context! { max_last => MAX_LAST, default_last => DEFAULT_LAST, read_notes => READ_NOTES_TOOL_NAME };
+    let values = context! { max_last => MAX_LAST, default_last => DEFAULT_LAST };
     let read_history = ReadHistoryTool {
         description: described(
             prompts,

@@ -64,18 +64,20 @@ pub struct KnowledgeRefResponse {
     /// Whether the channel was deleted (issue 164) - told only to whoever
     /// could read it were it there; for anyone else, it never was.
     pub channel_deleted: bool,
-    /// `"notes"`, `"private_notes"`, `"history"`, or for an entity its kind
-    /// (issue 323) - `"workspace"`, whose files were read, `"skill"`, loaded
-    /// (issue 22), `"memory"`, the agent's own, recalled (issue 518).
+    /// `"history"`; for what an actor keeps the kind that keeps it (issue 607): `"notes"`, its
+    /// private ones with the place `"private"`, and `"memory"`, the agent's own, recalled (issue
+    /// 518); or for an entity its kind (issue 323): `"workspace"`, whose files were read, and
+    /// `"skill"`, loaded (issue 22).
     pub source: &'static str,
     /// The entity read, for a kind.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entity_id: Option<Uuid>,
     /// Where within the entity what was read lies - for a workspace the path of the file or
-    /// directory read (issue 538) -; absent for an entity read as a whole.
+    /// directory read (issue 538) -, or what part of what an actor keeps (`"private"` of its
+    /// notes); absent for an entity or an actor's records read as a whole.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub place: Option<String>,
-    /// Whose notes, for `"notes"` and `"private_notes"`.
+    /// Whose records, for what an actor keeps.
     pub agent_id: Option<ActorId>,
     pub agent_name: Option<String>,
     pub digest: Option<Digest>,

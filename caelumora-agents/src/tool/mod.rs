@@ -40,7 +40,7 @@ use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::question::{Answers, Questions};
 use caelumora_domain::tool::{
     ToolCall, ToolCallResult, ToolCallState, ToolContent, ToolDescription, ToolParameters,
-    ToolResultStatus, ToolSet, ToolVisibility,
+    ToolPresentation, ToolResultStatus, ToolSet, ToolVisibility,
 };
 use caelumora_domain::turn::GivenUpReason;
 use chrono::Utc;
@@ -54,6 +54,13 @@ use std::iter;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
+
+/// One of an agent's notes, private notes or memory entries acted on (issues 303, 607): its `id`
+/// and what was done to it (`status`), its new `text` where the arguments hold one - written or
+/// updated -, and for a reclassification its new `classification`. What was revoked, forgotten or
+/// reclassified is named by its number alone. Shared by the notes and the memory, which keep their
+/// entries alike.
+pub const NOTE_PRESENTATION: ToolPresentation = ToolPresentation::new("note");
 
 #[derive(Debug, thiserror::Error)]
 pub enum ToolError {
@@ -1166,7 +1173,6 @@ mod tests {
     use caelumora_domain::context::{ContextRef, FrameRef, KnowledgeSource};
     use caelumora_domain::digest;
     use caelumora_domain::digest::Digest;
-    use caelumora_domain::note::NoteId;
     use caelumora_domain::session::testing::bare_session;
     use caelumora_domain::session::{Session, SessionId};
     use caelumora_domain::tool::testing::{make_tool_call, make_tool_description};
@@ -1258,8 +1264,8 @@ mod tests {
             matches!(&wrong, ToolError::InvalidParameter(m) if m.contains("invalid type")),
             "{wrong}"
         );
-        let id: NoteId = id_argument(&json!({ "id": 3 })).unwrap();
-        assert_eq!(id.0, 3);
+        let id: u32 = id_argument(&json!({ "id": 3 })).unwrap();
+        assert_eq!(id, 3);
         assert_eq!(text_argument(&json!({ "text": "  tea " })).unwrap(), "tea", "trimmed");
         assert!(
             matches!(text_argument(&json!({ "text": " " })), Err(ToolError::InvalidParameter(_))),

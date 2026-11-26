@@ -161,7 +161,7 @@ configured compartments.
     (`reclassify_note`, `reclassify_private_note`, `reclassify_memory`), as a change of its chain
     taken over with the turn. The ownership policy allows a note to its author, the agent calling,
     and a memory entry to the memory's owner, for whom the agent acts; the flow never above the
-    turn's channel; a memory entry only where it may be recalled, checked again by the memory plugin
+    turn's channel; a memory entry only where it may be recalled; each checked again by its plugin
     as it commits the change, and it is recalled where its new classification may be read. Agents do
     not reclassify channels or messages: people do.
 
@@ -535,6 +535,6 @@ the binary, such as Open Policy Agent, would state both.
     ([59](../issues/59-retrieval-of-notes.md)) will have to carry and respect the classification of
     where it came from; a search index must not become a way around the flow rule.
 *   **One enforcement for component state.** What is read across channels is judged where it is
-    kept - notes and histories by the kernel's views, an agent's memory by its plugin;
+    kept - histories by the kernel's views, notes and an agent's memory by their plugins;
     when notes become generic component state ([65](../issues/65-generic-component-state.md)), the
     kernel is to apply the rules to it alike.

@@ -86,9 +86,10 @@ personalities:
     agent whose personality includes it is left out of its channel, as one whose personality was
     withdrawn is; the channel runs with everyone else ([CHANNELS.md](CHANNELS.md)). A channel whose
     own components include it is left out of its session as it opens, and the session opens with
-    its other channels. A store that fails while the bundle is looked for is no bundle missing:
-    nobody is left out, and building fails as on any failure of a store - the channel, or the
-    session being opened, does not start.
+    its other channels. A session whose own components include it does not start: its commands are
+    built whole as it starts. A store that fails while the bundle is looked for is no bundle
+    missing: nobody is left out, and building fails as on any failure of a store - the channel, or
+    the session being opened, does not start.
 *   What an agent was built from is recorded, not computed again: the configuration with every
     `ref` resolved is kept by its actor and shown to the agent's owner (`ReadAgentComponents`).
 *   Only components are shared. A personality's kind, roles, introduction and reasoning visibility
@@ -344,7 +345,7 @@ only the initiator of the work, and the kernel builds the context of the call (i
 ## Writing a component
 
 The built-in components live **one file per component kind**, named after the kind
-(`calculator.rs`, `notes.rs`, ...), in the module of the facet that is their purpose. Those of
+(`calculator.rs`, `planning.rs`, ...), in the module of the facet that is their purpose. Those of
 `command/` and `moderator/` are the kernel's own, in `caelumora-kernel/src/`
 (`ComponentRegistry::built_in`); the others are an agent's, in `caelumora-agents/src/`, registered
 by the agents' library (`caelumora_agents::library::register_components`, issue 370). That module's
@@ -360,15 +361,14 @@ by the agents' library (`caelumora_agents::library::register_components`, issue 
 | `external/` | the facet through which an external agent is reached, and no kind: each protocol is a library (`a2a_agent` in `caelumora-a2a`) |
 | `components/` | everything else, and every component that offers several facets |
 
-A component that offers several facets - `planning`, `notes` and the other memory components
-provide tools and a prompt part - stays in `components`, because it cannot be sorted by one
-facet. Each file holds its component, its `register` function and its tests; each module's
-`register_all` registers its kinds and the singles it holds the default for. A component that
-contributes a group of commands (issue
+A component that offers several facets - `planning`, `channel_history` - stays in `components`,
+because it cannot be sorted by one facet. Each file holds its component, its `register` function and
+its tests; each module's `register_all` registers its kinds and the singles it holds the default
+for. A component that contributes a group of commands (issue
 [560](../issues/560-commands-are-not-grouped-by-what-they-act-on.md)) is a directory named after its
 kind instead - `command/participant/` -, the component in its `mod.rs` and a file per command, since
-the commands of a group share nothing but their component. A new component gets a
-file of its own and a line in its module's `register_all`; `components` holds components only.
+the commands of a group share nothing but their component. A new component gets a file of its own
+and a line in its module's `register_all`; `components` holds components only.
 
 A crate of its own that brings a kind - a library or a plugin - names the module after the kind's
 part in it, since the crate already names the subject: a component that contributes lies in the
@@ -510,8 +510,8 @@ query or fragment. A component that reaches paths below the endpoint's URL build
 | `image_generation` | `ToolProvider` | `requires_approval` (`false`), `destination` (`public`), `description` (the catalogue's) | Of the library `caelumora-tool-image` (issue 525). The tool `generate_image`, which generates an image with one of the agent's image models - those of its `image_model` components, the first the default - and gives it the agent's model to see ([TOOLS.md](TOOLS.md#images)). Not built where the agent has no image model. |
 | `web_fetch` | `ToolProvider` | `requires_approval` (`false`), `description` (the catalogue's), `keep_whole_above_bytes` (none: no text is kept whole) | Of the library `caelumora-tool-web` (issue 544). The tool `fetch_page`, which fetches a page of the web by its URL and gives it as Markdown or text, a page at a time - through the proxy of the environment, never from an address inside the network - one written in the URL always, a name where it resolves it itself; through the proxy, a name reaches what the proxy's rules let it; offered in public channels alone. What lies above `keep_whole_above_bytes` is kept whole beside a preview, and of HTML its body as it came beside every result of a page asked for whole, where it can be kept ([TOOLS.md](TOOLS.md#pages-of-the-web)). |
 | `web_search` | `ToolProvider` | `provider` (required, `tavily`), `endpoint` (required, with its key in `auth`; timeout 15 s), `requires_approval` (`false`), `destination` (`public`), `description` (the catalogue's) | Of the library `caelumora-tool-web` (issue 544). The tool `search_web`, which searches the web with the provider and gives the title, the URL and a snippet of each page found ([TOOLS.md](TOOLS.md#searching-the-web)). Not built where the endpoint names no key. |
-| `notes` | `ToolProvider`, `PromptProvider` | `position` (`before_turn_input`) | Public notes of the agents in a channel: `write_note`, `update_note`, `revoke_note`, `read_notes`, `reclassify_note` (asks for approval) and a prompt part ([MEMORY.md](MEMORY.md)). |
-| `private_notes` | `ToolProvider`, `PromptProvider`, `CommandProvider<dyn AgentCommand>` | `position` (`before_turn_input`) | The agent's private notes: `write_private_note`, `update_private_note`, `revoke_private_note`, `reclassify_private_note` (asks for approval), all `HIDDEN`, a prompt part, and the command `/private-notes` for the agent's owners ([MEMORY.md](MEMORY.md)). |
+| `notes` | `ToolProvider`, `PromptProvider` | `position` (`before_turn_input`) | Of the library of `caelumora-notes` (`NotesLibrary`), registered where it is joined (issue 607). Public notes of the agents in a channel: `write_note`, `update_note`, `revoke_note`, `read_notes`, `reclassify_note` (asks for approval) and a prompt part ([MEMORY.md](MEMORY.md)). |
+| `private_notes` | `ToolProvider`, `PromptProvider`, `CommandProvider<dyn AgentCommand>` | `position` (`before_turn_input`) | Of the library of `caelumora-notes` (issue 607). The agent's private notes: `write_private_note`, `update_private_note`, `revoke_private_note`, `reclassify_private_note` (asks for approval), all `HIDDEN`, a prompt part, and the command `/private-notes` for the agent's owners ([MEMORY.md](MEMORY.md)). |
 | `agent_memory` | `ToolProvider`, `PromptProvider`, `CommandProvider<dyn AgentCommand>` | `position` (`before_turn_input`) | Of the library of `caelumora-memory` (`MemoryLibrary`), registered where it is joined (issue 518). What the agent remembers across channels and sessions: `remember`, `update_memory`, `forget`, `reclassify_memory` (asks for approval), all `HIDDEN`, a prompt part, and the command `/memory` for the agent's owners ([MEMORY.md](MEMORY.md)). |
 | `skills` | `PromptProvider`, `ToolProvider`, `CommandProvider<dyn AgentCommand>`, `KnowledgeRestorer` | `position` (`start`), `requires_approval` (`true`, for writing) | Of the library of `caelumora-skills` (`SkillsLibrary`), registered where it is joined. Skills: the catalogue of those the agent may load, `list_skills`, `load_skill`, `create_skill`, `update_skill`, and the commands `/skill` and `/skills` ([SKILLS.md](SKILLS.md)). |
 | `channel_history` | `ToolProvider` | - | The tool `read_history` for other channels of the session ([MEMORY.md](MEMORY.md)). |

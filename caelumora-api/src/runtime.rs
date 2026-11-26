@@ -84,10 +84,6 @@ pub trait ActorRuntime: Send + Sync + Debug {
     /// model is given the times of messages in (issue 424).
     fn session_time_zone(&self) -> TimeZone;
 
-    /// Announces that the agent's state in its channel changed and is stored (issue 65), without
-    /// content. Nothing once the channel is gone.
-    fn announce_channel_state_changed(&self);
-
     /// The agent's state in its channel, as stored (issue 206).
     ///
     /// # Errors
@@ -191,7 +187,7 @@ pub trait ActorRuntime: Send + Sync + Debug {
 
     /// The agent's own channel as its work for `initiator` reads it from there at
     /// `classification` (`session`, `SessionReader::channel`, issue 399): its participants, its
-    /// notes. `None` where the work reaches no session.
+    /// history. `None` where the work reaches no session.
     ///
     /// # Errors
     /// What following the views to it reports.
@@ -229,16 +225,6 @@ pub trait ActorRuntime: Send + Sync + Debug {
         initiator: ActorId,
         classification: &Classification,
         into: &Classification,
-    ) -> bool;
-
-    /// Whether a note of the agent in its channel, public or private, may be reclassified, in its
-    /// name for `initiator`, as `classification`, within what is classified `within` (issues 133,
-    /// 516).
-    async fn may_reclassify_note(
-        &self,
-        initiator: ActorId,
-        classification: &Classification,
-        within: &Classification,
     ) -> bool;
 
     /// The secrets that may be read in the agent's name for `initiator` (issue 516), each read

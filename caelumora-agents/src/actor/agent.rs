@@ -213,10 +213,9 @@ impl AgentActor {
     ///
     /// The turn is taken over and stored before its `TurnFinished` announces its end (issue 65):
     /// whoever reacts to it - another agent whose turn it starts, a user interface reloading
-    /// notes - reads the state as the turn left it. A change of the agent's state in the channel
-    /// is announced as the channel's `channel::AGENT_STATE_CHANGED` once stored; what the turn
-    /// staged for a system service by the kernel, which commits it (`ActorRuntime::commit_staged`,
-    /// issue 518). The end is announced
+    /// notes - reads the state as the turn left it, and what the turn staged for a system service -
+    /// its notes, its memory - committed by the kernel (`ActorRuntime::commit_staged`, issues 518,
+    /// 607), which announces it. The end is announced
     /// even with no final messages - a plan cancelled before any step produced a visible answer
     /// still has to tell observers (e.g. the web UI) that generation stopped.
     async fn end_turn(
@@ -233,12 +232,9 @@ impl AgentActor {
             turn.requested_state().unwrap_or(ActorState::Idle)
         };
         let turn_id = turn.turn_id();
-        let CommittedTurn { final_messages, channel_state_changed, answering, abandoned_calls } =
+        let CommittedTurn { final_messages, answering, abandoned_calls } =
             turn.commit(cancelled, output).await;
         self.body.store(state).await;
-        if channel_state_changed {
-            self.body.runtime.announce_channel_state_changed();
-        }
         withdraw_requests(&answering, &abandoned_calls, output).await?;
         answering
             .send(ActorEvent::TurnFinished { turn_id, messages: final_messages }, output)
@@ -1357,6 +1353,7 @@ mod tests {
     use caelumora_domain::confidentiality::Confidentiality;
     use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
     use caelumora_domain::message::MessageId;
+    use caelumora_domain::store::EntityKind;
     use caelumora_domain::tool::testing::{make_tool_call, make_tool_description};
     use caelumora_domain::tool::{ToolDescription, ToolSet, ToolVisibility};
 
@@ -1476,7 +1473,12 @@ mod tests {
                 turn.record_knowledge(KnowledgeRef {
                     channel: turn.situation().channel_id(),
                     session: turn.situation().session_id(),
-                    source: KnowledgeSource::PrivateNotes { agent, digest: None },
+                    source: KnowledgeSource::Actor {
+                        actor: ActorId::Agent(agent),
+                        kind: EntityKind::new("notes"),
+                        place: Some("private".to_string()),
+                        digest: None,
+                    },
                     classification: None,
                     private: true,
                 });

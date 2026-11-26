@@ -23,7 +23,9 @@ here belongs to the system: every user may use it, only the system may change it
   in their scope. A personality includes one with `kind: ref` and `params: { name: ... }`, and gets
   all of its components there, in their order: what every agent should have is written once, and an
   addition reaches every personality that includes it. A component of an included one must not be
-  written again beside it.
+  written again beside it. A session template includes one in its `components` the same way:
+  `session-basics` brings what every session of these templates has beside the configuration's
+  commands - `/channel notes` (issue 607).
 
 Where a document refers to another - a personality to a bundle, a template to a personality -, it
 is found when an agent or a session is made, not when the seed is read: the order of the files does

@@ -70,12 +70,6 @@ pub const JOINED: &str = "joined";
 /// Someone left the channel, as the `ActorId` in the change's data says.
 pub const LEFT: &str = "left";
 
-/// The state of an agent in the channel changed - its notes or private
-/// notes (issue 65), the `AgentId` in the change's data. Published with the
-/// channel's attributes once it is stored, before the agent announces the
-/// end of its turn; without content, since part of it is private.
-pub const AGENT_STATE_CHANGED: &str = "agent_state_changed";
-
 /// Something new was said in the channel (issue 404): a message that others
 /// hear (`Message::is_heard`), said in its line or mentioning a user in
 /// another thread (issue 557) - what a frontend shows of the channel to whom
