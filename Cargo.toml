@@ -10,7 +10,6 @@ members = [
     "caelumora-tui",
     "caelumora-app",
     "caelumora-rest-api",
-    "caelumora-rest-client",
     "caelumora-rest-server",
     "caelumora-skills",
     "caelumora-memory",
@@ -153,6 +152,12 @@ codegen-units = 1
 # Nothing `pub` that its crate's root cannot reach: `pub(crate)` by default (CODING-GUIDELINES.md,
 # issue 452).
 unreachable_pub = "warn"
+
+[workspace.lints.cargo]
+# No dependency a crate does not use, in any build of it - the builds without features of the
+# crates on both levels included (CODING-GUIDELINES.md, issue 620). `deny`, not `warn` as the
+# others: the hook's `-D warnings` reaches the lints of rustc and clippy, not Cargo's.
+unused_dependencies = "deny"
 
 [workspace.lints.clippy]
 # Cloning an Arc or Rc says so: Arc::clone(&value) (CODING-GUIDELINES.md, issue 229).

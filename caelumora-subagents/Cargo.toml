@@ -9,7 +9,7 @@ license.workspace = true
 default = ["kernel", "library"]
 # What an agent's work does with sub-agents, and what that fails with: the crate's part of the
 # kernel's API, which the plugin serves and the library calls.
-api = ["dep:caelumora-api", "dep:async-trait", "dep:thiserror"]
+api = ["dep:caelumora-domain", "dep:caelumora-api", "dep:async-trait", "dep:thiserror"]
 # The writer and the plugin: the kernel's side.
 kernel = [
     "api",
@@ -32,7 +32,7 @@ library = [
 ]
 
 [dependencies]
-caelumora-domain.workspace = true
+caelumora-domain = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 caelumora-api = { workspace = true, optional = true }
 caelumora-kernel = { workspace = true, optional = true }

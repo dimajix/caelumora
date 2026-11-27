@@ -71,7 +71,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
 | [378](378-resource-management-epic.md) | open | medium | epic | Epic for resource management: the bracket around 376, 379–383 and 218, which reduce what the server holds in memory, and their recommended order. |
-| [620](620-dependencies-go-unused-and-out-of-date-unnoticed.md) | open | medium | refactoring | Cargo 1.100 warns of four dependencies two crates declare and do not use - three of `caelumora-rest-client`, the domain of `caelumora-subagents` built without features -, which no check of the workspace refuses, and nothing keeps the dependencies of the Rust workspace and of the web UI up to date, so they fall behind their newest versions unnoticed. |
+| [620](620-dependencies-go-unused-and-out-of-date-unnoticed.md) | in progress | medium | refactoring | Cargo 1.100 warns of four dependencies two crates declare and do not use - three of `caelumora-rest-client`, the domain of `caelumora-subagents` built without features -, which no check of the workspace refuses, and nothing keeps the dependencies of the Rust workspace and of the web UI up to date, so they fall behind their newest versions unnoticed. |
 
 ## Code structure
 

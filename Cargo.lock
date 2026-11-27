@@ -817,15 +817,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "caelumora-rest-client"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "caelumora-rest-server"
 version = "0.1.0"
 dependencies = [

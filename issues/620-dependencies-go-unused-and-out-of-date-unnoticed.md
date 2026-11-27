@@ -1,6 +1,6 @@
 # 620 — Dependencies go unused and out of date unnoticed
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** medium
 **Area:** Maintenance
@@ -101,9 +101,60 @@ recorded here.
   web UI is checked in a browser.
 - How dependencies are kept up to date from now on is decided and written down.
 
+## Decision
+
+Decided by the maintainer on 2026-11-27, after weighing the options above.
+
+**E1 - The empty crate is removed.** `caelumora-rest-client` has no user; issue
+[307](307-load-and-performance-tests.md), whose recommendation (not decided) makes it a real
+client, makes it anew when it is built - the name stays free.
+
+**E2 - Dependencies are brought up to date once a month**, as work of its own on a branch of its
+own, each major version a step of its own; `scripts/outdated.sh` says what is behind (a dry run of
+`cargo update`, `npm outdated`). What has to wait is recorded with its reason. The rule stands in
+CRATES.md (Rust) and WEB-UI.md (Node).
+
+The warning of an unused dependency is refused by the lint table:
+`[workspace.lints.cargo] unused_dependencies = "deny"` fails every build that warns of one - the
+builds without features the pre-commit hook makes too (tried in a probe workspace on 2026-11-27).
+
+What waits, as found on 2026-11-27:
+
+- **TypeScript 7** - `typescript-eslint` (8.74) takes TypeScript `>=4.8.4 <6.1.0`.
+- **`@types/node` 26** - the Node the web UI is built with here is 22; the types of 24 are ahead
+  of it already.
+
+Rejected:
+
+- **Only the empty crate's dependencies removed** - a crate without a user, which every reader of
+  the crate graph has to know.
+- **A bot opening pull requests** (Dependabot, Renovate) - it fits the review of step after step
+  less, and needs the GitHub mirror.
+
+## Plan
+
+Each step a commit of its own, reviewed before the next.
+
+1. **Unused dependencies refused.** `caelumora-rest-client` removed (workspace, CRATES.md,
+   ARCHITECTURE.md, README.md, the module docs of `caelumora-rest-api`); the domain of
+   `caelumora-subagents` optional, part of `api`; `[workspace.lints.cargo] unused_dependencies =
+   "deny"`, named in CODING-GUIDELINES.md.
+2. **Within their ranges.** `cargo update`, `npm update`; tests, clippy, the web UI's build, lint
+   and tests.
+3. **Major versions that build unchanged.** `base64` 0.23, `htmd` 0.6, `sse-stream` 0.3,
+   `rustyline` 19, `serde-saphyr` 2.2 - each built alone without an error on 2026-11-27.
+4. **`jsonwebtoken` 12.** `EncodingKey::from_secret` and `DecodingKey::from_secret` return a
+   `Result` (`caelumora-rest-server/src/auth.rs`).
+5. **`minijinja` 3.** Its feature `loader` is gone; the prompts render as before.
+6. **Keeping them up to date.** `scripts/outdated.sh`, the rule in CRATES.md and WEB-UI.md (E2).
+
 ## History
 
 - **2026-11-27** — Opened on the maintainer's request, after Cargo 1.100 warned of the unused
   dependencies of `caelumora-rest-client`.
 - **2026-11-27** — The unused domain of `caelumora-subagents` without features added, found by the
   pre-commit hook while committing issue 619.
+- **2026-11-27** — Decided by the maintainer (*Decision*), planned in six steps (*Plan*); in
+  progress.
+- **2026-11-27** — Step 1 done: `caelumora-rest-client` removed, the domain of
+  `caelumora-subagents` part of `api`, `unused_dependencies` denied by the lint table.

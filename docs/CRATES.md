@@ -52,7 +52,6 @@ flowchart TD
     kernel["caelumora-kernel"]
     logging["caelumora-logging"]
     rest_api["caelumora-rest-api"]
-    rest_client["caelumora-rest-client"]
     rest_server["caelumora-rest-server"]
     security["caelumora-security"]
     store["caelumora-store"]
@@ -60,7 +59,7 @@ flowchart TD
     both -. "library" .-> agents
     both -. "api" .-> api
     skills -. "library" .-> compaction
-    both --> domain
+    subagents -. "api" .-> domain
     both -. "kernel" .-> kernel
     artifacts & rest_server & skills --> rest_api
     notes -. "server" .-> rest_api
@@ -79,7 +78,7 @@ flowchart TD
     libraries --> domain
     agents -. "test-support" .-> kernel
     agents -. "test-support" .-> store
-    api & kernel & logging & rest_api & rest_server & security & store --> domain
+    api & artifacts & kernel & logging & memory & notes & rest_api & rest_server & security & skills & store --> domain
     kernel & rest_server --> api
     kernel & rest_server & store_home & store_json & store_postgres --> store
     rest_server --> kernel
@@ -96,8 +95,8 @@ those it takes with other features than their default ones.
 <!-- crate-graph.sh: programs -->
 | Program | Depends on |
 |---|---|
-| `caelumora-app` | every crate of the graph but `caelumora-rest-api`, `caelumora-rest-client`, `caelumora-security`, `caelumora-store` and `caelumora-store-home` |
-| `caelumora-tui` | every crate of the graph but `caelumora-rest-api`, `caelumora-rest-client`, `caelumora-rest-server` and `caelumora-store`; `caelumora-artifacts`, `caelumora-memory`, `caelumora-notes`, `caelumora-skills` and `caelumora-subagents` with `kernel` and `library` alone |
+| `caelumora-app` | every crate of the graph but `caelumora-rest-api`, `caelumora-security`, `caelumora-store` and `caelumora-store-home` |
+| `caelumora-tui` | every crate of the graph but `caelumora-rest-api`, `caelumora-rest-server` and `caelumora-store`; `caelumora-artifacts`, `caelumora-memory`, `caelumora-notes`, `caelumora-skills` and `caelumora-subagents` with `kernel` and `library` alone |
 <!-- crate-graph.sh: end -->
 
 Until issue [522](../issues/522-two-crates-named-model.md), `caelumora-domain` was named
@@ -108,9 +107,7 @@ generates images were one library, `caelumora-comfyui`. Until issue
 [531](../issues/531-workspace-tools-named-apart-from-the-tools.md), `caelumora-tool-workspace` was
 named `caelumora-workspace-tools` and `caelumora-tool-mcp` `caelumora-mcp`.
 
-`caelumora-rest-client` depends on no crate of the workspace, and none on it; it is reserved for a
-client of the REST interface. `caelumora-web-ui` is no crate, but the browser frontend served by
-`caelumora-app`.
+`caelumora-web-ui` is no crate, but the browser frontend served by `caelumora-app`.
 
 ## What the graph keeps
 
