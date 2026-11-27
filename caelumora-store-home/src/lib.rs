@@ -10,7 +10,9 @@ mod places;
 pub mod plugin;
 
 pub use content::{HomeContent, HomeContentConfig};
-pub use definitions::{DefinitionFiles, DefinitionProblem, FileFormat, Identity};
+pub use definitions::{
+    DefinitionFiles, DefinitionProblem, DefinitionProblemKind, FileFormat, Identity,
+};
 
 use async_trait::async_trait;
 use caelumora_domain::scope::Scope;
@@ -113,7 +115,7 @@ impl HomeStore {
     ///
     /// # Errors
     /// If a directory of definitions cannot be read.
-    pub async fn problems_of<T: Stored>(&self) -> StoreResult<Vec<(PathBuf, DefinitionProblem)>> {
+    pub async fn problems_of<T: Stored>(&self) -> StoreResult<Vec<DefinitionProblem>> {
         let Some(files) = self.definitions.get(T::KIND.name()) else { return Ok(Vec::new()) };
         KindFiles::new(Arc::clone(&self.places), T::KIND, files).problems::<T>().await
     }
@@ -815,18 +817,24 @@ mod tests {
 
         let mut problems = store.problems_of::<Personality>().await.unwrap();
 
-        problems.sort_by(|one, other| one.0.cmp(&other.0));
-        let told: Vec<(&str, &DefinitionProblem)> = problems
+        problems.sort_by(|one, other| one.path.cmp(&other.path));
+        let told: Vec<(&str, &DefinitionProblemKind)> = problems
             .iter()
-            .map(|(path, problem)| (path.file_name().unwrap().to_str().unwrap(), problem))
+            .map(|problem| (problem.path.file_name().unwrap().to_str().unwrap(), &problem.kind))
             .collect();
         assert_eq!(told.len(), 5, "{told:?}");
-        assert!(matches!(told[0], ("broken.yaml", DefinitionProblem::Unreadable(_))), "{told:?}");
-        assert_eq!(told[1], ("copy.yaml", &DefinitionProblem::Shared));
-        let unread = DefinitionProblem::Unread(vec!["descripton".to_string()]);
+        assert!(
+            matches!(told[0], ("broken.yaml", DefinitionProblemKind::Unreadable(_))),
+            "{told:?}"
+        );
+        assert_eq!(told[1], ("copy.yaml", &DefinitionProblemKind::Shared));
+        let unread = DefinitionProblemKind::Unread(vec!["descripton".to_string()]);
         assert_eq!(told[2], ("mistyped.yaml", &unread));
-        assert_eq!(told[3], ("one.yaml", &DefinitionProblem::Shared));
-        assert!(matches!(told[4], ("typed.yaml", DefinitionProblem::Unreadable(_))), "{told:?}");
+        assert_eq!(told[3], ("one.yaml", &DefinitionProblemKind::Shared));
+        assert!(
+            matches!(told[4], ("typed.yaml", DefinitionProblemKind::Unreadable(_))),
+            "{told:?}"
+        );
         assert!(store.problems_of::<Project>().await.unwrap().is_empty(), "no definitions");
     }
 

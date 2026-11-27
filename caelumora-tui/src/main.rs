@@ -56,7 +56,7 @@ use caelumora_skills::library::SkillsLibrary;
 use caelumora_skills::plugin::SkillsPlugin;
 use caelumora_skills::skill::Skill;
 use caelumora_store_home::plugin::HomeStorePlugin;
-use caelumora_store_home::{DefinitionProblem, HomeStore, HomeStoreConfig, HOME};
+use caelumora_store_home::{HomeStore, HomeStoreConfig, HOME};
 use caelumora_store_json::plugin::JsonStorePlugin;
 use caelumora_store_postgres::plugin::PostgresStorePlugin;
 use caelumora_subagents::library::SubagentsLibrary;
@@ -467,10 +467,7 @@ async fn problems_of_definitions(config: &AppConfig) -> Result<Vec<Printed>> {
     problems.extend(store.problems_of::<Personality>().await?);
     problems.extend(store.problems_of::<ComponentBundle>().await?);
     problems.extend(store.problems_of::<SessionTemplate>().await?);
-    let notice = |(path, problem): (PathBuf, DefinitionProblem)| {
-        Printed::Notice(format!("{}: {problem}", path.display()))
-    };
-    Ok(problems.into_iter().map(notice).collect())
+    Ok(problems.iter().map(|problem| Printed::Notice(problem.to_string())).collect())
 }
 
 /// Prints the identity of the definition in `file`, as the stores of `config` read it: its kind,

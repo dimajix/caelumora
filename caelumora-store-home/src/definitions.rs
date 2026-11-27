@@ -157,7 +157,22 @@ struct Head {
 
 /// What is wrong with one file of definitions (`HomeStore::problems_of`).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DefinitionProblem {
+pub struct DefinitionProblem {
+    /// The file.
+    pub path: PathBuf,
+    /// What is wrong with it.
+    pub kind: DefinitionProblemKind,
+}
+
+impl fmt::Display for DefinitionProblem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.path.display(), self.kind)
+    }
+}
+
+/// What can be wrong with a file of definitions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DefinitionProblemKind {
     /// No definition of its kind, and so left out of every read: why.
     Unreadable(String),
     /// One id or name with another file, and so left out with it.
@@ -166,7 +181,7 @@ pub enum DefinitionProblem {
     Unread(Vec<String>),
 }
 
-impl fmt::Display for DefinitionProblem {
+impl fmt::Display for DefinitionProblemKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Unreadable(why) => write!(f, "left out, no definition of its kind: {why}"),
@@ -340,9 +355,9 @@ impl KindFiles {
     }
 
     /// Every definition of the kind, and the files left out with what is wrong with them: those
-    /// that hold none (`DefinitionProblem::Unreadable`), and those of an id or a name another has
-    /// (`DefinitionProblem::Shared`). What is left out is logged.
-    async fn listing(&self) -> StoreResult<(Vec<Listed>, Vec<(PathBuf, DefinitionProblem)>)> {
+    /// that hold none (`DefinitionProblemKind::Unreadable`), and those of an id or a name another
+    /// has (`DefinitionProblemKind::Shared`). What is left out is logged.
+    async fn listing(&self) -> StoreResult<(Vec<Listed>, Vec<DefinitionProblem>)> {
         let extension = self.format.extension();
         let mut files = Vec::new();
         for holder in self.places.holders_of_definitions().await? {
@@ -365,7 +380,10 @@ impl KindFiles {
                 Ok(None) => {}
                 Err(why) => {
                     warn!("The file {:?} is no {}: {}", path, self.kind, why);
-                    left_out.push((path, DefinitionProblem::Unreadable(why)));
+                    left_out.push(DefinitionProblem {
+                        path,
+                        kind: DefinitionProblemKind::Unreadable(why),
+                    });
                 }
             }
         }
@@ -383,34 +401,34 @@ impl KindFiles {
         let (listed, shared): (Vec<Listed>, Vec<Listed>) = listed.into_iter().partition(|entry| {
             ids[&entry.id].len() == 1 && entry.key.as_ref().is_none_or(|key| keys[key].len() == 1)
         });
-        left_out.extend(shared.into_iter().map(|entry| (entry.path, DefinitionProblem::Shared)));
+        for Listed { path, .. } in shared {
+            left_out.push(DefinitionProblem { path, kind: DefinitionProblemKind::Shared });
+        }
         Ok((listed, left_out))
     }
 
     /// The files of the definitions of the kind, `T`'s, and what is wrong with each
     /// (`HomeStore::problems_of`): those left out of every read (`listing`), those that hold no
-    /// `T` (`DefinitionProblem::Unreadable`), and those with fields a `T` does not keep
-    /// (`DefinitionProblem::Unread`).
+    /// `T` (`DefinitionProblemKind::Unreadable`), and those with fields a `T` does not keep
+    /// (`DefinitionProblemKind::Unread`).
     ///
     /// # Errors
     /// If a directory of definitions cannot be read.
-    pub(crate) async fn problems<T: Stored>(
-        &self,
-    ) -> StoreResult<Vec<(PathBuf, DefinitionProblem)>> {
+    pub(crate) async fn problems<T: Stored>(&self) -> StoreResult<Vec<DefinitionProblem>> {
         let (listed, mut problems) = self.listing().await?;
         for Listed { path, .. } in listed {
-            if let Some(problem) = self.problem_of::<T>(&path).await {
-                problems.push((path, problem));
+            if let Some(kind) = self.problem_of::<T>(&path).await {
+                problems.push(DefinitionProblem { path, kind });
             }
         }
         Ok(problems)
     }
 
     /// What is wrong with the file at `path` read as a `T`, `None` if nothing is or it is gone.
-    async fn problem_of<T: Stored>(&self, path: &Path) -> Option<DefinitionProblem> {
+    async fn problem_of<T: Stored>(&self, path: &Path) -> Option<DefinitionProblemKind> {
         let text = match text_of(path).await {
             Ok(text) => text?,
-            Err(why) => return Some(DefinitionProblem::Unreadable(why)),
+            Err(why) => return Some(DefinitionProblemKind::Unreadable(why)),
         };
         let read = self.parse(path, &text).and_then(|body| {
             let read: T = serde_json::from_value(body.clone()).map_err(to_backend_error)?;
@@ -418,8 +436,8 @@ impl KindFiles {
         });
         match read {
             Ok(unread) if unread.is_empty() => None,
-            Ok(unread) => Some(DefinitionProblem::Unread(unread)),
-            Err(err) => Some(DefinitionProblem::Unreadable(err.to_string())),
+            Ok(unread) => Some(DefinitionProblemKind::Unread(unread)),
+            Err(err) => Some(DefinitionProblemKind::Unreadable(err.to_string())),
         }
     }
 
