@@ -506,29 +506,25 @@ impl AgentChannelState {
         }
     }
 
-    /// Replaces the context of the turn under way in `thread` of `actor` - the
-    /// agent whose state this is - (issue 16): the branch of `thread` begins anew
-    /// with `replacement` - what stands for the older messages: a summary, the
-    /// skills given again, each given to read with the knowledge it is, if
-    /// it is one -, the parts of prompt components that stand before the
-    /// entries kept (`Transcript::carried_over`, issue 537), and the entries
-    /// of its branch from `keep_from` on - `None`: none - as they stand
-    /// (`Transcript::compact`). The turn's context moves to the new head,
-    /// and the history records the compaction (`HistoryEntry::Compacted`),
-    /// then the replacement as messages the agent was given. Returns the
-    /// heads of the transcript before and after.
+    /// Replaces the context of the turn under way in `thread` of `actor` - the agent whose state
+    /// this is - (issue 16): the branch of `thread` begins anew with `replacement` - what stands
+    /// for the older messages: a summary, the skills given again, each given to read with the
+    /// knowledge it is, if it is one -, what it carries over that stands before the entries kept -
+    /// the parts of prompt components and the brief under way (`Transcript::carried_over`, issues
+    /// 537, 622) -, and the entries of its branch from `keep_from` on - `None`: none - as they
+    /// stand (`Transcript::compact`). The turn's context moves to the new head, and the history
+    /// records the compaction (`HistoryEntry::Compacted`), then the replacement as messages the
+    /// agent was given. Returns the heads of the transcript before and after.
     ///
     /// The calls of its model that wrote the replacement are counted (issue 514): those whose
     /// measures a message of the replacement carries, and `further_calls`, whose answers stand in
     /// no message.
     ///
-    /// Nothing is removed: every reference recorded before resolves to what
-    /// it did. The replacement is seen by the turn; whose it is
-    /// (`Message::turn_id`) is the caller's to say (issue 284). The prompt
-    /// parts the turn placed after an entry are carried over (issue 284) to
-    /// where the entry stands on the new branch: one after an entry kept, or
-    /// after a part kept, follows its copy, one after an entry replaced
-    /// follows the replacement.
+    /// Nothing is removed: every reference recorded before resolves to what it did. The replacement
+    /// is seen by the turn; whose it is (`Message::turn_id`) is the caller's to say (issue 284).
+    /// The prompt parts the turn placed after an entry are carried over (issue 284) to where the
+    /// entry stands on the new branch: one after an entry kept, or after one carried over, follows
+    /// its copy, one after an entry replaced follows the replacement.
     ///
     /// How full the new branch is, it estimates as the model is given it,
     /// its notices worded by `catalogue`.

@@ -3,10 +3,10 @@
 //! The cut lies before a message, never between a tool's call and its result (issue 284), never
 //! into a turn given up because its channel was lowered below it, and within the turn under way
 //! before a call of its model but the first. The prompt parts given into the transcript that stand
-//! before it are not replaced but carried over (issue 537): they count as kept. What the agent knew
-//! in the part replaced - was given, or read or wrote with its tools - and does not know still in
-//! the part kept is what is given again, as whoever first gave it; whose the replacement is and how
-//! it is classified follows from what it replaces.
+//! before it, and the brief under way, are not replaced but carried over (issues 537, 622): they
+//! count as kept. What the agent knew in the part replaced - was given, or read or wrote with its
+//! tools - and does not know still in the part kept is what is given again, as whoever first gave
+//! it; whose the replacement is and how it is classified follows from what it replaces.
 
 use caelumora_domain::channel::ThreadId;
 use caelumora_domain::confidentiality::Classification;
@@ -25,13 +25,14 @@ use std::collections::{HashMap, HashSet};
 /// model sees it (`knowledge_as_seen_whole`) -, and its message as it stands, if it holds one.
 type Entry = (Digest, Vec<KnowledgeSource>, Option<Message>);
 
-/// An agent's transcript cut for a compaction: the part replaced, without the prompt parts carried
-/// over, and the part kept as it stands.
+/// An agent's transcript cut for a compaction: the part replaced, without what is carried over, and
+/// the part kept as it stands.
 #[derive(Debug)]
 pub(crate) struct Cut {
     replaced: Vec<Entry>,
     kept: Vec<Entry>,
-    /// How many prompt parts before the cut are carried over (`Transcript::carried_over`).
+    /// How many entries before the cut are carried over - prompt parts, the brief under way
+    /// (`Transcript::carried_over`).
     carried: usize,
     /// The last entry before the cut: up to it the part replaced is read.
     until: Digest,
@@ -43,7 +44,7 @@ impl Cut {
     /// The branch of `thread` in `transcript` cut so that at most `keep` tokens are kept as they
     /// stand, its entries standing in the context at `positions` (`Situation::token_positions`);
     /// `under_way` is the turn under way. The oldest cut allowed behind which at most `keep`
-    /// tokens stand, the prompt parts carried over counted with them; the newest allowed if none
+    /// tokens stand, what is carried over counted with them; the newest allowed if none
     /// is. `None` if there is none, or nothing before it to replace.
     pub(crate) fn of(
         transcript: &Transcript,
@@ -77,7 +78,7 @@ impl Cut {
         Some(Self { until, under_way, replaced: path, kept, carried })
     }
 
-    /// The last entry before the cut, up to which the part replaced is read: a part carried over,
+    /// The last entry before the cut, up to which the part replaced is read: one carried over,
     /// maybe, which what is read of it leaves out (`ContextResolver::conversation_until`).
     pub(crate) fn until(&self) -> Digest {
         self.until
@@ -93,8 +94,8 @@ impl Cut {
         messages(&self.replaced)
     }
 
-    /// How many messages stay as they stand: those of the part kept, and the prompt parts carried
-    /// over from before it.
+    /// How many messages stay as they stand: those of the part kept, and those carried over from
+    /// before it.
     pub(crate) fn messages_kept(&self) -> usize {
         messages(&self.kept) + self.carried
     }
@@ -148,8 +149,8 @@ fn messages(entries: &[Entry]) -> usize {
 /// under way `under_way` before one of its model's messages but the first - before that, its input
 /// would be summarised and the turn kept -, before it before any message that is no tool's result,
 /// up to the turn's input, and none in a turn of `whole`. The oldest of them behind which at most
-/// `keep` tokens stand, those of the entries `carried` before it counted with them - the prompt
-/// parts a compaction carries over -; the newest if none is. `None` if there is none, or nothing
+/// `keep` tokens stand, those of the entries `carried` before it counted with them - what a
+/// compaction carries over -; the newest if none is. `None` if there is none, or nothing
 /// before it to replace but what is carried.
 fn cut_at(
     path: &[Entry],
@@ -416,6 +417,43 @@ mod tests {
             cut.replaced_as(Classification::PUBLIC),
             (None, Classification::PUBLIC),
             "classified by what it replaces, without the part"
+        );
+    }
+
+    /// Issue 622: the brief under way, given before the turn whose cut lies within it, is carried
+    /// over - its tokens counted with what is kept, itself not counted as replaced -, the brief a
+    /// turn answered before is replaced.
+    #[test]
+    fn the_brief_under_way_is_carried_over_and_one_answered_replaced() {
+        let thread = ThreadId::default();
+        let public = Classification::PUBLIC;
+        let mut transcript = Transcript::default();
+        let brief = |text| message(text, MessageRole::User, None, Classification::PUBLIC);
+        transcript.give(thread, brief("b1"), Some(GivenSource::Brief));
+        let answered = TurnId::new();
+        transcript
+            .push(thread, message("a1", MessageRole::Assistant, Some(answered), public.clone()));
+        transcript
+            .record(thread, TranscriptEntry::TurnFinished { turn_id: answered, at: Utc::now() });
+        transcript.give(thread, brief("b2"), Some(GivenSource::Brief));
+        let under_way = TurnId::new();
+        for (text, role) in [
+            ("a2", MessageRole::Assistant),
+            ("r2", MessageRole::Tool),
+            ("a3", MessageRole::Assistant),
+            ("r3", MessageRole::Tool),
+            ("a4", MessageRole::Assistant),
+        ] {
+            transcript.push(thread, message(text, role, Some(under_way), public.clone()));
+        }
+
+        // Behind a3 stand 30 tokens, with the 10 of b2 carried over 40: more than `keep`.
+        let positions = [0, 10, 20, 20, 30, 40, 50, 60, 70, 80];
+        let cut = Cut::of(&transcript, thread, &positions, 35, under_way).expect("cut");
+        assert_eq!(
+            (cut.messages_replaced(), cut.messages_kept()),
+            (6, 2),
+            "b1, a1, a2, r2, a3 and r3 replaced; a4 kept, and b2 carried over"
         );
     }
 

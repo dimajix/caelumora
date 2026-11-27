@@ -714,9 +714,9 @@ old one but does not continue it:
 
 *   **A branch of its own.** The transcript begins anew from the root with what replaces the older
     messages - a summary, what is given again, each a `Given` entry, the summary without a source -,
-    then copies of the parts given into the transcript that stand before the part kept, and then
-    copies of the entries kept, as they stand (`Transcript::compact`). Every copy gets a digest of
-    its own, since what precedes it is another.
+    then copies of the parts given into the transcript and of the brief under way that stand before
+    the part kept, and then copies of the entries kept, as they stand (`Transcript::compact`).
+    Every copy gets a digest of its own, since what precedes it is another.
 *   **The old branch stays**, in the store. Every reference recorded before resolves to what it
     did; the resolver does not know there was a compaction.
 *   **Prompt parts are carried over.** A part the turn placed after an entry kept follows its
@@ -726,6 +726,11 @@ old one but does not continue it:
     537): what replaces the older messages leaves it as it is. A plan whose instructions were
     replaced is named again where its current step stood: its steps, which are done and which is
     under way, then the instruction (`Turn::compact`).
+*   **So is the brief under way.** The brief the agent works on - the last given on its branch
+    after which no turn ended, as the delegate takes the first turn that ends after a brief as the
+    one answering it - is copied as it stands after the replacement, framed as a brief, however
+    long its turn works on it (`Transcript::carried_over`, issue 622): what the giver asked, in its
+    words, and that only the answer goes back. A brief answered is replaced with the rest.
 *   **The turn's answer is what it said**, kept with the turn (`TurnState::answer`), not read
     from the transcript, of which a part may have been summarised.
 *   **Where its part ends** is an entry of the transcript, `TranscriptEntry::Compacted`, after the
@@ -759,9 +764,10 @@ would free too little. It cuts only before a message, by the positions the resol
 that the turn's input would go and the turn stay -, before the turn before any message but a
 tool's result, up to the turn's input; never into a turn given up as `Lowered`. So a tool's result
 stays with its call, and the newest call with its results is never replaced. A part given into the
-transcript that stands before the cut is carried over rather than replaced (`Cut`): it counts as
-kept, so its tokens stay within `keep`, and a cut before which nothing else lies replaces nothing.
-The strategy is given the rest as the agent's model would be, without those parts
+transcript, or the brief under way, that stands before the cut is carried over rather than replaced
+(`Cut`): it counts as kept, so its tokens stay within `keep`, and a cut before which nothing else
+lies replaces nothing. The strategy is given the rest as the agent's model would be, without any
+part given into the transcript and without the brief under way
 (`ContextResolver::conversation_until`), and answers what stands in its place - the default,
 `summary_compaction`, has the agent's own model summarise it. A replacement that holds messages of
 the turn under way is the turn's (`Message::turn_id`) and classified as the turn's label - it holds

@@ -1,6 +1,6 @@
 # 622 — A compaction summarises the brief a sub-agent works on
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Context and knowledge
@@ -72,3 +72,16 @@ or from the turn (the brief whose request began it), and how a compaction betwee
 
 - **2026-11-27** — Opened from the review of step 3 of issue 619, as the maintainer decided:
   approach A.
+- **2026-11-27** — Decided by the maintainer: the open brief is read from the transcript alone -
+  the last brief on the branch after which no turn ended, as the delegate takes the first turn
+  that ends after a brief as its answer -, so that `/compact` between turns replaces a brief
+  answered; and the strategy is not given it, as it is given no part, since the replacement is
+  classified by what it replaces. Planned in two steps: what a compaction carries over named once
+  (`Transcript::carried_over`), then the brief under way added to it.
+- **2026-11-27** — Step 1 done: `Transcript::carried_parts` became `Transcript::carried_over`, and
+  what a summary is written of leaves out every part and what a compaction carries over.
+- **2026-11-27** — Step 2 done: the brief under way is carried over (`brief_under_way`). A
+  command turn ends it as well, though the delegate takes it for no answer; it comes between a
+  brief and its turn only if a command is asked for before that turn begins, and is left so.
+- **2026-11-27** — Done: both steps reviewed and accepted by the maintainer; the instruction of
+  the summary stays as it is, since it holds for an agent without a brief.

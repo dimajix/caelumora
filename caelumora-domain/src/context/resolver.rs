@@ -183,9 +183,10 @@ impl<'a> ContextResolver<'a> {
     /// on - up to and including its entry `last`, as the model of `agent` is given it in the turn
     /// `turn` - each message framed by `profile` at `time_zone` -, without any prompt part: none of
     /// a frame, none given into the transcript (`TranscriptEntry::part_of`, issue 537), of which a
-    /// compaction keeps those that still stand, and nothing else a compaction of what it reads
-    /// carries over (`carried_over`). What a model is handed to work on the conversation itself, a
-    /// summary say (issue 16). `None` if what it reads holds no entry `last`.
+    /// compaction keeps those that still stand, nor what else a compaction of what it reads
+    /// carries over: the brief under way (`carried_over`, issue 622). What a model is handed to
+    /// work on the conversation itself, a summary say (issue 16). `None` if what it reads holds no
+    /// entry `last`.
     ///
     /// # Errors
     /// `PromptError` if the text of a notice cannot be had.

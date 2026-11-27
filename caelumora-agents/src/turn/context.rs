@@ -48,7 +48,7 @@ impl Turn<'_> {
     /// the turn would be given it - each message as its profile gives it, with its time in the
     /// turn's time zone (issue 430), a turn given up told where it ended, one that no longer flows
     /// into the channel reduced to the tools it called -, without prompt parts or tools (issue
-    /// 16), nor what a compaction carries over (issue 537): what a component hands a model to
+    /// 16), nor what a compaction carries over (issues 537, 622): what a component hands a model to
     /// work on the conversation itself, a summary say. Resolved as the turn's own context is
     /// (`ContextResolver::conversation_until`), so the same rules hold, the attachments given along
     /// with their content (`given_along`).
@@ -716,5 +716,26 @@ mod tests {
             expected,
             "nor the part taken back only after the input - not carried over, replaced all the same"
         );
+    }
+
+    /// Issue 622: what a summary is written of (`Turn::conversation_until`) holds the brief a turn
+    /// answered, but not the brief under way, which a compaction carries over.
+    #[tokio::test]
+    async fn what_a_summary_is_written_of_holds_no_brief_under_way() {
+        let agent = AgentId::new();
+        let mut state = AgentChannelState::default();
+        state.given_brief(ThreadId::default(), heard("Find the bug."));
+        Turn::begun(agent, &mut state).commit(false, &Discard).await;
+        state.given_brief(ThreadId::default(), heard("Fix it."));
+        let mut turn = Turn::begun(agent, &mut state);
+        turn.set_context(Vec::new(), Vec::new());
+        let head =
+            turn.situation().agent_channel_state().transcript.digest(ThreadId::default()).unwrap();
+
+        let summarised = turn.conversation_until(head).await.unwrap();
+
+        let texts: Vec<_> = roles_and_texts(&summarised).into_iter().map(|(_, t)| t).collect();
+        assert!(texts.iter().any(|t| t.contains("Find the bug.")), "the brief answered: {texts:?}");
+        assert!(!texts.iter().any(|t| t.contains("Fix it.")), "the brief under way: {texts:?}");
     }
 }
