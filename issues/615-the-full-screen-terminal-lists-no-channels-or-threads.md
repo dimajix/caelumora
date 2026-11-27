@@ -209,3 +209,5 @@ Each step a commit of its own, reviewed before the next.
   `Place::at_work` is a flag, since the footer names no agent at work, and `Activity` carries the
   session's name (D4); unlike D1, the session's row stands whatever the width. Documented in
   README.md.
+- **2026-11-27** — Whether the kernel announces a delegation, for the terminal and the web UI
+  alike, opened as issue [621](621-a-delegation-is-announced-to-nobody.md).
