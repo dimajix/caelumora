@@ -32,9 +32,12 @@ refuses an external one with an error.
   remote task under way, and takes what the external agent says on its own as the answer to it; or
   the external agent's turn ends only once its task did.
 
-### What happens today with a late answer
+### What would happen with a late answer
 
-Read in the code on 2026-11-27, for the second point of *The problem*:
+Today no external agent is started as a sub-agent: `SubAgentWriter::personality` refuses an external
+personality before anything is made (`SubAgentError::External`). What follows is what would happen
+if that refusal were lifted and nothing else changed - read in the code on 2026-11-27, not tried,
+for the second point of *The problem*:
 
 - A request whose remote task outlives it - the stream ends or breaks before the task does - is
   answered with nothing: `Ending::Answered(None)`, published as a `TurnFinished` without messages
@@ -54,7 +57,12 @@ Read in the code on 2026-11-27, for the second point of *The problem*:
 - A question back from the remote agent already works: it is the request's answer, given back as
   such, and `ask_subagent` continues the task with the next request.
 
-Not looked at: how the intake takes in `GivenToRead` (the first point of *The problem*).
+The first point of *The problem* seems done already, read in the code but not covered by a test:
+since step 2 of issue 557 (2026-11-18), the external agent's actor lets `GivenToRead` in
+(`ExternalAgentActor::event_filter`), takes it in by the intake every agent shares - as a
+`TranscriptEntry::Given` (`intake.rs`) -, and `ContextResolver::given_messages` gives the remote
+agent the given entries of its transcript, framed as messages are. A test that a brief reaches the
+remote agent would settle it.
 
 ### Approaches to a late answer
 
@@ -83,3 +91,6 @@ it is under way rather than be given an empty answer or wait in silence.
   sub-agents are a step of their own, after the first version.
 - **2026-11-27** — What happens today with a late answer read in the code, and two approaches to
   it added, B recommended (*What happens today with a late answer*, *Approaches to a late answer*).
+- **2026-11-27** — Corrected: what the section described is not what happens today - an external
+  sub-agent is refused - but what would happen without the refusal (*What would happen with a late
+  answer*); the first point of *The problem* noted as seemingly done since 557.
