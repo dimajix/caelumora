@@ -90,3 +90,10 @@ still comes.
   that nothing more is needed until its answer. `attach` renders its text `attached` once, as it
   is made, instead of at every call with an empty text, logged, where it could not be had - as the
   texts of tools are rendered (`tool_text`).
+- **2026-11-27** — Tried with `gemma4:26b`, through the terminal program itself
+  (`work/subagent_start`, 10 runs per task and binary). The question of the experiment went to the
+  sub-agent: with the texts before, the model asked it again in the turn that started it in 9 of 10
+  runs with nothing else to do - for its findings, whether it was done -, 25 times in all; with the
+  texts of this issue in 2 of 10, once each, and one run looked for the answer in the channel's
+  history instead. With work of its own to do, the model waited under either texts (9 of 10). Not
+  done yet: consideration 3 follows, so that an early question is refused and says why.
