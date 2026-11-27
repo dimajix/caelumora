@@ -46,8 +46,8 @@ fn said(text: &str) -> Message {
 }
 
 /// The world with sub-agents, whose model "leading" answers `leading`, one per call, and then
-/// none - a turn that calls it again never ends -, and whose model "researching" answers what it
-/// is given.
+/// none - a turn that calls it again never ends -, whose model "researching" answers what it is
+/// given, and whose model "remarking" remarks on a tool it calls before it answers.
 async fn world(leading: Vec<Answer>) -> World {
     configured_world(leading, |_| {}).await
 }
@@ -58,6 +58,11 @@ async fn configured_world(leading: Vec<Answer>, configure: impl FnOnce(&mut AppC
     let register = |registry: &mut ComponentRegistry| {
         register_answering(registry, "leading", leading);
         register_scripted(registry, "researching", vec![said("found it"), said("found more")]);
+        let remark = Message {
+            content: Some("First I look around.".to_string()),
+            ..calling("look_around", serde_json::json!({}))
+        };
+        register_scripted(registry, "remarking", vec![remark, said("found it")]);
     };
     World::configured(&[&SubagentsPlugin], &libraries, register, configure).await
 }
@@ -617,6 +622,45 @@ async fn an_owner_has_an_agent_start_a_sub_agent_by_command() {
     for told in ["researcher", "Find it.", &thread.to_string()] {
         assert!(content.contains(told), "{told}: {content}");
     }
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// Issue 619: of the turn a sub-agent answers its brief in, the agent that started it is given back
+/// the answer alone, not the remark it made before calling a tool.
+#[tokio::test]
+async fn a_sub_agent_gives_back_its_answer_without_its_remarks() {
+    let thanks: Answer = Box::new(|_| said("thanks"));
+    let world = world(vec![thanks]).await;
+    let model = |kind: &str| ComponentDescriptor::new("model", kind);
+    let internal = PersonalityKind::Internal;
+    personality(&world, "remarker", world.alice, internal, vec![model("remarking")]).await;
+    let subagents = ComponentDescriptor {
+        params: serde_json::json!({ "personalities": ["remarker"] }),
+        ..ComponentDescriptor::new("subagents", SUBAGENTS_KIND)
+    };
+    let components = vec![model("leading"), subagents];
+    let leading = personality(&world, "leading", world.alice, internal, components).await;
+    let lead_id = world.agent("lead", world.alice, &leading).await;
+    let session = world.shared_session(&[lead_id], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let lead = ActorId::Agent(lead_id);
+
+    let alice = main.user_actor(world.alice).unwrap();
+    let line_of_command = format!("{SUBAGENT_COMMAND_NAME} @lead remarker Find it.");
+    alice.execute_command(None, &line_of_command).await.expect("hers");
+    let closed =
+        |e: &HistoryEntry| matches!(e, HistoryEntry::ThreadClosed { by, .. } if *by != lead);
+    let entries = main.history_once(|entries| entries.iter().any(closed)).await;
+    let given_back: Vec<Option<&str>> = entries
+        .iter()
+        .filter_map(|e| match e {
+            HistoryEntry::GivenToRead { recipient, message, .. } if *recipient == lead => {
+                Some(message.content.as_deref())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(given_back, [Some("found it")], "the answer alone: {entries:?}");
     world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

@@ -1210,17 +1210,28 @@ given what goes to the users and happens in its thread or the whole channel
 (`Recipients::reaches`), and:
 
 *   **gives the open brief** to the recipient, in the thread, once (`GivenToRead`);
-*   **takes the recipient's first turn that ends after the brief was given** as its answer - the
-    thread is a closed circle in which the delegate alone gives the recipient anything, and in
-    which nobody else says anything (`Rejection::ClosedCircle`): a turn answering a user who wrote
-    in it would be taken so, and the turn that answers the brief taken as the next brief's answer,
-    and so on -
-*   **and gives back** to the giver, where the thread was opened, what came of it, once: what
-    others hear of the turn, that it ended without an answer, that it was given up and why, that
-    the recipient could not be asked - the brief refused, the recipient gone before it was given -,
-    or that it left, for the open brief and for each that waited behind it (`kernel.delegation_*`),
-    as the recipient's message. Both directions carry the delegating chain's initiator, so that the
-    turns that answer them act in the authority the chain began in. Then the next brief is open.
+*   **takes the recipient's first turn that ends after the brief was given** as the one answering
+    it - the thread is a closed circle in which the delegate alone gives the recipient anything,
+    and in which nobody else says anything (`Rejection::ClosedCircle`): a turn answering a user who
+    wrote in it would be taken so, and the turn that answers the brief taken as the next brief's
+    answer, and so on -
+*   **and gives back** to the giver, where the thread was opened, what came of it, once: the
+    turn's answer alone (issue 619) - its last message, if that is one (`Message::is_answer`) and
+    says something in words, bounded in length with a notice (`MAX_ANSWER`), never the remarks
+    before its tool calls, which are steps of its work -, that it ended without an answer,
+    that it was given up and why, that the recipient could not be asked - the brief refused, the
+    recipient gone before it was given -, or that it left, for the open brief and for each that
+    waited behind it (`kernel.delegation_*`), as the recipient's message. Both directions carry the
+    delegating chain's initiator, so that the turns that answer them act in the authority the chain
+    began in. Then the next brief is open.
+
+    The delegate takes the answer from what the recipient says, not from the end of its turn,
+    whose messages the history does not keep for a delegate reading on after a restart. It is
+    given each message as the channel publishes it (`Message::published`): a remark whose calls
+    only its sender sees - private notes, the agent's memory - comes without them, and is taken
+    for the answer where the turn ends after them without words, or is cancelled before it says
+    any. An internal agent's answer cut short by a cancel is not said, only shown, so its turn
+    ends without an answer.
 
 After a restart the channel builds its threads, reconciles what changed while it did not run, starts
 the delegates of what is still to answer, then its participants: a delegate reads on from where its

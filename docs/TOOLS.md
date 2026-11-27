@@ -650,12 +650,15 @@ personalities the component is configured with (`personalities`), which works on
 a thread of its own opened at the call, and gives back only what came of it. Starting does not
 block: the call returns the thread at once, and what the sub-agent answers is given to the agent to
 read where the thread was opened, once it is there - as the kernel's delegate gives it (see
-[CHANNELS.md](CHANNELS.md#delegating-into-a-thread)). `ask_subagent` gives it more to read - in the
-turn that read its answer: one left without a word then is let go (issue 598), asked again
-`NoSubAgent`, to be ended with its thread -, `end_subagent` ends it: its thread, which owns it,
-closed with it (`procedure::thread::Close`, issue 598) - let go from its channel and its session,
-the agent deleted, never purged, the thread closed last. A brief still open as it is ended is
-dropped - if its leave came first, the agent is given back that it left before it answered.
+[CHANNELS.md](CHANNELS.md#delegating-into-a-thread)): the answer of its turn alone - its last
+message, calling no tool -, bounded in length (issue 619), never the remarks it made on the way,
+so that the agent's context holds the result and not the steps of the work. `ask_subagent` gives it
+more to read - in the turn that read its answer: one left without a word then is let go (issue
+598), asked again `NoSubAgent`, to be ended with its thread -, `end_subagent` ends it: its thread,
+which owns it, closed with it (`procedure::thread::Close`, issue 598) - let go from its channel and
+its session, the agent deleted, never purged, the thread closed last. A brief still open as it is
+ended is dropped - if its leave came first, the agent is given back that it left before it
+answered.
 
 They are offered where the work's session runs, and act through the `SubAgentWriter` the plugin
 binds to the turn's work (issue 516), in its context: the agent gives, its owner owns the sub-agent,
