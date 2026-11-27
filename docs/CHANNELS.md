@@ -1288,6 +1288,13 @@ An **actor** is anything that sends and receives events in a channel.
     actors (`ChannelLoop::runs`, `context_of`, `agent_commands`), and what enters is decided at its
     door. Whether an agent asked is answering
     already is the agent's own to tell; nobody guards it.
+*   **What actors send** the channel takes from one queue they share, of 100 places
+    (`ChannelLoop::run`): an actor that finds it full waits. Taking an envelope, the channel takes
+    what is queued behind it as well and handles them one after the other - the pieces of a partial
+    message one sender sent meanwhile as one (`Envelope::absorb`, issue 626), so that what a model
+    streams faster than the channel handles it is admitted, routed and delivered once, not chunk by
+    chunk. Each sender's envelopes keep their order; a piece moves ahead of what another sent before
+    it, which it does not depend on.
 *   **An actor's inbox** (`channel::inbox`, issue 223) is a bounded queue of the envelopes the
     channel delivers live, and behind it the channel's history, which it reads from wherever the
     queue fell short. The channel opens it as the actor starts, at where the actor stands in the

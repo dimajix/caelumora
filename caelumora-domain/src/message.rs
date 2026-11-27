@@ -1,7 +1,7 @@
 //! Messages: what an actor says in a channel - its text, its reasoning, its attachments, its tool
 //! calls and results -, with the rules by which a message is heard, published, modified,
-//! reclassified, fitted into its channel and taken back, and what a model's calls report and use
-//! (`CallMeasures`, `TokenUsage`).
+//! reclassified, fitted into its channel and taken back, and goes on as it streams in, and what a
+//! model's calls report and use (`CallMeasures`, `TokenUsage`).
 use crate::actor::ActorId;
 use crate::confidentiality::{Classification, Visibility};
 use crate::content::ContentRef;
@@ -432,6 +432,76 @@ impl Message {
         }
         applies
     }
+
+    /// Appends the text of `piece`, the next piece of this message streaming in (issue 626), and
+    /// returns whether it did: only if both carry text alone (`is_text_alone`), of the same
+    /// sender, role and turn, both of a step of a plan or neither, classified alike and with
+    /// their reasoning seen by the same. Its content and reasoning go on with those of `piece`; it
+    /// keeps its id and the time it was said.
+    pub(crate) fn append(&mut self, piece: &Message) -> bool {
+        let applies = self.is_text_alone()
+            && piece.is_text_alone()
+            && piece.sender_id == self.sender_id
+            && piece.sender_name == self.sender_name
+            && piece.role == self.role
+            && piece.turn_id == self.turn_id
+            && piece.internal == self.internal
+            && piece.classification == self.classification
+            && piece.reasoning_visibility == self.reasoning_visibility;
+        if applies {
+            let texts =
+                [(&mut self.content, &piece.content), (&mut self.reasoning, &piece.reasoning)];
+            for (text, more) in texts {
+                if let Some(more) = more {
+                    text.get_or_insert_default().push_str(more);
+                }
+            }
+        }
+        applies
+    }
+
+    /// Whether it carries text alone - content, reasoning or neither -, as a piece of a message
+    /// streaming in does: nothing said with it, called or answered, resolved, measured, changed or
+    /// produced from a context. Every field is named, so that a new one is decided here.
+    fn is_text_alone(&self) -> bool {
+        let Message {
+            id: _,
+            timestamp: _,
+            sender_id: _,
+            sender_name: _,
+            role: _,
+            classification: _,
+            content: _,
+            reasoning: _,
+            reasoning_visibility: _,
+            internal: _,
+            turn_id: _,
+            attachments,
+            tool_calls,
+            tool_results,
+            metadata,
+            mentions,
+            addressees,
+            measures,
+            modified,
+            revoked,
+            notice_of,
+            context_transcript,
+            context_frame,
+        } = self;
+        attachments.is_empty()
+            && tool_calls.is_empty()
+            && tool_results.is_empty()
+            && metadata.is_empty()
+            && mentions.is_empty()
+            && addressees.is_empty()
+            && measures.is_none()
+            && modified.is_none()
+            && revoked.is_none()
+            && notice_of.is_none()
+            && context_transcript.is_none()
+            && context_frame.is_none()
+    }
 }
 
 /// About how many tokens `bytes` of text take in a model's context (issue
@@ -615,6 +685,70 @@ pub(crate) mod tests {
     use crate::user::UserId;
     use chrono::Duration;
     use serde_json::Value;
+
+    /// Issue 626: a piece of a message streaming in goes on with the next piece - its reasoning and
+    /// its content, each where the piece has some -, if both carry text alone and are of the same
+    /// sender, role, turn and step, classified alike and with their reasoning seen by the same.
+    #[test]
+    fn a_piece_of_a_message_goes_on_with_the_next_piece_of_the_same_message_alone() {
+        use crate::digest;
+        let talker = ActorId::Agent(AgentId::new());
+        let turn_id = Some(TurnId::new());
+        let piece = |content: Option<&str>, reasoning: Option<&str>| Message {
+            id: MessageId::new(),
+            sender_id: talker,
+            sender_name: "talker".to_string(),
+            role: MessageRole::Assistant,
+            turn_id,
+            content: content.map(str::to_string),
+            reasoning: reasoning.map(str::to_string),
+            ..make_message(MessageId::new())
+        };
+        let mut message = piece(None, Some("think"));
+        let id = message.id;
+        assert!(message.append(&piece(None, Some("ing"))), "its reasoning goes on");
+        assert!(message.append(&piece(Some("Hel"), None)), "its content begins");
+        assert!(message.append(&piece(Some("lo"), None)), "and goes on");
+        let texts = (message.reasoning.as_deref(), message.content.as_deref());
+        assert_eq!(texts, (Some("thinking"), Some("Hello")));
+        assert_eq!(message.id, id, "its own id");
+
+        let text = || piece(Some("!"), None);
+        let call = || vec![make_tool_call("search")];
+        let attachment = || vec![make_content_ref("a.txt", b"a")];
+        let metadata = || HashMap::from([("key".to_string(), "value".to_string())]);
+        // Any digest: what matters is that the piece names one.
+        let digest = Some(digest::message_revoked(None, MessageId::new()));
+        for (other, what) in [
+            (Message { sender_id: ActorId::Agent(AgentId::new()), ..text() }, "of another"),
+            (Message { sender_name: "other".to_string(), ..text() }, "under another name"),
+            (Message { role: MessageRole::User, ..text() }, "in another role"),
+            (Message { turn_id: Some(TurnId::new()), ..text() }, "of another turn"),
+            (Message { internal: true, ..text() }, "of a step of a plan"),
+            (Message { classification: Classification::PUBLIC, ..text() }, "classified otherwise"),
+            (Message { reasoning_visibility: Visibility::Owner, ..text() }, "seen by fewer"),
+            (Message { tool_calls: call(), ..text() }, "with a call"),
+            (
+                Message { tool_results: vec![result("1", ToolVisibility::SHOWN)], ..text() },
+                "with a result",
+            ),
+            (Message { attachments: attachment(), ..text() }, "with an attachment"),
+            (Message { metadata: metadata(), ..text() }, "with metadata"),
+            (Message { mentions: vec![talker], ..text() }, "mentioning someone"),
+            (Message { addressees: vec![talker], ..text() }, "addressing someone"),
+            (Message { measures: Some(CallMeasures::default()), ..text() }, "measured"),
+            (Message { modified: Some(Utc::now()), ..text() }, "modified"),
+            (Message { revoked: Some(Utc::now()), ..text() }, "taken back"),
+            (Message { notice_of: Some(MessageId::new()), ..text() }, "telling of another"),
+            (Message { context_transcript: digest, ..text() }, "produced from a transcript"),
+            (Message { context_frame: digest, ..text() }, "produced from a frame"),
+        ] {
+            assert!(!message.append(&other), "not a piece {what}");
+        }
+        assert_eq!(message.content.as_deref(), Some("Hello"), "unchanged by what it did not take");
+        let mut called = Message { tool_calls: call(), ..text() };
+        assert!(!called.append(&text()), "nor goes on one that carries more than text");
+    }
 
     /// Issue 514: a model may report the size of its context and no tokens; that is no call
     /// counted.
