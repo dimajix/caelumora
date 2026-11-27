@@ -155,6 +155,8 @@ Each step a commit of its own, reviewed before the next.
    HTML as `\<` -, without an option to leave it: the page's text keeps the escapes, its title is
    decoded without the converter.
 7. **Keeping them up to date.** `scripts/outdated.sh`, the rule in CRATES.md and WEB-UI.md (E2).
+8. **What the script found.** `nix` 0.32, `npm update` (`eslint` 10.16); `matchit` recorded as
+   waiting for `axum`, which holds it; the web UI checked in a browser.
 
 ## History
 
@@ -184,3 +186,8 @@ Each step a commit of its own, reviewed before the next.
 - **2026-11-27** — Step 6 done: `htmd` 0.6. A page is parsed once, by `html_to_tree`, which 0.6
   makes public; its title is the text of its `title` element, no longer found in its source by hand
   and converted, and its text the Markdown of the tree, escapes and all - as TOOLS.md says.
+- **2026-11-27** — Step 7 done: `scripts/outdated.sh`, the rule in CRATES.md (*Keeping the
+  dependencies up to date*) and WEB-UI.md (*Its dependencies*), named in CODING-GUIDELINES.md; the
+  lists of `licenses/` generated again, which steps 2 to 6 had left behind - the web UI brings a
+  license new to it, `0BSD` (`tslib`, while it is built). The script found two more behind, which
+  step 2 had not named: `nix` 0.32 and `eslint` 10.16, within its range.

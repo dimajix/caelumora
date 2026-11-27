@@ -239,7 +239,8 @@ it the Rust files a commit adds or changes.
 *   **Dependencies.** Every dependency - of another crate of the workspace too - is declared once
     in `[workspace.dependencies]`, with its version, `default-features = false` if any crate needs
     it, and the features every crate using it needs. A crate names it with `workspace = true` and
-    adds only its own features and `optional`. A version is raised there, for all crates at once.
+    adds only its own features and `optional`. A version is raised there, for all crates at once,
+    in the update made once a month ([CRATES.md](CRATES.md#keeping-the-dependencies-up-to-date)).
     A crate declares only what it uses, in every build of it: `unused_dependencies`
     (`[workspace.lints.cargo]`, issue 620) fails a build that leaves a dependency unused - a crate
     on both levels makes one that only a feature uses optional, part of that feature.

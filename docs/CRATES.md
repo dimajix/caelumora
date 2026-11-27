@@ -157,3 +157,15 @@ to `scripts/crates.sh` runs the script, and the pre-commit hook refuses a commit
 it is staged, does not match the manifests (`crate-graph.sh --check`). Which box a crate is drawn in
 comes from `scripts/crates.sh`, which lists the libraries, the crates on both levels and the
 plugins; a new crate of one of these kinds is entered there.
+
+## Keeping the dependencies up to date
+
+The dependencies of the workspace are brought up to date once a month (issue 620), as work of its
+own on a branch of its own, and so are the web UI's ([WEB-UI.md](WEB-UI.md#its-dependencies)).
+`scripts/outdated.sh` says what is behind: a dry run of `cargo update` and `npm outdated`. What lies
+within the ranges of the manifests is one step - `cargo update` -, each new major version a step of
+its own, with what it changes in the code; what has to wait is recorded with its reason in the issue
+the work is done under. `licenses/generate.py` runs again once `Cargo.lock` changed (see the
+[README](../README.md#third-party-licenses)). A crate declares no dependency it does not use: the
+lint `unused_dependencies` refuses one
+([CODING-GUIDELINES.md](CODING-GUIDELINES.md#crates-and-interfaces)).
