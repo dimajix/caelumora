@@ -170,7 +170,8 @@ plugins:
 Before the first call to a model, the backend reads the model's control tokens from the server and
 keeps them from being produced by any text it sends; if they cannot be read, the call fails
 (`control_tokens` of `caelumora-model-ollama`). They are read of the model's `tokenizer`, if one is
-configured.
+configured. A control token the model writes as text is taken out of what it says and thinks;
+what it says or thinks that is blank is none.
 
 An agent is given its model as a component: the kind `language_model` of `caelumora-model`, which
 provides the `LanguageModelClient` facet, of which an agent has exactly one, and how the agent's

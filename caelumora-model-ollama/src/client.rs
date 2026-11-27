@@ -29,8 +29,14 @@
 //! fails rather than go out unprotected. A model that does not list them -
 //! one Ollama serves from its cloud, which tokenizes content the same way
 //! (measured, issue 462) - is given the `tokenizer` of a model that does.
+//!
+//! What the model produces is passed on without the control tokens it writes as text (issue 625):
+//! they are never meant as part of its answer or its thinking. Ollama's parser for a model takes
+//! out those of its format it knows, not every one - gemma4's `<|tool_response>` reaches the
+//! content -, so each piece streamed is let through a `TokenFilter`, and the whole is what the
+//! filter let through. An answer or thinking that is blank is none.
 
-use crate::control_tokens::ControlTokens;
+use crate::control_tokens::{ControlTokens, TokenFilter, TokenKind};
 use async_stream::stream;
 use async_trait::async_trait;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -60,6 +66,7 @@ use std::fmt::Debug;
 use std::io;
 use std::io::ErrorKind;
 use std::mem;
+use std::pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::OnceCell;
@@ -239,6 +246,21 @@ struct OllamaChatResponse {
     eval_duration: Option<u64>,
 }
 
+impl OllamaChatResponse {
+    /// What Ollama reports of the call; the size of its context is the client's to add
+    /// (`chat_completion`).
+    fn measures(&self) -> CallMeasures {
+        CallMeasures {
+            prompt_tokens: self.prompt_eval_count,
+            completion_tokens: self.eval_count,
+            prompt_duration: self.prompt_eval_duration,
+            completion_duration: self.eval_duration,
+            total_duration: self.total_duration,
+            context_size: None,
+        }
+    }
+}
+
 /// What of `given` the model is given along (issue 282), as Ollama takes images: base64; `None`
 /// for none.
 fn images_of<'a>(given: impl IntoIterator<Item = &'a ContentRef>) -> Option<Vec<String>> {
@@ -331,7 +353,8 @@ impl OllamaChatRequest {
 
 /// Ollama's token types that it tokenizes in text (`tokenizer.ggml.token_type`):
 /// control tokens, and user-defined ones such as qwen3's `<think>` and
-/// `<tool_call>` - measured, issue 149.
+/// `<tool_call>` - measured, issue 149. Both are defused; only control tokens
+/// are taken out of what the model produces (`TokenKind`, issue 625).
 const CONTROL_TOKEN_TYPE: i32 = 3;
 const USER_DEFINED_TOKEN_TYPE: i32 = 4;
 
@@ -453,13 +476,13 @@ async fn read_control_tokens(
         };
         return Err(ModelError::InvalidResponse { endpoint, reason });
     }
-    let control = info
-        .tokens
-        .into_iter()
-        .zip(info.token_types)
-        .filter(|(_, kind)| *kind == CONTROL_TOKEN_TYPE || *kind == USER_DEFINED_TOKEN_TYPE)
-        .map(|(token, _)| token);
-    let tokens = ControlTokens::new(control).map_err(|e| ModelError::InvalidResponse {
+    let special =
+        info.tokens.into_iter().zip(info.token_types).filter_map(|(token, kind)| match kind {
+            CONTROL_TOKEN_TYPE => Some((token, TokenKind::Control)),
+            USER_DEFINED_TOKEN_TYPE => Some((token, TokenKind::UserDefined)),
+            _ => None,
+        });
+    let tokens = ControlTokens::new(special).map_err(|e| ModelError::InvalidResponse {
         endpoint,
         reason: format!("cannot search for the model's control tokens: {e}"),
     })?;
@@ -776,12 +799,15 @@ impl OllamaModel {
 }
 
 /// The answer of Ollama's stream of `bytes`, one JSON object per line: as it
-/// comes, then whole. The lines are framed in bytes, so a character or a
-/// line the network splits arrives whole (issue 185).
+/// comes, then whole - its words and its thinking without the control tokens
+/// `tokens` (issue 625), and either left blank as none. The lines are framed
+/// in bytes, so a character or a line the network splits arrives whole
+/// (issue 185).
 fn answer_of<S, D, E>(
     bytes: S,
     endpoint: String,
     model: String,
+    tokens: Arc<ControlTokens>,
 ) -> impl Stream<Item = ModelResult<MessageEvent>> + Send + 'static
 where
     S: Stream<Item = Result<D, E>> + Send + 'static,
@@ -790,10 +816,21 @@ where
 {
     let sender_id = ActorId::None;
     let sender_name = "ollama".to_string();
+    let message = move |content: Option<String>, reasoning: Option<String>| Message {
+        id: MessageId::new(),
+        sender_id,
+        sender_name: sender_name.clone(),
+        role: MessageRole::Assistant,
+        content,
+        reasoning,
+        ..unlabelled_message()
+    };
     stream! {
         let reader = StreamReader::new(bytes.map(|chunk| chunk.map_err(io::Error::other)));
-        let mut lines = std::pin::pin!(FramedRead::new(reader, LinesCodec::new()));
+        let mut lines = pin::pin!(FramedRead::new(reader, LinesCodec::new()));
 
+        let mut content = TokenFilter::new(Arc::clone(&tokens));
+        let mut thinking = TokenFilter::new(tokens);
         let mut full_content = String::new();
         let mut full_reasoning = String::new();
         let mut all_tool_calls = Vec::new();
@@ -819,8 +856,10 @@ where
                 return;
             }
             match serde_json::from_str::<OllamaChatResponse>(&line) {
-                Ok(body) => {
-                    if let Some(msg) = body.message {
+                Ok(mut body) => {
+                    let mut thought = String::new();
+                    let mut said = String::new();
+                    if let Some(msg) = body.message.take() {
                         if let Some(tc) = msg.tool_calls {
                             for call in tc {
                                 all_tool_calls.push(ToolCall::new(
@@ -830,56 +869,41 @@ where
                                 ));
                             }
                         }
-
-                        if let Some(thinking) = msg.thinking.filter(|t| !t.is_empty()) {
-                            full_reasoning.push_str(&thinking);
-                            let partial_message = Message {
-                                id: MessageId::new(),
-                                sender_id,
-                                sender_name: sender_name.clone(),
-                                role: MessageRole::Assistant,
-                                reasoning: Some(thinking),
-                                ..unlabelled_message()
-                            };
-                            yield Ok(MessageEvent::Partial(partial_message));
-                        }
-
-                        if !msg.content.is_empty() {
-                            full_content.push_str(&msg.content);
-                            let partial_message = Message {
-                                id: MessageId::new(),
-                                sender_id,
-                                sender_name: sender_name.clone(),
-                                role: MessageRole::Assistant,
-                                content: Some(msg.content),
-                                ..unlabelled_message()
-                            };
-                            yield Ok(MessageEvent::Partial(partial_message));
-                        }
+                        thought = thinking.push(msg.thinking.as_deref().unwrap_or_default());
+                        said = content.push(&msg.content);
                     }
                     if body.done {
-                        // What Ollama reports of the call; the size of its context is the client's
-                        // to add (`chat_completion`).
-                        let measures = CallMeasures {
-                            prompt_tokens: body.prompt_eval_count,
-                            completion_tokens: body.eval_count,
-                            prompt_duration: body.prompt_eval_duration,
-                            completion_duration: body.eval_duration,
-                            total_duration: body.total_duration,
-                            context_size: None,
+                        // What was held back: with nothing to follow, it begins no token.
+                        thought.push_str(&thinking.finish());
+                        said.push_str(&content.finish());
+                    }
+                    if !thought.is_empty() {
+                        full_reasoning.push_str(&thought);
+                        yield Ok(MessageEvent::Partial(message(None, Some(thought))));
+                    }
+                    if !said.is_empty() {
+                        full_content.push_str(&said);
+                        yield Ok(MessageEvent::Partial(message(Some(said), None)));
+                    }
+                    if body.done {
+                        let removed = [content.removed(), thinking.removed()].concat();
+                        if !removed.is_empty() {
+                            debug!(
+                                "ollama: model {} wrote {} control tokens as text, taken out",
+                                model,
+                                removed.len()
+                            );
+                            trace!("ollama: control tokens taken out: {:?}", removed);
+                        }
+                        let whole = Message {
+                            tool_calls: all_tool_calls,
+                            measures: Some(body.measures()),
+                            ..message(
+                                (!full_content.trim().is_empty()).then_some(full_content),
+                                (!full_reasoning.trim().is_empty()).then_some(full_reasoning),
+                            )
                         };
-                        let message = Message {
-                            id: MessageId::new(),
-                            sender_id,
-                            sender_name: sender_name.clone(),
-                            role: MessageRole::Assistant,
-                            content: if full_content.is_empty() { None } else { Some(full_content.clone()) },
-                            reasoning: if full_reasoning.is_empty() { None } else { Some(full_reasoning.clone()) },
-                            tool_calls: all_tool_calls.clone(),
-                            measures: Some(measures),
-                            ..unlabelled_message()
-                        };
-                        yield Ok(MessageEvent::Complete(message));
+                        yield Ok(MessageEvent::Complete(whole));
                         return;
                     }
                 },
@@ -941,13 +965,15 @@ impl LanguageModelProvider for OllamaModel {
         let context_size = self.context_size;
 
         let output = stream! {
-            match known.control_tokens.get(&http, &remote, &model, tokenizer.as_deref()).await {
-                Ok(tokens) => request.defuse(&tokens),
+            let asked = known.control_tokens.get(&http, &remote, &model, tokenizer.as_deref());
+            let tokens = match asked.await {
+                Ok(tokens) => tokens,
                 Err(e) => {
                     yield Err(e);
                     return;
                 }
-            }
+            };
+            request.defuse(&tokens);
             debug!(
                 "ollama: sending chat request model={}, messages={}, endpoint={}",
                 model,
@@ -974,7 +1000,9 @@ impl LanguageModelProvider for OllamaModel {
                 yield Err(ModelError::Rejected { endpoint, model, status: status.as_u16(), message: backend_error_message(&body) });
                 return;
             }
-            let mut answer = std::pin::pin!(answer_of(response.bytes_stream().map(|chunk| chunk.map_err(reqwest::Error::without_url)), endpoint, model.clone()));
+            let bytes =
+                response.bytes_stream().map(|chunk| chunk.map_err(reqwest::Error::without_url));
+            let mut answer = pin::pin!(answer_of(bytes, endpoint, model.clone(), tokens));
             while let Some(event) = answer.next().await {
                 match event {
                     Ok(MessageEvent::Complete(mut message)) => {
@@ -1160,8 +1188,8 @@ mod tests {
 
     /// A stand-in for Ollama: `/api/show` lists `<|im_start|>` as a control
     /// token and `<think>` as a user-defined one, `/api/chat` keeps what it
-    /// is sent and answers, `/api/ps` lists the `loaded` models with the
-    /// context size each was loaded with.
+    /// is sent and answers - "ok", or its `answer` -, `/api/ps` lists the
+    /// `loaded` models with the context size each was loaded with.
     #[derive(Clone, Default)]
     struct FakeOllama {
         sent: Arc<Mutex<Vec<Value>>>,
@@ -1175,6 +1203,8 @@ mod tests {
         listed: Arc<AtomicUsize>,
         /// A model whose capabilities name `vision` (issue 282).
         seeing: Option<&'static str>,
+        /// The lines `/api/chat` answers with instead of "ok".
+        answer: Option<&'static str>,
     }
 
     async fn serve(fake: FakeOllama) -> String {
@@ -1230,7 +1260,9 @@ mod tests {
                 "/api/chat",
                 post(|State(fake): State<FakeOllama>, Json(body): Json<Value>| async move {
                     fake.sent.lock().unwrap().push(body);
-                    "{\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"done\":true}\n"
+                    fake.answer.unwrap_or(
+                        "{\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"done\":true}\n",
+                    )
                 }),
             )
             .with_state(fake);
@@ -1549,8 +1581,9 @@ mod tests {
         let bytes =
             futures_stream::iter(body.bytes().map(|b| Ok::<_, Error>(Bytes::from(vec![b]))));
 
+        let tokens = Arc::new(ControlTokens::new(Vec::new()).unwrap());
         let events: Vec<_> =
-            answer_of(bytes, "ollama".to_string(), "qwen3:8b".to_string()).collect().await;
+            answer_of(bytes, "ollama".to_string(), "qwen3:8b".to_string(), tokens).collect().await;
         let parts: Vec<_> = events
             .iter()
             .filter_map(|e| match e {
@@ -1563,6 +1596,61 @@ mod tests {
             matches!(events.last(), Some(Ok(MessageEvent::Complete(m))) if m.content.as_deref() == Some("Grüße")),
             "{events:?}"
         );
+    }
+
+    /// What the client gives of the answer `answer` of the stand-in: the pieces it streams, and
+    /// the message it ends with.
+    async fn answered(answer: &'static str) -> (Vec<Message>, Message) {
+        let fake = FakeOllama { answer: Some(answer), ..FakeOllama::default() };
+        let client = client(&serve(fake).await);
+        let mut events: Vec<_> = client.chat_completion(&[], &[]).await.collect().await;
+        let Some(Ok(MessageEvent::Complete(whole))) = events.pop() else {
+            panic!("ends with a whole message: {events:?}");
+        };
+        let pieces = events
+            .into_iter()
+            .map(|event| match event {
+                Ok(MessageEvent::Partial(piece)) => piece,
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        (pieces, whole)
+    }
+
+    /// Issue 625: a control token the model writes as text is taken out of what it says and
+    /// thinks, streamed and whole - also one the stream splits; a user-defined one is kept.
+    #[tokio::test]
+    async fn a_control_token_the_model_writes_is_taken_out_of_its_answer() {
+        let (pieces, whole) = answered(concat!(
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"\",\"thinking\":\"<|im_start|>hm\"},\"done\":false}\n",
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"Hallo <|im_\"},\"done\":false}\n",
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"start|>Welt <think>\"},\"done\":false}\n",
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true}\n",
+        ))
+        .await;
+
+        let said: Vec<_> = pieces.iter().filter_map(|piece| piece.content.clone()).collect();
+        let thought: Vec<_> = pieces.iter().filter_map(|piece| piece.reasoning.clone()).collect();
+        assert_eq!(said, ["Hallo ", "Welt <think>"], "streamed");
+        assert_eq!(thought, ["hm"]);
+        assert_eq!(whole.content.as_deref(), Some("Hallo Welt <think>"), "whole");
+        assert_eq!(whole.reasoning.as_deref(), Some("hm"));
+    }
+
+    /// Issue 625: an answer of control tokens alone - with whitespace around them - says nothing.
+    #[tokio::test]
+    async fn an_answer_of_control_tokens_alone_is_none() {
+        let (pieces, whole) = answered(
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"<|im_start|>\"},\"done\":true}\n",
+        )
+        .await;
+        assert!(pieces.is_empty() && whole.content.is_none(), "{pieces:?}, {whole:?}");
+
+        let (_, whole) = answered(
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"\\n<|im_start|>\"},\"done\":true}\n",
+        )
+        .await;
+        assert_eq!(whole.content, None, "what is left blank is no answer");
     }
 
     #[tokio::test]

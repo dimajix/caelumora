@@ -138,7 +138,7 @@ sub-agent answered is not to be trusted.
 
 In 14 of the 80 runs, gemma4 wrote one of its control tokens as text - `<|tool_response>` as the
 whole answer of a turn it meant to end, `<channel|>` once in the middle of one -, which Ollama
-passes on as content (issue 625).
+passes on as content; the backend takes it out (issue 625).
 
 ## Seeing images
 
