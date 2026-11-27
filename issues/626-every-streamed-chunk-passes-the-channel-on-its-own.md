@@ -46,7 +46,8 @@ an event, nor how often a turn waits for the channel.
   the chunks of one agent delay the events of the others.
 - What follows the channel - inboxes, outboxes, streams, the browser - pays per chunk, not per
   message.
-- An inbox that overflows leaves a hole in the text a user watches stream in.
+- An inbox that overflows leaves a hole in the text a user watches stream in; a stream that falls
+  behind loses the answer under way, since the snapshot it is sent holds no partials.
 
 ## Considerations
 
@@ -90,12 +91,21 @@ an event, nor how often a turn waits for the channel.
   that merges, and one more concept to know. Its gain over the above shows only where a single
   handling takes seconds; it is taken up if a turn is seen waiting for the channel despite it.
 - **In the inbox of a user's actor (not part of this).** `Inbox::deliver` could merge by the same
-  rule. The user's actor empties its inbox without any I/O, so little stays there, and once the
-  channel merges, what reaches the inbox is merged already.
+  rule, but little stays there to merge: nothing behind it holds the user's actor back. It shows
+  what it takes in its outbox, a `broadcast`, whose `send` never waits (`UserActor::show`): a
+  follower too slow loses the oldest items (`Lagged`), the actor goes on. The actor waits only as it
+  sends into the channel - a message of its user (`forward`), the answer of a rule of theirs to an
+  approval (`answer_by_rule`) -, that is for a busy loop, which meanwhile delivers nothing into its
+  inbox either. And once the channel merges, what reaches the inbox is merged already.
 - **In the stream (not part of this).** A `broadcast` cannot change what it holds. The
   `ChannelFollower` could merge, as it takes them, the partials already waiting, and send one event
-  for them: fewer events and updates of the browser, though not a stream that falls behind any less.
-  A matter of its own, should a browser be seen to lag behind a fast model.
+  for them. Each event of the stream carries an envelope's whole `EventContext` - session, channel,
+  thread, sender, ids, span -, far more than the few characters of a chunk; merged, a stream writes
+  fewer bytes, empties the outbox sooner and falls behind less often. That matters: a stream that
+  falls behind is sent a snapshot of the channel (`ChannelFollower::next`), built from its history,
+  which holds no partials - the answer under way loses what streamed before, until its complete
+  message comes. The merging at the channel already makes the items of the outbox fewer; merging in
+  the `ChannelFollower` is a matter of its own, should a stream be seen to fall behind a fast model.
 - **Other kinds.** `StateChanged`, of which only the last counts, could be taken by the same
   mechanism; not without a need for it.
 
@@ -112,3 +122,6 @@ an event, nor how often a turn waits for the channel.
 - **2026-11-27** — Opened from a discussion with the maintainer: merging as envelopes are put into
   the channel's queue, in the inbox of a user's actor and in the stream were weighed; merging as the
   channel's loop takes them, from a queue of 100, was chosen.
+- **2026-11-27** — The options of the inbox and the stream corrected: nothing behind the user's
+  actor holds it back, since its outbox never waits; merging in the stream does make it fall behind
+  less often, and a stream that falls behind loses the answer under way from its snapshot.
