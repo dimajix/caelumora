@@ -246,12 +246,16 @@ bound by which classification, what it has seen so far (its label), the agent's 
 channel, the tools it was offered, and its session to navigate. A `Situation` is what every piece of
 work of an agent has, so an external agent's work has one too. The `Turn` reads through it and
 passes none of it on: its own methods change something - stage, say, give, compact -, act in the
-channel, or read what only the turn holds (its id, what it staged, the state a tool requested).
+channel, or read what only the turn holds (its id, what it staged, the state a tool requested, the
+results of its calls so far).
 
 **The turn's id** is given when it begins and stored with it, so that a turn resumed after a restart
 is the same turn. Every message the turn produces carries it (`Message::turn_id`), so which messages
 belong to one turn can be told from the messages alone. It is not covered by the digest, and a
-modification does not take it over: a changed message stays in the turn it was produced in.
+modification does not take it over: a changed message stays in the turn it was produced in. What
+the turn's calls gave so far (`Turn::tool_results`, issue 616) is read by it: the results of its
+earlier steps from its messages in the transcript, those of the current step from its calls - a
+step a compaction replaced in the middle of the turn is not among them.
 
 Beside its state, a turn reaches its session through its readers (`Situation::session`), from which
 components read other channels as the confidentiality rules allow - at the classification the turn

@@ -97,3 +97,17 @@ still comes.
   texts of this issue in 2 of 10, once each, and one run looked for the answer in the channel's
   history instead. With work of its own to do, the model waited under either texts (9 of 10). Not
   done yet: consideration 3 follows, so that an early question is refused and says why.
+- **2026-11-27** — Consideration 3 carried out, narrower than written, on the agent's side. A first
+  attempt refused a further brief in the channel until the giver read what came of the last
+  (`ThreadState::delegate`, `ChannelError::AnswerUnread`) and was taken back before it was
+  committed: when to brief again is a matter of the tool's contract, not of the channel, whose
+  delegation stays a queue of briefs for every giver - one asked before the answer came is answered
+  after it, on its own. Instead `ask_subagent` refuses to ask a sub-agent in the turn that gave it
+  a brief, by `start_subagent` or `ask_subagent`: its answer is given to read between turns, so it
+  cannot come before that turn ends - the case the experiment showed. The model is told so as a
+  failure, with the text `tools.subagents.briefed_already` saying to end the turn. The tool reads
+  what the turn did from the results of its calls, `Turn::tool_results` - the earlier steps from
+  the turn's messages in the transcript, the current step from its calls -; a step a compaction
+  replaced in the middle of the turn is not among them, and an ask after it is taken as asked
+  later. Tried with `gemma4:26b` only with the first attempt: the refusal was not reached, the one
+  early ask failed on its arguments first.

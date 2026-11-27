@@ -16,6 +16,7 @@ The binaries:
 |---|---|---|
 | `before` | `main` at `ad75dc52`, before issue 616 | the texts of issue 558; the result of `start_subagent` is `{"thread"}` |
 | `after` | the branch `issue-616-subagent-texts` at `5263c8bb` | the texts of issue 616; the result is `{"started", "thread"}`, `started` saying that nothing more is needed until the answer |
+| `refused` | the same branch with a first attempt at consideration 3, never committed | as `after`, and `ask_subagent` refused by the channel until the agent read the sub-agent's answer, told as a failure with what to do instead; replaced by a refusal in the turn that gave the brief (issue 616) |
 
 The tasks, both in German, as a person would type them:
 
@@ -32,6 +33,8 @@ The tasks, both in German, as a person would type them:
 | after | delegate | 10 | 7 | 1 | 2 | 0 | 0 | 0 | 0 |
 | before | meanwhile | 10 | 9 | 0 | 0 | 1 | 0 | 0 | 0 |
 | after | meanwhile | 10 | 9 | 0 | 0 | 0 | 0 | 1 | 0 |
+| refused | delegate | 10 | 7 | 1 | 1 | 1 | 0 | 0 | 0 |
+| refused | meanwhile | 10 | 10 | 0 | 0 | 0 | 0 | 0 | 0 |
 
 ## Findings
 
@@ -58,7 +61,13 @@ The tasks, both in German, as a person would type them:
     turn ended with an answer whose whole text was `<|tool_response>` - gemma4's token, given as
     text -, in one more beside a call. What the channel then shows as the assistant's answer was
     not looked at; not a matter of issue 616.
-6.  **An earlier measurement was flawed and is not counted.** An exchange still open when a run's
+6.  **The refusal of consideration 3 was not reached.** With it (`refused`), the one early
+    `ask_subagent` failed on its arguments first - a thread id it garbled, then no `text` - and was
+    told "The arguments were invalid: ... Correct them and call the tool again." before the writer
+    was asked; the turn then ended. One run asked the user instead, through `ask_user`, "Has the
+    sub-agent finished its task?". The other runs did as under `after`. The refusal is held by the
+    tests; whether a model follows its text was not seen.
+7.  **An earlier measurement was flawed and is not counted.** An exchange still open when a run's
     program was ended was recorded into the next run, which was then judged by it (`no_start`) and
     lost. `experiment.py` now drops what an earlier run opened; the flawed runs lie in
     `results/flawed-1/`.

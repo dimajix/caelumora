@@ -50,6 +50,25 @@ struct End {
     thread: ThreadId,
 }
 
+/// The thread a call of `start_subagent` or `ask_subagent` gave a brief into, as its result names
+/// it - beside what it tells of what it did. Read from what the model was given, which is the
+/// result itself as long as the tools are shown and do not classify what they give
+/// (`successful_result`): so `tool` makes them, and so they answer.
+#[derive(Deserialize)]
+struct Briefed {
+    thread: ThreadId,
+}
+
+/// Whether `turn` gave the sub-agent of `thread` a brief already (issue 616): a call of
+/// `start_subagent` or `ask_subagent` naming it, which succeeded.
+fn briefed_in(turn: &Turn<'_>, thread: ThreadId) -> bool {
+    turn.tool_results().iter().any(|result| {
+        [START_SUBAGENT, ASK_SUBAGENT].contains(&result.tool_name.as_str())
+            && result.status.is_ok()
+            && serde_json::from_str::<Briefed>(&result.content).is_ok_and(|b| b.thread == thread)
+    })
+}
+
 /// What starting, asking or ending a sub-agent failed of, as the model is told it, by its class
 /// (`SubAgentError::class`): what it can correct is a parameter, a refusal a refusal, what failed a
 /// failure.
@@ -168,6 +187,9 @@ pub(super) struct AskSubagentTool {
     /// What its result tells of what it did: that the sub-agent is given the text once it answered
     /// what it was given before, and nothing more is needed until its answer (issue 616).
     asked: String,
+    /// Why a call in the turn that gave the sub-agent a brief is refused: its answer cannot come
+    /// before the turn ends (issue 616).
+    briefed_already: String,
 }
 
 impl AskSubagentTool {
@@ -182,7 +204,8 @@ impl AskSubagentTool {
         let values = context! { start => START_SUBAGENT };
         let description = tool(prompts, (ASK_SUBAGENT, parameters), false, values)?;
         let asked = tool_text(prompts, NAMESPACE, SUBAGENTS_KIND, "asked", ())?;
-        Ok(Self { description, asked })
+        let briefed_already = tool_text(prompts, NAMESPACE, SUBAGENTS_KIND, "briefed_already", ())?;
+        Ok(Self { description, asked, briefed_already })
     }
 }
 
@@ -199,6 +222,10 @@ impl Tool for AskSubagentTool {
         turn: &mut Turn<'_>,
     ) -> ToolResult<ToolOutput> {
         let Ask { thread, text } = arguments(params)?;
+        // Never answered within the turn: the answer is given to read between turns.
+        if briefed_in(turn, thread) {
+            return Err(ToolError::ExecutionFailed(self.briefed_already.clone()));
+        }
         writer(turn).await?.ask(thread, text).await?;
         Ok(json!({ "thread": thread, "asked": self.asked }).into())
     }

@@ -657,7 +657,12 @@ turn that read its answer: one left without a word then is let go (issue 598), a
 `NoSubAgent`, to be ended with its thread -, `end_subagent` ends it: its thread, which owns it,
 closed with it (`procedure::thread::Close`, issue 598) - let go from its channel and its session,
 the agent deleted, never purged, the thread closed last. A brief still open as it is ended is
-dropped - if its leave came first, the agent is given back that it left before it answered.
+dropped - if its leave came first, the agent is given back that it left before it answered. Asked
+before it answered, what a sub-agent is given waits behind the brief and is answered after it, on
+its own. In the turn that gave it a brief, by `start_subagent` or `ask_subagent`, the tool refuses
+to ask it - its answer cannot come before that turn ends -, told the model as a failure with what
+to do instead (issue 616): the tool reads what the turn did from the results of its calls
+(`Turn::tool_results`), and the channel's delegation stays a queue of briefs for every giver.
 
 They are offered where the work's session runs, and act through the `SubAgentWriter` the plugin
 binds to the turn's work (issue 516), in its context: the agent gives, its owner owns the sub-agent,
