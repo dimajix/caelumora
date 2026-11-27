@@ -327,7 +327,7 @@ external agent alike.
 | `/channel list` | - | the channel | `channel` | - | private | Lists the channels of the session the user may read: whether it is this one, whether the user takes part, and its summary. |
 | `/channel describe` | - | the channel | `channel` | `[channel]` | private | Describes this channel, or the one of the session named: its summary, briefing, classification and language. |
 | `/channel notes` | - | the channel | `agent_notes` | `[channel]` | private | Shows what the agents noted in this channel, or in the one of the session named, by their authors - read as the channel's, as a notice board is ([MEMORY.md](MEMORY.md#notes)). Brought by the notes' plugin, in no default of the configuration: a session has it where its components name it - the seed's bundle `session-basics` - or the configuration's commands do, as the terminal's (issue 607). |
-| `/channel create` | - | the channel | `channel` | `<name>` | private | Makes a channel of the session, with the user alone in it. |
+| `/channel create` | - | the channel | `channel` | `<name>` | private | Makes a channel of the session, with the user alone in it and an approver deciding by `Any`, as the web UI's dialog makes one. |
 | `/channel delete` | - | the channel | `channel` | `<channel>` | private | Deletes the channel of the session named, also this one; it can be restored. |
 | `/channel join` | - | the channel | `channel` | `<channel>` | private | Joins the channel of the session named, if the user may join it. |
 | `/channel leave` | - | the channel | `channel` | `[agent]` | private | Leaves this channel, or takes the user's own agent named out of it; they stay in the session ([CHANNELS.md](CHANNELS.md#leaving-a-channel)). |

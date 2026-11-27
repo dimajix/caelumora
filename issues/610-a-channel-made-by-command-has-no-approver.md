@@ -1,6 +1,6 @@
 # 610 — A channel made by `/channel create` has no approver
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** high
 **Area:** Tools and approvals
@@ -67,3 +67,11 @@ Recommended: option 1.
 
 - **2026-11-26** — Opened after an agent in a channel made by `/channel create` in the terminal
   waited for the approval of a `list_files` call that no approver received.
+- **2026-11-27** — Done by option 1, as the maintainer decided. `/channel create` makes its
+  channel of `ChannelSpec::new(name)` with one `InternalActorTemplate::Approver` deciding by `Any`,
+  as the web UI's dialog asks for one; `ChannelSpec::new` and the REST route still name none
+  unless asked to. A test of the command finds the approver stored with the channel and its actor
+  running, which puts a call needing approval before the users as in a channel made from a
+  template; `/help`, `docs/COMMANDS.md` and `docs/CHANNELS.md` say the channel has an approver.
+  An agent asking for approval in a channel made without one - over REST, by a template - still
+  waits, as the issue leaves it.

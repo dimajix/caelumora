@@ -5,13 +5,15 @@ use crate::procedure::channel::Create;
 use crate::session::ChannelSpec;
 use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandError, CommandResult};
+use caelumora_domain::approval::ApprovalStrategy;
 use caelumora_domain::command::{CommandDescription, CommandOutput, CommandParameter};
+use caelumora_domain::template::InternalActorTemplate;
 use caelumora_domain::value::command_name::CommandName;
 use caelumora_domain::value::name::Name;
 
 const CREATE_COMMAND_NAME: &str = "channel create";
 
-/// `/channel create <name>`: makes a channel in the session, with its issuer in it.
+/// `/channel create <name>`: makes a channel in the session, with its issuer in it and an approver.
 #[derive(Debug)]
 pub(super) struct CreateCommand(CommandDescription);
 
@@ -21,7 +23,8 @@ impl CreateCommand {
         Self(CommandDescription {
             name: CommandName::fixed(CREATE_COMMAND_NAME),
             aliases: Vec::new(),
-            description: "Makes a channel of the name given in this session, with you alone in it."
+            description: "Makes a channel of the name given in this session, with you alone in it \
+                          and an approver."
                 .to_string(),
             parameters: vec![CommandParameter::required("name")],
             owners_only: false,
@@ -38,9 +41,11 @@ impl Command for CreateCommand {
 #[async_trait]
 impl ChannelCommand for CreateCommand {
     /// Runs `/channel create` with `args`, the name of the new channel: made as a channel that says
-    /// nothing else (`ChannelSpec::new`), with the issuer alone in it
-    /// (`procedure::channel::Create`, which asks `CreateChannel` and `UpdateSession`). Only the
-    /// issuer is answered: the session tells everyone of the new channel.
+    /// nothing else (`ChannelSpec::new`) but its approver, deciding by `Any` as the web UI's dialog
+    /// asks for one - without it, a call needing approval would wait for ever (issue 610) -, with
+    /// the issuer alone in it (`procedure::channel::Create`, which asks `CreateChannel` and
+    /// `UpdateSession`). Only the issuer is answered: the session tells everyone of the new
+    /// channel.
     async fn execute(
         &self,
         args: &str,
@@ -53,8 +58,10 @@ impl ChannelCommand for CreateCommand {
         let name = args.trim();
         Name::new(name).map_err(|e| invalid(e.to_string()))?;
         let issuer = context.issuer.security_context();
+        let approver = InternalActorTemplate::Approver { strategy: ApprovalStrategy::Any };
+        let spec = ChannelSpec { internal_actors: vec![approver], ..ChannelSpec::new(name) };
         context
-            .carry_out(|session| Create::new(&issuer, session, ChannelSpec::new(name)))
+            .carry_out(|session| Create::new(&issuer, session, spec))
             .await
             .map_err(|e| command_error(CREATE_COMMAND_NAME, &e))?;
         Ok(CommandOutput::private(format!("Created the channel {name}; you take part in it.")))
