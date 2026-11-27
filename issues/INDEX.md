@@ -289,6 +289,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [553](553-a-fetched-page-keeps-no-original.md) | done | `fetch_page` keeps at most the Markdown it made of a page, so the bytes the server sent - links, tables, what the conversion left out - are gone after the call, and whoever needs them has to fetch the page again, which may have changed. |
 | [584](584-a-tool-has-no-object-of-its-own.md) | done | A `ToolProvider` answers for all of its tools by their names - it carries a call out, asks its questions, proposes its matcher and describes it, each by a `match` of the name or a search of its list -, so what belongs to one tool is spread over the methods of its provider, as a command's was before issue 583. |
 | [610](610-a-channel-made-by-command-has-no-approver.md) | done | `/channel create` makes its channel of `ChannelSpec::new(name)`, which names no internal actors, so the new channel has no approver, and an agent that calls a tool needing approval in it waits for a decision nobody can give, without a timeout and without anyone being asked. |
+| [616](616-a-model-misreads-what-starting-a-sub-agent-does.md) | open | A model that starts a sub-agent does not take from the tools' texts that the brief is the whole task and already on its way: in an experiment Gemma started a sub-agent and at once asked an additional question, as if the brief had not yet set the sub-agent to work. |
 
 ## User interaction
 
