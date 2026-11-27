@@ -29,7 +29,7 @@ use caelumora_kernel::component::ComponentRegistry;
 use caelumora_kernel::session::SessionLoop;
 use caelumora_kernel::testing::{participant_runtime_in, shown, World, STAFF};
 use caelumora_subagents::component::{
-    ASK_SUBAGENT, START_SUBAGENT, SUBAGENTS_KIND, SUBAGENT_COMMAND_NAME,
+    ASK_SUBAGENT, END_SUBAGENT, START_SUBAGENT, SUBAGENTS_KIND, SUBAGENT_COMMAND_NAME,
 };
 use caelumora_subagents::extension::{SubAgentError, SubAgentWriter};
 use caelumora_subagents::library::SubagentsLibrary;
@@ -83,17 +83,17 @@ fn leading_a_researcher() -> Vec<Answer> {
     ]
 }
 
-/// The result of `start_subagent`, as the model was given it among `messages`.
-fn start_result(messages: &[Message]) -> serde_json::Value {
+/// The result of the tool `name`, as the model was given it among `messages`.
+fn result_of(messages: &[Message], name: &str) -> serde_json::Value {
     let results = messages.iter().flat_map(|message| &message.tool_results);
-    let mut started = results.filter(|result| result.tool_name == START_SUBAGENT);
-    let result = started.find_map(|result| serde_json::from_str(&result.content).ok());
+    let mut called = results.filter(|result| result.tool_name == name);
+    let result = called.find_map(|result| serde_json::from_str(&result.content).ok());
     result.unwrap()
 }
 
 /// The thread `start_subagent` returned, as the model was given its result among `messages`.
 fn started(messages: &[Message]) -> ThreadId {
-    serde_json::from_value(start_result(messages)["thread"].clone()).unwrap()
+    serde_json::from_value(result_of(messages, START_SUBAGENT)["thread"].clone()).unwrap()
 }
 
 /// The personality `name` of `owner`, with `components` and of `kind`.
@@ -151,13 +151,13 @@ async fn limited_world(leading: Vec<Answer>, max_open: usize, max_depth: usize) 
 }
 
 /// Issue 558: an agent starts a sub-agent of a personality its tool lists - a new agent, named by
-/// an adjective and the personality, in a thread of its own at the call, the result telling it
-/// that nothing more is needed until its answer (issue 616) -, is given back to read
+/// an adjective and the personality, in a thread of its own at the call -, is given back to read
 /// what it answered, and asks it again in the turn that read it (issue 598), and is given that back
-/// too; the turn that reads the second answer leaves it without a word, which lets it go: the
-/// session follower closes its thread with it - let go, the agent deleted -, and nothing is left
-/// to ask or to end. A personality of an external agent is no sub-agent's, and a thread without
-/// one of the work's is none to ask.
+/// too, each result telling it that nothing more is needed until the answer (issue 616); the turn
+/// that reads the second answer leaves it without a word, which lets it go: the session follower
+/// closes its thread with it - let go, the agent deleted -, and nothing is left to ask or to end. A
+/// personality of an external agent is no sub-agent's, and a thread without one of the work's is
+/// none to ask.
 #[tokio::test]
 async fn an_agent_starts_a_sub_agent_asks_it_again_as_it_reads_its_answer_and_lets_it_go() {
     let world = world(leading_a_researcher()).await;
@@ -229,8 +229,12 @@ async fn an_agent_starts_a_sub_agent_asks_it_again_as_it_reads_its_answer_and_le
     let state = world.store.state_store().get_agent_channel_state(lead_id, main.id()).await;
     let messages = state.unwrap().transcript.messages(ThreadId::line(main.id()));
     let prompts = prompts_with(NAMESPACE, PROMPTS);
-    let told = tool_text(&prompts, NAMESPACE, SUBAGENTS_KIND, "started", ()).unwrap();
-    assert_eq!(start_result(&messages)["started"], told, "the result says what to do meanwhile");
+    let told = |key| tool_text(&prompts, NAMESPACE, SUBAGENTS_KIND, key, ()).unwrap();
+    let start = result_of(&messages, START_SUBAGENT);
+    assert_eq!(start["started"], told("started"), "the result says what to do meanwhile");
+    let ask = result_of(&messages, ASK_SUBAGENT);
+    assert_eq!(ask["thread"], start["thread"], "asked the one started");
+    assert_eq!(ask["asked"], told("asked"), "the result says what to do meanwhile");
 
     let writer = writer_of(&main, lead, world.alice).await;
     let refused = writer.ask(thread, "Still there?".to_string()).await.unwrap_err();
@@ -396,6 +400,39 @@ async fn starting_a_sub_agent_asks_for_approval_as_configured() {
     let unconfigured = tools(serde_json::json!({ "personalities": ["researcher"] })).await.unwrap();
     assert!(!unconfigured.tools()[0].description().requires_approval, "unless configured");
     assert!(tools(serde_json::json!({ "personalities": [] })).await.is_err(), "one to start");
+}
+
+/// Issue 616: an agent ends a sub-agent by its tool in the turn that read its answer, and is told
+/// so with the thread it ended - repeated here by its model -; the thread is closed.
+#[tokio::test]
+async fn an_agent_ends_a_sub_agent_by_its_tool_and_is_told_so() {
+    let fixed = |answer: Message| -> Answer { Box::new(move |_| answer.clone()) };
+    let start = calling(
+        START_SUBAGENT,
+        serde_json::json!({ "personality": "researcher", "brief": "Find it." }),
+    );
+    let end: Answer = Box::new(|messages| {
+        calling(END_SUBAGENT, serde_json::json!({ "thread": started(messages) }))
+    });
+    let repeat: Answer = Box::new(|messages| {
+        let ended = result_of(messages, END_SUBAGENT);
+        let same = ended["thread"] == result_of(messages, START_SUBAGENT)["thread"];
+        said(if same { ended["ended"].as_str().unwrap_or_default() } else { "another thread" })
+    });
+    let world = world(vec![fixed(start), fixed(said("started")), end, repeat]).await;
+    let (session, main, _) = commanded_lead(&world).await;
+
+    main.user_actor(world.alice)
+        .expect("alice takes part")
+        .send_message(None, Some("@lead find it".to_string()), None, Vec::new())
+        .await
+        .expect("said");
+    let prompts = prompts_with(NAMESPACE, PROMPTS);
+    let told = tool_text(&prompts, NAMESPACE, SUBAGENTS_KIND, "ended", ()).unwrap();
+    main.thread_said_in(&told).await;
+    let closed = |e: &HistoryEntry| matches!(e, HistoryEntry::ThreadClosed { .. });
+    assert!(main.history_entries().await.iter().any(closed), "its thread closed");
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// Issue 597: unless the operator allows more, a sub-agent starts none of its own - refused before

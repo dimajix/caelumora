@@ -25,10 +25,9 @@ use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
 use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolPresentation, ToolVisibility};
 use futures::TryStreamExt;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tracing::error;
 
 const VIEW_ATTACHMENT: &str = "view_attachment";
 const READ_ATTACHMENT: &str = "read_attachment";
@@ -351,8 +350,8 @@ impl Tool for CopyAttachmentTool {
 #[derive(Debug)]
 pub(super) struct AttachTool {
     description: ToolDescription,
-    /// The texts its results give.
-    prompts: PromptTexts,
+    /// What its result tells of what it did: that the copy goes with the next answer.
+    attached: String,
 }
 
 impl AttachTool {
@@ -360,23 +359,14 @@ impl AttachTool {
     ///
     /// # Errors
     /// `PromptError` if one of its texts cannot be had.
-    pub(super) fn new(prompts: PromptTexts) -> Result<Self, PromptError> {
+    pub(super) fn new(prompts: &PromptTexts) -> Result<Self, PromptError> {
         let parameters = ToolParameters::object([reference()], ["ref"]);
         let description = ToolDescription {
             presentation: ToolPresentation::QUIET,
-            ..described_as(&prompts, ATTACH, parameters, false)?
+            ..described_as(prompts, ATTACH, parameters, false)?
         };
-        Ok(Self { description, prompts })
-    }
-
-    /// The text `key` of its results, rendered with `values`; `None`, logged, if it cannot be had -
-    /// the result is given without it.
-    fn text(&self, key: &str, values: impl Serialize) -> Option<String> {
-        tool_text(&self.prompts, NAMESPACE, ATTACHMENTS_KIND, key, values)
-            .inspect_err(|e| {
-                error!("A result of the attachment tools is given without saying what it did: {e}")
-            })
-            .ok()
+        let attached = tool_text(prompts, NAMESPACE, ATTACHMENTS_KIND, "attached", ())?;
+        Ok(Self { description, attached })
     }
 }
 
@@ -397,7 +387,7 @@ impl Tool for AttachTool {
         let copy = turn.copy_attachment(message, id).await?;
         let (classification, name) = (copy.classification.clone(), copy.name.clone());
         turn.put_aside(copy);
-        let value = json!({ "ref": reference, "name": name.as_str(), "attached": self.text("attached", ()).unwrap_or_default() });
+        let value = json!({ "ref": reference, "name": name.as_str(), "attached": self.attached });
         Ok(ToolOutput::classified(value, classification))
     }
 }
@@ -496,7 +486,7 @@ mod tests {
     }
 
     fn tool() -> AttachmentsComponent {
-        AttachmentsComponent::new(prompts()).unwrap()
+        AttachmentsComponent::new(&prompts()).unwrap()
     }
 
     /// A text of one line, longer than a page.
@@ -715,10 +705,12 @@ mod tests {
             "a write, always asked"
         );
 
-        testing::tool_named(&tool, ATTACH)
+        let attached = testing::tool_named(&tool, ATTACH)
             .execute(&json!({ "ref": "a1" }), None, &mut turn)
             .await
             .unwrap();
+        let told = tool_text(&prompts(), NAMESPACE, ATTACHMENTS_KIND, "attached", ()).unwrap();
+        assert_eq!(attached.value["attached"], told, "says what it did");
         let aside: Vec<ContentRef> = turn
             .situation()
             .agent_channel_state()

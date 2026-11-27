@@ -84,3 +84,9 @@ still comes.
   is `{"thread", "started"}`, `started` the text `tools.subagents.started` of `prompts.yaml`,
   rendered once with the tool, as its description is (`tool_text`). Which question the experiment
   asked is still unknown; the texts cover both readings. Still to do: the trial with Gemma.
+- **2026-11-27** — Two findings of the review taken up. `ask_subagent` and `end_subagent` answer as
+  `start_subagent` does, the thread and a text of what they did (`{"thread", "asked"}`,
+  `{"thread", "ended"}`), so that the three results read alike, and the one asked again tells too
+  that nothing more is needed until its answer. `attach` renders its text `attached` once, as it
+  is made, instead of at every call with an empty text, logged, where it could not be had - as the
+  texts of tools are rendered (`tool_text`).

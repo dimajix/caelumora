@@ -13,8 +13,8 @@ started: |-
 
 # The descriptions of the tools (`caelumora_agents::tool::described`); `start_subagent` is given
 # the `personalities` it may start an agent of, and the names of the other two, `ask` and `end`;
-# those two the name of `start`. `started`: what the result of `start_subagent` tells of what it did
-# (issue 616).
+# those two the name of `start`. `started`, `asked` and `ended`: what the results of the three tell
+# of what they did (issue 616).
 tools:
   subagents:
     description: >-
@@ -41,6 +41,11 @@ tools:
       has answered, and is answered after it on its own. What it answers is given to you to read.
     ask_subagent.thread: The thread of the sub-agent, as {{ start }} returned it
     ask_subagent.text: What it is given to read
+    asked: >-
+      The sub-agent is given what you gave it as soon as it has answered what it was given before.
+      Its answer to it will be given to you to read on its own, in a later turn; nothing more is
+      needed until then.
     end_subagent: >-
       End a sub-agent you started, once its work is done: it is let go and its thread closed.
     end_subagent.thread: The thread of the sub-agent, as {{ start }} returned it
+    ended: The sub-agent is let go and its thread closed.

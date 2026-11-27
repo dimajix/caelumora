@@ -165,6 +165,9 @@ impl Tool for StartSubagentTool {
 #[derive(Debug)]
 pub(super) struct AskSubagentTool {
     description: ToolDescription,
+    /// What its result tells of what it did: that the sub-agent is given the text once it answered
+    /// what it was given before, and nothing more is needed until its answer (issue 616).
+    asked: String,
 }
 
 impl AskSubagentTool {
@@ -176,14 +179,10 @@ impl AskSubagentTool {
         let string = ToolParameters::string;
         let parameters =
             ToolParameters::object([("thread", string()), ("text", string())], ["thread", "text"]);
-        Ok(Self {
-            description: tool(
-                prompts,
-                (ASK_SUBAGENT, parameters),
-                false,
-                context! { start => START_SUBAGENT },
-            )?,
-        })
+        let values = context! { start => START_SUBAGENT };
+        let description = tool(prompts, (ASK_SUBAGENT, parameters), false, values)?;
+        let asked = tool_text(prompts, NAMESPACE, SUBAGENTS_KIND, "asked", ())?;
+        Ok(Self { description, asked })
     }
 }
 
@@ -201,7 +200,7 @@ impl Tool for AskSubagentTool {
     ) -> ToolResult<ToolOutput> {
         let Ask { thread, text } = arguments(params)?;
         writer(turn).await?.ask(thread, text).await?;
-        Ok(json!({ "asked": thread }).into())
+        Ok(json!({ "thread": thread, "asked": self.asked }).into())
     }
 }
 
@@ -209,6 +208,9 @@ impl Tool for AskSubagentTool {
 #[derive(Debug)]
 pub(super) struct EndSubagentTool {
     description: ToolDescription,
+    /// What its result tells of what it did: that the sub-agent is let go and its thread closed
+    /// (issue 616).
+    ended: String,
 }
 
 impl EndSubagentTool {
@@ -218,14 +220,10 @@ impl EndSubagentTool {
     /// `PromptError` if one of its texts cannot be had.
     pub(super) fn new(prompts: &PromptTexts) -> Result<Self, PromptError> {
         let parameters = ToolParameters::object([("thread", ToolParameters::string())], ["thread"]);
-        Ok(Self {
-            description: tool(
-                prompts,
-                (END_SUBAGENT, parameters),
-                false,
-                context! { start => START_SUBAGENT },
-            )?,
-        })
+        let values = context! { start => START_SUBAGENT };
+        let description = tool(prompts, (END_SUBAGENT, parameters), false, values)?;
+        let ended = tool_text(prompts, NAMESPACE, SUBAGENTS_KIND, "ended", ())?;
+        Ok(Self { description, ended })
     }
 }
 
@@ -243,7 +241,7 @@ impl Tool for EndSubagentTool {
     ) -> ToolResult<ToolOutput> {
         let End { thread } = arguments(params)?;
         writer(turn).await?.end(thread).await?;
-        Ok(json!({ "ended": thread }).into())
+        Ok(json!({ "thread": thread, "ended": self.ended }).into())
     }
 }
 
