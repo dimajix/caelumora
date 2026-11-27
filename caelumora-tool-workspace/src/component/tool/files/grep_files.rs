@@ -11,6 +11,7 @@ use caelumora_agents::turn::Turn;
 use caelumora_api::terminal::{TerminalReader, WorkspacePath};
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
+use caelumora_domain::text::shortened;
 use caelumora_domain::tool::ToolDescription;
 use caelumora_domain::tool::{ToolParameters, ToolPresentation};
 use regex::{Regex, RegexBuilder};
@@ -42,10 +43,7 @@ struct Grep {
 /// `line` as a match shows it: at most `MATCH_CHARS` characters.
 fn shown(line: &str) -> String {
     let line = line.trim_end_matches(['\r', '\n']);
-    match line.char_indices().nth(MATCH_CHARS) {
-        Some((cut, _)) => format!("{}…", &line[..cut]),
-        None => line.to_string(),
-    }
+    shortened(line, MATCH_CHARS, "…")
 }
 
 /// Searches `terminal` from `start` for `pattern`; what was searched and

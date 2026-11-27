@@ -13,6 +13,7 @@ use caelumora_domain::history::Heard;
 use caelumora_domain::message::{Message, MessageId, MessageRole};
 use caelumora_domain::prompt_catalogue::{context, PromptCatalogue};
 use caelumora_domain::session::SessionId;
+use caelumora_domain::text::shortened;
 use caelumora_domain::value::name::Name;
 use caelumora_domain::work::TurnId;
 use serde::Serialize;
@@ -27,9 +28,10 @@ use tracing::{info, warn};
 /// thread's delegation, and kept in step with it as the channel changes it (`sync`) - the channel
 /// alone moves a brief on, as it records or refuses what the delegate gives. It gives the open
 /// brief to the recipient, in the thread, in the delegating chain's name; takes the recipient's
-/// first turn that ends after the brief was given as its answer; and gives what came of it to the
-/// giver where the thread was opened: the answer, that the turn ended without one, that it was
-/// given up and why, that the recipient could not be asked - the brief refused -, or that it left.
+/// first turn that ends after the brief was given as the one answering it; and gives what came of
+/// it to the giver where the thread was opened: the turn's answer alone (`answer`), that the turn
+/// ended without one, that it was given up and why, that the recipient could not be asked - the
+/// brief refused -, or that it left.
 /// It hears what goes to the users of its thread (`Recipients::reaches`): after a restart it reads
 /// on from where its open brief was given (`heard`), so that an answer recorded meanwhile is not
 /// lost.
@@ -51,6 +53,10 @@ pub(crate) struct DelegateActor {
     ended: CancellationToken,
 }
 
+/// The most of an answer a delegate gives back, in characters (issue 619): what goes beyond is cut,
+/// with a notice. About 4 000 tokens.
+const MAX_ANSWER: usize = 16_000;
+
 /// Where a delegate stands in its run: what it gave and waits for the channel to follow.
 #[derive(Debug, Default)]
 struct Carrying {
@@ -58,9 +64,10 @@ struct Carrying {
     briefed: Option<MessageId>,
     /// The brief it gave back what came of, until the channel takes the brief as answered.
     answered: Option<MessageId>,
-    /// What the recipient said in each of its turns not ended yet: the answer, once the turn that
-    /// answers the brief ends.
-    said: HashMap<TurnId, Vec<Message>>,
+    /// What the recipient said last in each of its turns not ended yet: the answer, if it is one,
+    /// once the turn that answers the brief ends. Taken from what it says, not from the end of the
+    /// turn, whose messages the history does not keep for a delegate reading on after a restart.
+    said: HashMap<TurnId, Message>,
     /// Whether the recipient left the thread: what is open is given back as such.
     gone: bool,
 }
@@ -201,14 +208,14 @@ impl DelegateActor {
             }
             _ if envelope.context.sender_id != recipient => {}
             ActorEvent::CompleteMessageGenerated(message) => {
-                if let Some(turn) = message.turn_id.filter(|_| message.is_heard()) {
-                    carrying.said.entry(turn).or_default().push(message);
+                if let Some(turn) = message.turn_id {
+                    carrying.said.insert(turn, message);
                 }
             }
             ActorEvent::TurnFinished { turn_id, .. } => {
-                let said = carrying.said.remove(&turn_id).unwrap_or_default();
+                let last = carrying.said.remove(&turn_id);
                 if let Some(open) = open.filter(|_| answers) {
-                    let (text, classification) = self.answer(&said);
+                    let (text, classification) = self.answer(last);
                     self.give_back(carrying, &open, text, classification, tx).await;
                 }
             }
@@ -224,15 +231,27 @@ impl DelegateActor {
         }
     }
 
-    /// What came of the open brief, of what the turn answering it `said` that others hear: its
-    /// words, classified as they are; that it ended without any, classified as the brief.
-    fn answer(&self, said: &[Message]) -> (String, Option<Classification>) {
-        let texts: Vec<&str> = said.iter().filter_map(|m| m.content.as_deref()).collect();
-        if texts.is_empty() {
-            return (self.told("kernel.delegation_unanswered", context! {}), None);
+    /// What came of the open brief, of what the turn answering it said `last` (issue 619): its
+    /// words if it is the turn's answer (`Message::is_answer`), bounded (`bounded`) and classified
+    /// as they are; else that the turn ended without one - its remarks before tool calls are steps
+    /// of its work, not what came of it -, classified as the brief. A remark whose calls only its
+    /// sender sees - private notes, the agent's memory - is published without them
+    /// (`Message::published`), and looks like an answer where the turn ends after them without
+    /// words, or is cancelled before it says any.
+    fn answer(&self, last: Option<Message>) -> (String, Option<Classification>) {
+        match last.filter(Message::is_answer) {
+            Some(Message { content: Some(text), classification, .. }) if !text.is_empty() => {
+                (self.bounded(&text), Some(classification))
+            }
+            _ => (self.told("kernel.delegation_unanswered", context! {}), None),
         }
-        let classification = Classification::join_all(said.iter().map(|m| &m.classification));
-        (texts.join("\n\n"), classification)
+    }
+
+    /// `text` cut after `MAX_ANSWER` characters, with a notice that it was, if it is longer - the
+    /// notice rendered whether or not it is needed.
+    fn bounded(&self, text: &str) -> String {
+        let notice = self.told("kernel.delegation_cut", context! { limit => MAX_ANSWER });
+        shortened(text, MAX_ANSWER, &format!("\n\n{notice}"))
     }
 }
 
@@ -306,7 +325,10 @@ mod tests {
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::chain::Position;
     use caelumora_domain::channel::Word;
+    use caelumora_domain::confidentiality::Confidentiality;
+    use caelumora_domain::message::testing::make_message;
     use caelumora_domain::prompt_catalogue::{KERNEL, KERNEL_PROMPTS};
+    use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_domain::turn::GivenUpReason;
     use caelumora_domain::user::UserId;
     use std::collections::VecDeque;
@@ -330,10 +352,9 @@ mod tests {
 
     fn brief(giver: ActorId, text: &str, given_at: Option<Position>) -> Brief {
         let message = Message {
-            id: MessageId::new(),
             sender_id: giver,
             content: Some(text.to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            ..make_message(MessageId::new())
         };
         Brief { message, given_at }
     }
@@ -404,28 +425,46 @@ mod tests {
             self.to_it.send(Envelope::new(context, event)).await.expect("running");
         }
 
-        /// The recipient saying `text` in its turn `turn`, which then ends, from `at` on.
-        async fn answers(&self, turn: TurnId, text: &str, at: u64) {
+        /// The recipient saying `messages` in its turn `turn`, which then ends, from `at` on - its
+        /// end carrying no messages, as read from the history after a restart.
+        async fn says(&self, turn: TurnId, messages: Vec<Message>, mut at: u64) {
             let recipient = self.delegation.recipient;
-            let said = Message {
-                sender_id: recipient,
-                role: MessageRole::Assistant,
-                content: Some(text.to_string()),
-                turn_id: Some(turn),
-                ..Message::new(Classification::CHANNEL_DEFAULT)
-            };
-            let step = Message { role: MessageRole::Tool, ..said.clone() };
-            self.hears(recipient, at, ActorEvent::CompleteMessageGenerated(step)).await;
-            self.hears(recipient, at + 1, ActorEvent::CompleteMessageGenerated(said)).await;
+            for message in messages {
+                let message = Message { sender_id: recipient, turn_id: Some(turn), ..message };
+                self.hears(recipient, at, ActorEvent::CompleteMessageGenerated(message)).await;
+                at += 1;
+            }
             let finished = ActorEvent::TurnFinished { turn_id: turn, messages: Vec::new() };
-            self.hears(recipient, at + 2, finished).await;
+            self.hears(recipient, at, finished).await;
         }
+
+        /// The recipient answering `text` in its turn `turn` after a tool's message, from `at` on.
+        async fn answers(&self, turn: TurnId, text: &str, at: u64) {
+            let steps = vec![said(MessageRole::Tool, text), said(MessageRole::Assistant, text)];
+            self.says(turn, steps, at).await;
+        }
+
+        /// What it gives back of the next brief, given and answered by `messages` from `at` on, the
+        /// channel following both.
+        async fn gives_back(&mut self, messages: Vec<Message>, at: u64) -> Message {
+            let (_, _, brief, _) = self.gives().await;
+            self.recorded(self.delegation.recipient, &brief, at);
+            self.says(TurnId::new(), messages, at + 1).await;
+            let (_, _, back, _) = self.gives().await;
+            self.recorded(self.delegation.giver, &back, at + 50);
+            back
+        }
+    }
+
+    /// A message of `role` saying `text`, of nobody yet, in no turn.
+    fn said(role: MessageRole, text: &str) -> Message {
+        Message { role, content: Some(text.to_string()), ..make_message(MessageId::new()) }
     }
 
     /// Issue 557: a delegate gives its open brief to the recipient, in its thread, in the
     /// delegating chain's name, once; it takes the recipient's first turn that ends after the
-    /// channel recorded the brief given - what others hear of it - and gives it back to the giver
-    /// where the thread was opened, once; then the next brief, once the channel took the first as
+    /// channel recorded the brief given and gives its answer back to the giver where the thread
+    /// was opened, once; then the next brief, once the channel took the first as
     /// answered, whose turn it brings back as given up.
     #[tokio::test]
     async fn a_delegate_gives_its_briefs_and_brings_back_the_turns_that_answer_them() {
@@ -442,7 +481,7 @@ mod tests {
         delegate.answers(TurnId::new(), "found it", 6).await;
         let (thread, to, answer, chain) = delegate.gives().await;
         assert_eq!((thread, to, answer.sender_id, chain), (delegate.line, giver, recipient, giver));
-        assert_eq!(answer.content.as_deref(), Some("found it"), "what others hear of the turn");
+        assert_eq!(answer.content.as_deref(), Some("found it"), "the turn's answer");
         assert!(delegate.gives_nothing().await, "given back once, until the channel follows");
 
         delegate.recorded(giver, &answer, 9);
@@ -458,6 +497,53 @@ mod tests {
             "that it was given up: {:?}",
             message.content
         );
+        delegate.run.abort();
+    }
+
+    /// Issue 619: of the turn answering a brief only its answer is given back - not the remarks
+    /// before its tool calls -, classified as it is, cut after `MAX_ANSWER` characters with a
+    /// notice; a turn whose last message is no answer ended without one, classified as the brief.
+    /// What the channel publishes of a remark whose calls only its sender sees - the remark without
+    /// them - is taken for the answer where nothing follows it.
+    #[tokio::test]
+    async fn a_delegate_gives_back_the_turns_answer_alone_and_bounded() {
+        let mut delegate = running(|giver| {
+            let briefs = ["look it up", "and this", "and that", "and more"];
+            briefs.into_iter().map(|text| brief(giver, text, None)).collect()
+        });
+        let remark = Message {
+            tool_calls: vec![make_tool_call("search")],
+            ..said(MessageRole::Assistant, "First I look.")
+        };
+        let result = said(MessageRole::Tool, "what it found");
+
+        let confidential = Classification::general(Confidentiality::Confidential);
+        let answer = Message {
+            classification: confidential.clone(),
+            ..said(MessageRole::Assistant, "Found it.")
+        };
+        let answered = vec![remark.clone(), result.clone(), answer];
+        let back = delegate.gives_back(answered, 100).await;
+        assert_eq!(back.content.as_deref(), Some("Found it."), "the answer alone");
+        assert_eq!(back.classification, confidential, "classified as the answer");
+
+        let unanswered = vec![remark.clone(), result];
+        let back = delegate.gives_back(unanswered, 200).await;
+        let ended = Some("It ended its turn without an answer.");
+        assert_eq!(back.content.as_deref(), ended, "ending on a tool's message");
+        assert_eq!(back.classification, Classification::CHANNEL_DEFAULT, "as the brief");
+
+        let long = "ä".repeat(MAX_ANSWER + 1);
+        let back = delegate.gives_back(vec![said(MessageRole::Assistant, &long)], 300).await;
+        let text = back.content.unwrap_or_default();
+        let (kept, notice) = text.split_once("\n\n").expect("cut with a notice");
+        assert_eq!(kept, "ä".repeat(MAX_ANSWER), "cut at a character's boundary");
+        assert_eq!(notice, "[Cut here: the answer was longer than 16000 characters.]");
+
+        // Documented, not wanted: what is published of a remark whose calls are hidden.
+        let published = Message { tool_calls: Vec::new(), ..remark };
+        let back = delegate.gives_back(vec![published], 400).await;
+        assert_eq!(back.content.as_deref(), Some("First I look."), "taken for the answer");
         delegate.run.abort();
     }
 

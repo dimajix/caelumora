@@ -622,7 +622,12 @@ brackets - `[Skill: release-notes]` -, which every text given has, and the expla
 markers says so (`kernel.framing`). One another participant gave - a skill given with `/skill`,
 a message a delegate gave in their name (`GivenToRead`, issue 557) - says who: "@alice gave you
 this to read:", then the text, named as senders are; the transcript keeps the giver as the
-message's sender. An external agent's remote agent is given it so too.
+message's sender. A brief a thread's delegate gave (`Envelope::is_brief`) is taken in as one
+(`GivenSource::Brief`, `AgentChannelState::given_brief`, issue 619) and framed so: "@alice gave
+you this brief:", the text, and that only the agent's answer to it - its last message, calling no
+tool - goes back to @alice and is all @alice reads of its work (`kernel.given_brief`), so that
+every personality started as a sub-agent knows it. An external agent's remote agent is given it so
+too.
 
 ### Attachments
 

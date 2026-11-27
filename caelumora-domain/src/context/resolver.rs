@@ -450,7 +450,9 @@ fn framed(
     time_zone: TimeZone,
 ) -> Result<Message, PromptError> {
     match entry {
-        TranscriptEntry::Given { .. } => profile.given_to_read(message, agent, in_turn, texts),
+        TranscriptEntry::Given { source, .. } => {
+            profile.given_to_read(message, source.as_ref(), agent, in_turn, texts)
+        }
         _ => Ok(profile.as_said(calls_in_words(texts, message)?, agent, in_turn, time_zone)),
     }
 }
@@ -567,6 +569,7 @@ mod tests {
     use crate::prompt_catalogue::{PromptVariant, KERNEL_PROMPTS};
     use crate::tool::testing::{make_tool_call, make_tool_description};
     use crate::tool::{ToolCall, ToolCallResult, ToolDescription, ToolResultStatus};
+    use crate::transcript::GivenSource;
     use crate::turn::TurnState;
     use crate::user::UserId;
     use crate::work::Work;
@@ -979,7 +982,8 @@ mod tests {
 
     /// Issue 539: what is given to read is framed by the resolver, whoever gave it - a system
     /// message where the model keeps one, never marked as said, who gave it worded if another
-    /// participant did -, for the agent's model as for a remote agent.
+    /// participant did, a brief as one, telling what goes back of the work (issue 619) -, for the
+    /// agent's model as for a remote agent.
     #[test]
     fn what_is_given_to_read_is_framed_as_given_whoever_gave_it() {
         let agent = ActorId::Agent(AgentId::new());
@@ -1010,6 +1014,17 @@ mod tests {
             Message { sender_id: agent, role: MessageRole::User, ..text("[Skill: plan]\nOrder.") },
             None,
         );
+        // A brief alice delegated to it (issue 619).
+        state.transcript.give(
+            ThreadId::default(),
+            Message {
+                sender_id: alice,
+                sender_name: "Alice".to_string(),
+                role: MessageRole::User,
+                ..text("Find it.")
+            },
+            Some(GivenSource::Brief),
+        );
         let profile = |system_messages| ModelProfile {
             sender_format: SenderFormat::Prefix,
             system_messages,
@@ -1034,6 +1049,13 @@ mod tests {
                 (MessageRole::User, "@alice: hello".to_string()),
                 (role, "@alice gave you this to read:\n[Skill: notes]\nCollect.".to_string()),
                 (role, "[Skill: plan]\nOrder.".to_string()),
+                (
+                    role,
+                    "@alice gave you this brief:\nFind it.\nOnly your answer to it - your last \
+                     message, calling no tool - is given back to @alice, and it is all @alice \
+                     reads of your work: make it complete and concise."
+                        .to_string(),
+                ),
             ]
         };
         assert_eq!(

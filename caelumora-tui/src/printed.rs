@@ -5,6 +5,7 @@ use caelumora_domain::approval::ApprovalRequest;
 use caelumora_domain::channel::ChannelId;
 use caelumora_domain::content::ContentRef;
 use caelumora_domain::question::QuestionRequest;
+use caelumora_domain::text::shortened;
 use caelumora_domain::tool::{ToolCall, ToolCallResult};
 use caelumora_domain::value::name::Name;
 use std::ops::Range;
@@ -135,10 +136,7 @@ const SHOWN: usize = 60;
 /// characters - what is shown of what was said where it is listed.
 pub(crate) fn beginning(content: &str) -> String {
     let line = content.lines().find(|line| !line.trim().is_empty()).unwrap_or_default().trim();
-    match line.char_indices().nth(SHOWN) {
-        Some((cut, _)) => format!("{}…", &line[..cut]),
-        None => line.to_string(),
-    }
+    shortened(line, SHOWN, "…")
 }
 
 #[cfg(test)]

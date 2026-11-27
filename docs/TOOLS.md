@@ -650,8 +650,13 @@ personalities the component is configured with (`personalities`), which works on
 a thread of its own opened at the call, and gives back only what came of it. Starting does not
 block: the call returns the thread at once, and what the sub-agent answers is given to the agent to
 read where the thread was opened, once it is there - as the kernel's delegate gives it (see
-[CHANNELS.md](CHANNELS.md#delegating-into-a-thread)). `ask_subagent` gives it more to read - in the
-turn that read its answer: one left without a word then is let go (issue 598), asked again
+[CHANNELS.md](CHANNELS.md#delegating-into-a-thread)): the answer of its turn alone - its last
+message, calling no tool -, bounded in length (issue 619), never the remarks it made on the way,
+so that the agent's context holds the result and not the steps of the work. The sub-agent is told
+so with each brief (see [AGENT-TURN.md](AGENT-TURN.md#what-is-given-to-read)); an answer it writes
+in a message that calls a tool ending its turn (`turn_end`: `stop`, `bye`) is no answer and is not
+given back, so the terminal's helper has none of them. `ask_subagent` gives it more to read - in
+the turn that read its answer: one left without a word then is let go (issue 598), asked again
 `NoSubAgent`, to be ended with its thread -, `end_subagent` ends it: its thread, which owns it,
 closed with it (`procedure::thread::Close`, issue 598) - let go from its channel and its session,
 the agent deleted, never purged, the thread closed last. A brief still open as it is ended is

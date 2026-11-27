@@ -1,3 +1,6 @@
+//! The domain: its entities, the values and messages they hold, and the rules about them, which
+//! every other crate of Caelumora builds on (docs/ARCHITECTURE.md).
+
 #[macro_use]
 pub mod macros;
 pub mod actor;
@@ -37,6 +40,7 @@ pub mod session;
 pub mod snapshot;
 pub mod store;
 pub mod template;
+pub mod text;
 pub mod tool;
 pub mod transcript;
 pub mod turn;

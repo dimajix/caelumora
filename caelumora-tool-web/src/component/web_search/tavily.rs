@@ -5,6 +5,7 @@
 use super::{Found, SearchError};
 use caelumora_api::error::describe_request_error;
 use caelumora_domain::remote::RemoteEndpoint;
+use caelumora_domain::text::shortened;
 use reqwest::Client as HttpClient;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -77,7 +78,7 @@ pub(super) async fn search(
             Some(Found {
                 url: hit.url?,
                 title: hit.title.unwrap_or_default(),
-                snippet: hit.content.unwrap_or_default().chars().take(MAX_SNIPPET_CHARS).collect(),
+                snippet: shortened(&hit.content.unwrap_or_default(), MAX_SNIPPET_CHARS, ""),
             })
         })
         .collect())
@@ -88,7 +89,7 @@ pub(super) async fn search(
 fn explanation(body: &Value) -> String {
     let said = body["detail"]["error"].as_str().or_else(|| body["detail"].as_str());
     match said {
-        Some(said) => format!(": {}", said.chars().take(MAX_EXPLANATION_CHARS).collect::<String>()),
+        Some(said) => format!(": {}", shortened(said, MAX_EXPLANATION_CHARS, "")),
         None => String::new(),
     }
 }

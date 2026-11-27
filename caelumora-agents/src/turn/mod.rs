@@ -50,7 +50,7 @@ use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::content::{ContentId, ContentRef};
 use caelumora_domain::context::KnowledgeRef;
 use caelumora_domain::digest::Digest;
-use caelumora_domain::message::{CallMeasures, Message, MessageId, MessageRole};
+use caelumora_domain::message::{CallMeasures, Message, MessageId};
 use caelumora_domain::prompt_catalogue::PromptError;
 use caelumora_domain::tool::{ToolContent, ToolDescription};
 use caelumora_domain::turn::{StagedChange, TurnState};
@@ -378,19 +378,15 @@ impl<'a> Turn<'a> {
     /// a turn's complete message reaches the channel (issue 258) - the
     /// model's, a step's tool message, the one answering the calls the turn
     /// abandoned. Kept before it is sent, so that a failed send loses
-    /// nothing of the turn. The turn's answer - a message of the model
-    /// calling no tools, not a step of a plan - carries what the turn put
-    /// aside (`put_aside`), with words or without: what it attaches is
-    /// heard all the same.
+    /// nothing of the turn. The turn's answer (`Message::is_answer`)
+    /// carries what the turn put aside (`put_aside`), with words or
+    /// without: what it attaches is heard all the same.
     pub(crate) async fn say(
         &mut self,
         mut message: Message,
         output: &dyn EventSender,
     ) -> Result<()> {
-        if message.role == MessageRole::Assistant
-            && !message.internal
-            && message.tool_calls.is_empty()
-        {
+        if message.is_answer() {
             message.attachments.append(&mut self.current_mut().attachments);
         }
         let said = self.push_message(message);

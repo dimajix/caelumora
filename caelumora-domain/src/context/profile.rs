@@ -11,6 +11,7 @@ use crate::message::{Message, MessageRole};
 use crate::prompt_catalogue::{
     context, PromptCatalogue, PromptError, PromptTexts, PromptVariant, KERNEL,
 };
+use crate::transcript::GivenSource;
 use crate::value::time_zone::TimeZone;
 use serde::{Deserialize, Serialize};
 use std::iter;
@@ -118,18 +119,21 @@ impl ModelProfile {
         self.marked(self.with_notes(message), agent, time_zone)
     }
 
-    /// `message`, given to `agent` to read (`TranscriptEntry::Given`, issue 539) - a skill, a
-    /// summary, a prompt part -, as its model is given it, `in_turn` if the turn under way was
-    /// given it: its reasoning and notes as for a message said (`as_said`), but a system message -
-    /// a user message where the model keeps none there (`place_system_messages`) -, never marked
-    /// as said by anyone, its title in brackets the mark of what is given; worded by `texts` as
-    /// given by its sender (`kernel.given_by`) if another participant, a user or agent, gave it.
+    /// `message`, given to `agent` to read as `source` (`TranscriptEntry::Given`, issue 539) - a
+    /// skill, a summary, a prompt part, a brief -, as its model is given it, `in_turn` if the turn
+    /// under way was given it: its reasoning and notes as for a message said (`as_said`), but a
+    /// system message - a user message where the model keeps none there
+    /// (`place_system_messages`) -, never marked as said by anyone, its title in brackets the mark
+    /// of what is given; worded by `texts` as given by its sender if another participant, a user
+    /// or agent, gave it: a brief as one, telling what goes back of the work on it
+    /// (`kernel.given_brief`, issue 619), anything else as given to read (`kernel.given_by`).
     ///
     /// # Errors
     /// `PromptError` if the text cannot be had.
     pub(super) fn given_to_read(
         &self,
         message: Message,
+        source: Option<&GivenSource>,
         agent: ActorId,
         in_turn: bool,
         texts: &PromptTexts,
@@ -139,9 +143,12 @@ impl ModelProfile {
         if another_participant(message.sender_id, agent) {
             if let Some(text) = message.content.take() {
                 let by = self.sender_style.of(&message.sender_name);
-                let given_by =
-                    texts.render(&format!("{KERNEL}.given_by"), context! { by, text })?;
-                message.content = Some(given_by);
+                let key = match source {
+                    Some(GivenSource::Brief) => "given_brief",
+                    _ => "given_by",
+                };
+                let given = texts.render(&format!("{KERNEL}.{key}"), context! { by, text })?;
+                message.content = Some(given);
             }
         }
         Ok(message)
@@ -684,7 +691,7 @@ mod tests {
                 role: MessageRole::User,
                 ..text("[Skill: notes]\nCollect.")
             };
-            let message = profile.given_to_read(message, agent, false, &texts).unwrap();
+            let message = profile.given_to_read(message, None, agent, false, &texts).unwrap();
             (message.role, message.content.unwrap_or_default())
         };
         let alice = ActorId::User(UserId::new());

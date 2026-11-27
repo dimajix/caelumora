@@ -1,6 +1,6 @@
 # 619 — A sub-agent gives back everything it said
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Sessions and channels
@@ -73,7 +73,137 @@ back where an answer was cut and the turn had no answer but remarks.
 - Covered by tests of the delegate; CHANNELS.md (*Delegating into a thread*) and TOOLS.md
   (*Sub-agents*) say what is given back.
 
+## Decision
+
+Decided by the maintainer on 2026-11-27, after weighing the options below.
+
+**D1 - The answer is the turn's last message, if it is one.** The delegate keeps the last message
+of each turn of the recipient it sees, and gives back its text if it is the turn's answer
+(`Message::is_answer`: an assistant message, not internal, calling no tool) and has words; else
+that the turn ended without an answer. It keeps collecting what is said, since a turn's end read
+from the history after a restart carries no messages. A remark followed by calls hidden from
+others alone (private notes, agent memory) and an end without words looks like an answer: rare,
+documented and held by a test, rather than a mark of its own on the message.
+
+**D2 - Remarks are no answer.** A turn that ends with remarks but no answer - one cancelled while
+it called a tool included - gives back that it ended without an answer. An answer cut short by a
+cancel is given back as far as it came only of an external agent, which says what it has; an
+internal agent's is only shown while it streams, never said, so its turn ends without an answer
+(corrected on 2026-11-27, see *History*).
+
+**D3 - A bound of 16 000 characters, a constant of the delegate.** What goes beyond it is cut at a
+character boundary, with a notice of the kernel's texts (`delegation_cut`). No setting: nobody
+would set it.
+
+**D4 - The brief is framed of its own.** The recipient takes a brief in as given of its own kind
+(`GivenSource::Brief`), and its profile frames it with the kernel's `given_brief`: who gave it, and
+that its answer alone - its last message, calling no tool - goes back and is all the giver reads
+of its work. The framing is the recipient's, since the channel admits a brief only as given; it
+reaches an external agent as well. The terminal's helper no longer says it itself.
+
+**D5 - An answer written with a call that ends the turn is not taken for one.** A tool of
+`turn_end` (`stop`, `bye`) ends the turn with its tool step, so an answer written in the message
+that calls it is no answer and is not given back. Decided on 2026-11-27, after the review of step
+2 found it: the terminal's helper is shipped without `turn_end` - a sub-agent's turn ends with an
+answer calling no tool anyway -, and the brief's framing (D4) tells every sub-agent to answer
+without calling a tool. A personality with `turn_end` started as a sub-agent can still lose its
+answer so; documented.
+
+Rejected:
+
+- **The turn marks its answer on the message** - a stored field for a rare case.
+- **A setting of `plugins.subagents` for the bound** - passed through the channel for a value
+  nobody chooses.
+- **A model summarising what came back** (D of *Considerations*).
+- **The model's last message as the answer, whether it calls tools or not** (for D5) - a turn
+  cancelled while calling a tool would give back its remark again, against D2, and an answer
+  without words, which is not published, would give back the remark before it.
+- **Calls that end the turn as a concept of their own**, marked on the tool and the call so that
+  an answer may make them (for D5) - a new concept of the domain for what the framing tells.
+- **Brief and what comes back told apart in the event** - an event or a field of its own: it
+  changes stored history and every place handling `GivenToRead`, for what the envelope tells
+  already.
+
+## Plan
+
+The interfaces as agreed on 2026-11-27. Each step a commit of its own, reviewed before the next.
+
+### Step 1 - The answer and the brief named, without a change of behaviour
+
+The rule of a turn's answer and the rule of a brief each move to one place.
+
+```rust
+// caelumora-domain/src/message.rs
+/// Whether this is a turn's answer: the agent's own words, not a step of a plan, calling no tool.
+pub fn is_answer(&self) -> bool
+
+// caelumora-domain/src/actor/envelope.rs
+/// Whether it gives a brief (issues 557, 619): a `GivenToRead` its thread's own delegate sends,
+/// as against what that delegate gives back where the thread was opened.
+pub fn is_brief(&self) -> bool
+```
+
+`Turn::say` uses `is_answer`; the channel's routing and `admit_given` use `is_brief`.
+
+### Step 2 - The answer alone, bounded (D1-D3)
+
+`DelegateActor` keeps the last message per turn instead of every heard one, gives back its text if
+it is an answer, cut at `MAX_ANSWER` (16 000 characters) with `kernel.delegation_cut`. Tests of the
+delegate; CHANNELS.md (*Delegating into a thread*) and TOOLS.md (*Sub-agents*).
+
+### Step 3 - The brief framed (D4)
+
+```rust
+// caelumora-domain/src/transcript.rs
+pub enum GivenSource { /* ... */
+    /// A brief delegated to the agent in its thread (issues 557, 619).
+    Brief }
+
+// caelumora-domain/src/agent/channel_state.rs
+/// Records `message`, a brief given to the agent, as given (`GivenSource::Brief`).
+pub fn given_brief(&mut self, thread: ThreadId, message: Message)
+```
+
+The intake takes a brief in by `Envelope::is_brief`; `ModelProfile::given_to_read` is given the
+source and frames a brief with `kernel.given_brief`; the helper's prompt is adjusted and the helper
+shipped without `turn_end` (D5). Tests of the framing, also for an external agent; AGENT-TURN.md
+(*What is given to read*).
+
+### Step 4 - The findings of step 2, without a change of behaviour
+
+On the maintainer's decision of 2026-11-27, the two findings of the review of step 2 are part of
+this work:
+
+- **One way to cut a text after a number of characters.** It is written out at four places
+  (`char_indices().nth(n)`, then a cut, marked with `…`: the delegate's `bounded`,
+  `caelumora-tui/src/printed.rs` `beginning`, `caelumora-tui/src/screen/words.rs` `shortened`,
+  `caelumora-tool-workspace/.../grep_files.rs` `shown`), and as `chars().take(n)` at four more
+  (`caelumora-agents/src/actor/external_agent.rs` `notice`, marked; the web search's
+  `tavily.rs` twice and `caelumora-model-ollama/src/client.rs`, unmarked). One function of the
+  domain takes their place: `caelumora_domain::text::shortened(text, max_chars, mark)`, as the
+  maintainer agreed on 2026-11-27 (a module of its own, since `value::text` checks texts and never
+  changes them).
+- **The delegate's tests build their messages from `make_message`**, the `brief` helper too.
+
 ## History
 
 - **2026-11-27** — Opened from the discussion of issue 591: what a sub-agent gives back, read in
   the code, is everything it said in the turn, not a deliberate answer.
+- **2026-11-27** — Decided by the maintainer (*Decision*), planned in three steps (*Plan*); in
+  progress.
+- **2026-11-27** — Step 1 done: the rule of a turn's answer (`Message::is_answer`) and of a brief
+  (`Envelope::is_brief`) each in one place, without a change of behaviour.
+- **2026-11-27** — Step 2 done: the delegate gives back the turn's answer alone, cut after 16 000
+  characters with a notice (`MAX_ANSWER`, `kernel.delegation_cut`); a turn whose last message is
+  no answer ended without one.
+- **2026-11-27** — D2 corrected, as the review of step 2 found in the code: an internal agent's
+  answer cut short by a cancel is not said, so it is not given back; only an external agent's is.
+- **2026-11-27** — D5 decided by the maintainer (an answer written with a call that ends the turn);
+  step 4 planned for the two findings of the review of step 2.
+- **2026-11-27** — Step 3 done: a brief is taken in as one (`GivenSource::Brief`,
+  `AgentChannelState::given_brief`) and framed with `kernel.given_brief`, also for an external
+  agent's remote agent; the terminal's helper says it no longer itself and has no `turn_end` (D5).
+- **2026-11-27** — Step 4 done: the eight places named in the plan cut by `text::shortened` - not
+  the terminal's short form of an id (`sessions.rs`, `shown_id`), which is no text kept short -;
+  the delegate's tests build their messages from `make_message`.
+- **2026-11-27** — Done: all four steps reviewed and accepted by the maintainer.

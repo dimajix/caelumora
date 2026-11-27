@@ -29,13 +29,16 @@ pub enum TranscriptEntry {
     Message(Message),
     /// A message the agent was given to read (issue 16) - not said by it,
     /// not heard from another -, and what it is: knowledge - a skill loaded
-    /// for it (issue 22), say -, or the part of a prompt component given
-    /// where it changed (issue 537); the summary of a compaction is neither
-    /// (issue 389). Given to the model as what it was given to read, whoever
-    /// gave it (`ModelProfile::given_to_read`, issue 539); `source` says what
-    /// it was given, so that what the agent knows can be told from the
-    /// transcript - a compaction gives a skill again, and keeps a part. `source`
-    /// is not covered by the digest: the model is given the message alone.
+    /// for it (issue 22), say -, the part of a prompt component given where
+    /// it changed (issue 537), or a brief delegated to it (issue 619); the
+    /// summary of a compaction is none of them (issue 389). Given to the
+    /// model as what it was given to read, whoever gave it
+    /// (`ModelProfile::given_to_read`, issue 539), a brief framed as one;
+    /// `source` says what it was given, so that what the agent knows can be
+    /// told from the transcript - a compaction gives a skill again, and keeps
+    /// a part. `source` is not covered by the digest, though it chooses the
+    /// framing of a brief: no other entry holds a message of its id, so the
+    /// message stands for the entry.
     Given { message: Message, source: Option<GivenSource> },
     /// The message `message.id`, before it on the path, is given as
     /// `message` from here on (issue 234, `Message::modify`).
@@ -90,6 +93,10 @@ pub enum GivenSource {
     /// The part of the prompt component `0`, by its id, given where its text
     /// changed (issue 537, `AgentChannelState::give_parts`).
     Part(String),
+    /// A brief delegated to the agent in its thread (issues 557, 619,
+    /// `AgentChannelState::given_brief`): framed as one, telling it what goes
+    /// back of its work.
+    Brief,
 }
 
 /// An agent's transcript (issue 50): what its model is given of its
