@@ -255,7 +255,7 @@ impl AgentChannelState {
     pub fn record_change(&mut self, change: TranscriptEntry) -> bool {
         let holding = self.transcript.holding(&change);
         for &thread in &holding {
-            match self.turn_mut(thread).filter(|turn| !turn.tool_calls.is_empty()) {
+            match self.in_step(thread) {
                 Some(turn) => turn.after_step.push(AfterStep::Noted { entry: change.clone() }),
                 None => self.transcript.record_change(thread, change.clone()),
             }
@@ -275,7 +275,7 @@ impl AgentChannelState {
             warn!("An entry of the history that is not announced was to be noted");
             return;
         };
-        if let Some(turn) = self.turn_mut(thread).filter(|turn| !turn.tool_calls.is_empty()) {
+        if let Some(turn) = self.in_step(thread) {
             turn.after_step.push(AfterStep::Noted { entry: told });
             return;
         }
@@ -339,6 +339,7 @@ impl AgentChannelState {
                     AfterStep::Given { message, knowledge } => {
                         self.given(thread, message, knowledge);
                     }
+                    AfterStep::Brief { message } => self.given_brief(thread, message),
                     AfterStep::Noted { entry } => self.note(thread, entry),
                 }
             }
@@ -372,7 +373,7 @@ impl AgentChannelState {
     ) -> bool {
         let stands =
             knowledge.as_ref().is_some_and(|k| self.stands_given(thread, &message, &k.source));
-        if let Some(turn) = self.turn_mut(thread).filter(|turn| !turn.tool_calls.is_empty()) {
+        if let Some(turn) = self.in_step(thread) {
             turn.after_step.push(AfterStep::Given { message, knowledge });
             return !stands;
         }
@@ -385,6 +386,24 @@ impl AgentChannelState {
             self.give_as(thread, message, source);
         }
         !stands
+    }
+
+    /// Records `message`, a brief delegated to the agent in `thread` (issues 557, 619), as given
+    /// (`GivenSource::Brief`), as `given` records what is no knowledge - put aside while the calls
+    /// of a step run. A delegation gives its next brief only once the turn answering the one
+    /// before has ended, so no brief is known to come during a step; it is put aside all the same,
+    /// since nothing may stand between calls and their results.
+    pub fn given_brief(&mut self, thread: ThreadId, message: Message) {
+        match self.in_step(thread) {
+            Some(turn) => turn.after_step.push(AfterStep::Brief { message }),
+            None => self.give_as(thread, message, Some(GivenSource::Brief)),
+        }
+    }
+
+    /// The turn under way in `thread`, while the calls of its step run: what comes to it is put
+    /// aside to be written after the step's tool message (`TurnState::after_step`, issue 389).
+    fn in_step(&mut self, thread: ThreadId) -> Option<&mut TurnState> {
+        self.turn_mut(thread).filter(|turn| !turn.tool_calls.is_empty())
     }
 
     /// Whether `message`, giving the knowledge `source`, stands given already: the same knowledge
@@ -422,7 +441,7 @@ impl AgentChannelState {
             known.extend(results.flat_map(|r| &r.knowledge).map(|k| k.source.clone()));
             let put_aside = turn.after_step.iter().filter_map(|put| match put {
                 AfterStep::Given { knowledge, .. } => knowledge.as_ref(),
-                AfterStep::Noted { .. } => None,
+                AfterStep::Brief { .. } | AfterStep::Noted { .. } => None,
             });
             known.extend(put_aside.map(|k| k.source.clone()));
         }
@@ -1478,9 +1497,11 @@ mod tests {
         let calls = a_step_calling(&mut state, &["load_skill"]);
         let skill = said("Collect, group, write.", Classification::PUBLIC);
         let summary = said("what was given without being knowledge", Classification::PUBLIC);
+        let brief = said("a brief delegated meanwhile", Classification::PUBLIC);
 
         state.given(ThreadId::default(), skill.clone(), Some(a_workspace_read()));
         state.given(ThreadId::default(), summary.clone(), None);
+        state.given_brief(ThreadId::default(), brief.clone());
         assert_eq!(
             state.transcript.messages(ThreadId::default()).len(),
             2,
@@ -1505,16 +1526,21 @@ mod tests {
             state.transcript.messages(ThreadId::default()).iter().map(|m| m.id).collect();
         assert_eq!(
             order[2..],
-            [results.id, skill.id, summary.id],
+            [results.id, skill.id, summary.id, brief.id],
             "after the results, in the order given"
         );
         let sources: Vec<_> = state
             .transcript
             .entries(ThreadId::default())
             .skip(3)
-            .map(|n| matches!(&n.entry, TranscriptEntry::Given { source: Some(_), .. }))
+            .map(|n| match &n.entry {
+                TranscriptEntry::Given { source: Some(GivenSource::Knowledge(_)), .. } => "known",
+                TranscriptEntry::Given { source: Some(GivenSource::Brief), .. } => "brief",
+                TranscriptEntry::Given { source: None, .. } => "text",
+                _ => "other",
+            })
             .collect();
-        assert_eq!(sources, [true, false], "each as it was given, knowledge or not");
+        assert_eq!(sources, ["known", "text", "brief"], "each as it was given");
         assert!(state.turn(ThreadId::default()).unwrap().after_step.is_empty());
         assert_eq!(
             state.turn(ThreadId::default()).unwrap().work.context.transcript,
@@ -1529,7 +1555,7 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(told, [skill.id, summary.id], "and its channel is to be told so");
+        assert_eq!(told, [skill.id, summary.id, brief.id], "and its channel is to be told so");
     }
 
     /// Issue 541: knowledge that stands given - with the same text and classification - is not

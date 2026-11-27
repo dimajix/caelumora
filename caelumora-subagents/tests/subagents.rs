@@ -47,7 +47,8 @@ fn said(text: &str) -> Message {
 
 /// The world with sub-agents, whose model "leading" answers `leading`, one per call, and then
 /// none - a turn that calls it again never ends -, whose model "researching" answers what it is
-/// given, and whose model "remarking" remarks on a tool it calls before it answers.
+/// given, and whose model "remarking" remarks on a tool it calls before it answers - "found it",
+/// if it was given its brief framed as one (issue 619).
 async fn world(leading: Vec<Answer>) -> World {
     configured_world(leading, |_| {}).await
 }
@@ -62,7 +63,15 @@ async fn configured_world(leading: Vec<Answer>, configure: impl FnOnce(&mut AppC
             content: Some("First I look around.".to_string()),
             ..calling("look_around", serde_json::json!({}))
         };
-        register_scripted(registry, "remarking", vec![remark, said("found it")]);
+        let remarked: Answer = Box::new(move |_| remark.clone());
+        let answered: Answer = Box::new(|messages| {
+            let framed = messages.iter().filter_map(|m| m.content.as_deref());
+            match framed.into_iter().any(|text| text.contains("gave you this brief")) {
+                true => said("found it"),
+                false => said("not told it was a brief"),
+            }
+        });
+        register_answering(registry, "remarking", vec![remarked, answered]);
     };
     World::configured(&[&SubagentsPlugin], &libraries, register, configure).await
 }
@@ -625,8 +634,9 @@ async fn an_owner_has_an_agent_start_a_sub_agent_by_command() {
     world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
-/// Issue 619: of the turn a sub-agent answers its brief in, the agent that started it is given back
-/// the answer alone, not the remark it made before calling a tool.
+/// Issue 619: a sub-agent is given its brief framed as one, and of the turn it answers it in, the
+/// agent that started it is given back the answer alone, not the remark it made before calling a
+/// tool.
 #[tokio::test]
 async fn a_sub_agent_gives_back_its_answer_without_its_remarks() {
     let thanks: Answer = Box::new(|_| said("thanks"));

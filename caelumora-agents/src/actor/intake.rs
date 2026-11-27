@@ -322,7 +322,8 @@ impl AgentBody {
     /// perceived as it comes (`perceive`), and so is a message modified or taken back since (issue
     /// 234); a reclassification is recorded as it is (issue 239), in the transcript where it holds
     /// the message on a branch, and so is who joined or left (issue 408); what a delegate gives it
-    /// to read is what it was given (`AgentChannelState::given`, issue 557). A modification or
+    /// to read is what it was given (`AgentChannelState::given`, issue 557), a brief as one
+    /// (`AgentChannelState::given_brief`, issue 619). A modification or
     /// revocation the transcript did not take is handed over (`AgentBody::hand_over`, issue 236),
     /// as the agent hears it. What it appends goes on the branch of the thread the envelope happens
     /// in (issue 602); its own join or leave of a thread changes the threads it follows (`follow`),
@@ -338,6 +339,7 @@ impl AgentBody {
             self.follow(state, joined);
         }
         let thread = event.context.thread_id;
+        let brief = event.is_brief();
         match event.event {
             ActorEvent::CompleteMessageGenerated(message) => {
                 trace!("Heard {:?}", message.content);
@@ -362,7 +364,9 @@ impl AgentBody {
                 state.record_change(TranscriptEntry::Reclassified { message, classification });
             }
             // Given to read by a delegate (issue 557), as a skill loaded for it is given: its giver
-            // is the message's sender, and the request to respond follows it.
+            // is the message's sender, and the request to respond follows it. A brief is given as
+            // one (issue 619), what came of a brief as any text.
+            ActorEvent::GivenToRead { message, .. } if brief => state.given_brief(thread, message),
             ActorEvent::GivenToRead { message, .. } => {
                 state.given(thread, message, None);
             }

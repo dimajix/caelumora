@@ -33,6 +33,9 @@ pub enum AfterStep {
     /// A message it was given to read, with the knowledge it is, if it is
     /// knowledge (`AgentChannelState::given`, issue 389).
     Given { message: Message, knowledge: Option<KnowledgeRef> },
+    /// A brief it was given (`AgentChannelState::given_brief`, issue 619) - none is known to come
+    /// during a step, which the delegation's order of briefs rules out.
+    Brief { message: Message },
     /// Who joined or left, as the transcript notes it (`AgentChannelState::note_announced`, issues
     /// 408, 482), or a change of a message of the whole channel
     /// (`AgentChannelState::record_change`, issue 602).

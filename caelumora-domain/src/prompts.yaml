@@ -20,6 +20,13 @@ given_by: |-
   {{ by }} gave you this to read:
   {{ text }}
 
+# A brief another participant delegated to the agent (issues 557, 619), framed as `given_by` but
+# telling what goes back of its work: who gave it, `by`, before its `text`.
+given_brief: |-
+  {{ by }} gave you this brief:
+  {{ text }}
+  Only your answer to it - your last message, calling no tool - is given back to {{ by }}, and it is all {{ by }} reads of your work: make it complete and concise.
+
 # What came of a brief delegated (issue 557) when the turn answering it ended without an answer
 # (issue 619), was given up - why, `cause`, one of `given_up_cause` -, the brief could not be
 # given, or its recipient left before it answered: given back to the giver to read, as the

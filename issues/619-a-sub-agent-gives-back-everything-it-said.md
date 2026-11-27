@@ -198,3 +198,6 @@ this work:
   answer cut short by a cancel is not said, so it is not given back; only an external agent's is.
 - **2026-11-27** — D5 decided by the maintainer (an answer written with a call that ends the turn);
   step 4 planned for the two findings of the review of step 2.
+- **2026-11-27** — Step 3 done: a brief is taken in as one (`GivenSource::Brief`,
+  `AgentChannelState::given_brief`) and framed with `kernel.given_brief`, also for an external
+  agent's remote agent; the terminal's helper says it no longer itself and has no `turn_end` (D5).
