@@ -53,6 +53,7 @@ use caelumora_domain::digest;
 use caelumora_domain::external_agent::{OpenTaskState, TaskId};
 use caelumora_domain::history::Heard;
 use caelumora_domain::message::{Message, MessageId, MessageRole};
+use caelumora_domain::text::shortened;
 use caelumora_domain::transcript::TranscriptEntry;
 use caelumora_domain::turn::GivenUpReason;
 use caelumora_domain::type_map::TypeKey;
@@ -985,10 +986,7 @@ const NOTICE_QUOTE: usize = 200;
 /// take an instruction to disregard something for an injection.
 fn notice(was: &Message, now: Option<&Message>, at: DateTime<Utc>) -> Message {
     let said = was.content.as_deref().unwrap_or_default();
-    let mut quoted: String = said.chars().take(NOTICE_QUOTE).collect();
-    if quoted.len() < said.len() {
-        quoted.push('…');
-    }
+    let quoted = shortened(said, NOTICE_QUOTE, "…");
     let (content, classification) = match now {
         Some(now) => {
             let reads = now.content.as_deref().unwrap_or_default();

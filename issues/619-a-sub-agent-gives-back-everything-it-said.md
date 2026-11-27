@@ -1,6 +1,6 @@
 # 619 — A sub-agent gives back everything it said
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Sessions and channels
@@ -180,7 +180,9 @@ this work:
   `caelumora-tool-workspace/.../grep_files.rs` `shown`), and as `chars().take(n)` at four more
   (`caelumora-agents/src/actor/external_agent.rs` `notice`, marked; the web search's
   `tavily.rs` twice and `caelumora-model-ollama/src/client.rs`, unmarked). One function of the
-  domain takes their place; its interface is put before the maintainer as the step begins.
+  domain takes their place: `caelumora_domain::text::shortened(text, max_chars, mark)`, as the
+  maintainer agreed on 2026-11-27 (a module of its own, since `value::text` checks texts and never
+  changes them).
 - **The delegate's tests build their messages from `make_message`**, the `brief` helper too.
 
 ## History
@@ -201,3 +203,7 @@ this work:
 - **2026-11-27** — Step 3 done: a brief is taken in as one (`GivenSource::Brief`,
   `AgentChannelState::given_brief`) and framed with `kernel.given_brief`, also for an external
   agent's remote agent; the terminal's helper says it no longer itself and has no `turn_end` (D5).
+- **2026-11-27** — Step 4 done: the eight places named in the plan cut by `text::shortened` - not
+  the terminal's short form of an id (`sessions.rs`, `shown_id`), which is no text kept short -;
+  the delegate's tests build their messages from `make_message`.
+- **2026-11-27** — Done: all four steps reviewed and accepted by the maintainer.

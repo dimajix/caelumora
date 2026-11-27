@@ -13,6 +13,7 @@ use caelumora_domain::history::Heard;
 use caelumora_domain::message::{Message, MessageId, MessageRole};
 use caelumora_domain::prompt_catalogue::{context, PromptCatalogue};
 use caelumora_domain::session::SessionId;
+use caelumora_domain::text::shortened;
 use caelumora_domain::value::name::Name;
 use caelumora_domain::work::TurnId;
 use serde::Serialize;
@@ -240,20 +241,17 @@ impl DelegateActor {
     fn answer(&self, last: Option<Message>) -> (String, Option<Classification>) {
         match last.filter(Message::is_answer) {
             Some(Message { content: Some(text), classification, .. }) if !text.is_empty() => {
-                (self.bounded(text), Some(classification))
+                (self.bounded(&text), Some(classification))
             }
             _ => (self.told("kernel.delegation_unanswered", context! {}), None),
         }
     }
 
-    /// `text` cut after `MAX_ANSWER` characters, with a notice that it was, if it is longer.
-    fn bounded(&self, mut text: String) -> String {
-        if let Some((cut, _)) = text.char_indices().nth(MAX_ANSWER) {
-            text.truncate(cut);
-            text.push_str("\n\n");
-            text.push_str(&self.told("kernel.delegation_cut", context! { limit => MAX_ANSWER }));
-        }
-        text
+    /// `text` cut after `MAX_ANSWER` characters, with a notice that it was, if it is longer - the
+    /// notice rendered whether or not it is needed.
+    fn bounded(&self, text: &str) -> String {
+        let notice = self.told("kernel.delegation_cut", context! { limit => MAX_ANSWER });
+        shortened(text, MAX_ANSWER, &format!("\n\n{notice}"))
     }
 }
 
@@ -354,10 +352,9 @@ mod tests {
 
     fn brief(giver: ActorId, text: &str, given_at: Option<Position>) -> Brief {
         let message = Message {
-            id: MessageId::new(),
             sender_id: giver,
             content: Some(text.to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            ..make_message(MessageId::new())
         };
         Brief { message, given_at }
     }

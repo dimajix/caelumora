@@ -7,6 +7,7 @@ use caelumora_api::terminal::command_state;
 use caelumora_domain::approval::{ApprovalRequest, ArgumentMatcher, Reach, ToolMatcher};
 use caelumora_domain::content::ContentRef;
 use caelumora_domain::question::{Choice, Question, QuestionRequest};
+use caelumora_domain::text::shortened;
 use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolResultStatus};
 use caelumora_domain::workspace::CommandStatus;
 use serde_json::Value;
@@ -49,11 +50,11 @@ impl Called {
         }
     }
 
-    /// The same on one line, shortened (`one_line`, `shortened`): as a call is headed.
+    /// The same on one line, shortened (`one_line`): as a call is headed.
     pub(super) fn on_one_line(self) -> Self {
         match self {
             Called::Described(description) => Called::Described(one_line(&description)),
-            Called::With(arguments) => Called::With(shortened(&arguments)),
+            Called::With(arguments) => Called::With(shortened(&arguments, SHORTENED, "…")),
             whole => whole,
         }
     }
@@ -117,7 +118,7 @@ fn answered(result: &ToolCallResult) -> String {
         return "answered, its result not shown".to_string();
     }
     let lines = || result.content.lines().filter(|line| !line.trim().is_empty());
-    let first = lines().next().map(shortened);
+    let first = lines().next().map(|line| shortened(line, SHORTENED, "…"));
     let more = lines().count().saturating_sub(1);
     let said = |how: &str| match &first {
         Some(first) if more > 0 => format!("{how}: {first} (and {} more)", lines_counted(more)),
@@ -269,17 +270,10 @@ pub(super) fn how_to_answer(request: &QuestionRequest, put_to_user: bool) -> Vec
     how
 }
 
-/// `text` on one line - its line breaks told as `⏎` -, shortened (`shortened`).
+/// `text` on one line - its line breaks told as `⏎` -, shortened to at most `SHORTENED`
+/// characters, the cut marked.
 fn one_line(text: &str) -> String {
-    shortened(&text.lines().collect::<Vec<_>>().join("⏎"))
-}
-
-/// `text` shortened to at most `SHORTENED` characters, the cut marked.
-fn shortened(text: &str) -> String {
-    match text.char_indices().nth(SHORTENED) {
-        Some((cut, _)) => format!("{}…", &text[..cut]),
-        None => text.to_string(),
-    }
+    shortened(&text.lines().collect::<Vec<_>>().join("⏎"), SHORTENED, "…")
 }
 
 #[cfg(test)]

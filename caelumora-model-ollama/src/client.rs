@@ -43,6 +43,7 @@ use caelumora_domain::actor::ActorId;
 use caelumora_domain::content::ContentRef;
 use caelumora_domain::message::{CallMeasures, Message, MessageEvent, MessageId, MessageRole};
 use caelumora_domain::remote::RemoteEndpoint;
+use caelumora_domain::text::shortened;
 use caelumora_domain::tool::{ToolCall, ToolDescription, ToolParameters};
 use caelumora_kernel::backend::Backends;
 use caelumora_model::LanguageModelProvider;
@@ -634,7 +635,7 @@ fn backend_error_message(body: &str) -> String {
     match serde_json::from_str::<OllamaErrorResponse>(body) {
         Ok(OllamaErrorResponse { error }) => error,
         Err(_) if body.trim().is_empty() => "no details given".to_string(),
-        Err(_) => body.trim().chars().take(200).collect(),
+        Err(_) => shortened(body.trim(), 200, ""),
     }
 }
 
