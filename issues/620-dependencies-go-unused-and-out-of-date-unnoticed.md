@@ -172,3 +172,7 @@ Each step a commit of its own, reviewed before the next.
   0.3, without a change of the code. `htmd` 0.6 builds, but a test of `web_fetch` failed - the
   title of a page came out as `The \& Title` -; the maintainer decided to take it as a step of its
   own (step 6).
+- **2026-11-27** — Step 4 done: `jsonwebtoken` 12, which refuses an empty HMAC key - the keys of
+  `TokenService` pass its error on, though it checks their length of at least 32 bytes before. The
+  RustCrypto crates it moves to newer versions leave 13 packages fewer in `Cargo.lock`, the older
+  `digest`, `sha2`, `hmac` and `rand` beside the newer among them.
