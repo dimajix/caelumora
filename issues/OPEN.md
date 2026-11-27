@@ -9,6 +9,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
 | [616](616-a-model-misreads-what-starting-a-sub-agent-does.md) | open | medium | bug | A model that starts a sub-agent does not take from the tools' texts that the brief is the whole task and already on its way: in an experiment Gemma started a sub-agent and at once asked an additional question, as if the brief had not yet set the sub-agent to work. |
+| [625](625-a-models-control-tokens-reach-the-channel-as-its-answer.md) | open | medium | bug | What an Ollama model produces is passed on as it comes, so a control token the model writes as text - one of gemma4 - becomes, or becomes part of, the agent's answer in the channel. |
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | low | bug | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
 | [588](588-a-person-s-call-is-released-without-its-result.md) | open | low | bug | A message carrying a person's call (issue 587) is reclassified and fitted into a lowered channel by its own classification alone, while its tool results keep theirs, so whoever is given the message is labelled below what it read, or loses more than the result. |
 
