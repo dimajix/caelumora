@@ -235,7 +235,7 @@ The column _Usage_:
 | `native-tls` | 0.2.18 | `MIT OR Apache-2.0` | runtime |  | https://github.com/rust-native-tls/rust-native-tls |
 | `new_debug_unreachable` | 1.0.6 | `MIT` | runtime |  | https://github.com/mbrubeck/rust-debug-unreachable |
 | `nibble_vec` | 0.1.0 | `MIT` | runtime |  | https://github.com/michaelsproul/rust_nibble_vec |
-| `nix` | 0.31.4 | `MIT` | runtime | ✓ | https://github.com/nix-rust/nix |
+| `nix` | 0.31.4, 0.32.0 | `MIT` | runtime | ✓ | https://github.com/nix-rust/nix |
 | `nohash-hasher` | 0.2.0 | `Apache-2.0 OR MIT` | runtime |  | https://github.com/paritytech/nohash-hasher |
 | `nom` | 1.2.4, 8.0.0 | `MIT` | runtime |  | https://github.com/rust-bakery/nom |
 | `nu-ansi-term` | 0.50.3 | `MIT` | runtime |  | https://github.com/nushell/nu-ansi-term |

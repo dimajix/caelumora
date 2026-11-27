@@ -78,7 +78,7 @@ mime_guess = "2.0.5"
 # access to files or the network: the catalogue reads its files and adds their
 # texts as templates of owned names and sources.
 minijinja = { version = "3", default-features = false, features = ["builtins", "multi_template", "serde"] }
-nix = { version = "0.31", features = ["signal", "process"] }
+nix = { version = "0.32", features = ["signal", "process"] }
 percent-encoding = "2.3"
 rand = "0.10.3"
 # The full-screen terminal (issue 569), drawn with crossterm in the version declared above;

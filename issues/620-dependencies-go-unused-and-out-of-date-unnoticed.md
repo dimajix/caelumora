@@ -1,6 +1,6 @@
 # 620 — Dependencies go unused and out of date unnoticed
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** medium
 **Area:** Maintenance
@@ -128,6 +128,7 @@ What waits, as found on 2026-11-27:
   (`npm audit fix --force`) installs `@tailwindcss/typography` 0.5.4, a step back and breaking. The
   package runs as the CSS is built, not in the browser; it waits for a release of
   `@tailwindcss/typography` that takes the fixed parser (added on 2026-11-27, step 2).
+- **`matchit` 0.8.6** - `axum` (0.8.9) holds it at `=0.8.4` (added on 2026-11-27, step 8).
 
 Rejected:
 
@@ -191,3 +192,7 @@ Each step a commit of its own, reviewed before the next.
   lists of `licenses/` generated again, which steps 2 to 6 had left behind - the web UI brings a
   license new to it, `0BSD` (`tslib`, while it is built). The script found two more behind, which
   step 2 had not named: `nix` 0.32 and `eslint` 10.16, within its range.
+- **2026-11-27** — Step 8 done: `nix` 0.32 - `rustyline` 19 keeps 0.31 beside it until it takes
+  the newer one -, `npm update` (`eslint` 10.16); `matchit` waits for `axum`. The web UI checked in
+  a browser: login, a page reloaded on its session, a skill shown as Markdown, no error on the
+  console. Done.

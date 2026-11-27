@@ -67,7 +67,7 @@ Not purely permissive:
 | `@emnapi/wasi-threads` | 1.2.3 | `MIT` | build, optional |  | https://www.npmjs.com/package/@emnapi/wasi-threads |
 | `@eslint-community/eslint-utils` | 4.10.1 | `MIT` | build |  | https://www.npmjs.com/package/@eslint-community/eslint-utils |
 | `@eslint-community/regexpp` | 4.12.4 | `MIT` | build |  | https://www.npmjs.com/package/@eslint-community/regexpp |
-| `@eslint/config-array` | 0.23.6 | `Apache-2.0` | build |  | https://www.npmjs.com/package/@eslint/config-array |
+| `@eslint/config-array` | 0.23.7 | `Apache-2.0` | build |  | https://www.npmjs.com/package/@eslint/config-array |
 | `@eslint/config-helpers` | 0.7.0 | `Apache-2.0` | build |  | https://www.npmjs.com/package/@eslint/config-helpers |
 | `@eslint/core` | 1.2.1 | `Apache-2.0` | build |  | https://www.npmjs.com/package/@eslint/core |
 | `@eslint/js` | 10.0.1 | `MIT` | build | ✓ | https://www.npmjs.com/package/@eslint/js |
@@ -185,7 +185,7 @@ Not purely permissive:
 | `es-module-lexer` | 2.3.2 | `MIT` | build |  | https://www.npmjs.com/package/es-module-lexer |
 | `escalade` | 3.2.0 | `MIT` | build |  | https://www.npmjs.com/package/escalade |
 | `escape-string-regexp` | 4.0.0, 5.0.0 | `MIT` | runtime |  | https://www.npmjs.com/package/escape-string-regexp |
-| `eslint` | 10.15.0 | `MIT` | build | ✓ | https://www.npmjs.com/package/eslint |
+| `eslint` | 10.16.0 | `MIT` | build | ✓ | https://www.npmjs.com/package/eslint |
 | `eslint-plugin-react-hooks` | 7.1.1 | `MIT` | build | ✓ | https://www.npmjs.com/package/eslint-plugin-react-hooks |
 | `eslint-plugin-react-refresh` | 0.5.8 | `MIT` | build | ✓ | https://www.npmjs.com/package/eslint-plugin-react-refresh |
 | `eslint-scope` | 9.1.2 | `BSD-2-Clause` | build |  | https://www.npmjs.com/package/eslint-scope |
