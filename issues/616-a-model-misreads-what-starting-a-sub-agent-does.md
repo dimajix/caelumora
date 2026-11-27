@@ -1,6 +1,6 @@
 # 616 — A model misreads what starting a sub-agent does
 
-**Status:** in progress
+**Status:** done
 **Type:** bug
 **Priority:** medium
 **Area:** Tools and approvals
@@ -111,3 +111,13 @@ still comes.
   replaced in the middle of the turn is not among them, and an ask after it is taken as asked
   later. Tried with `gemma4:26b` only with the first attempt: the refusal was not reached, the one
   early ask failed on its arguments first.
+- **2026-11-27** — Tried again with `gemma4:26b`, with the refusal in the turn that gave the brief
+  (`work/subagent_start`, label `turn`). With nothing else to do, 6 of 10 runs waited; the one
+  early ask failed on its arguments - a garbled thread id, no `text` - before the refusal was
+  reached; three looked for the answer in the channel's history, and one of them told the user
+  findings of the sub-agent it had made up, before its answer came. With work of its own, every
+  run waited. The early question to the sub-agent, 9 of 10 runs before this issue, is 1 of 10; what
+  remains is a model looking for the answer within the turn by other means.
+- **2026-11-27** — Done, by the maintainer's decision: the question to the sub-agent within the turn
+  is taken away by the texts and refused by the tool. A model looking for the answer within the
+  turn by other means, and making it up, is a matter of its own.

@@ -17,6 +17,7 @@ The binaries:
 | `before` | `main` at `ad75dc52`, before issue 616 | the texts of issue 558; the result of `start_subagent` is `{"thread"}` |
 | `after` | the branch `issue-616-subagent-texts` at `5263c8bb` | the texts of issue 616; the result is `{"started", "thread"}`, `started` saying that nothing more is needed until the answer |
 | `refused` | the same branch with a first attempt at consideration 3, never committed | as `after`, and `ask_subagent` refused by the channel until the agent read the sub-agent's answer, told as a failure with what to do instead; replaced by a refusal in the turn that gave the brief (issue 616) |
+| `turn` | the branch at `6798be77` | as `after`, and `ask_subagent` refused by the tool in the turn that gave the sub-agent a brief, told as a failure: finish the other work and end the turn |
 
 The tasks, both in German, as a person would type them:
 
@@ -35,6 +36,8 @@ The tasks, both in German, as a person would type them:
 | after | meanwhile | 10 | 9 | 0 | 0 | 0 | 0 | 1 | 0 |
 | refused | delegate | 10 | 7 | 1 | 1 | 1 | 0 | 0 | 0 |
 | refused | meanwhile | 10 | 10 | 0 | 0 | 0 | 0 | 0 | 0 |
+| turn | delegate | 10 | 6 | 3 | 1 | 0 | 0 | 0 | 0 |
+| turn | meanwhile | 10 | 10 | 0 | 0 | 0 | 0 | 0 | 0 |
 
 ## Findings
 
@@ -67,7 +70,15 @@ The tasks, both in German, as a person would type them:
     was asked; the turn then ended. One run asked the user instead, through `ask_user`, "Has the
     sub-agent finished its task?". The other runs did as under `after`. The refusal is held by the
     tests; whether a model follows its text was not seen.
-7.  **An earlier measurement was flawed and is not counted.** An exchange still open when a run's
+7.  **The refusal of the final version was not reached either.** With it (`turn`), the one early
+    `ask_subagent` again failed on its arguments - a garbled thread id, no `text` - and the turn
+    then ended with an empty answer. Three runs looked for the answer instead, through
+    `read_history`: two ended the turn saying they waited - one as a code comment, "// Wait for the
+    sub-agent's answer." -, and one, after reading the sub-agent's thread and listing the files,
+    told the user what the sub-agent had found: three TODOs in `README.md`, `setup.sh` and
+    `run.sh`, none of which exist - the project's three are German comments in Python files. A
+    sub-agent's findings made up, before its answer came. With work of its own, every run waited.
+8.  **An earlier measurement was flawed and is not counted.** An exchange still open when a run's
     program was ended was recorded into the next run, which was then judged by it (`no_start`) and
     lost. `experiment.py` now drops what an earlier run opened; the flawed runs lie in
     `results/flawed-1/`.
