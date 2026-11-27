@@ -103,6 +103,43 @@ half of its answers with a time of its own, made up - which is why they never ca
 models are not measured; `message_times: false` turns the times off for one that handles them
 badly.
 
+## Handing a task to a sub-agent
+
+Measured on 2026-11-27 for gemma4:26b alone, against Ollama 0.40.18, through the terminal program
+itself (`work/subagent_start/RESULTS.md`, issue 616): the assistant is to start a sub-agent that
+finds the TODOs of a small project and then say what it found (`delegate`), or to start one and
+meanwhile read the README and say what the project does (`meanwhile`). Judged is the turn that
+started the sub-agent, 10 runs each:
+
+| Texts | Task | Waits | Asks the sub-agent again | Looks for the answer | Other |
+|---|---|---:|---:|---:|---:|
+| of issue 558 | `delegate` | 1 | 9 | 0 | 0 |
+| of issue 616 | `delegate` | 7 | 2 | 1 | 0 |
+| of issue 616, with the refusal | `delegate` | 6 | 1 | 3 | 0 |
+| of issue 558 | `meanwhile` | 9 | 0 | 0 | 1 |
+| of issue 616 | `meanwhile` | 9 | 0 | 0 | 1 |
+| of issue 616, with the refusal | `meanwhile` | 10 | 0 | 0 | 0 |
+
+The model expects a sub-agent's answer within the turn that started it: under the texts of issue
+558 it asked the sub-agent again for its findings in 9 of 10 runs, up to six times in a turn, and
+then mostly searched itself. The texts of issue 616 - the brief is the whole task, nothing more is
+needed until the answer, which comes in a later turn - and the refusal of `ask_subagent` in the
+turn that gave the brief bring that down to 1 of 10; the early asks that remained failed on their
+arguments - a garbled thread id, no `text` - before the refusal was reached. With work of its own
+to do, it waits under any texts.
+
+What remains is that, with nothing to do but wait, the model looks for the answer within the turn
+by other means - the channel's history, the sub-agent's thread, the files - and sometimes makes it
+up: in 2 of the 20 `delegate` runs under the texts of issue 616 it told the user TODOs the
+sub-agent had found, in files that do not exist, before the sub-agent had answered - once after
+looking, once without any call, counted as waiting above. Nothing in Caelumora tells a made-up
+result from a real one: with this model, what an agent reports of a sub-agent's work before the
+sub-agent answered is not to be trusted.
+
+In 14 of the 80 runs, gemma4 wrote one of its control tokens as text - `<|tool_response>` as the
+whole answer of a turn it meant to end, `<channel|>` once in the middle of one -, which Ollama
+passes on as content (issue 625).
+
 ## Seeing images
 
 Whether a model sees images is asked of Ollama's `/api/show` as the agent is built (`vision`, its

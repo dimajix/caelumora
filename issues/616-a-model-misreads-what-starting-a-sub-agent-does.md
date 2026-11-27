@@ -1,6 +1,6 @@
 # 616 — A model misreads what starting a sub-agent does
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** medium
 **Area:** Tools and approvals
@@ -76,3 +76,48 @@ still comes.
 ## History
 
 - **2026-11-27** — Opened on the maintainer's observation from an experiment with Gemma.
+- **2026-11-27** — Considerations 1 and 2 carried out, as recommended. `start_subagent` says that
+  the brief is the sub-agent's whole task, given at once, that nothing more is needed now - finish
+  the other work, end the turn, the answer comes in a later one -, and names `ask_subagent` last,
+  for after the answer was read; `ask_subagent` says that anything given before the answer waits
+  until it came; the `started` text of `/subagent` says the same. The result of `start_subagent`
+  is `{"thread", "started"}`, `started` the text `tools.subagents.started` of `prompts.yaml`,
+  rendered once with the tool, as its description is (`tool_text`). Which question the experiment
+  asked is still unknown; the texts cover both readings. Still to do: the trial with Gemma.
+- **2026-11-27** — Two findings of the review taken up. `ask_subagent` and `end_subagent` answer as
+  `start_subagent` does, the thread and a text of what they did (`{"thread", "asked"}`,
+  `{"thread", "ended"}`), so that the three results read alike, and the one asked again tells too
+  that nothing more is needed until its answer. `attach` renders its text `attached` once, as it
+  is made, instead of at every call with an empty text, logged, where it could not be had - as the
+  texts of tools are rendered (`tool_text`).
+- **2026-11-27** — Tried with `gemma4:26b`, through the terminal program itself
+  (`work/subagent_start`, 10 runs per task and binary). The question of the experiment went to the
+  sub-agent: with the texts before, the model asked it again in the turn that started it in 9 of 10
+  runs with nothing else to do - for its findings, whether it was done -, 25 times in all; with the
+  texts of this issue in 2 of 10, once each, and one run looked for the answer in the channel's
+  history instead. With work of its own to do, the model waited under either texts (9 of 10). Not
+  done yet: consideration 3 follows, so that an early question is refused and says why.
+- **2026-11-27** — Consideration 3 carried out, narrower than written, on the agent's side. A first
+  attempt refused a further brief in the channel until the giver read what came of the last
+  (`ThreadState::delegate`, `ChannelError::AnswerUnread`) and was taken back before it was
+  committed: when to brief again is a matter of the tool's contract, not of the channel, whose
+  delegation stays a queue of briefs for every giver - one asked before the answer came is answered
+  after it, on its own. Instead `ask_subagent` refuses to ask a sub-agent in the turn that gave it
+  a brief, by `start_subagent` or `ask_subagent`: its answer is given to read between turns, so it
+  cannot come before that turn ends - the case the experiment showed. The model is told so as a
+  failure, with the text `tools.subagents.briefed_already` saying to end the turn. The tool reads
+  what the turn did from the results of its calls, `Turn::tool_results` - the earlier steps from
+  the turn's messages in the transcript, the current step from its calls -; a step a compaction
+  replaced in the middle of the turn is not among them, and an ask after it is taken as asked
+  later. Tried with `gemma4:26b` only with the first attempt: the refusal was not reached, the one
+  early ask failed on its arguments first.
+- **2026-11-27** — Tried again with `gemma4:26b`, with the refusal in the turn that gave the brief
+  (`work/subagent_start`, label `turn`). With nothing else to do, 6 of 10 runs waited; the one
+  early ask failed on its arguments - a garbled thread id, no `text` - before the refusal was
+  reached; three looked for the answer in the channel's history, and one of them told the user
+  findings of the sub-agent it had made up, before its answer came. With work of its own, every
+  run waited. The early question to the sub-agent, 9 of 10 runs before this issue, is 1 of 10; what
+  remains is a model looking for the answer within the turn by other means.
+- **2026-11-27** — Done, by the maintainer's decision: the question to the sub-agent within the turn
+  is taken away by the texts and refused by the tool. A model looking for the answer within the
+  turn by other means, and making it up, is a matter of its own.

@@ -52,7 +52,7 @@ use caelumora_domain::context::KnowledgeRef;
 use caelumora_domain::digest::Digest;
 use caelumora_domain::message::{CallMeasures, Message, MessageId};
 use caelumora_domain::prompt_catalogue::PromptError;
-use caelumora_domain::tool::{ToolContent, ToolDescription};
+use caelumora_domain::tool::{ToolCallResult, ToolCallState, ToolContent, ToolDescription};
 use caelumora_domain::turn::{StagedChange, TurnState};
 use caelumora_domain::work::TurnId;
 #[cfg(test)]
@@ -161,6 +161,17 @@ impl<'a> Turn<'a> {
             .rev()
             .find(|message| message.turn_id == Some(turn_id) && !message.tool_calls.is_empty())?;
         Some(calling.id)
+    }
+
+    /// The results of the calls the turn has made so far, in the order made (issue 616): those of
+    /// its earlier steps as its transcript holds them - none a compaction replaced -, then those of
+    /// the current step that ended.
+    pub fn tool_results(&self) -> Vec<ToolCallResult> {
+        let turn_id = Some(self.turn_id());
+        let messages = self.agent_channel_state.transcript.messages(self.thread);
+        let earlier = messages.into_iter().filter(|message| message.turn_id == turn_id);
+        let current = self.current().tool_calls.iter().filter_map(ToolCallState::result);
+        earlier.flat_map(|message| message.tool_results).chain(current.cloned()).collect()
     }
 
     /// The working state of the turn under way. A `Turn` is only had while
@@ -590,6 +601,34 @@ mod tests {
         let with_calls: Vec<_> =
             said.iter().filter(|m| !m.tool_calls.is_empty()).map(|m| Some(m.id)).collect();
         assert_eq!([first, second].as_slice(), with_calls.as_slice(), "each step's own");
+    }
+
+    /// Issue 616: the results of a turn's calls so far are those of its earlier steps and those of
+    /// its current step that ended, in the order made - none of a turn before.
+    #[tokio::test]
+    async fn a_turn_has_the_results_of_its_calls_so_far() {
+        use caelumora_domain::tool::ToolResultStatus;
+        use caelumora_kernel::testing::Discard;
+        let call = make_tool_call("a_tool");
+        let result = |content: &str| {
+            let classification = Classification::CHANNEL_DEFAULT;
+            ToolCallResult::of(&call, ToolResultStatus::Ok, content.to_string(), classification)
+        };
+        let step = |content: &str| Message {
+            role: MessageRole::Tool,
+            tool_results: vec![result(content)],
+            ..message("")
+        };
+        let mut state = AgentChannelState::default();
+        let before = Message { turn_id: Some(TurnId::new()), ..step("a turn before") };
+        state.said(ThreadId::default(), before);
+        let mut turn = Turn::begun(AgentId::new(), &mut state);
+        turn.say(step("first step"), &Discard).await.unwrap();
+        let ended = ToolCallState::answered(call.clone(), result("current step"));
+        turn.tool_calls().register(vec![ended, ToolCallState::approved(call.clone())]);
+
+        let contents: Vec<_> = turn.tool_results().into_iter().map(|r| r.content).collect();
+        assert_eq!(contents, ["first step", "current step"], "the turn's own, ended");
     }
 
     /// Issue 417: what a turn says leaves the agent as it is, what only its

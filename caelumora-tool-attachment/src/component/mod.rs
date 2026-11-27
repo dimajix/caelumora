@@ -38,13 +38,13 @@ impl AttachmentsComponent {
     ///
     /// # Errors
     /// `PromptError` if one of its texts cannot be had.
-    fn new(prompts: PromptTexts) -> Result<Self, PromptError> {
-        let description = tool_text(&prompts, NAMESPACE, ATTACHMENTS_KIND, "description", ())?;
+    fn new(prompts: &PromptTexts) -> Result<Self, PromptError> {
+        let description = tool_text(prompts, NAMESPACE, ATTACHMENTS_KIND, "description", ())?;
         Ok(Self {
             description,
-            view: Arc::new(tool::ViewAttachmentTool::new(&prompts)?),
-            read: Arc::new(tool::ReadAttachmentTool::new(&prompts)?),
-            copy: Arc::new(tool::CopyAttachmentTool::new(&prompts)?),
+            view: Arc::new(tool::ViewAttachmentTool::new(prompts)?),
+            read: Arc::new(tool::ReadAttachmentTool::new(prompts)?),
+            copy: Arc::new(tool::CopyAttachmentTool::new(prompts)?),
             attach: Arc::new(tool::AttachTool::new(prompts)?),
         })
     }
@@ -63,7 +63,7 @@ pub(crate) fn register(registry: &mut LibraryComponents<'_>) {
         |_descriptor, context| async move {
             let texts = texts_of(&context).await?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(AttachmentsComponent::new(texts)?));
+            facets.insert::<dyn ToolProvider>(Arc::new(AttachmentsComponent::new(&texts)?));
             Ok(facets)
         },
     );

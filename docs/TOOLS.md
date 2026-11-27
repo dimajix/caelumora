@@ -51,9 +51,10 @@ agents or of the library that brings it (`<namespace>.tools.<kind>`): `notes.wri
 tool's, `notes.write_note.text` its parameter's, `.item` an entry's of a list, and the entries of a
 list of objects are described by their fields under the list's path. A parameter described already
 keeps its text, as the parameters every reclassifying tool shares (`tool::reclassify_parameters`).
-The texts are rendered once, when the component is made; a text missing keeps it from being built. A
-tool of a generic provider, an MCP server's, is described as it describes itself, its parameters
-read of the JSON Schema it gives (`ToolParameters::from_json_schema`).
+A text a tool's result gives - what it did, what to do next - has a path of its own there
+(`subagents.started`). The texts are rendered once, when the component is made; a text missing keeps
+it from being built. A tool of a generic provider, an MCP server's, is described as it describes
+itself, its parameters read of the JSON Schema it gives (`ToolParameters::from_json_schema`).
 
 ## Tool sets
 
@@ -650,8 +651,9 @@ never by moving an artifact (see [PROJECTS.md](PROJECTS.md), [STORAGE.md](STORAG
 `caelumora-subagents`, issue 558) hand a task to a sub-agent: a new agent of one of the
 personalities the component is configured with (`personalities`), which works on the brief apart, in
 a thread of its own opened at the call, and gives back only what came of it. Starting does not
-block: the call returns the thread at once, and what the sub-agent answers is given to the agent to
-read where the thread was opened, once it is there - as the kernel's delegate gives it (see
+block: the call returns the thread at once, telling the agent that nothing more is needed until the
+answer, and what the sub-agent answers is given to the agent to read in a later turn, where the
+thread was opened, once it is there - as the kernel's delegate gives it (see
 [CHANNELS.md](CHANNELS.md#delegating-into-a-thread)): the answer of its turn alone - its last
 message, calling no tool -, bounded in length (issue 619), never the remarks it made on the way,
 so that the agent's context holds the result and not the steps of the work. The sub-agent is told
@@ -662,7 +664,12 @@ the turn that read its answer: one left without a word then is let go (issue 598
 `NoSubAgent`, to be ended with its thread -, `end_subagent` ends it: its thread, which owns it,
 closed with it (`procedure::thread::Close`, issue 598) - let go from its channel and its session,
 the agent deleted, never purged, the thread closed last. A brief still open as it is ended is
-dropped - if its leave came first, the agent is given back that it left before it answered.
+dropped - if its leave came first, the agent is given back that it left before it answered. Asked
+before it answered, what a sub-agent is given waits behind the brief and is answered after it, on
+its own. In the turn that gave it a brief, by `start_subagent` or `ask_subagent`, the tool refuses
+to ask it - its answer cannot come before that turn ends -, told the model as a failure with what
+to do instead (issue 616): the tool reads what the turn did from the results of its calls
+(`Turn::tool_results`), and the channel's delegation stays a queue of briefs for every giver.
 
 They are offered where the work's session runs, and act through the `SubAgentWriter` the plugin
 binds to the turn's work (issue 516), in its context: the agent gives, its owner owns the sub-agent,

@@ -5,9 +5,9 @@
 
 use caelumora_agents::library::AgentsLibrary;
 use caelumora_agents::testing::{
-    agent_runtime, calling, register_answering, register_scripted, Answer,
+    agent_runtime, calling, prompts_with, register_answering, register_scripted, Answer,
 };
-use caelumora_agents::tool::ToolProvider;
+use caelumora_agents::tool::{tool_text, ToolProvider};
 use caelumora_api::command::CommandError;
 use caelumora_api::library::Library;
 use caelumora_domain::actor::{ActorEvent, ActorId};
@@ -29,12 +29,12 @@ use caelumora_kernel::component::ComponentRegistry;
 use caelumora_kernel::session::SessionLoop;
 use caelumora_kernel::testing::{participant_runtime_in, shown, World, STAFF};
 use caelumora_subagents::component::{
-    ASK_SUBAGENT, START_SUBAGENT, SUBAGENTS_KIND, SUBAGENT_COMMAND_NAME,
+    ASK_SUBAGENT, END_SUBAGENT, START_SUBAGENT, SUBAGENTS_KIND, SUBAGENT_COMMAND_NAME,
 };
 use caelumora_subagents::extension::{SubAgentError, SubAgentWriter};
 use caelumora_subagents::library::SubagentsLibrary;
 use caelumora_subagents::plugin::SubagentsPlugin;
-use caelumora_subagents::SUBAGENTS;
+use caelumora_subagents::{NAMESPACE, PROMPTS, SUBAGENTS};
 use std::sync::Arc;
 
 fn said(text: &str) -> Message {
@@ -47,8 +47,8 @@ fn said(text: &str) -> Message {
 
 /// The world with sub-agents, whose model "leading" answers `leading`, one per call, and then
 /// none - a turn that calls it again never ends -, whose model "researching" answers what it is
-/// given, and whose model "remarking" remarks on a tool it calls before it answers - "found it",
-/// if it was given its brief framed as one (issue 619).
+/// given, whose model "remarking" remarks on a tool it calls before it answers - "found it", if it
+/// was given its brief framed as one (issue 619) -, and whose model "silent" answers nothing.
 async fn world(leading: Vec<Answer>) -> World {
     configured_world(leading, |_| {}).await
 }
@@ -72,6 +72,7 @@ async fn configured_world(leading: Vec<Answer>, configure: impl FnOnce(&mut AppC
             }
         });
         register_answering(registry, "remarking", vec![remarked, answered]);
+        register_answering(registry, "silent", Vec::new());
     };
     World::configured(&[&SubagentsPlugin], &libraries, register, configure).await
 }
@@ -97,14 +98,17 @@ fn leading_a_researcher() -> Vec<Answer> {
     ]
 }
 
+/// The result of the tool `name`, as the model was given it among `messages`.
+fn result_of(messages: &[Message], name: &str) -> serde_json::Value {
+    let results = messages.iter().flat_map(|message| &message.tool_results);
+    let mut called = results.filter(|result| result.tool_name == name);
+    let result = called.find_map(|result| serde_json::from_str(&result.content).ok());
+    result.unwrap()
+}
+
 /// The thread `start_subagent` returned, as the model was given its result among `messages`.
 fn started(messages: &[Message]) -> ThreadId {
-    let results = messages.iter().flat_map(|message| &message.tool_results);
-    let thread = results.filter(|result| result.tool_name == START_SUBAGENT).find_map(|result| {
-        let result: serde_json::Value = serde_json::from_str(&result.content).ok()?;
-        serde_json::from_value(result.get("thread")?.clone()).ok()
-    });
-    thread.unwrap()
+    serde_json::from_value(result_of(messages, START_SUBAGENT)["thread"].clone()).unwrap()
 }
 
 /// The personality `name` of `owner`, with `components` and of `kind`.
@@ -164,10 +168,11 @@ async fn limited_world(leading: Vec<Answer>, max_open: usize, max_depth: usize) 
 /// Issue 558: an agent starts a sub-agent of a personality its tool lists - a new agent, named by
 /// an adjective and the personality, in a thread of its own at the call -, is given back to read
 /// what it answered, and asks it again in the turn that read it (issue 598), and is given that back
-/// too; the turn that reads the second answer leaves it without a word, which lets it go: the
-/// session follower closes its thread with it - let go, the agent deleted -, and nothing is left
-/// to ask or to end. A personality of an external agent is no sub-agent's, and a thread without
-/// one of the work's is none to ask.
+/// too, each result telling it that nothing more is needed until the answer (issue 616); the turn
+/// that reads the second answer leaves it without a word, which lets it go: the session follower
+/// closes its thread with it - let go, the agent deleted -, and nothing is left to ask or to end. A
+/// personality of an external agent is no sub-agent's, and a thread without one of the work's is
+/// none to ask.
 #[tokio::test]
 async fn an_agent_starts_a_sub_agent_asks_it_again_as_it_reads_its_answer_and_lets_it_go() {
     let world = world(leading_a_researcher()).await;
@@ -183,10 +188,10 @@ async fn an_agent_starts_a_sub_agent_asks_it_again_as_it_reads_its_answer_and_le
     };
     let leading =
         personality(&world, "leading", alice, internal, vec![model("leading"), subagents]).await;
-    let lead = world.agent("lead", world.alice, &leading).await;
-    let session = world.session_of(&[], &[lead], &[]).await;
+    let lead_id = world.agent("lead", world.alice, &leading).await;
+    let session = world.session_of(&[], &[lead_id], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
-    let lead = ActorId::Agent(lead);
+    let lead = ActorId::Agent(lead_id);
 
     main.user_actor(world.alice)
         .expect("alice takes part")
@@ -236,6 +241,15 @@ async fn an_agent_starts_a_sub_agent_asks_it_again_as_it_reads_its_answer_and_le
     let name = deleted.entity.name.name.to_string();
     assert!(name.ends_with("-researcher"), "an adjective and the personality: {name}");
     assert!(!main.channel().lists(ActorId::Agent(sub_agent)), "let go");
+    let state = world.store.state_store().get_agent_channel_state(lead_id, main.id()).await;
+    let messages = state.unwrap().transcript.messages(ThreadId::line(main.id()));
+    let prompts = prompts_with(NAMESPACE, PROMPTS);
+    let told = |key| tool_text(&prompts, NAMESPACE, SUBAGENTS_KIND, key, ()).unwrap();
+    let start = result_of(&messages, START_SUBAGENT);
+    assert_eq!(start["started"], told("started"), "the result says what to do meanwhile");
+    let ask = result_of(&messages, ASK_SUBAGENT);
+    assert_eq!(ask["thread"], start["thread"], "asked the one started");
+    assert_eq!(ask["asked"], told("asked"), "the result says what to do meanwhile");
 
     let writer = writer_of(&main, lead, world.alice).await;
     let refused = writer.ask(thread, "Still there?".to_string()).await.unwrap_err();
@@ -403,6 +417,173 @@ async fn starting_a_sub_agent_asks_for_approval_as_configured() {
     assert!(tools(serde_json::json!({ "personalities": [] })).await.is_err(), "one to start");
 }
 
+/// Issue 616: an agent ends a sub-agent by its tool in the turn that read its answer, and is told
+/// so with the thread it ended - repeated here by its model -; the thread is closed.
+#[tokio::test]
+async fn an_agent_ends_a_sub_agent_by_its_tool_and_is_told_so() {
+    let fixed = |answer: Message| -> Answer { Box::new(move |_| answer.clone()) };
+    let start = calling(
+        START_SUBAGENT,
+        serde_json::json!({ "personality": "researcher", "brief": "Find it." }),
+    );
+    let end: Answer = Box::new(|messages| {
+        calling(END_SUBAGENT, serde_json::json!({ "thread": started(messages) }))
+    });
+    let repeat: Answer = Box::new(|messages| {
+        let ended = result_of(messages, END_SUBAGENT);
+        let same = ended["thread"] == result_of(messages, START_SUBAGENT)["thread"];
+        said(if same { ended["ended"].as_str().unwrap_or_default() } else { "another thread" })
+    });
+    let world = world(vec![fixed(start), fixed(said("started")), end, repeat]).await;
+    let (session, main, _) = commanded_lead(&world, "researching").await;
+
+    main.user_actor(world.alice)
+        .expect("alice takes part")
+        .send_message(None, Some("@lead find it".to_string()), None, Vec::new())
+        .await
+        .expect("said");
+    let prompts = prompts_with(NAMESPACE, PROMPTS);
+    let told = tool_text(&prompts, NAMESPACE, SUBAGENTS_KIND, "ended", ()).unwrap();
+    main.thread_said_in(&told).await;
+    let closed = |e: &HistoryEntry| matches!(e, HistoryEntry::ThreadClosed { .. });
+    assert!(main.history_entries().await.iter().any(closed), "its thread closed");
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// How the calls of `ask_subagent` among `messages` ended, in the order called: "ok", or the status
+/// they failed with and what the model was told.
+fn asked(messages: &[Message]) -> Vec<String> {
+    let results = messages.iter().flat_map(|message| &message.tool_results);
+    let called = results.filter(|result| result.tool_name == ASK_SUBAGENT);
+    let told = called.map(|result| {
+        serde_json::from_str::<serde_json::Value>(&result.content).unwrap_or_default()
+    });
+    let ended = told.map(|told| match (told["status"].as_str(), told["message"].as_str()) {
+        (Some(status), Some(message)) => format!("{status}: {message}"),
+        (Some(status), None) => status.to_string(),
+        (None, _) => "ok".to_string(),
+    });
+    ended.collect()
+}
+
+/// Why `ask_subagent` is refused in the turn that gave the sub-agent a brief.
+fn briefed_already() -> String {
+    let prompts = prompts_with(NAMESPACE, PROMPTS);
+    tool_text(&prompts, NAMESPACE, SUBAGENTS_KIND, "briefed_already", ()).unwrap()
+}
+
+/// Whether `ended`, how a call of `ask_subagent` ended (`asked`), is its refusal in the turn that
+/// gave the sub-agent a brief.
+fn refused_as_briefed(ended: &str) -> bool {
+    ended.starts_with("failed: ") && ended.ends_with(&briefed_already())
+}
+
+/// Issue 616: an agent that asks its sub-agent again in the turn that started it is refused - the
+/// answer cannot come before the turn ends -, told so as a failure with what to do instead, and
+/// nothing more is delegated.
+#[tokio::test]
+async fn an_agent_asking_in_the_turn_that_started_its_sub_agent_is_refused_and_told_why() {
+    let fixed = |answer: Message| -> Answer { Box::new(move |_| answer.clone()) };
+    let start = calling(
+        START_SUBAGENT,
+        serde_json::json!({ "personality": "researcher", "brief": "Find it." }),
+    );
+    let ask: Answer = Box::new(|messages| {
+        let asking = serde_json::json!({ "thread": started(messages), "text": "Are you done?" });
+        calling(ASK_SUBAGENT, asking)
+    });
+    let judge: Answer = Box::new(|messages| {
+        let refused = matches!(asked(messages).as_slice(), [ended] if refused_as_briefed(ended));
+        said(if refused { "refused" } else { "asked" })
+    });
+    let world = world(vec![fixed(start), ask, judge]).await;
+    let (session, main, lead) = commanded_lead(&world, "silent").await;
+
+    main.user_actor(world.alice)
+        .expect("alice takes part")
+        .send_message(None, Some("@lead find it".to_string()), None, Vec::new())
+        .await
+        .expect("said");
+    main.thread_said_in("refused").await;
+    let opened = main.history_entries().await.into_iter().find_map(|e| match e {
+        HistoryEntry::ThreadOpened { thread, by, .. } if by == ActorId::Agent(lead) => Some(thread),
+        _ => None,
+    });
+    let delegation = main.delegation(opened.expect("opened")).await.expect("delegated");
+    let briefs: Vec<_> = delegation.briefs.iter().map(|b| b.message.content.as_deref()).collect();
+    assert_eq!(briefs, [Some("Find it.")], "the brief alone, unanswered");
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// Issue 616: in a step of the turn that read its answer, a sub-agent is asked once - the second
+/// call for it refused -, whatever brief another one was given in the turn.
+#[tokio::test]
+async fn a_sub_agent_is_asked_once_in_a_turn_whatever_another_is_given() {
+    let fixed = |answer: Message| -> Answer { Box::new(move |_| answer.clone()) };
+    let starting = || {
+        let start = serde_json::json!({ "personality": "researcher", "brief": "Find it." });
+        calling(START_SUBAGENT, start).tool_calls
+    };
+    let start = Message { tool_calls: starting(), ..said("") };
+    // Another sub-agent started, then the first asked twice, in one step.
+    let start_and_ask_twice: Answer = Box::new(move |messages| {
+        let asking = |text: &str| serde_json::json!({ "thread": started(messages), "text": text });
+        let calls = [
+            starting(),
+            calling(ASK_SUBAGENT, asking("And more?")).tool_calls,
+            calling(ASK_SUBAGENT, asking("Anything else?")).tool_calls,
+        ];
+        let mut calls = calls.concat();
+        for (id, call) in calls.iter_mut().enumerate() {
+            call.id = Some(id.to_string());
+        }
+        Message { tool_calls: calls, ..said("") }
+    });
+    let judge: Answer = Box::new(|messages| {
+        let asked_once = matches!(asked(messages).as_slice(),
+            [first, second] if first == "ok" && refused_as_briefed(second));
+        said(if asked_once { "asked once" } else { "asked otherwise" })
+    });
+    let answers = vec![fixed(start), fixed(said("started")), start_and_ask_twice, judge];
+    let world = world(answers).await;
+    let (session, main, _) = commanded_lead(&world, "researching").await;
+
+    main.user_actor(world.alice)
+        .expect("alice takes part")
+        .send_message(None, Some("@lead find it".to_string()), None, Vec::new())
+        .await
+        .expect("said");
+    main.thread_said_in("asked once").await;
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// Issue 616: what a sub-agent is given before it answered waits behind its brief, and is answered
+/// after it, on its own: both answers are given back, one after the other.
+#[tokio::test]
+async fn what_a_sub_agent_is_asked_before_it_answered_is_answered_after_it() {
+    let world = world(Vec::new()).await;
+    let (session, main, lead) = commanded_lead(&world, "researching").await;
+    let lead = ActorId::Agent(lead);
+    let writer = writer_of(&main, lead, world.alice).await;
+    let origin = ThreadOrigin { thread: ThreadId::line(main.id()), message: MessageId::new() };
+    let thread = writer.start("researcher", origin, "Find it.".to_string()).await.expect("started");
+    writer.ask(thread, "And more?".to_string()).await.expect("waits behind the brief");
+
+    let given_back = |entries: &[HistoryEntry]| -> Vec<Option<String>> {
+        let given = entries.iter().filter_map(|e| match e {
+            HistoryEntry::GivenToRead { recipient, message, .. } if *recipient == lead => {
+                Some(message.content.clone())
+            }
+            _ => None,
+        });
+        given.collect()
+    };
+    let entries = main.history_once(|entries| given_back(entries).len() == 2).await;
+    let answers = [Some("found it".to_string()), Some("found more".to_string())];
+    assert_eq!(given_back(&entries), answers, "each on its own, in order");
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 /// Issue 597: unless the operator allows more, a sub-agent starts none of its own - refused before
 /// anything is made.
 #[tokio::test]
@@ -553,11 +734,14 @@ async fn a_sub_agent_is_cleared_no_wider_than_the_agent_that_starts_it() {
 
 /// A session of alice's with a lead of hers, that starts sub-agents of "researcher" and "researcher
 /// assistant" - a personality nobody has - by its tools and its command, and a "researcher" of
-/// hers: the session, its main channel and the lead.
-async fn commanded_lead(world: &World) -> (Arc<SessionLoop>, Arc<ChannelLoop>, AgentId) {
+/// hers, whose model is `researching`: the session, its main channel and the lead.
+async fn commanded_lead(
+    world: &World,
+    researching: &str,
+) -> (Arc<SessionLoop>, Arc<ChannelLoop>, AgentId) {
     let model = |kind: &str| ComponentDescriptor::new("model", kind);
     let internal = PersonalityKind::Internal;
-    personality(world, "researcher", world.alice, internal, vec![model("researching")]).await;
+    personality(world, "researcher", world.alice, internal, vec![model(researching)]).await;
     let subagents = ComponentDescriptor {
         params: serde_json::json!({ "personalities": ["researcher", "researcher assistant"] }),
         ..ComponentDescriptor::new("subagents", SUBAGENTS_KIND)
@@ -578,7 +762,7 @@ async fn commanded_lead(world: &World) -> (Arc<SessionLoop>, Arc<ChannelLoop>, A
 async fn an_owner_has_an_agent_start_a_sub_agent_by_command() {
     let thanks: Answer = Box::new(|_| said("thanks"));
     let world = world(vec![thanks]).await;
-    let (session, main, lead_id) = commanded_lead(&world).await;
+    let (session, main, lead_id) = commanded_lead(&world, "researching").await;
     let lead = ActorId::Agent(lead_id);
     let line = ThreadId::line(main.id());
     let alice = main.user_actor(world.alice).unwrap();
@@ -682,7 +866,7 @@ async fn a_sub_agent_gives_back_its_answer_without_its_remarks() {
 async fn a_sub_agent_is_started_by_command_by_an_owner_on_a_listed_personality_alone() {
     // A lead that does not answer: a command wakes nobody.
     let world = world(Vec::new()).await;
-    let (session, main, lead_id) = commanded_lead(&world).await;
+    let (session, main, lead_id) = commanded_lead(&world, "researching").await;
     world.kernel.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
 
     let bob = main.user_actor(world.bob).unwrap();
@@ -730,7 +914,7 @@ async fn a_sub_agent_is_started_by_command_by_an_owner_on_a_listed_personality_a
 #[tokio::test]
 async fn a_start_by_command_refused_is_answered_as_a_refusal() {
     let world = limited_world(Vec::new(), 5, 0).await;
-    let (session, main, _) = commanded_lead(&world).await;
+    let (session, main, _) = commanded_lead(&world, "researching").await;
     let alice = main.user_actor(world.alice).unwrap();
     let mut hers = alice.watch();
 
