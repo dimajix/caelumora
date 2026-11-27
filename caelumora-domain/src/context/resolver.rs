@@ -14,7 +14,7 @@ use crate::kept::Kept;
 use crate::message::{Message, MessageId, MessageRole};
 use crate::prompt_catalogue::{context, PromptCatalogue, PromptError, PromptTexts, KERNEL};
 use crate::tool::ToolSet;
-use crate::transcript::{as_they_stand, Transcript, TranscriptEntry};
+use crate::transcript::{as_they_stand, carried_over, Transcript, TranscriptEntry};
 use crate::turn::GivenUpReason;
 use crate::value::time_zone::TimeZone;
 use crate::work::TurnId;
@@ -99,9 +99,9 @@ struct GivenPath<'a> {
 impl GivenPath<'_> {
     /// All of it, in the order the model is given it, without the entries
     /// `left_out` leaves out.
-    fn items(self, left_out: impl Fn(&TranscriptEntry) -> bool) -> Vec<ContextItem> {
+    fn items(self, left_out: impl Fn(&Node<TranscriptEntry>) -> bool) -> Vec<ContextItem> {
         let mut items = self.leading;
-        let entries = self.entries.into_iter().filter(|(node, _)| !left_out(&node.entry));
+        let entries = self.entries.into_iter().filter(|(node, _)| !left_out(node));
         items.extend(entries.flat_map(|(_, given)| given));
         items.extend(self.trailing);
         items
@@ -179,12 +179,14 @@ impl<'a> ContextResolver<'a> {
         Ok(Some(ResolvedContext { reference: reference.clone(), items, tool_sets }))
     }
 
-    /// The transcript up to and including the entry `last`, as the model of `agent` is given it in
-    /// the turn `turn` - each message framed by `profile` at `time_zone` -, without any prompt
-    /// part: none of a frame, and none given into the transcript (`TranscriptEntry::part_of`,
-    /// issue 537), of which a compaction keeps those that still stand. What a model is handed to
-    /// work on the conversation itself, a summary say (issue 16). `None` if the transcript holds
-    /// no entry `last`.
+    /// The transcript it reads - the branch of the thread it resolves for, or the path it was made
+    /// on - up to and including its entry `last`, as the model of `agent` is given it in the turn
+    /// `turn` - each message framed by `profile` at `time_zone` -, without any prompt part: none of
+    /// a frame, none given into the transcript (`TranscriptEntry::part_of`, issue 537), of which a
+    /// compaction keeps those that still stand, nor what else a compaction of what it reads
+    /// carries over: the brief under way (`carried_over`, issue 622). What a model is handed to
+    /// work on the conversation itself, a summary say (issue 16). `None` if what it reads holds no
+    /// entry `last`.
     ///
     /// # Errors
     /// `PromptError` if the text of a notice cannot be had.
@@ -200,10 +202,16 @@ impl<'a> ContextResolver<'a> {
             transcript: Some(last),
             frame: FrameRef { profile, time_zone, ..FrameRef::default() },
         };
+        let read = self.transcript.entries();
+        if !read.iter().any(|node| node.digest == last) {
+            return Ok(None);
+        }
         let Some(given) = self.given_path(&reference, turn, agent)? else {
             return Ok(None);
         };
-        let mut items = given.items(|entry| entry.part_of().is_some());
+        let carried = carried_over(read);
+        let mut items =
+            given.items(|node| node.entry.part_of().is_some() || carried.contains(&node.digest));
         // No system prompt: every message is the conversation's.
         profile.place_system_messages(&mut items);
         Ok(Some(items))

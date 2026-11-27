@@ -27,18 +27,15 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 pub enum TranscriptEntry {
     /// A message the model was given, or produced.
     Message(Message),
-    /// A message the agent was given to read (issue 16) - not said by it,
-    /// not heard from another -, and what it is: knowledge - a skill loaded
-    /// for it (issue 22), say -, the part of a prompt component given where
-    /// it changed (issue 537), or a brief delegated to it (issue 619); the
-    /// summary of a compaction is none of them (issue 389). Given to the
-    /// model as what it was given to read, whoever gave it
-    /// (`ModelProfile::given_to_read`, issue 539), a brief framed as one;
-    /// `source` says what it was given, so that what the agent knows can be
-    /// told from the transcript - a compaction gives a skill again, and keeps
-    /// a part. `source` is not covered by the digest, though it chooses the
-    /// framing of a brief: no other entry holds a message of its id, so the
-    /// message stands for the entry.
+    /// A message the agent was given to read (issue 16) - not said by it, not heard from another -,
+    /// and what it is: knowledge - a skill loaded for it (issue 22), say -, the part of a prompt
+    /// component given where it changed (issue 537), or a brief delegated to it (issue 619); the
+    /// summary of a compaction is none of them (issue 389). Given to the model as what it was given
+    /// to read, whoever gave it (`ModelProfile::given_to_read`, issue 539), a brief framed as one;
+    /// `source` says what it was given, so that what the agent knows can be told from the
+    /// transcript - a compaction gives a skill again, and keeps a part and the brief under way
+    /// (issue 622). `source` is not covered by the digest, though it chooses the framing of a
+    /// brief: no other entry holds a message of its id, so the message stands for the entry.
     Given { message: Message, source: Option<GivenSource> },
     /// The message `message.id`, before it on the path, is given as
     /// `message` from here on (issue 234, `Message::modify`).
@@ -95,7 +92,8 @@ pub enum GivenSource {
     Part(String),
     /// A brief delegated to the agent in its thread (issues 557, 619,
     /// `AgentChannelState::given_brief`): framed as one, telling it what goes
-    /// back of its work.
+    /// back of its work; kept as it stands by a compaction while it is under
+    /// way (`brief_under_way`, issue 622).
     Brief,
 }
 
@@ -240,7 +238,7 @@ where
 /// The parts of prompt components on `path` that stand given (`given_as_they_stand`), each entry
 /// (`TranscriptEntry::part_of`) with its message as it stands (issue 537): what stands of the
 /// components' parts, for a turn to give where they changed (`AgentChannelState::give_parts`) and
-/// a compaction to carry over (`Transcript::carried_parts`).
+/// a compaction to carry over (`carried_over`).
 pub(crate) fn parts_as_given<'a, P>(path: P) -> Vec<(&'a Node<TranscriptEntry>, Message)>
 where
     P: IntoIterator<Item = &'a Node<TranscriptEntry>>,
@@ -250,6 +248,43 @@ where
         .into_iter()
         .filter(|(node, _)| node.entry.part_of().is_some())
         .collect()
+}
+
+/// The brief under way on `path` - a path of a transcript from its root - (issue 622): the last
+/// brief given on it (`GivenSource::Brief`), if no turn ended after it and it stands given
+/// (`given_as_they_stand`). The delegate takes the first turn that ends after a brief as the one
+/// answering it; a brief answered is history. A command turn ends it too, though the delegate
+/// takes it for no answer, since it records its end as every turn does: it comes between a brief
+/// and the turn answering it only if a command is asked for there before that turn begins, and the
+/// request to answer follows the brief at once.
+pub(crate) fn brief_under_way<'a, P>(path: P) -> Option<&'a Node<TranscriptEntry>>
+where
+    P: IntoIterator<Item = &'a Node<TranscriptEntry>>,
+    P::IntoIter: Clone,
+{
+    let path = path.into_iter();
+    let last = path.clone().fold(None, |last, node| match &node.entry {
+        TranscriptEntry::Given { source: Some(GivenSource::Brief), .. } => Some(node.digest),
+        entry if entry.ended_turn().is_some() => None,
+        _ => last,
+    })?;
+    given_as_they_stand(path).into_iter().map(|(node, _)| node).find(|node| node.digest == last)
+}
+
+/// The entries of `path` - a path of a transcript from its root - that a compaction carries over
+/// rather than replacing them: the parts of prompt components that stand on it (`parts_as_given`,
+/// issue 537), and the brief under way (`brief_under_way`, issue 622). Copied after the
+/// replacement (`Transcript::compact`), they stay as they are, and so count as kept wherever the
+/// path is cut; what is handed a model to write the replacement leaves them out
+/// (`ContextResolver::conversation_until`).
+pub(crate) fn carried_over<'a, P>(path: P) -> HashSet<Digest>
+where
+    P: IntoIterator<Item = &'a Node<TranscriptEntry>>,
+    P::IntoIter: Clone,
+{
+    let path = path.into_iter();
+    let parts = parts_as_given(path.clone()).into_iter().map(|(node, _)| node);
+    parts.chain(brief_under_way(path)).map(|node| node.digest).collect()
 }
 
 /// The message `id` as `nodes` - a transcript's, in the order they were
@@ -297,13 +332,10 @@ impl Transcript {
         as_they_stand(self.entries(thread)).filter_map(|(_, message)| message).collect()
     }
 
-    /// The entries of the branch of `thread` a compaction carries over
-    /// rather than replacing them (issue 537): the parts of prompt
-    /// components that stand on it, as the model is given them
-    /// (`parts_as_given`). Copied after the replacement (`compact`), they
-    /// stay as they are, and so count as kept wherever the branch is cut.
-    pub fn carried_parts(&self, thread: ThreadId) -> HashSet<Digest> {
-        parts_as_given(self.entries(thread)).into_iter().map(|(node, _)| node.digest).collect()
+    /// The entries of the branch of `thread` a compaction carries over rather than replacing them
+    /// (`carried_over`).
+    pub fn carried_over(&self, thread: ThreadId) -> HashSet<Digest> {
+        carried_over(self.entries(thread))
     }
 
     /// The entries of the path `digest` names: from the root up to and
@@ -411,13 +443,12 @@ impl Transcript {
         given
     }
 
-    /// Begins the branch of `thread` anew as a compaction does (issue 16): a
-    /// branch of its own from the root. On it come `replacement` - what stands for
-    /// the older entries -, given to read, each as its source if it is
-    /// knowledge (issue 389); then the parts of prompt components that stand
-    /// before the entries kept (`carried_parts`, issue 537); then the entries
-    /// of the branch from `keep_from` on - `None`: none - as they stand;
-    /// and last where the compaction's part of the branch ends
+    /// Begins the branch of `thread` anew as a compaction does (issue 16): a branch of its own from
+    /// the root. On it come `replacement` - what stands for the older entries -, given to read,
+    /// each as its source if it is knowledge (issue 389); then what it carries over that stands
+    /// before the entries kept - the parts of prompt components and the brief under way
+    /// (`carried_over`, issues 537, 622) -; then the entries of the branch from `keep_from` on -
+    /// `None`: none - as they stand; and last where the compaction's part of the branch ends
     /// (`TranscriptEntry::Compacted`, issue 387).
     ///
     /// Nothing is removed: the old branch stays, and every digest it had
@@ -427,12 +458,11 @@ impl Transcript {
     /// (`TranscriptEntry::copy_standing`); every copy gets a digest of its
     /// own, since what comes before it is another.
     ///
-    /// Returns where each entry of the old branch stands on the new one: a
-    /// part kept at its copy, another entry replaced at the end of the
-    /// replacement - `None` without one -, one kept at its copy, or at the
-    /// copy before it if it has none - a change of a message, which is in its
-    /// copy. `None`, and nothing changes, if the branch is empty, if
-    /// `keep_from` is not on it, or if the new branch would be empty.
+    /// Returns where each entry of the old branch stands on the new one: one carried over at its
+    /// copy, another entry replaced at the end of the replacement - `None` without one -, one kept
+    /// at its copy, or at the copy before it if it has none - a change of a message, which is in
+    /// its copy. `None`, and nothing changes, if the branch is empty, if `keep_from` is not on it,
+    /// or if the new branch would be empty.
     pub fn compact(
         &mut self,
         thread: ThreadId,
@@ -454,10 +484,12 @@ impl Transcript {
                 .map(|(node, standing)| (node.digest, node.entry.copy_standing(standing)))
                 .collect();
         let kept = copies.split_off(start);
-        let carried = self.carried_parts(thread);
-        let (parts, replaced): (Vec<_>, Vec<_>) =
-            copies.into_iter().partition(|(old, _)| carried.contains(old));
-        if replacement.is_empty() && parts.is_empty() && kept.iter().all(|(_, copy)| copy.is_none())
+        let carried_over = self.carried_over(thread);
+        let (carried, replaced): (Vec<_>, Vec<_>) =
+            copies.into_iter().partition(|(old, _)| carried_over.contains(old));
+        if replacement.is_empty()
+            && carried.is_empty()
+            && kept.iter().all(|(_, copy)| copy.is_none())
         {
             return None;
         }
@@ -468,7 +500,7 @@ impl Transcript {
         let replacement_end = self.digest(thread);
         let mut moved: HashMap<Digest, Option<Digest>> =
             replaced.into_iter().map(|(old, _)| (old, replacement_end)).collect();
-        for (old, copy) in parts.into_iter().chain(kept) {
+        for (old, copy) in carried.into_iter().chain(kept) {
             if let Some(copy) = copy {
                 self.record(thread, copy);
             }
@@ -1579,5 +1611,55 @@ mod tests {
             Some(transcript.entries(ThreadId::default()).nth(1).unwrap().digest),
             "a part replaced stands at its copy"
         );
+    }
+
+    /// Issue 622: the brief under way - the last given, after which no turn ended - is kept after
+    /// the replacement as it stands, as a brief, by every compaction until a turn ends; one a turn
+    /// answered is replaced.
+    #[test]
+    fn a_compaction_keeps_the_brief_under_way_and_replaces_one_answered() {
+        let thread = ThreadId::default();
+        let brief = Some(GivenSource::Brief);
+        let mut transcript = Transcript::default();
+        transcript.give(thread, make_message(id(1)), brief.clone());
+        let answered = TurnId::new();
+        transcript.push(thread, of_turn(answered, 2));
+        transcript
+            .record(thread, TranscriptEntry::TurnFinished { turn_id: answered, at: Utc::now() });
+        transcript.give(thread, make_message(id(3)), brief.clone());
+        let under_way = TurnId::new();
+        transcript.push(thread, of_turn(under_way, 4));
+        transcript.push(thread, of_turn(under_way, 5));
+        let keep_from = transcript.last(thread).map(|node| node.digest);
+
+        transcript
+            .compact(thread, vec![(make_message(id(10)), None)], keep_from)
+            .expect("compacted");
+
+        let ids: Vec<_> = transcript.messages(thread).iter().map(|m| m.id).collect();
+        assert_eq!(
+            ids,
+            [id(10), id(3), id(5)],
+            "the summary, the brief under way, what was kept - not the brief answered"
+        );
+        assert!(
+            matches!(
+                &transcript.entries(thread).nth(1).unwrap().entry,
+                TranscriptEntry::Given { source, .. } if *source == brief
+            ),
+            "still a brief"
+        );
+
+        transcript.push(thread, of_turn(under_way, 6));
+        let keep_from = transcript.last(thread).map(|node| node.digest);
+        transcript
+            .compact(thread, vec![(make_message(id(11)), None)], keep_from)
+            .expect("compacted");
+        let ids: Vec<_> = transcript.messages(thread).iter().map(|m| m.id).collect();
+        assert_eq!(ids, [id(11), id(3), id(6)], "kept again while its turn goes on");
+
+        transcript
+            .record(thread, TranscriptEntry::TurnFinished { turn_id: under_way, at: Utc::now() });
+        assert!(transcript.carried_over(thread).is_empty(), "answered, it is history");
     }
 }

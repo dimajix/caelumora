@@ -44,11 +44,11 @@ impl Turn<'_> {
         Ok((messages, resolved.tool_sets.into_iter().flat_map(|set| set.tools).collect()))
     }
 
-    /// The transcript up to and including the entry `last`, on whichever branch, as the model of
+    /// The transcript up to and including the entry `last` of the turn's branch, as the model of
     /// the turn would be given it - each message as its profile gives it, with its time in the
     /// turn's time zone (issue 430), a turn given up told where it ended, one that no longer flows
     /// into the channel reduced to the tools it called -, without prompt parts or tools (issue
-    /// 16) - also those given into the transcript (issue 537) -: what a component hands a model to
+    /// 16), nor what a compaction carries over (issues 537, 622): what a component hands a model to
     /// work on the conversation itself, a summary say. Resolved as the turn's own context is
     /// (`ContextResolver::conversation_until`), so the same rules hold, the attachments given along
     /// with their content (`given_along`).
@@ -591,48 +591,55 @@ mod tests {
         assert_eq!(state.offered_tools.len(), 2, "each offer kept once");
     }
 
-    /// Issue 537: a part placed `Given` goes into the transcript after the turn's input, and is
-    /// given to the model there as what is given to read (issue 539); a later turn whose part
-    /// is the same gives nothing again, one whose part changed is given the new one alone. What a
-    /// summary is written of holds no part (`Turn::conversation_until`).
-    #[tokio::test]
-    async fn a_part_given_into_the_transcript_follows_the_input_and_stands_where_it_changed() {
-        let agent = AgentId::new();
-        let heard = |content: &str| Message {
+    /// A message heard from someone, saying `content`.
+    fn heard(content: &str) -> Message {
+        Message {
             id: MessageId::new(),
             role: MessageRole::User,
             content: Some(content.to_string()),
             ..Message::new(Classification::CHANNEL_DEFAULT)
-        };
-        let parts = |rules: &str| {
-            vec![
-                PromptPart {
-                    text: "[Time]\nnow".to_string(),
-                    placement: Placement::Frame {
-                        at: PromptAt::Start,
-                        role: MessageRole::User,
-                        component: None,
-                    },
-                    classification: None,
+        }
+    }
+
+    /// The parts of a turn: the time placed in the frame, and `rules` given into the transcript.
+    fn time_and_rules(rules: &str) -> Vec<PromptPart> {
+        vec![
+            PromptPart {
+                text: "[Time]\nnow".to_string(),
+                placement: Placement::Frame {
+                    at: PromptAt::Start,
+                    role: MessageRole::User,
+                    component: None,
                 },
-                PromptPart {
-                    text: rules.to_string(),
-                    placement: Placement::Given { component: "rules".to_string() },
-                    classification: Some(Classification::PUBLIC),
-                },
-            ]
-        };
-        let given = |messages: &[Message]| -> Vec<(MessageRole, String)> {
-            messages.iter().map(|m| (m.role, m.content.clone().unwrap_or_default())).collect()
-        };
+                classification: None,
+            },
+            PromptPart {
+                text: rules.to_string(),
+                placement: Placement::Given { component: "rules".to_string() },
+                classification: Some(Classification::PUBLIC),
+            },
+        ]
+    }
+
+    /// The role and the text of each of `messages`.
+    fn roles_and_texts(messages: &[Message]) -> Vec<(MessageRole, String)> {
+        messages.iter().map(|m| (m.role, m.content.clone().unwrap_or_default())).collect()
+    }
+
+    /// Issue 537: a part placed `Given` goes into the transcript after the turn's input, and is
+    /// given to the model there as what is given to read (issue 539); a later turn whose part
+    /// is the same gives nothing again, one whose part changed is given the new one alone.
+    #[tokio::test]
+    async fn a_part_given_into_the_transcript_follows_the_input_and_stands_where_it_changed() {
+        let agent = AgentId::new();
         let mut state = AgentChannelState::default();
         state.perceive(ThreadId::default(), vec![heard("hello")]);
         {
             let mut turn = Turn::begun(agent, &mut state);
-            turn.set_context(parts("[Rules]\nBe brief."), Vec::new());
+            turn.set_context(time_and_rules("[Rules]\nBe brief."), Vec::new());
             let (messages, _) = turn.full_context().await.unwrap();
             assert_eq!(
-                given(&messages),
+                roles_and_texts(&messages),
                 [
                     (MessageRole::User, "[Time]\nnow".to_string()),
                     (MessageRole::User, "hello".to_string()),
@@ -646,10 +653,10 @@ mod tests {
 
         state.perceive(ThreadId::default(), vec![heard("again")]);
         let mut turn = Turn::begun(agent, &mut state);
-        turn.set_context(parts("[Rules]\nBe brief."), Vec::new());
+        turn.set_context(time_and_rules("[Rules]\nBe brief."), Vec::new());
         let (messages, _) = turn.full_context().await.unwrap();
         assert_eq!(
-            given(&messages)[1..],
+            roles_and_texts(&messages)[1..],
             [
                 (MessageRole::User, "hello".to_string()),
                 (MessageRole::User, "[Rules]\nBe brief.".to_string()),
@@ -662,10 +669,10 @@ mod tests {
 
         state.perceive(ThreadId::default(), vec![heard("once more")]);
         let mut turn = Turn::begun(agent, &mut state);
-        turn.set_context(parts("[Rules]\nBe very brief."), Vec::new());
+        turn.set_context(time_and_rules("[Rules]\nBe very brief."), Vec::new());
         let (messages, _) = turn.full_context().await.unwrap();
         assert_eq!(
-            given(&messages)[1..],
+            roles_and_texts(&messages)[1..],
             [
                 (MessageRole::User, "hello".to_string()),
                 (MessageRole::User, "again".to_string()),
@@ -674,17 +681,61 @@ mod tests {
             ],
             "changed, the new one after the input, the old one taken back"
         );
-        let last =
-            turn.situation().agent_channel_state().transcript.digest(ThreadId::default()).unwrap();
-        let summarised = turn.conversation_until(last).await.unwrap();
+    }
+
+    /// Issue 537: what a summary is written of (`Turn::conversation_until`) holds no part, given
+    /// or placed - also one taken back only after where it ends, which a compaction neither
+    /// carries over nor keeps.
+    #[tokio::test]
+    async fn what_a_summary_is_written_of_holds_no_part() {
+        let agent = AgentId::new();
+        let mut state = AgentChannelState::default();
+        state.perceive(ThreadId::default(), vec![heard("hello")]);
+        {
+            let mut turn = Turn::begun(agent, &mut state);
+            turn.set_context(time_and_rules("[Rules]\nBe brief."), Vec::new());
+            turn.commit(false, &Discard).await;
+        }
+        state.perceive(ThreadId::default(), vec![heard("again")]);
+        let mut turn = Turn::begun(agent, &mut state);
+        turn.set_context(time_and_rules("[Rules]\nBe very brief."), Vec::new());
+        let transcript = &turn.situation().agent_channel_state().transcript;
+        let head = transcript.digest(ThreadId::default()).unwrap();
+        let again = transcript
+            .entries(ThreadId::default())
+            .find(|node| node.entry.message().and_then(|m| m.content.as_deref()) == Some("again"))
+            .map(|node| node.digest)
+            .unwrap();
+        let expected =
+            [(MessageRole::User, "hello".to_string()), (MessageRole::User, "again".to_string())];
+        let summarised = turn.conversation_until(head).await.unwrap();
+        assert_eq!(roles_and_texts(&summarised), expected, "no part, given or placed");
+        let summarised = turn.conversation_until(again).await.unwrap();
         assert_eq!(
-            given(&summarised),
-            [
-                (MessageRole::User, "hello".to_string()),
-                (MessageRole::User, "again".to_string()),
-                (MessageRole::User, "once more".to_string()),
-            ],
-            "what a summary is written of holds no part, given or placed"
+            roles_and_texts(&summarised),
+            expected,
+            "nor the part taken back only after the input - not carried over, replaced all the same"
         );
+    }
+
+    /// Issue 622: what a summary is written of (`Turn::conversation_until`) holds the brief a turn
+    /// answered, but not the brief under way, which a compaction carries over.
+    #[tokio::test]
+    async fn what_a_summary_is_written_of_holds_no_brief_under_way() {
+        let agent = AgentId::new();
+        let mut state = AgentChannelState::default();
+        state.given_brief(ThreadId::default(), heard("Find the bug."));
+        Turn::begun(agent, &mut state).commit(false, &Discard).await;
+        state.given_brief(ThreadId::default(), heard("Fix it."));
+        let mut turn = Turn::begun(agent, &mut state);
+        turn.set_context(Vec::new(), Vec::new());
+        let head =
+            turn.situation().agent_channel_state().transcript.digest(ThreadId::default()).unwrap();
+
+        let summarised = turn.conversation_until(head).await.unwrap();
+
+        let texts: Vec<_> = roles_and_texts(&summarised).into_iter().map(|(_, t)| t).collect();
+        assert!(texts.iter().any(|t| t.contains("Find the bug.")), "the brief answered: {texts:?}");
+        assert!(!texts.iter().any(|t| t.contains("Fix it.")), "the brief under way: {texts:?}");
     }
 }
