@@ -1,6 +1,6 @@
 # 609 — The terminal's assistant starts no sub-agent
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -73,3 +73,26 @@ hand off a task and keep its own transcript short.
 - 2026-11-26: Opened. The maintainer asked whether the terminal's assistant can start a sub-agent;
   it cannot, since `assistant.yaml` has no component `subagents`. Decided: a personality of its own
   for sub-agents, not `assistant` itself.
+- 2026-11-26: Done. `caelumora-tui` writes `defaults/helper.yaml` beside `assistant.yaml`, and
+  `assistant` has the component `subagents` listing `helper`. `FIRST_FILES` lists the files by the
+  directory of their kind, and `Home::first_start` writes those of a kind together where its
+  directory is missing - without a change of behaviour of its own. The program's way from its
+  configuration to the sessions of its directory - its kernel built and seeded (`kernel_of`), the
+  user's controller and sessions (`sessions_for`) - is a function each, which the test shares
+  with `main`. Decided on the open points, each a line of a file the person may change:
+  - **Name:** `helper` - a general sub-agent of an assistant that works on files and runs
+    commands; `researcher` would promise a narrower role.
+  - **Components:** those of `assistant` but `ask_user`, `channel_history`, `notes`,
+    `agent_memory` and `subagents`. Questions are the assistant's to put, which talks with the
+    person, and what the helper lacks it gives back with its answer; it works on its brief, not on
+    the channel; memory and notes of its own are lost as it is ended; and by default
+    (`plugins.subagents.max_depth: 1`) a sub-agent starts none. It hears the users during a turn
+    as the assistant does, so that a person who writes into its thread steers it.
+  - **Approval:** `requires_approval` unset - starting asks for none; the one personality listed
+    bounds what is started, and every call of the helper that needs approval still asks for it.
+
+  A test starts the default session from the files the first start writes, in a kernel built from
+  the program's configuration with its plugins and libraries, and finds `start_subagent` offered
+  to the assistant, naming `helper`; it finds `helper` by its name and builds its components as
+  its actor asks for them, as `caelumora-app` builds the personalities of the example seed. The
+  README says where the files lie for an installation whose personalities were written before.

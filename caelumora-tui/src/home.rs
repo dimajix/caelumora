@@ -15,11 +15,18 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// The default session's template and the personality of its assistant, written on a first start,
-/// each where its kind's directory is not there yet.
-const FIRST_FILES: [(&str, &str, &str); 2] = [
-    ("templates", "default.yaml", include_str!("../defaults/default.yaml")),
-    ("personalities", "assistant.yaml", include_str!("../defaults/assistant.yaml")),
+/// The files of a first start by the directory of their kind - the default session's template, the
+/// personality of its assistant and that of the sub-agents the assistant starts (issue 609) -,
+/// those of a kind written together where its directory is not there yet.
+const FIRST_FILES: [(&str, &[(&str, &str)]); 2] = [
+    ("templates", &[("default.yaml", include_str!("../defaults/default.yaml"))]),
+    (
+        "personalities",
+        &[
+            ("assistant.yaml", include_str!("../defaults/assistant.yaml")),
+            ("helper.yaml", include_str!("../defaults/helper.yaml")),
+        ],
+    ),
 ];
 
 /// The commands of a session of the program unless its configuration says otherwise: those every
@@ -169,22 +176,24 @@ impl Home {
             .with_context(|| format!("{} over the defaults is no configuration", own.display()))
     }
 
-    /// Writes the default session's template and its assistant's personality, each where the
-    /// directory of its kind is not there yet: so that a person who wrote a `config.yaml` first
+    /// Writes the files of a first start (`FIRST_FILES`), those of a kind together where the
+    /// directory of the kind is not there yet: so that a person who wrote a `config.yaml` first
     /// still gets them, and what the person changed or removed stays so.
     ///
     /// # Errors
-    /// If a file cannot be written.
+    /// If a directory or a file cannot be written.
     pub(crate) fn first_start(&self) -> Result<()> {
-        for (kind, file, text) in FIRST_FILES {
+        for (kind, files) in FIRST_FILES {
             let dir = self.config.join(kind);
             if dir.exists() {
                 continue;
             }
-            let path = dir.join(file);
-            let write = || format!("cannot write {}", path.display());
-            fs::create_dir_all(&dir).with_context(write)?;
-            fs::write(&path, text).with_context(write)?;
+            fs::create_dir_all(&dir).with_context(|| format!("cannot write {}", dir.display()))?;
+            for (file, text) in files {
+                let path = dir.join(file);
+                fs::write(&path, text)
+                    .with_context(|| format!("cannot write {}", path.display()))?;
+            }
         }
         Ok(())
     }
@@ -269,10 +278,64 @@ mod tests {
         home.first_start().unwrap();
 
         let template = home.config.join("templates/default.yaml");
+        let helper = home.config.join("personalities/helper.yaml");
         assert!(template.is_file(), "also beside a config.yaml written first");
         assert!(home.config.join("personalities/assistant.yaml").is_file(), "and its personality");
+        assert!(helper.is_file(), "and that of its sub-agents, beside it");
         fs::remove_file(&template).unwrap();
+        fs::remove_file(&helper).unwrap();
         home.first_start().unwrap();
         assert!(!template.exists(), "what the person removed stays removed");
+        assert!(!helper.exists(), "also beside what the person kept of its kind");
+    }
+
+    /// Issue 609: the default session started from the files of a first start, in a kernel built
+    /// as the program builds it, has an assistant offered to start sub-agents of the helper
+    /// written beside it, and the helper can be built.
+    #[tokio::test]
+    async fn the_assistant_of_a_first_start_is_offered_sub_agents_of_its_helper() {
+        use crate::sessions::Opening;
+        use crate::{kernel_of, sessions_for};
+        use caelumora_domain::scope::Scope;
+        use caelumora_domain::value::name::Name;
+        use caelumora_kernel::component::BuildContext;
+        use caelumora_kernel::procedure::session;
+        use caelumora_logging::LogTarget;
+        use caelumora_model_ollama::plugin::with_local_model;
+        use caelumora_security::SecurityContext;
+        use caelumora_subagents::component::START_SUBAGENT;
+        let dir = tempfile::tempdir().unwrap();
+        let home = home(dir.path());
+        let here = dir.path().join("here");
+        fs::create_dir_all(&here).unwrap();
+        home.first_start().unwrap();
+        let config = with_local_model(home.config(&here).unwrap());
+        let kernel = kernel_of(&config, LogTarget::File(home.log())).await.unwrap();
+        let template = "default".to_string();
+        let (_, sessions) = sessions_for(&kernel, &config, &here, "user", template).await.unwrap();
+
+        let started = sessions.open(&Opening::Start { template: None }).await;
+        let (session_loop, _) = started.expect("started from the template written");
+        let main = session_loop.channel_named("main").expect("its channel");
+        let views = sessions.views();
+        let channel = views.channel(session_loop.id(), main.id()).await.unwrap();
+        let participants = channel.participants().await;
+        let assistant = participants.iter().find(|p| p.handle().as_deref() == Some("assistant"));
+        let tool_sets = assistant.expect("the assistant").tool_sets().await.unwrap();
+        let subagents = tool_sets.iter().find(|set| set.name == "subagents").expect("its set");
+        assert!(subagents.unavailable.is_none(), "available: {:?}", subagents.unavailable);
+        let start = subagents.tools.iter().find(|tool| tool.name == START_SUBAGENT);
+        let start = start.expect("starting one");
+        assert!(start.description.contains("helper"), "of the helper: {}", start.description);
+        // The helper found by its name, as a sub-agent's personality is, and built as its actor
+        // asks (`every_personality_of_the_example_seed_can_be_built` of `caelumora-app`).
+        let place = Scope::SessionScope { session_id: session_loop.id() };
+        let helper = Name::new("helper").unwrap();
+        let helper = views.personality_named(&helper, &place).await.expect("the helper");
+        let asked = kernel.agent_kinds().facets(helper.kind).expect("a kind the program runs");
+        let context = BuildContext::new(SecurityContext::system(), kernel.services().clone());
+        let built = kernel.component_registry().build(&helper.components, asked, &context).await;
+        built.expect("the helper's components built");
+        session::shut_down(kernel.procedures()).await;
     }
 }
