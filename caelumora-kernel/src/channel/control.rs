@@ -15,34 +15,42 @@ impl ChannelLoop {
     /// Ends the turns that run in `thread` - in every thread of the channel if `None` (issue
     /// 602) -, on behalf of `context`'s initiator, and keeps the thread quiet - nobody
     /// is asked to respond in it - until it is woken again, usually by the next message said in it
-    /// (issue 557).
+    /// (issue 557). Returns the names of the actors whose turn it ended (issue 611).
     ///
     /// # Errors
     /// `ChannelError::Forbidden` if the `AccessPolicy` refuses `CancelChannel` - a thread is part
     /// of its channel -; the channel is then untouched. Deliberately one decision for the whole
     /// scope: a per-actor one could leave half of it cancelled (issue 30). `ThreadNotOpen` if
     /// `thread` is not open.
-    pub async fn cancel(&self, context: &SecurityContext, thread: Option<ThreadId>) -> Result<()> {
+    pub async fn cancel(
+        &self,
+        context: &SecurityContext,
+        thread: Option<ThreadId>,
+    ) -> Result<Vec<String>> {
         self.require(context, |attributes| ActionType::CancelChannel(attributes), "cancelling")
             .await?;
         self.require_open(thread)?;
-        self.cancel_actors(thread);
-        Ok(())
+        Ok(self.cancel_actors(thread))
     }
 
     /// Ends the turn under way in `thread` of every actor taking part in it - running there, or set
     /// aside there waiting for a person, not one in another thread (issue 602) -, or every turn if
     /// `None`, and keeps the thread quiet: what
     /// `cancel` does once permitted, and `reclassify` as a consequence of lowering the channel.
-    pub(super) fn cancel_actors(&self, thread: Option<ThreadId>) {
+    /// Returns the names of the actors that had such a turn.
+    pub(super) fn cancel_actors(&self, thread: Option<ThreadId>) -> Vec<String> {
         for held in self.threads_in(thread) {
             held.set_quiet(true);
         }
         let in_scope =
             |actor: &&ChannelActor| thread.is_none_or(|thread| actor.takes_part_in(thread));
+        let mut ended = Vec::new();
         for ChannelActor { actor, .. } in self.actors.load().values().filter(in_scope) {
-            actor.cancel(thread);
+            if actor.cancel(thread) {
+                ended.push(actor.name().to_string());
+            }
         }
+        ended
     }
 
     /// Wakes the sleeping actors of `thread` - of every thread if `None` - because someone asked
@@ -101,19 +109,20 @@ impl ChannelLoop {
     /// stop the channel lets them stop one of its actors. Its thread is not
     /// kept quiet - that is the thread's state, not the actor's: the others
     /// are still asked to respond, and the answer the actor's turn is taken
-    /// over with reaches everyone as any answer does.
+    /// over with reaches everyone as any answer does. Returns whether it had a
+    /// turn to end (issue 611).
     ///
     /// # Errors
     /// `ChannelError::Forbidden` if the `AccessPolicy` refuses
     /// `CancelChannel`, before anything of the actor is looked at;
     /// `NotAParticipant` if `actor` is not in this channel.
-    pub async fn cancel_actor(&self, context: &SecurityContext, actor: ActorId) -> Result<()> {
+    pub async fn cancel_actor(&self, context: &SecurityContext, actor: ActorId) -> Result<bool> {
         self.require(context, |attributes| ActionType::CancelChannel(attributes), "cancelling")
             .await?;
-        self.actor(actor)
-            .ok_or(ChannelError::NotAParticipant { participant: actor, channel: self.id })?
-            .cancel(None);
-        Ok(())
+        let actor = self
+            .actor(actor)
+            .ok_or(ChannelError::NotAParticipant { participant: actor, channel: self.id })?;
+        Ok(actor.cancel(None))
     }
 
     /// Interrupts the tool call `call` of `actor`'s turn `turn` alone (issue

@@ -1324,14 +1324,14 @@ impl Actor for AgentActor {
         hit
     }
 
-    fn cancel(&self, thread: Option<ThreadId>) {
+    fn cancel(&self, thread: Option<ThreadId>) -> bool {
         info!(
             "Cancelling agent {} {} in {}",
             self.id(),
             self.body.scoped_name(),
             thread.map_or("every thread".to_string(), |thread| format!("thread {thread}"))
         );
-        self.body.control.cancel(thread);
+        self.body.control.cancel(thread)
     }
 
     fn stop(&self) {

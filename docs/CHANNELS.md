@@ -1080,7 +1080,8 @@ that of a thread's pane its thread alone (`POST …/threads/{tid}/cancel`, issue
 `/agent cancel` the thread it is issued in, or from the line the whole channel. It is an
 operation on the channel, like renaming or deleting it, not an act of taking part: the policy
 decides who may, and nobody has to be a participant for it; a thread is part of its channel, and
-asks the same.
+asks the same. Whether an actor had a turn to end there is the actor's to tell (`Actor::cancel`),
+not the channel's to judge.
 
 It is not a kill. The agent takes its turn over, so that observers stop waiting even when the turn
 said nothing, and returns to a normal state with its history intact. But nothing under way is waited

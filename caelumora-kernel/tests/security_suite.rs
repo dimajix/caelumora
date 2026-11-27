@@ -5461,6 +5461,42 @@ async fn a_command_of_the_session_is_seen_and_run_by_whoever_reads_the_channel()
     world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
+/// `/agent cancel` and `/agent wakeup` (issues 28, 611) ask in the issuer's name what cancelling
+/// and waking the channel ask, beside seeing and running the command - for the whole channel and
+/// for one agent of it alike: bob, who reads the channel, runs them.
+#[tokio::test]
+async fn cancelling_and_waking_by_command_asks_what_cancelling_and_waking_ask() {
+    // Agents that can take part.
+    let answering = ScriptedAgents(Script::Answers("ok".to_string()));
+    let world = World::with(&[], &[&answering], |_| {}).await;
+    let plain = world.personality("plain", Some(world.alice), &[]).await;
+    let hers = world.agent("hers", world.alice, &plain).await;
+    let session = world.shared_session(&[hers], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.kernel.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    let bob = main.user_actor(world.bob).unwrap();
+
+    for (line, asks) in [
+        ("agent cancel", "CancelChannel"),
+        ("agent cancel @hers", "CancelChannel"),
+        ("agent wakeup", "WakeChannel"),
+        ("agent wakeup @hers", "WakeChannel"),
+    ] {
+        let (reply, asked) = world.asked(bob.execute_command(None, line)).await;
+        reply.unwrap_or_else(|e| panic!("{line}: his to run: {e:#}"));
+        assert_eq!(
+            asked,
+            checks(&[
+                "bob: ShowCommand(alice's) yes",
+                "bob: ExecuteCommand(alice's) yes",
+                &format!("bob: {asks}(alice's) yes"),
+            ]),
+            "{line}"
+        );
+    }
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 /// `/participant add` (issue 555) asks nothing taking someone in does not ask, beside the lookup of
 /// the name: bob, who reads the channel, sees and runs it, and is refused what he may not do -
 /// changing the session. A name that finds nobody is answered alike whether it is nobody's or not

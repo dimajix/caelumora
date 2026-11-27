@@ -6,7 +6,6 @@ mod threads;
 pub(super) use crate::channel::testing::*;
 
 use super::*;
-use crate::command::CommandExecutor;
 use crate::component::ComponentRegistry;
 use crate::kernel::ChannelRuntime;
 use crate::moderator::{Moderator, Routing};
