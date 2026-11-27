@@ -51,9 +51,10 @@ agents or of the library that brings it (`<namespace>.tools.<kind>`): `notes.wri
 tool's, `notes.write_note.text` its parameter's, `.item` an entry's of a list, and the entries of a
 list of objects are described by their fields under the list's path. A parameter described already
 keeps its text, as the parameters every reclassifying tool shares (`tool::reclassify_parameters`).
-The texts are rendered once, when the component is made; a text missing keeps it from being built. A
-tool of a generic provider, an MCP server's, is described as it describes itself, its parameters
-read of the JSON Schema it gives (`ToolParameters::from_json_schema`).
+A text a tool's result gives - what it did, what to do next - has a path of its own there
+(`subagents.started`). The texts are rendered once, when the component is made; a text missing keeps
+it from being built. A tool of a generic provider, an MCP server's, is described as it describes
+itself, its parameters read of the JSON Schema it gives (`ToolParameters::from_json_schema`).
 
 ## Tool sets
 
@@ -648,8 +649,9 @@ never by moving an artifact (see [PROJECTS.md](PROJECTS.md), [STORAGE.md](STORAG
 `caelumora-subagents`, issue 558) hand a task to a sub-agent: a new agent of one of the
 personalities the component is configured with (`personalities`), which works on the brief apart, in
 a thread of its own opened at the call, and gives back only what came of it. Starting does not
-block: the call returns the thread at once, and what the sub-agent answers is given to the agent to
-read where the thread was opened, once it is there - as the kernel's delegate gives it (see
+block: the call returns the thread at once, telling the agent that nothing more is needed until the
+answer, and what the sub-agent answers is given to the agent to read in a later turn, where the
+thread was opened, once it is there - as the kernel's delegate gives it (see
 [CHANNELS.md](CHANNELS.md#delegating-into-a-thread)). `ask_subagent` gives it more to read - in the
 turn that read its answer: one left without a word then is let go (issue 598), asked again
 `NoSubAgent`, to be ended with its thread -, `end_subagent` ends it: its thread, which owns it,

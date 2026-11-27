@@ -5,9 +5,9 @@
 
 use caelumora_agents::library::AgentsLibrary;
 use caelumora_agents::testing::{
-    agent_runtime, calling, register_answering, register_scripted, Answer,
+    agent_runtime, calling, prompts_with, register_answering, register_scripted, Answer,
 };
-use caelumora_agents::tool::ToolProvider;
+use caelumora_agents::tool::{tool_text, ToolProvider};
 use caelumora_api::command::CommandError;
 use caelumora_api::library::Library;
 use caelumora_domain::actor::{ActorEvent, ActorId};
@@ -34,7 +34,7 @@ use caelumora_subagents::component::{
 use caelumora_subagents::extension::{SubAgentError, SubAgentWriter};
 use caelumora_subagents::library::SubagentsLibrary;
 use caelumora_subagents::plugin::SubagentsPlugin;
-use caelumora_subagents::SUBAGENTS;
+use caelumora_subagents::{NAMESPACE, PROMPTS, SUBAGENTS};
 use std::sync::Arc;
 
 fn said(text: &str) -> Message {
@@ -83,14 +83,17 @@ fn leading_a_researcher() -> Vec<Answer> {
     ]
 }
 
+/// The result of `start_subagent`, as the model was given it among `messages`.
+fn start_result(messages: &[Message]) -> serde_json::Value {
+    let results = messages.iter().flat_map(|message| &message.tool_results);
+    let mut started = results.filter(|result| result.tool_name == START_SUBAGENT);
+    let result = started.find_map(|result| serde_json::from_str(&result.content).ok());
+    result.unwrap()
+}
+
 /// The thread `start_subagent` returned, as the model was given its result among `messages`.
 fn started(messages: &[Message]) -> ThreadId {
-    let results = messages.iter().flat_map(|message| &message.tool_results);
-    let thread = results.filter(|result| result.tool_name == START_SUBAGENT).find_map(|result| {
-        let result: serde_json::Value = serde_json::from_str(&result.content).ok()?;
-        serde_json::from_value(result.get("thread")?.clone()).ok()
-    });
-    thread.unwrap()
+    serde_json::from_value(start_result(messages)["thread"].clone()).unwrap()
 }
 
 /// The personality `name` of `owner`, with `components` and of `kind`.
@@ -148,7 +151,8 @@ async fn limited_world(leading: Vec<Answer>, max_open: usize, max_depth: usize) 
 }
 
 /// Issue 558: an agent starts a sub-agent of a personality its tool lists - a new agent, named by
-/// an adjective and the personality, in a thread of its own at the call -, is given back to read
+/// an adjective and the personality, in a thread of its own at the call, the result telling it
+/// that nothing more is needed until its answer (issue 616) -, is given back to read
 /// what it answered, and asks it again in the turn that read it (issue 598), and is given that back
 /// too; the turn that reads the second answer leaves it without a word, which lets it go: the
 /// session follower closes its thread with it - let go, the agent deleted -, and nothing is left
@@ -169,10 +173,10 @@ async fn an_agent_starts_a_sub_agent_asks_it_again_as_it_reads_its_answer_and_le
     };
     let leading =
         personality(&world, "leading", alice, internal, vec![model("leading"), subagents]).await;
-    let lead = world.agent("lead", world.alice, &leading).await;
-    let session = world.session_of(&[], &[lead], &[]).await;
+    let lead_id = world.agent("lead", world.alice, &leading).await;
+    let session = world.session_of(&[], &[lead_id], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
-    let lead = ActorId::Agent(lead);
+    let lead = ActorId::Agent(lead_id);
 
     main.user_actor(world.alice)
         .expect("alice takes part")
@@ -222,6 +226,11 @@ async fn an_agent_starts_a_sub_agent_asks_it_again_as_it_reads_its_answer_and_le
     let name = deleted.entity.name.name.to_string();
     assert!(name.ends_with("-researcher"), "an adjective and the personality: {name}");
     assert!(!main.channel().lists(ActorId::Agent(sub_agent)), "let go");
+    let state = world.store.state_store().get_agent_channel_state(lead_id, main.id()).await;
+    let messages = state.unwrap().transcript.messages(ThreadId::line(main.id()));
+    let prompts = prompts_with(NAMESPACE, PROMPTS);
+    let told = tool_text(&prompts, NAMESPACE, SUBAGENTS_KIND, "started", ()).unwrap();
+    assert_eq!(start_result(&messages)["started"], told, "the result says what to do meanwhile");
 
     let writer = writer_of(&main, lead, world.alice).await;
     let refused = writer.ask(thread, "Still there?".to_string()).await.unwrap_err();

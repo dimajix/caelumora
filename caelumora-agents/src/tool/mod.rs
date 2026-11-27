@@ -283,8 +283,8 @@ pub fn classification_argument(params: &Value) -> ToolResult<Classification> {
 /// offers (issue 57), among the texts of `namespace` - the agents' or a
 /// plugin's -, rendered with `values`: `description` that of its tool set,
 /// `<tool>` that of a tool, `<tool>.<path>` that of a parameter
-/// (`ToolParameters::describe`). The texts of tools are rendered once, when
-/// their component is made.
+/// (`ToolParameters::describe`), any other a text a tool's result gives. The
+/// texts of tools are rendered once, when their component is made.
 ///
 /// # Errors
 /// `PromptError` if the catalogue has no such text, or it cannot be

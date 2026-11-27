@@ -1,6 +1,6 @@
 # 616 — A model misreads what starting a sub-agent does
 
-**Status:** open
+**Status:** in progress
 **Type:** bug
 **Priority:** medium
 **Area:** Tools and approvals
@@ -76,3 +76,11 @@ still comes.
 ## History
 
 - **2026-11-27** — Opened on the maintainer's observation from an experiment with Gemma.
+- **2026-11-27** — Considerations 1 and 2 carried out, as recommended. `start_subagent` says that
+  the brief is the sub-agent's whole task, given at once, that nothing more is needed now - finish
+  the other work, end the turn, the answer comes in a later one -, and names `ask_subagent` last,
+  for after the answer was read; `ask_subagent` says that anything given before the answer waits
+  until it came; the `started` text of `/subagent` says the same. The result of `start_subagent`
+  is `{"thread", "started"}`, `started` the text `tools.subagents.started` of `prompts.yaml`,
+  rendered once with the tool, as its description is (`tool_text`). Which question the experiment
+  asked is still unknown; the texts cover both readings. Still to do: the trial with Gemma.

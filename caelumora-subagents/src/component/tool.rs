@@ -11,7 +11,7 @@ use crate::NAMESPACE;
 use async_trait::async_trait;
 use caelumora_agents::situation::Situation;
 use caelumora_agents::tool::{
-    arguments, described, Tool, ToolError, ToolOutput, ToolProvider, ToolResult,
+    arguments, described, tool_text, Tool, ToolError, ToolOutput, ToolProvider, ToolResult,
 };
 use caelumora_agents::turn::Turn;
 use caelumora_domain::channel::{ThreadId, ThreadOrigin};
@@ -97,6 +97,9 @@ pub(super) struct StartSubagentTool {
     description: ToolDescription,
     /// The personalities it may start an agent of.
     personalities: Vec<Name>,
+    /// What its result tells of what it did: that the sub-agent works on the brief and nothing
+    /// more is needed until its answer (issue 616).
+    started: String,
 }
 
 impl StartSubagentTool {
@@ -118,7 +121,8 @@ impl StartSubagentTool {
         let names: Vec<&str> = personalities.iter().map(Name::as_str).collect();
         let values = context! { personalities => names, ask => ASK_SUBAGENT, end => END_SUBAGENT };
         let description = tool(prompts, (START_SUBAGENT, parameters), requires_approval, values)?;
-        Ok(Self { description, personalities })
+        let started = tool_text(prompts, NAMESPACE, SUBAGENTS_KIND, "started", ())?;
+        Ok(Self { description, personalities, started })
     }
 }
 
@@ -153,7 +157,7 @@ impl Tool for StartSubagentTool {
         })?;
         let origin = ThreadOrigin { thread: turn.situation().thread_id(), message };
         let thread = writer(turn).await?.start(&personality, origin, brief).await?;
-        Ok(json!({ "thread": thread }).into())
+        Ok(json!({ "thread": thread, "started": self.started }).into())
     }
 }
 

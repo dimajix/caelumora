@@ -9,11 +9,12 @@ started: |-
   [Sub-agent started]
   On my word you started a sub-agent of the personality {{ personality }}, in the thread {{ thread }}, on this brief:
   {{ brief }}
-  What it answers is given to you to read here. Ask it again with {{ ask }} in the turn in which you read its answer - left without a word then, it is ended -, or end it with {{ end }} once its work is done.
+  The brief is its whole task: it has it and works on it alone, and nothing more is needed now. What it answers is given to you to read here, in a later turn. After you read its answer, ask it again with {{ ask }} in that turn - left without a word then, it is ended -, or end it with {{ end }} once its work is done.
 
 # The descriptions of the tools (`caelumora_agents::tool::described`); `start_subagent` is given
 # the `personalities` it may start an agent of, and the names of the other two, `ask` and `end`;
-# those two the name of `start`.
+# those two the name of `start`. `started`: what the result of `start_subagent` tells of what it did
+# (issue 616).
 tools:
   subagents:
     description: >-
@@ -21,17 +22,23 @@ tools:
       giving back only what came of it.
     start_subagent: >-
       Start a sub-agent on a task: a new agent of one of the personalities {{ personalities | join(", ") }},
-      working on the brief apart, in a thread of its own at this call. It returns at once with the
-      thread; what the sub-agent answers is given to you to read once it is there. Write the brief so
-      that it can be worked on without what was said here. Ask it again with {{ ask }} in the turn
-      in which you read its answer - left without a word then, it is ended -, or end it with
+      in a thread of its own at this call. The brief is its whole task: it gets it at once and
+      works on it alone - nobody but you gives it anything in its thread. Write the
+      brief so that it can be worked on without what was said here. The call returns at once with
+      the thread, and nothing more is needed now: finish your other work and end your turn - what
+      the sub-agent answers is given to you to read in a later turn. After you read its answer, ask
+      it again with {{ ask }} in that turn - left without a word then, it is ended -, or end it with
       {{ end }} once its work is done.
     start_subagent.personality: "The personality of the sub-agent: one of {{ personalities | join(\", \") }}"
     start_subagent.brief: The task, with everything needed to work on it
+    started: >-
+      The sub-agent has the brief and works on it now. Its answer will be given to you to read in a
+      later turn; nothing more is needed until then.
     ask_subagent: >-
       Give a sub-agent you started more to read - a question, a correction, the next task -, in the
-      turn in which you read its answer: one you leave without a word then is ended. What it
-      answers is given to you to read.
+      turn in which you read its answer: one you leave without a word then is ended. Do not call it
+      before its answer has come: while it works on what it was given, anything more waits until it
+      has answered, and is answered after it on its own. What it answers is given to you to read.
     ask_subagent.thread: The thread of the sub-agent, as {{ start }} returned it
     ask_subagent.text: What it is given to read
     end_subagent: >-
