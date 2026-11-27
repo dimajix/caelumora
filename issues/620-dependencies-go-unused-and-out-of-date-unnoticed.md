@@ -146,12 +146,15 @@ Each step a commit of its own, reviewed before the next.
    "deny"`, named in CODING-GUIDELINES.md.
 2. **Within their ranges.** `cargo update`, `npm update`; tests, clippy, the web UI's build, lint
    and tests.
-3. **Major versions that build unchanged.** `base64` 0.23, `htmd` 0.6, `sse-stream` 0.3,
-   `rustyline` 19, `serde-saphyr` 2.2 - each built alone without an error on 2026-11-27.
+3. **Major versions that build unchanged.** `base64` 0.23, `sse-stream` 0.3, `rustyline` 19,
+   `serde-saphyr` 2.2 - each built alone without an error on 2026-11-27.
 4. **`jsonwebtoken` 12.** `EncodingKey::from_secret` and `DecodingKey::from_secret` return a
    `Result` (`caelumora-rest-server/src/auth.rs`).
 5. **`minijinja` 3.** Its feature `loader` is gone; the prompts render as before.
-6. **Keeping them up to date.** `scripts/outdated.sh`, the rule in CRATES.md and WEB-UI.md (E2).
+6. **`htmd` 0.6.** It escapes for Markdown what 0.5 left as it was - `&` as `\&`, what looks like
+   HTML as `\<` -, without an option to leave it: the page's text keeps the escapes, its title is
+   decoded without the converter.
+7. **Keeping them up to date.** `scripts/outdated.sh`, the rule in CRATES.md and WEB-UI.md (E2).
 
 ## History
 
@@ -165,3 +168,7 @@ Each step a commit of its own, reviewed before the next.
   `caelumora-subagents` part of `api`, `unused_dependencies` denied by the lint table.
 - **2026-11-27** — Step 2 done: `cargo update` (101 packages locked anew) and `npm update` within
   their ranges; behind afterwards only what waits (TypeScript 7, `@types/node` 26).
+- **2026-11-27** — Step 3 done: `base64` 0.23, `rustyline` 19, `serde-saphyr` 2.2 and `sse-stream`
+  0.3, without a change of the code. `htmd` 0.6 builds, but a test of `web_fetch` failed - the
+  title of a page came out as `The \& Title` -; the maintainer decided to take it as a step of its
+  own (step 6).
