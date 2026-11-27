@@ -75,7 +75,7 @@ fn told(
     prompts.render(
         &format!("{NAMESPACE}.workspace"),
         context! {
-            name => workspace.name(),
+            name => workspace.name().as_str(),
             classification => workspace.classification().to_string(),
             description => workspace.description().map(|description| description.to_string()),
             writable,

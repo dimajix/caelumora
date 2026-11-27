@@ -19,12 +19,16 @@
 //! `lstrip_blocks`); one that ends a line of text takes its line break with
 //! it, unless written `+%}`. A text ends in the line break its file gives it.
 
-/// The values a text is rendered with, by name: `context!{ name => "Sassy" }`.
+/// The values a text is rendered with, by name: `context!{ name => "Sassy" }`. Each value is
+/// converted by `Into<minijinja::Value>` and moved: a field is lent (`&step.description`), a slice
+/// given as a `Vec` of owned values, an id or a name as its string.
 pub use minijinja::context;
 
 use crate::config::parse_yaml;
 use crate::intern::intern;
 use crate::value::identifier::Identifier;
+use minijinja::syntax::SyntaxConfig;
+use minijinja::value::Serde;
 use minijinja::{AutoEscape, Environment, UndefinedBehavior};
 use serde::de::Error as _;
 use serde::de::{MapAccess, Visitor};
@@ -133,16 +137,23 @@ impl Default for PromptCatalogue {
 
 impl PromptCatalogue {
     /// A catalogue without texts.
+    #[expect(clippy::expect_used, reason = "the default delimiters, which every test builds")]
     pub fn new() -> Self {
         let mut templates = Environment::new();
         // Plain text for a model, not HTML: nothing is escaped.
         templates.set_auto_escape_callback(|_| AutoEscape::None);
         templates.set_undefined_behavior(UndefinedBehavior::Strict);
         // A block tag on a line of its own leaves no line behind, and a text
-        // ends in the line break its file gives it.
-        templates.set_trim_blocks(true);
-        templates.set_lstrip_blocks(true);
-        templates.set_keep_trailing_newline(true);
+        // ends in the line break its file gives it. Building the syntax fails
+        // only for delimiters of its own.
+        templates.set_syntax(
+            SyntaxConfig::builder()
+                .trim_blocks(true)
+                .lstrip_blocks(true)
+                .keep_trailing_newline(true)
+                .build()
+                .expect("the default delimiters"),
+        );
         Self { templates, namespaces: BTreeSet::new(), variants: BTreeSet::new() }
     }
 
@@ -304,7 +315,7 @@ impl PromptCatalogue {
                 .map_err(|_| PromptError::Unknown(key.to_string()))?,
         };
         template
-            .render(values)
+            .render(Serde(values))
             .map_err(|cause| PromptError::Invalid { key: key.to_string(), cause })
     }
 }

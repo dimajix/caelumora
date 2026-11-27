@@ -49,8 +49,17 @@ impl ToolSetsComponent {
     /// The text naming the unavailable sets among `sets`, empty if there
     /// are none.
     fn render(&self, sets: &[ToolSet]) -> Result<String, ContextError> {
-        let unavailable: Vec<_> = sets.iter()
-            .filter_map(|set| set.unavailable.as_deref().map(|why| context! { name => set.name, description => one_line(&set.description), why => one_line(why) }))
+        let unavailable: Vec<_> = sets
+            .iter()
+            .filter_map(|set| {
+                set.unavailable.as_deref().map(|why| {
+                    context! {
+                        name => &set.name,
+                        description => one_line(&set.description),
+                        why => one_line(why),
+                    }
+                })
+            })
             .collect();
         if unavailable.is_empty() {
             return Ok(String::new());

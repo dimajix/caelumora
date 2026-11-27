@@ -78,7 +78,7 @@ impl SubagentCommand {
         let values = context! {
             personality => personality.as_str(),
             brief,
-            thread,
+            thread => thread.to_string(),
             ask => ASK_SUBAGENT,
             end => END_SUBAGENT,
         };

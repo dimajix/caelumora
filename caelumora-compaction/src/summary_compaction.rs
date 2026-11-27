@@ -40,12 +40,16 @@ impl SummaryCompaction {
     /// What the model is asked to summarise for - going on from the summary alone -, and to leave
     /// out `given`, which can be given again.
     fn instruction(&self, given: &[String]) -> Result<String, PromptError> {
-        self.prompts.render(&format!("{NAMESPACE}.instruction"), context! { given })
+        self.prompts
+            .render(&format!("{NAMESPACE}.instruction"), context! { given => given.to_vec() })
     }
 
     /// What the model is asked after its summary: which of `given` it still needs.
     fn question(&self, given: &[String]) -> Result<String, PromptError> {
-        self.prompts.render(&format!("{NAMESPACE}.still_needed"), context! { given, none => NONE })
+        self.prompts.render(
+            &format!("{NAMESPACE}.still_needed"),
+            context! { given => given.to_vec(), none => NONE },
+        )
     }
 
     /// The summary `text` as the transcript holds it, under its title; nothing if there is none.

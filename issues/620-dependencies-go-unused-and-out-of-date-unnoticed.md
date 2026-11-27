@@ -176,3 +176,8 @@ Each step a commit of its own, reviewed before the next.
   `TokenService` pass its error on, though it checks their length of at least 32 bytes before. The
   RustCrypto crates it moves to newer versions leave 13 packages fewer in `Cargo.lock`, the older
   `digest`, `sha2`, `hmac` and `rand` beside the newer among them.
+- **2026-11-27** — Step 5 done: `minijinja` 3. More changed than its feature `loader`: the
+  catalogue sets its whitespace as a `SyntaxConfig`, and `context!` takes its values by
+  `Into<Value>` instead of serializing them - a field is lent (`&step.description`), a slice copied
+  (`given.to_vec()`), an id or a name written as a string, in six crates. `PromptTexts::render`
+  takes what serializes, as before, through `minijinja`'s `Serde`.
