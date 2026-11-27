@@ -1048,7 +1048,8 @@ mod tests {
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::context::{ContextItem, ContextRef};
     use caelumora_domain::history::{Audience, HistoryEntry, HistoryPage, Recorded};
-    use caelumora_domain::message::{CallMeasures, Message};
+    use caelumora_domain::message::testing::make_message;
+    use caelumora_domain::message::{CallMeasures, Message, MessageId, MessageRole};
     use caelumora_domain::security::{Grant, SecurityAttributes, Subject};
     use caelumora_domain::session::testing::make_session;
     use caelumora_domain::session::Session;
@@ -1142,9 +1143,9 @@ mod tests {
         let session = stored(&kernel, session, slice::from_mut(&mut channel)).await;
 
         let said = |t: &str| Message {
-            id: MessageId::new(),
             content: Some(t.to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            role: MessageRole::System,
+            ..make_message(MessageId::new())
         };
         let question = said("question");
         let answer = Message {
@@ -1670,11 +1671,9 @@ mod tests {
                 .await;
 
         let said = |by: &User, text: &str| Message {
-            id: MessageId::new(),
-            role: MessageRole::User,
             sender_id: ActorId::User(by.id),
             content: Some(text.to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            ..make_message(MessageId::new())
         };
         let hello = said(&dave, "hello");
         let hers = said(&alice, "hi");
@@ -1833,7 +1832,7 @@ mod tests {
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn what_a_channel_holds_is_read_through_its_nodes_and_a_participants_context_by_who_may()
     {
-        use caelumora_domain::message::{Message, MessageId, MessageRole};
+        use caelumora_domain::message::{Message, MessageId};
 
         let kernel = owned_kernel(Default::default());
 
@@ -1849,12 +1848,8 @@ mod tests {
                 .await;
 
         // What was said, of which bob - who joined later - sees the end only.
-        let said = |t: &str| Message {
-            id: MessageId::new(),
-            role: MessageRole::User,
-            content: Some(t.to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
-        };
+        let said =
+            |t: &str| Message { content: Some(t.to_string()), ..make_message(MessageId::new()) };
         let (first, second) = (said("first"), said("second"));
         // And so does the agent, though alice, for whom it acts, sees it all
         // (issue 417).
@@ -2019,9 +2014,10 @@ mod tests {
         state.history.extend(
             &EventContext::new(hers.session_id, hers.id, ActorId::None, String::new()),
             vec![Message {
-                id: MessageId::new(),
                 content: Some("hers alone".to_string()),
-                ..Message::new(hers.classification.clone())
+                role: MessageRole::System,
+                classification: hers.classification.clone(),
+                ..make_message(MessageId::new())
             }],
         );
         kernel.state_store().put_channel_state(hers.id, &mut state).await.unwrap();
@@ -2080,8 +2076,12 @@ mod tests {
         // What it kept while it ran: the same state, whatever its kind was
         // (issue 206).
         let mut kept = AgentChannelState::default();
-        let heard =
-            Message { content: Some("kept".to_string()), ..Message::new(Classification::PUBLIC) };
+        let heard = Message {
+            content: Some("kept".to_string()),
+            role: MessageRole::System,
+            classification: Classification::PUBLIC,
+            ..make_message(MessageId::new())
+        };
         kept.transcript.push(ThreadId::default(), heard);
         kernel
             .state_store()
@@ -2184,7 +2184,9 @@ mod tests {
         let answer = Message {
             sender_id: ActorId::Agent(helper.id),
             measures: Some(measures),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            content: None,
+            role: MessageRole::System,
+            ..make_message(MessageId::new())
         };
         let calls = vec![make_tool_call("delete")];
         let mut state = waiting_for_approval(session.id, channel.id, helper.id, calls);
@@ -2251,7 +2253,7 @@ mod tests {
         use caelumora_domain::confidentiality::{Compartment, Compartments, Confidentiality};
         use caelumora_domain::content::testing::make_content_ref;
         use caelumora_domain::content::ContentRef;
-        use caelumora_domain::message::{Message, MessageId, MessageRole};
+        use caelumora_domain::message::{Message, MessageId};
         use caelumora_domain::privacy::SessionPrivacy;
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
@@ -2293,10 +2295,9 @@ mod tests {
         let hers = ActorId::User(alice.id);
         // Said in secret: one released to everyone.
         let said = |t: &str, classification: &Classification| Message {
-            id: MessageId::new(),
-            role: MessageRole::User,
             content: Some(t.to_string()),
-            ..Message::new(classification.clone())
+            classification: classification.clone(),
+            ..make_message(MessageId::new())
         };
         let mut state = kernel.state_store().get_channel_state(secret.id).await.unwrap();
         let plan = said("the plan", &secret.classification);
@@ -2476,10 +2477,10 @@ mod tests {
         state.history.extend(
             &EventContext::new(channel.session_id, channel.id, ActorId::None, String::new()),
             vec![Message {
-                id: MessageId::new(),
                 sender_id: ActorId::Agent(helper.id),
                 content: Some("I was here".to_string()),
-                ..Message::new(Classification::CHANNEL_DEFAULT)
+                role: MessageRole::System,
+                ..make_message(MessageId::new())
             }],
         );
         kernel.state_store().put_channel_state(channel.id, &mut state).await.unwrap();

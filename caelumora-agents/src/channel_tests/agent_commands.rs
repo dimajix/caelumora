@@ -5,6 +5,7 @@ use super::*;
 use crate::tool::turn_end::TURN_END_KIND;
 use caelumora_api::command::CommandError;
 use caelumora_domain::channel::ThreadId;
+use caelumora_domain::message::testing::make_message;
 use caelumora_domain::tool::testing::make_tool_call;
 use caelumora_domain::transcript::TranscriptEntry;
 use caelumora_kernel::command::{CommandContext, CommandReply};
@@ -30,7 +31,7 @@ async fn with_a_marking_agent_under(access_policy: Arc<dyn AccessPolicy>, asleep
         role: MessageRole::Assistant,
         content: Some("Hi.".to_string()),
         tool_calls: if asleep { vec![stop] } else { Vec::new() },
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     let components = ComponentConfig {
         component_nodes: vec![

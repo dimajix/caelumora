@@ -8,7 +8,8 @@ use caelumora_agents::turn::Turn;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::AgentId;
 use caelumora_domain::confidentiality::Classification;
-use caelumora_domain::message::{CallMeasures, Message, MessageRole};
+use caelumora_domain::message::testing::make_message;
+use caelumora_domain::message::{CallMeasures, Message, MessageId, MessageRole};
 use caelumora_domain::prompt_catalogue::PromptTexts;
 use std::sync::Mutex;
 
@@ -20,7 +21,12 @@ pub(super) fn prompts() -> PromptTexts {
 
 /// A message heard, saying `text`.
 pub(super) fn heard(text: &str) -> Message {
-    Message { content: Some(text.to_string()), ..Message::new(Classification::PUBLIC) }
+    Message {
+        content: Some(text.to_string()),
+        role: MessageRole::System,
+        classification: Classification::PUBLIC,
+        ..make_message(MessageId::new())
+    }
 }
 
 /// The text the strategy puts in the place of a part, unless it fails.
@@ -112,7 +118,8 @@ pub(super) fn two_calls(turn: &mut Turn<'_>, agent: AgentId) {
             sender_id: ActorId::Agent(agent),
             role,
             content: Some(content.repeat(40)),
-            ..Message::new(Classification::PUBLIC)
+            classification: Classification::PUBLIC,
+            ..make_message(MessageId::new())
         });
     }
 }

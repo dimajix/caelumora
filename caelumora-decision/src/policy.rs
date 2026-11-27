@@ -426,6 +426,7 @@ mod tests {
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_domain::confidentiality::Confidentiality;
+    use caelumora_domain::message::testing::make_message;
     use caelumora_domain::message::{MessageId, MessageRole};
     use caelumora_domain::user::UserId;
     use caelumora_domain::value::name::Name;
@@ -570,12 +571,12 @@ mod tests {
         classification: Classification,
     ) -> Message {
         Message {
-            id: MessageId::new(),
             sender_id: sender,
             sender_name: name.to_string(),
             role,
             content: Some(content.to_string()),
-            ..Message::new(classification)
+            classification,
+            ..make_message(MessageId::new())
         }
     }
 

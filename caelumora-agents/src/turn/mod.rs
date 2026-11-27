@@ -431,19 +431,14 @@ mod tests {
     use caelumora_domain::context::{
         ContextItem, ContextResolver, Placement, PromptAt, PromptPart,
     };
-    use caelumora_domain::message::MessageId;
-    use caelumora_domain::message::MessageRole;
+    use caelumora_domain::message::testing::make_message;
+    use caelumora_domain::message::{MessageId, MessageRole};
     use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_kernel::transport::memory::InMemoryEventSender;
     use tokio::sync::mpsc;
 
     pub(super) fn message(content: &str) -> Message {
-        Message {
-            id: MessageId::new(),
-            role: MessageRole::User,
-            content: Some(content.to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
-        }
+        Message { content: Some(content.to_string()), ..make_message(MessageId::new()) }
     }
 
     /// A turn runs on the branch it was begun on (issue 602), whatever thread its agent takes part
@@ -466,9 +461,9 @@ mod tests {
 
     fn message_classified(classification: &Classification) -> Message {
         Message {
-            id: MessageId::new(),
-            role: MessageRole::User,
-            ..Message::new(classification.clone())
+            content: None,
+            classification: classification.clone(),
+            ..make_message(MessageId::new())
         }
     }
 
@@ -537,7 +532,7 @@ mod tests {
             role,
             internal,
             content: Some("said".to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            ..make_message(MessageId::new())
         };
         let call = ToolCall {
             id: Some("1".to_string()),
@@ -658,7 +653,8 @@ mod tests {
             reasoning: Some("weighing".to_string()),
             reasoning_visibility: Visibility::Owner,
             tool_calls: vec![call],
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            content: None,
+            ..make_message(MessageId::new())
         };
         turn.push_message(thinking.clone());
         turn.send_event(ActorEvent::CompleteMessageGenerated(thinking.clone()), &output)

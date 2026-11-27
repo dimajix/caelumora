@@ -746,9 +746,8 @@ pub fn frame(frame: &FrameRef) -> Digest {
 mod tests {
     use super::*;
     use crate::content::testing::make_content_ref;
-    use crate::message::CallMeasures;
-    use crate::message::MessageId;
-    use crate::message::MessageRole;
+    use crate::message::testing::make_message;
+    use crate::message::{CallMeasures, MessageId, MessageRole};
     use crate::tool::testing::{make_tool_call, make_tool_description};
     use crate::tool::{ToolCall, ToolResultStatus};
     use chrono::{Duration, Utc};
@@ -756,9 +755,9 @@ mod tests {
 
     fn message(content: &str) -> Message {
         Message {
-            id: MessageId::new(),
             content: Some(content.to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            role: MessageRole::System,
+            ..make_message(MessageId::new())
         }
     }
 

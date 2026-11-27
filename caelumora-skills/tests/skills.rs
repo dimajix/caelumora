@@ -30,7 +30,8 @@ use caelumora_domain::confidentiality::{Classification, Confidentiality, Place};
 use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_domain::history::testing::{items_of, messages_of};
 use caelumora_domain::history::HistoryEntry;
-use caelumora_domain::message::{CallMeasures, Message, MessageRole};
+use caelumora_domain::message::testing::make_message;
+use caelumora_domain::message::{CallMeasures, Message, MessageId, MessageRole};
 use caelumora_domain::privacy::SessionPrivacy;
 use caelumora_domain::query::Query;
 use caelumora_domain::scope::Scope;
@@ -897,7 +898,9 @@ async fn with_a_writing_agent(
             arguments,
             ..make_tool_call(function)
         }],
-        ..Message::new(Classification::general(Confidentiality::Internal))
+        content: None,
+        classification: Classification::general(Confidentiality::Internal),
+        ..make_message(MessageId::new())
     };
     let world = World::with(&[&SkillsPlugin], &[&AgentsLibrary, &SkillsLibrary], |registry| {
         register_scripted(registry, "writing", vec![call])

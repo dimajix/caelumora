@@ -157,16 +157,12 @@ mod tests {
     use caelumora_domain::channel::ThreadId;
     use caelumora_domain::component::ComponentFailPolicy;
     use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::message::testing::make_message;
     use caelumora_domain::message::{Message, MessageId};
     use futures::executor;
 
     fn message(content: &str) -> Message {
-        Message {
-            id: MessageId::new(),
-            role: MessageRole::User,
-            content: Some(content.to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
-        }
+        Message { content: Some(content.to_string()), ..make_message(MessageId::new()) }
     }
 
     /// `provider` as a component with `fail_policy`.

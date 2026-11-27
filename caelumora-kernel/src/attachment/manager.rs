@@ -633,6 +633,8 @@ mod tests {
     use bytes::Bytes;
     use caelumora_domain::confidentiality::{Compartment, Confidentiality};
     use caelumora_domain::digest;
+    use caelumora_domain::message::testing::make_message;
+    use caelumora_domain::message::{MessageId, MessageRole};
     use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_domain::tool::{ToolCall, ToolCallResult};
     use caelumora_domain::user::UserId;
@@ -996,11 +998,17 @@ mod tests {
             vec![
                 Message {
                     attachments: vec![image.clone(), text.clone()],
-                    ..Message::new(main.classification.clone())
+                    content: None,
+                    role: MessageRole::System,
+                    classification: main.classification.clone(),
+                    ..make_message(MessageId::new())
                 },
                 Message {
                     tool_results: vec![showing.clone()],
-                    ..Message::new(main.classification.clone())
+                    content: None,
+                    role: MessageRole::System,
+                    classification: main.classification.clone(),
+                    ..make_message(MessageId::new())
                 },
             ]
         };

@@ -996,7 +996,10 @@ pub(crate) mod tests {
                 classification: internal.clone(),
                 ..result("1", ToolVisibility::SHOWN)
             }],
-            ..Message::new(Classification::PUBLIC)
+            content: None,
+            role: MessageRole::System,
+            classification: Classification::PUBLIC,
+            ..make_message(MessageId::new())
         };
         assert_eq!(message.classification_with_results(), Some(internal), "the result's above");
         let apart = Message {
@@ -1004,7 +1007,10 @@ pub(crate) mod tests {
                 classification: classified(Confidentiality::Internal, &["hr"]),
                 ..result("1", ToolVisibility::SHOWN)
             }],
-            ..Message::new(classified(Confidentiality::Internal, &["finance"]))
+            content: None,
+            role: MessageRole::System,
+            classification: classified(Confidentiality::Internal, &["finance"]),
+            ..make_message(MessageId::new())
         };
         assert_eq!(apart.classification_with_results(), None, "no compartment in common");
     }
@@ -1179,7 +1185,9 @@ pub(crate) mod tests {
             content: Some("let me look".to_string()),
             reasoning: Some("hm".to_string()),
             tool_calls: vec![call.clone()],
-            ..Message::new(secret.clone())
+            role: MessageRole::System,
+            classification: secret.clone(),
+            ..make_message(MessageId::new())
         };
         let result = ToolCallResult::of(
             &call,
@@ -1190,7 +1198,9 @@ pub(crate) mod tests {
         let answered = Message {
             role: MessageRole::Tool,
             tool_results: vec![result],
-            ..Message::new(secret.clone())
+            content: None,
+            classification: secret.clone(),
+            ..make_message(MessageId::new())
         };
 
         let given = calling.names_only(&Classification::PUBLIC).expect("it called a tool");
@@ -1214,7 +1224,12 @@ pub(crate) mod tests {
             "how it ended, not what it returned"
         );
         assert_eq!(given.tool_results[0].classification, Classification::PUBLIC);
-        let words = Message { content: Some("said".to_string()), ..Message::new(secret) };
+        let words = Message {
+            content: Some("said".to_string()),
+            role: MessageRole::System,
+            classification: secret,
+            ..make_message(MessageId::new())
+        };
         assert!(words.names_only(&Classification::PUBLIC).is_none(), "nothing left of words alone");
     }
 

@@ -62,6 +62,7 @@ mod tests {
     use caelumora_domain::agent::AgentChannelState;
     use caelumora_domain::channel::ThreadId;
     use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::message::testing::make_message;
     use caelumora_domain::message::{CallMeasures, Message, MessageId, MessageRole};
     use caelumora_kernel::workspace::testing::session_with_workspace;
     use std::sync::Arc;
@@ -107,7 +108,6 @@ mod tests {
         assert!(!component.is_due(&turn.situation()), "nothing measured");
 
         let call = |prompt: u64, size: Option<u64>| Message {
-            id: MessageId::new(),
             sender_id: ActorId::Agent(world.agent),
             role: MessageRole::Assistant,
             content: Some("x".to_string()),
@@ -117,7 +117,8 @@ mod tests {
                 context_size: size,
                 ..CallMeasures::default()
             }),
-            ..Message::new(Classification::PUBLIC)
+            classification: Classification::PUBLIC,
+            ..make_message(MessageId::new())
         };
         turn.record_said(call(700, Some(1000)));
         assert!(!component.is_due(&turn.situation()), "701 of 1000");

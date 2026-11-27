@@ -206,6 +206,7 @@ mod tests {
     use caelumora_domain::config::AppConfig;
     use caelumora_domain::content::testing::make_content_ref;
     use caelumora_domain::history::{Audience, Recorded};
+    use caelumora_domain::message::testing::make_message;
     use caelumora_domain::message::{MessageId, MessageRole};
     use caelumora_domain::scope::Scope;
     use caelumora_domain::tool::testing::make_tool_call;
@@ -228,9 +229,9 @@ mod tests {
     /// A message saying `content`, recorded as the store keeps it.
     fn said(content: &str) -> Value {
         recorded(Message {
-            id: MessageId::new(),
             content: Some(content.to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            role: MessageRole::System,
+            ..make_message(MessageId::new())
         })
     }
 
@@ -244,18 +245,18 @@ mod tests {
         assert!(wanted(None).matches(&said("coffee")), "any text without a query");
         assert!(!wanted(None).matches(&said("")), "a message without text does not count");
         let attached = Message {
-            id: MessageId::new(),
             attachments: vec![make_content_ref("a.png", b"a")],
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            content: None,
+            role: MessageRole::System,
+            ..make_message(MessageId::new())
         };
         let attached = recorded(attached);
         assert!(wanted(None).matches(&attached), "unless it has attachments (issue 282)");
         assert!(!wanted(Some("tea")).matches(&attached), "which no query finds");
         let called = Message {
-            id: MessageId::new(),
-            role: MessageRole::User,
             tool_calls: vec![make_tool_call("run_command")],
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            content: None,
+            ..make_message(MessageId::new())
         };
         assert!(wanted(None).matches(&recorded(called.clone())), "a person's call (issue 587)");
         let of_an_agent = Message { role: MessageRole::Assistant, ..called.clone() };

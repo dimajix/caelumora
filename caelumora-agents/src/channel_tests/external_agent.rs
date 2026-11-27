@@ -25,6 +25,7 @@ use caelumora_domain::context::ContextItem;
 use caelumora_domain::digest;
 use caelumora_domain::external_agent::{OpenTaskState, TaskId};
 use caelumora_domain::history::{Heard, HistoryEntry};
+use caelumora_domain::message::testing::make_message;
 use caelumora_domain::security::SecurityAttributes;
 use caelumora_domain::session::testing::{bare_session, make_session};
 use caelumora_domain::session::SessionId;
@@ -159,17 +160,15 @@ fn register_heard(registry: &mut ComponentRegistry) {
 /// its channel's history, as what it hears - without what it said itself.
 #[tokio::test]
 async fn an_external_agent_that_starts_takes_in_what_it_missed_without_its_own() {
-    use caelumora_domain::message::{MessageId, MessageRole};
+    use caelumora_domain::message::MessageId;
     let remote = Arc::new(ScriptedExternalAgent::default());
     let (channel, context, agent, _) =
         external_channel(remote, external_components(), |_, _| None).await.unwrap();
     let line = ThreadId::line(channel.id());
     let message = |sender: ActorId, text: &str| Message {
-        id: MessageId::new(),
-        role: MessageRole::User,
         sender_id: sender,
         content: Some(text.to_string()),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     let said = |text: &str| message(context.initiator_id, text);
     let three = said("three");
@@ -449,7 +448,6 @@ async fn an_external_agent_is_given_what_a_delegate_gives_it_to_read_and_answers
     use crate::external::ExternalEvent;
     use caelumora_domain::chain::Position;
     use caelumora_domain::channel::{Brief, Delegation, ThreadId, Word};
-    use caelumora_domain::message::MessageRole;
     use std::collections::VecDeque;
 
     let remote = Arc::new(ScriptedExternalAgent::answering(vec![
@@ -473,9 +471,8 @@ async fn an_external_agent_is_given_what_a_delegate_gives_it_to_read_and_answers
     let brief = Message {
         sender_id: alice,
         sender_name: "alice".to_string(),
-        role: MessageRole::User,
         content: Some("Look this up.".to_string()),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     let given = |thread| {
         let context = EventContext {
@@ -1136,13 +1133,11 @@ async fn the_prompt_parts_an_external_agent_could_not_send_are_sent_with_its_nex
 #[tokio::test]
 async fn after_a_restart_an_external_agent_sends_what_it_heard_but_had_not_sent() {
     use crate::external::ExternalEvent;
-    use caelumora_domain::message::MessageRole;
 
     let said = |text: &str| Message {
-        role: MessageRole::User,
         sender_name: "bob".to_string(),
         content: Some(text.to_string()),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     let stored = |_: AgentId, channel: ChannelId| {
         let line = ThreadId::line(channel);

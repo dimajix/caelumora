@@ -32,7 +32,6 @@ use caelumora_domain::chain::Position;
 use caelumora_domain::channel::{Channel, Participant};
 use caelumora_domain::command::{CommandDescription, CommandOutput, CommandParameter};
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
-use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::config::AppConfig;
 use caelumora_domain::context::ModelProfile;
 use caelumora_domain::history::HistoryEntry;

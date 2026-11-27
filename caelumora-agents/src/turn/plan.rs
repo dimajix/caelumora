@@ -277,8 +277,8 @@ mod tests {
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::context::ModelProfile;
     use caelumora_domain::context::{ContextItem, Placement, PromptAt, PromptPart};
-    use caelumora_domain::message::Message;
-    use caelumora_domain::message::MessageId;
+    use caelumora_domain::message::testing::make_message;
+    use caelumora_domain::message::{Message, MessageId};
     use caelumora_domain::plan::PlanId;
     use caelumora_domain::work::Work;
     use caelumora_kernel::testing::Discard;
@@ -321,11 +321,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         state.transcript.push(
             ThreadId::default(),
-            Message {
-                role: MessageRole::User,
-                content: Some("do it".to_string()),
-                ..Message::new(Classification::CHANNEL_DEFAULT)
-            },
+            Message { content: Some("do it".to_string()), ..make_message(MessageId::new()) },
         );
         let mut turn = Turn::begun(AgentId::default(), &mut state);
         turn.set_context(Vec::new(), Vec::new());
@@ -407,11 +403,10 @@ mod tests {
         use MessageRole::{Assistant, System, User};
         let agent = AgentId::new();
         let text = |role: MessageRole, content: &str| Message {
-            id: MessageId::new(),
             sender_id: ActorId::Agent(agent),
             role,
             content: Some(content.to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            ..make_message(MessageId::new())
         };
         let mut state = AgentChannelState::default();
         state.transcript.push(
@@ -567,11 +562,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         state.transcript.push(
             ThreadId::default(),
-            Message {
-                role: MessageRole::User,
-                content: Some("do it".to_string()),
-                ..Message::new(Classification::CHANNEL_DEFAULT)
-            },
+            Message { content: Some("do it".to_string()), ..make_message(MessageId::new()) },
         );
         let mut turn = Turn::begun(AgentId::default(), &mut state);
         turn.set_context(Vec::new(), Vec::new());

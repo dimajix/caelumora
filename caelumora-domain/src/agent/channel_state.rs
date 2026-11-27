@@ -1118,9 +1118,10 @@ mod tests {
 
     fn said(content: &str, classification: Classification) -> Message {
         Message {
-            id: MessageId::new(),
             content: Some(content.to_string()),
-            ..Message::new(classification)
+            role: MessageRole::System,
+            classification,
+            ..make_message(MessageId::new())
         }
     }
 

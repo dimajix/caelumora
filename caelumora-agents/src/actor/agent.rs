@@ -1352,6 +1352,7 @@ mod tests {
     use caelumora_domain::channel::ThreadId;
     use caelumora_domain::confidentiality::Confidentiality;
     use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
+    use caelumora_domain::message::testing::make_message;
     use caelumora_domain::message::MessageId;
     use caelumora_domain::store::EntityKind;
     use caelumora_domain::tool::testing::{make_tool_call, make_tool_description};
@@ -1373,12 +1374,12 @@ mod tests {
 
     fn answer(calls: &[&str]) -> Message {
         Message {
-            id: MessageId::new(),
             role: MessageRole::Assistant,
             content: Some("answer".to_string()),
             reasoning: Some("thinking".to_string()),
             tool_calls: calls.iter().map(|name| call(name)).collect(),
-            ..Message::new(Classification::general(Confidentiality::Public))
+            classification: Classification::general(Confidentiality::Public),
+            ..make_message(MessageId::new())
         }
     }
 

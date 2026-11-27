@@ -836,7 +836,6 @@ mod tests {
         let talker = ActorId::Agent(AgentId::new());
         let context = EventContext::new(SessionId::new(), ChannelId::new(), talker, "talker");
         let piece = |text: &str| Message {
-            id: MessageId::new(),
             sender_id: talker,
             role: MessageRole::Assistant,
             content: Some(text.to_string()),
@@ -1155,7 +1154,7 @@ mod tests {
             sender_id: sender,
             role,
             content: content.map(str::to_string),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            ..make_message(MessageId::new())
         };
         let call = ToolCall {
             id: Some("1".to_string()),

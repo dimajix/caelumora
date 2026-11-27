@@ -1038,6 +1038,7 @@ mod tests {
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::channel::Participant;
     use caelumora_domain::history::{Audience, Recorded};
+    use caelumora_domain::message::testing::make_message;
     use caelumora_domain::message::MessageRole;
     use caelumora_domain::security::Refused;
     use caelumora_kernel::channel::ChannelError;
@@ -1318,11 +1319,10 @@ mod tests {
         let said = |text: &str| {
             let addressees = if text.contains("@alice") { vec![alice] } else { Vec::new() };
             Message {
-                role: MessageRole::User,
                 addressees,
                 sender_id: alice,
                 content: Some(text.to_string()),
-                ..Message::new(Classification::CHANNEL_DEFAULT)
+                ..make_message(MessageId::new())
             }
         };
         let states = state.kernel.state_store();
@@ -1377,7 +1377,8 @@ mod tests {
         let said = Message {
             sender_id: alice,
             content: Some("in the line".to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            role: MessageRole::System,
+            ..make_message(MessageId::new())
         };
         let given = Message { content: Some("given".to_string()), ..said.clone() };
         let recipient = ActorId::Agent(helper.id);

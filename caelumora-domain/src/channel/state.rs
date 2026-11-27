@@ -205,6 +205,7 @@ mod tests {
     use super::*;
     use crate::actor::testing::context_in;
     use crate::message::testing::{id, make_message};
+    use crate::message::MessageRole;
     use crate::store::testing::{replayed, stored};
 
     #[test]
@@ -254,9 +255,10 @@ mod tests {
         for owns in [true, false] {
             let recipient = AgentId::new();
             let answer = Message {
-                id: MessageId::new(),
                 sender_id: ActorId::Agent(recipient),
-                ..Message::new(Classification::CHANNEL_DEFAULT)
+                content: None,
+                role: MessageRole::System,
+                ..make_message(MessageId::new())
             };
             let brief =
                 Brief { message: Message::new(Classification::CHANNEL_DEFAULT), given_at: None };
