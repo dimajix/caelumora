@@ -79,6 +79,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 |---|---|---|---|---|
 | [548](548-a-workspace-container-has-to-run-a-server.md) | open | medium | feature | A workspace of an `open_terminal_docker` storage can only run in Open Terminal's image, needs a network Caelumora reaches it through, and keeps a key and a server beside the commands it is meant to contain, although Caelumora holds the Docker daemon that could reach the container without any of them. |
 | [613](613-an-agent-cannot-read-or-send-email.md) | open | medium | feature | An agent has no mailbox: it cannot read mail from an IMAP account, learn that a new mail arrived, or send one, so mail - the way most people and companies outside reach each other - stays out of its reach, and with it any work that begins with a mail. |
+| [614](614-no-messenger-reaches-a-channel.md) | open | medium | feature | Nobody can talk with an agent through a messenger - Telegram, Matrix, Signal, Slack -: a user can reach a channel only through the web UI or the terminal, and an agent cannot take part in a chat of people who are no users of Caelumora. |
 
 ## Low priority
 
