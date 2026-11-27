@@ -302,7 +302,7 @@ impl Channels {
         match shown {
             Ok(Shown::Envelope(envelope)) => {
                 let is_told = talked_in || followed.concerns_user(&envelope);
-                let printed = followed.take_in(&envelope);
+                let printed = followed.take_in(&envelope).await;
                 if is_told {
                     told(printed)
                 } else {
@@ -651,6 +651,61 @@ mod tests {
             "in the order of the channels, the one talked in for its other threads, an agent at \
              work in two of them once"
         );
+    }
+
+    /// Issue 615: the threads open in a channel followed are kept as one opens, is delegated into -
+    /// with the sub-agent it was delegated to - and closes.
+    #[tokio::test]
+    async fn the_threads_open_are_kept_with_whom_they_were_delegated_to() {
+        use caelumora_domain::agent::testing::make_personality;
+        use caelumora_domain::channel::{Circle, ThreadOrigin};
+        use caelumora_kernel::channel::ThreadSpec;
+        use caelumora_store::testing::stored_agent;
+        let (mut channels, session_loop, owner, kernel) = alone().await;
+        let channel_id = channels.talked_in().expect("talked in").channel_id();
+        let channel = session_loop.channel(channel_id).expect("its first channel");
+        // Not in the session yet: a closed thread takes in those it is founded with alone, and one
+        // that owns them is closed with them.
+        let stores = kernel.entity_stores();
+        let personality = make_personality("helper");
+        let agent = stored_agent(stores, "helper", personality, owner.caller_id).await.id;
+        let agent = ActorId::Agent(agent);
+        let ActorId::User(user) = owner.caller_id else { unreachable!("a user") };
+        let line = ThreadId::line(channel_id);
+        let origin = ThreadOrigin { thread: line, message: channel.said_by(user, line).await };
+        let spec = ThreadSpec {
+            circle: Circle::Closed,
+            founders: vec![agent],
+            owns_founders: true,
+            ..ThreadSpec::new(origin)
+        };
+        let thread = channel.open_thread_by_procedure(&owner, spec).await.expect("opened");
+        until_threads(&mut channels, &[(thread, "Thread")]).await;
+
+        channel.delegate(&owner, thread, agent, "find it".to_string()).await.expect("delegated");
+        until_threads(&mut channels, &[(thread, "Thread of helper")]).await;
+
+        assert!(channel.close_thread_by_procedure(&owner, thread).await.expect("closed"));
+        until_threads(&mut channels, &[]).await;
+    }
+
+    /// Takes in what happens next, until the channel talked in keeps the threads `wanted` open,
+    /// each with its title, within five seconds.
+    async fn until_threads(channels: &mut Channels, wanted: &[(ThreadId, &str)]) {
+        let kept = |channels: &Channels| -> Vec<(ThreadId, String)> {
+            let threads = channels.talked_in().map(Followed::threads).unwrap_or_default();
+            threads.iter().map(|thread| (thread.id, thread.title())).collect()
+        };
+        let wanted: Vec<(ThreadId, String)> =
+            wanted.iter().map(|(id, title)| (*id, title.to_string())).collect();
+        let taken_in = async {
+            while kept(channels) != wanted {
+                let happened = channels.next().await;
+                channels.take_in(happened).await;
+            }
+        };
+        let waited = time::timeout(Duration::from_secs(5), taken_in).await;
+        assert!(waited.is_ok(), "kept {:?}, not {wanted:?}", kept(channels));
     }
 
     /// The end of an approval told of another channel is told as well, marked with its name:
