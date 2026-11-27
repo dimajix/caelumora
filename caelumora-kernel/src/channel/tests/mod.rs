@@ -6,22 +6,19 @@ mod threads;
 pub(super) use crate::channel::testing::*;
 
 use super::*;
-use crate::command::help::HelpCommand;
-use crate::command::{agent, participant, ChannelCommand, CommandExecutor};
+use crate::command::CommandExecutor;
 use crate::component::ComponentRegistry;
 use crate::kernel::ChannelRuntime;
 use crate::moderator::{Moderator, Routing};
 use crate::testing::{Script, ScriptedAgent, ScriptedAgents, StandIn, TestKernel};
 use caelumora_api::actor::Actor;
-use caelumora_api::command::CommandProvider;
-use caelumora_api::component::ComponentImpl;
 use caelumora_domain::actor::{ActorEvent, ActorId, ActorState, Envelope, RequestReason};
 use caelumora_domain::agent::testing::make_personality;
 use caelumora_domain::agent::AgentId;
 use caelumora_domain::channel::testing::founded;
 use caelumora_domain::channel::testing::make_channel;
 use caelumora_domain::channel::{moderation_components, Channel, Participant};
-use caelumora_domain::component::{ComponentConfig, ComponentFailPolicy};
+use caelumora_domain::component::ComponentConfig;
 use caelumora_domain::history::Audience;
 use caelumora_domain::session::testing::bare_session;
 use caelumora_domain::session::SessionId;
@@ -77,20 +74,7 @@ async fn channel_built(
         TestKernel { store, access_policy, components: Box::new(register), ..Default::default() }
             .build();
     let channel = Channel { components, participants, ..make_channel(SessionId::new(), "main") };
-    let builtin = |id: &str, commands: Vec<Arc<dyn ChannelCommand>>| ComponentImpl {
-        id: id.to_string(),
-        fail_policy: ComponentFailPolicy::FailOpen,
-        facet: Arc::new(commands) as Arc<dyn CommandProvider<dyn ChannelCommand>>,
-    };
-    let executor = CommandExecutor::new(
-        Arc::clone(kernel.access_policy()),
-        vec![
-            builtin("help", vec![Arc::new(HelpCommand::new())]),
-            builtin("participant", participant::commands()),
-            builtin("agent", agent::commands(kernel.agent_manager())),
-        ],
-    )
-    .unwrap();
+    let executor = builtin_commands(&kernel);
     // Its participants' joins recorded, as if they had founded it (issue 420).
     kernel.state_store().put_channel_state(channel.id, &mut founded(&channel)).await.unwrap();
     let session =

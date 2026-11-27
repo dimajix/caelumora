@@ -1,5 +1,6 @@
-//! The user commands in a running channel - `/help`, `/agent wakeup`, `/participant nudge`,
-//! `/participant add`, `/agent create`, `/agent usage` - and the nudges they ask for. The commands
+//! The user commands in a running channel - `/help`, `/agent wakeup`, `/agent cancel`,
+//! `/participant nudge`, `/participant add`, `/agent create`, `/agent usage` - and the nudges they
+//! ask for. The commands
 //! an agent carries out itself are the agents' (`agent_commands`).
 
 use super::*;
@@ -44,7 +45,7 @@ async fn help_answers_the_issuer_alone_and_lists_what_they_may_see() {
         actor.visible_commands().await.into_iter().map(|c| c.name.to_string()).collect();
     let participant =
         ["participant add", "participant list", "participant nudge", "participant remove"];
-    let agent = ["agent create", "agent delete", "agent list", "agent usage"];
+    let agent = ["agent cancel", "agent create", "agent delete", "agent list", "agent usage"];
     assert_eq!(names, [&agent[..], &["help"], &participant].concat());
 
     for hidden in ["agent wakeup", "wakeup", "help agent wakeup", "help wakeup"] {
@@ -214,6 +215,78 @@ async fn wakeup_wakes_the_agent_named_and_refuses_an_ambiguous_name() {
         "{error}"
     );
     assert!(!sleepers[2].woken(), "nobody is picked");
+}
+
+/// Issue 611: `/agent cancel` with an agent ends its turn and leaves it in the channel, which is
+/// not kept quiet; everybody is told, by the command's name.
+#[tokio::test]
+async fn cancel_ends_the_turn_of_the_agent_named_and_leaves_it_in_the_channel() {
+    let Stuck { channel, context, agent, helper, running, .. } = stuck_in_a_turn().await;
+    let actor = channel.user_actor(alice_of(&context)).unwrap();
+
+    let reply = actor.execute_command(None, "cancel @helper").await.expect("/cancel runs");
+    assert_eq!(reply.command, "agent cancel", "by its short form");
+    assert_eq!(
+        (reply.output.as_deref(), reply.visibility),
+        (Some("Ended any turn of helper."), CommandVisibility::Channel),
+        "told to everybody"
+    );
+    settled(&helper, ActorState::Idle).await;
+    assert_eq!(channel.turn_of(ActorId::Agent(agent)), None, "its turn is ended");
+    assert!(channel.actor(ActorId::Agent(agent)).is_some(), "and it is still in the channel");
+    assert!(!channel.is_quiet(ThreadId::line(channel.id())), "the others are still asked");
+    running.abort();
+}
+
+/// Issue 611: `/agent cancel` issued in a thread ends the turns of that thread and keeps it quiet;
+/// issued in the line, those of the whole channel.
+#[tokio::test]
+async fn cancel_ends_the_turns_of_the_thread_it_is_issued_in_or_of_the_channel() {
+    use caelumora_domain::channel::ThreadOrigin;
+    let Stuck { channel, context, helper, running, .. } = stuck_in_a_turn().await;
+    let actor = channel.user_actor(alice_of(&context)).unwrap();
+    let line = ThreadId::line(channel.id());
+    let origin = ThreadOrigin { thread: line, message: MessageId::new() };
+    let thread =
+        channel.open_thread_by_procedure(&context, ThreadSpec::new(origin)).await.expect("opened");
+
+    let reply = actor.execute_command(Some(thread), "agent cancel").await.expect("it runs");
+    assert_eq!(
+        reply.output.as_deref(),
+        Some("Ended any turns of this thread; it is quiet until someone speaks.")
+    );
+    assert!(channel.is_quiet(thread) && !channel.is_quiet(line), "the thread alone");
+    assert!(channel.turn_of(helper.id()).is_some(), "the turn in the line goes on");
+
+    let reply = actor.execute_command(None, "agent cancel").await.expect("it runs");
+    assert_eq!(
+        reply.output.as_deref(),
+        Some("Ended any turns of this channel; it is quiet until someone speaks.")
+    );
+    settled(&helper, ActorState::Idle).await;
+    assert_eq!(channel.turn_of(helper.id()), None, "its turn is ended");
+    assert!(channel.is_quiet(line), "the channel is quiet");
+    running.abort();
+}
+
+/// Issue 611: `/agent cancel`, `/cancel` for short, asks for `CancelChannel`, as cancelling does
+/// over REST, and names nobody it does not find.
+#[tokio::test]
+async fn cancel_reports_refusals_and_unknown_agents() {
+    let alice = make_user("alice");
+    let refuse_cancelling = Policy(|action| !matches!(action, ActionType::CancelChannel(_)));
+    let channel = channel_with(&[&alice], Arc::new(refuse_cancelling)).await;
+    let actor = channel.user_actor(alice.id).unwrap();
+    for line in ["cancel", "cancel @alice"] {
+        let error = actor.execute_command(None, line).await.expect_err("cancelling is refused");
+        assert!(matches!(as_command_error(&error), CommandError::Forbidden { .. }), "{error}");
+    }
+    assert!(!channel.is_quiet(ThreadId::line(channel.id())), "nothing was cancelled");
+
+    let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
+    let actor = channel.user_actor(alice.id).unwrap();
+    let error = actor.execute_command(None, "cancel @nobody").await.expect_err("no such agent");
+    assert!(matches!(as_command_error(&error), CommandError::InvalidArguments { .. }), "{error}");
 }
 
 /// Runs `/participant nudge` with `args` in `channel`'s line as alice.

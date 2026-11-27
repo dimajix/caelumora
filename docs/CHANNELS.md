@@ -1076,7 +1076,8 @@ decision for the whole channel rather than one per actor.
 `ChannelLoop::cancel` (`CancelChannel`) ends the turns that run in a thread, or wait there for a
 person, set aside - not the turn an actor taking part in it runs in another (issue 602) -, or in
 every thread of the channel: the web UI's stop button of the line cancels them all (issue 557),
-that of a thread's pane its thread alone (`POST …/threads/{tid}/cancel`, issue 595). It is an
+that of a thread's pane its thread alone (`POST …/threads/{tid}/cancel`, issue 595), and
+`/agent cancel` the thread it is issued in, or from the line the whole channel. It is an
 operation on the channel, like renaming or deleting it, not an act of taking part: the policy
 decides who may, and nobody has to be a participant for it; a thread is part of its channel, and
 asks the same.
