@@ -209,9 +209,15 @@ fn render(
     elsewhere: &[PrivateNotesElsewhere],
 ) -> Result<String, PromptError> {
     let own: Vec<_> =
-        own.iter().map(|n| context! { id => n.id.to_string(), text => n.text }).collect();
-    let elsewhere: Vec<_> = elsewhere.iter()
-        .map(|c| context! { name => c.name, notes => c.notes.iter().map(|n| n.text.as_str()).collect::<Vec<_>>() })
+        own.iter().map(|n| context! { id => n.id.to_string(), text => &n.text }).collect();
+    let elsewhere: Vec<_> = elsewhere
+        .iter()
+        .map(|c| {
+            context! {
+                name => &c.name,
+                notes => c.notes.iter().map(|n| n.text.clone()).collect::<Vec<_>>(),
+            }
+        })
         .collect();
     if own.is_empty() && elsewhere.is_empty() {
         return Ok(String::new());

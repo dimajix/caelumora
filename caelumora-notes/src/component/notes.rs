@@ -425,7 +425,7 @@ fn render<'a>(
     let numbered = |notes: &[Note]| {
         notes
             .iter()
-            .map(|n| context! { id => n.id.to_string(), text => n.text })
+            .map(|n| context! { id => n.id.to_string(), text => &n.text })
             .collect::<Vec<_>>()
     };
     let others: Vec<_> = others

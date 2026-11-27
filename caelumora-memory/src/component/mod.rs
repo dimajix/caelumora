@@ -113,7 +113,7 @@ impl PromptProvider for AgentMemoryComponent {
 /// The prompt part of `prompts` for what the agent `recalled` here.
 fn render(prompts: &PromptTexts, recalled: &[Memory]) -> Result<String, PromptError> {
     let recalled: Vec<_> =
-        recalled.iter().map(|m| context! { id => m.id.to_string(), text => m.text }).collect();
+        recalled.iter().map(|m| context! { id => m.id.to_string(), text => &m.text }).collect();
     prompts.render(TEXT, context! { recalled, remember => REMEMBER_TOOL_NAME, update => UPDATE_MEMORY_TOOL_NAME, forget => FORGET_TOOL_NAME })
 }
 

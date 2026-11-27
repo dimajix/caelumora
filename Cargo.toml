@@ -10,7 +10,6 @@ members = [
     "caelumora-tui",
     "caelumora-app",
     "caelumora-rest-api",
-    "caelumora-rest-client",
     "caelumora-rest-server",
     "caelumora-skills",
     "caelumora-memory",
@@ -57,7 +56,7 @@ async-trait = "0.1"
 axum = "0.8.9"
 # The images an Ollama model is given along (issue 282), what the full-screen terminal copies by
 # OSC 52 (issue 576).
-base64 = "0.22"
+base64 = "0.23"
 bitflags = "2"
 bollard = "0.21"
 bytes = "1"
@@ -71,15 +70,15 @@ derive_more = { version = "2.1.1", features = ["display"] }
 encoding_rs = "0.8"
 futures = "0.3"
 # What `web_fetch` gives of a page (issue 544).
-htmd = "0.5"
-jsonwebtoken = { version = "11.1.0", default-features = false, features = ["rust_crypto"] }
+htmd = "0.6"
+jsonwebtoken = { version = "12", default-features = false, features = ["rust_crypto"] }
 meval = "0.2.0"
 mime_guess = "2.0.5"
 # The prompt catalogue (issue 57): templates with loops and conditions, no
-# access to files or the network. `loader` only for templates of owned names
-# and sources, read from the catalogue's files.
-minijinja = { version = "2.24", default-features = false, features = ["builtins", "loader", "multi_template", "serde"] }
-nix = { version = "0.31", features = ["signal", "process"] }
+# access to files or the network: the catalogue reads its files and adds their
+# texts as templates of owned names and sources.
+minijinja = { version = "3", default-features = false, features = ["builtins", "multi_template", "serde"] }
+nix = { version = "0.32", features = ["signal", "process"] }
 percent-encoding = "2.3"
 rand = "0.10.3"
 # The full-screen terminal (issue 569), drawn with crossterm in the version declared above;
@@ -89,15 +88,15 @@ regex = "1.12"
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "native-tls"] }
 rmcp = { version = "3.4", features = ["client", "transport-streamable-http-client-reqwest"] }
 rust-embed = "8.5.0"
-rustyline = "18.0.1"
+rustyline = "19.0.0"
 schemars = "1.2"
 serde = { version = "1.0", features = ["derive"] }
-serde-saphyr = { version = "1.3", default-features = false, features = ["deserialize"] }
+serde-saphyr = { version = "2.2", default-features = false, features = ["deserialize"] }
 serde_json = "1.0"
 serde_path_to_error = "0.1"
 sha2 = "0.11"
 sqlx = { version = "0.9", default-features = false }
-sse-stream = "0.2"
+sse-stream = "0.3"
 tempfile = "3.27"
 thiserror = "2.0.21"
 tokio = "1.53.1"
@@ -153,6 +152,12 @@ codegen-units = 1
 # Nothing `pub` that its crate's root cannot reach: `pub(crate)` by default (CODING-GUIDELINES.md,
 # issue 452).
 unreachable_pub = "warn"
+
+[workspace.lints.cargo]
+# No dependency a crate does not use, in any build of it - the builds without features of the
+# crates on both levels included (CODING-GUIDELINES.md, issue 620). `deny`, not `warn` as the
+# others: the hook's `-D warnings` reaches the lints of rustc and clippy, not Cargo's.
+unused_dependencies = "deny"
 
 [workspace.lints.clippy]
 # Cloning an Arc or Rc says so: Arc::clone(&value) (CODING-GUIDELINES.md, issue 229).

@@ -126,8 +126,8 @@ impl TokenService {
         validation.leeway = 5;
         validation.set_required_spec_claims(&["exp", "sub"]);
         Ok(Self {
-            encoding: EncodingKey::from_secret(key),
-            decoding: DecodingKey::from_secret(key),
+            encoding: EncodingKey::from_secret(key)?,
+            decoding: DecodingKey::from_secret(key)?,
             validation,
             key_id: config.jwt_secret.to_string(),
             lifetime: config.token_lifetime_secs as i64,

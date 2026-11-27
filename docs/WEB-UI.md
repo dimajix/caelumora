@@ -94,6 +94,16 @@ the user is told (`unread.ts`) - is tested beside it, in `*.test.ts` with Vitest
 `src/testing.ts`; `npm run build` type-checks the tests with the rest. The components themselves
 are not tested; they are checked in a browser.
 
+## Its dependencies
+
+The packages of the web UI are brought up to date once a month, with the crates of the workspace
+and as [CRATES.md](CRATES.md#keeping-the-dependencies-up-to-date) describes it:
+`scripts/outdated.sh` names them by `npm outdated`, `npm update` raises them within their ranges,
+each new major version is a step of its own. After the update, `npm run build`, `npm run lint` and
+`npm test` pass, the UI is checked in a browser, and `licenses/generate.py` runs again for
+`package-lock.json`. `npm audit` names what is known to be vulnerable; what waits for a release of
+another package is recorded with its reason.
+
 ## Talking to the server
 
 ### Login and keeping the session

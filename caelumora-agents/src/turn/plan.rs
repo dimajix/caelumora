@@ -207,7 +207,7 @@ fn plan_step_instruction(
     plan_text(
         prompts,
         "step",
-        context! { number => step_number, total => total_steps, description => step.description },
+        context! { number => step_number, total => total_steps, description => &step.description },
     )
 }
 
@@ -217,7 +217,7 @@ fn plan_finalize_instruction(prompts: &PromptTexts, plan: &Plan) -> Result<Strin
     plan_text(
         prompts,
         "finalize",
-        context! { steps => plan.steps.iter().map(|s| s.description.as_str()).collect::<Vec<_>>() },
+        context! { steps => plan.steps.iter().map(|s| s.description.clone()).collect::<Vec<_>>() },
     )
 }
 
@@ -246,11 +246,11 @@ fn plan_overview_instruction(
                 Ordering::Equal => "under_way",
                 Ordering::Greater => "to_do",
             };
-            context! { state, description => s.description }
+            context! { state, description => &s.description }
         })
         .collect();
     let instruction = plan_step_instruction(prompts, current + 1, plan.steps.len(), step)?;
-    plan_text(prompts, "overview", context! { summary => plan.summary, steps, instruction })
+    plan_text(prompts, "overview", context! { summary => &plan.summary, steps, instruction })
 }
 
 /// Every text `plan` is given to the model as: each step's instruction,

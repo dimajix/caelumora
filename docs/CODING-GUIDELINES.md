@@ -143,8 +143,9 @@ against this list, rule by rule, before it is reported (the self-review of
     2` in `clippy.toml`), `unwrap_used` and `expect_used` ([Types](#types)), `print_stdout` and
     `print_stderr` ([Logging](#logging)), `allow_attributes` and
     `allow_attributes_without_reason` (the rule above), `unreachable_pub` (visible only what is
-    used from outside, [AGENTS.md](../AGENTS.md#design-principles)); and `dbg_macro` and `todo`,
-    so that no debugging output and no unfinished code is committed. `clippy.toml` allows
+    used from outside, [AGENTS.md](../AGENTS.md#design-principles)), `unused_dependencies`
+    ([Crates and interfaces](#crates-and-interfaces)); and `dbg_macro` and `todo`, so that no
+    debugging output and no unfinished code is committed. `clippy.toml` allows
     unwrapping and printing in tests; test code outside `#[cfg(test)]` - a `testing` module, a
     suite, the helpers of an integration test - says so at its top with
     `#![expect(clippy::unwrap_used, …, reason = "test code: …")]`. `unreachable_pub` checks only
@@ -238,7 +239,11 @@ it the Rust files a commit adds or changes.
 *   **Dependencies.** Every dependency - of another crate of the workspace too - is declared once
     in `[workspace.dependencies]`, with its version, `default-features = false` if any crate needs
     it, and the features every crate using it needs. A crate names it with `workspace = true` and
-    adds only its own features and `optional`. A version is raised there, for all crates at once.
+    adds only its own features and `optional`. A version is raised there, for all crates at once,
+    in the update made once a month ([CRATES.md](CRATES.md#keeping-the-dependencies-up-to-date)).
+    A crate declares only what it uses, in every build of it: `unused_dependencies`
+    (`[workspace.lints.cargo]`, issue 620) fails a build that leaves a dependency unused - a crate
+    on both levels makes one that only a feature uses optional, part of that feature.
 *   **Stored data.** Stored data need not stay readable: until further notice, old data may be
     deleted. A change to what is stored comes without compatibility code - no `serde` aliases, no
     readers of an older form. Instead, the summary of the change says which stored data has to be

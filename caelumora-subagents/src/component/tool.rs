@@ -115,7 +115,7 @@ impl StartSubagentTool {
             [("personality", string()), ("brief", string())],
             ["personality", "brief"],
         );
-        let names: Vec<&str> = personalities.iter().map(Name::as_str).collect();
+        let names: Vec<String> = personalities.iter().map(Name::to_string).collect();
         let values = context! { personalities => names, ask => ASK_SUBAGENT, end => END_SUBAGENT };
         let description = tool(prompts, (START_SUBAGENT, parameters), requires_approval, values)?;
         Ok(Self { description, personalities })

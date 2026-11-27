@@ -156,7 +156,6 @@ drawn in [CRATES.md](CRATES.md):
     the whole window or line by line for a screen reader (`Screen`).
 *   **`caelumora-logging`** - the setup of the log the two programs share: it installs the `tracing`
     subscriber from `AppConfig::logging`. The other crates only emit records (issue 330).
-*   **`caelumora-rest-client`** - reserved for a client of the REST interface; empty so far.
 
 ## Plugins
 

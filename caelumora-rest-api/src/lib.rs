@@ -1,8 +1,7 @@
-//! The wire of Caelumora's REST API (issue 323): the requests a client
-//! sends and the responses the server answers, as `serde` reads and writes
-//! them. Nothing here serves or sends them - the server is
-//! `caelumora-rest-server`, a client is `caelumora-rest-client` -, so that
-//! both depend on these types alone and neither on the other.
+//! The wire of Caelumora's REST API (issue 323): the requests a client sends and the responses the
+//! server answers, as `serde` reads and writes them. Nothing here serves or sends them - the server
+//! is `caelumora-rest-server` -, so that it and a client depend on these types alone and neither on
+//! the other.
 //!
 //! A response is made from what the domain gives - an entity, a snapshot of it as a reader sees
 //! it - by `From` or an `of`; what only the kernel knows is put into it by the server.

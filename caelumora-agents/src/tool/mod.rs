@@ -565,7 +565,11 @@ impl ToolError {
             }
             ToolError::UnknownTool(name) => (
                 ToolResultStatus::UnknownTool,
-                result_text(prompts, "unknown_tool", context! { name, available }),
+                result_text(
+                    prompts,
+                    "unknown_tool",
+                    context! { name, available => available.to_vec() },
+                ),
             ),
             ToolError::InvalidParameter(reason) => (
                 ToolResultStatus::InvalidArguments,
