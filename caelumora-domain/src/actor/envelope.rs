@@ -1,6 +1,7 @@
 //! An event on its way through a channel (`Envelope`): when it was sent, where and in which chain
-//! (`EventContext`, by the ids `EventId` and `SpanId`), whom it goes to and what is kept of it -
-//! and what an actor does with one it looks at in its inbox (`Pick`).
+//! (`EventContext`, by the ids `EventId` and `SpanId`), whom it goes to, what is kept of it and
+//! how the pieces of a partial message become one (`absorb`) - and what an actor does with one it
+//! looks at in its inbox (`Pick`).
 
 use super::{ActorEvent, ActorId, Rejection};
 use crate::approval::ApprovalStatus;
@@ -125,6 +126,27 @@ impl Envelope {
     /// moderator passing an answer on.
     pub fn forward(&self, event: ActorEvent) -> Self {
         Self { timestamp: Utc::now(), context: self.context.clone(), event }
+    }
+
+    /// Takes `next` in if it is the next piece of the same partial message (issue 626), and
+    /// returns whether it did: of the same kind - both a `PartialMessageGenerated` or both an
+    /// `IntermediatePartialGenerated` -, in the same context but for its id, and of the same
+    /// message (`Message::append`). It keeps its id and the time it was sent: a partial is neither
+    /// recorded nor referred to.
+    pub fn absorb(&mut self, next: &Envelope) -> bool {
+        let context = EventContext { event_id: self.context.event_id, ..next.context.clone() };
+        context == self.context
+            && match (&mut self.event, &next.event) {
+                (
+                    ActorEvent::PartialMessageGenerated(message),
+                    ActorEvent::PartialMessageGenerated(piece),
+                )
+                | (
+                    ActorEvent::IntermediatePartialGenerated(message),
+                    ActorEvent::IntermediatePartialGenerated(piece),
+                ) => message.append(piece),
+                _ => false,
+            }
     }
 
     /// What the channel's history records of this envelope if it is an
@@ -804,6 +826,76 @@ mod tests {
         assert_eq!(written["span_id"], said.span_id.to_string(), "a bare UUID");
         let read: EventContext = serde_json::from_value(written).unwrap();
         assert_eq!(read, answer, "read back as it was written");
+    }
+
+    /// Issue 626: a partial takes in the next piece of its message - of the same kind, in the same
+    /// context but for its id -, and keeps its own ids and time; what is of another kind, or sent
+    /// in another context, it does not.
+    #[test]
+    fn a_partial_takes_in_the_next_piece_of_its_message_alone() {
+        let talker = ActorId::Agent(AgentId::new());
+        let context = EventContext::new(SessionId::new(), ChannelId::new(), talker, "talker");
+        let piece = |text: &str| Message {
+            id: MessageId::new(),
+            sender_id: talker,
+            role: MessageRole::Assistant,
+            content: Some(text.to_string()),
+            ..make_message(MessageId::new())
+        };
+        let sent = |event| {
+            Envelope::new(EventContext { event_id: EventId::new(), ..context.clone() }, event)
+        };
+        let partial = |text| sent(ActorEvent::PartialMessageGenerated(piece(text)));
+        let content = |envelope: &Envelope| match &envelope.event {
+            ActorEvent::PartialMessageGenerated(message)
+            | ActorEvent::IntermediatePartialGenerated(message) => {
+                (message.id, message.content.clone())
+            }
+            other => panic!("a partial, got {}", other.kind()),
+        };
+
+        let mut first = partial("Hel");
+        let own = (first.context.event_id, first.timestamp);
+        let (id, _) = content(&first);
+        assert!(first.absorb(&partial("lo")), "the next piece");
+        assert_eq!(content(&first), (id, Some("Hello".to_string())), "its own message goes on");
+        assert_eq!((first.context.event_id, first.timestamp), own, "its own id and time");
+
+        let mut step = sent(ActorEvent::IntermediatePartialGenerated(piece("one")));
+        let next_step = sent(ActorEvent::IntermediatePartialGenerated(piece(", two")));
+        assert!(step.absorb(&next_step), "a step of a plan streams in as the answer does");
+        assert_eq!(content(&step).1.as_deref(), Some("one, two"));
+
+        let elsewhere = |context: EventContext| Envelope { context, ..partial("!") };
+        let stranger = ActorId::User(UserId::new());
+        for (other, what) in [
+            (next_step, "a step of a plan"),
+            (sent(ActorEvent::CompleteMessageGenerated(piece("!"))), "a message said"),
+            (elsewhere(EventContext { sender_id: stranger, ..context.clone() }), "of another"),
+            (
+                elsewhere(EventContext { thread_id: ThreadId::new(), ..context.clone() }),
+                "elsewhere",
+            ),
+            (elsewhere(EventContext { initiator_id: stranger, ..context.clone() }), "for another"),
+            (
+                elsewhere(EventContext { correlation_id: EventId::new(), ..context.clone() }),
+                "later",
+            ),
+            (
+                elsewhere(EventContext { span_id: SpanId::new(), ..context.clone() }),
+                "in another span",
+            ),
+            (elsewhere(EventContext { span_depth: 3, ..context.clone() }), "deeper in its span"),
+        ] {
+            assert!(!first.absorb(&other), "not {what}");
+        }
+        assert_eq!(
+            content(&first).1.as_deref(),
+            Some("Hello"),
+            "unchanged by what it did not take"
+        );
+        let mut said = sent(ActorEvent::CompleteMessageGenerated(piece("Hello")));
+        assert!(!said.absorb(&partial("!")), "a message said takes nothing in");
     }
 
     /// Issue 557: the line's view shows what happens in the line and in the whole channel, and of

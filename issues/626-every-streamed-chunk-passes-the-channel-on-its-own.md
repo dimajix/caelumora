@@ -1,6 +1,6 @@
 # 626 — Every streamed chunk passes the channel on its own
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** low
 **Area:** Sessions and channels
@@ -125,3 +125,9 @@ an event, nor how often a turn waits for the channel.
 - **2026-11-27** — The options of the inbox and the stream corrected: nothing behind the user's
   actor holds it back, since its outbox never waits; merging in the stream does make it fall behind
   less often, and a stream that falls behind loses the answer under way from its snapshot.
+- **2026-11-27** — Done as chosen: `Envelope::absorb` and `Message::append` hold the rule in the
+  domain; the channel's loop takes what is queued behind an envelope with it (`taken_together` in
+  `caelumora-kernel/src/channel/run.rs`), from a queue of 100 (`INPUT_CAPACITY`); described in
+  `docs/CHANNELS.md`. The busy loop of *Done when* is tested as a queue filled before the loop
+  takes from it: a test through `ChannelLoop::run` with a moderator that holds the loop could not
+  tell when another actor's pieces are all queued, and would depend on timing.

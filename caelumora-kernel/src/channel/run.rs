@@ -30,6 +30,10 @@ use tokio::task::{AbortHandle, JoinSet};
 use tokio_util::task::TaskTracker;
 use tracing::{debug, error, info, trace, warn, Instrument};
 
+/// How many envelopes the actors of a channel may have sent it that it has yet to take: whoever
+/// sends one more waits until it takes them (issue 626).
+const INPUT_CAPACITY: usize = 100;
+
 /// The task of a running actor and its inbox. Owned by `run`, which keeps
 /// them apart from `ChannelLoop::actors`: that table says who takes part and
 /// is read from anywhere; this one is `run`'s, whose `JoinSet` owns the
@@ -80,6 +84,25 @@ struct Leaving {
     carried_out: Vec<oneshot::Sender<()>>,
 }
 
+/// `first` and what was queued behind it as it was taken, to be handled one after the other (issue
+/// 626): each envelope taken in by the last one taken of its sender if it is the next piece of the
+/// same partial message (`Envelope::absorb`), so that the pieces sent while the channel was busy
+/// are admitted, routed and delivered as one. Each sender's envelopes keep their order; between
+/// senders, a piece moves ahead of what another sent before it, which it does not depend on. What
+/// arrives while they are taken waits for the next round.
+fn taken_together(first: Envelope, queue: &mut mpsc::Receiver<Envelope>) -> Vec<Envelope> {
+    let mut taken = vec![first];
+    for _ in 0..queue.len() {
+        let Ok(next) = queue.try_recv() else { break };
+        let sender = next.context.sender_id;
+        let last = taken.iter_mut().rev().find(|envelope| envelope.context.sender_id == sender);
+        if !last.is_some_and(|last| last.absorb(&next)) {
+            taken.push(next);
+        }
+    }
+    taken
+}
+
 /// Aborts the tasks `aborts` names unless those `tasks` track have ended by themselves within
 /// `STOP_GRACE` (`stopped`), logging `warning` then: for actors told to leave or to stop, which
 /// `run` keeps routing meanwhile.
@@ -115,7 +138,7 @@ impl ChannelLoop {
         let mut requests_rx = taken.ok_or_else(|| anyhow!("Channel {} ran already", self.id))?;
         info!("Channel {}/{} is starting", self.channel.name(), self.id);
         let _end = EndOfRun(self);
-        let (event_tx, mut event_rx) = mpsc::channel(10);
+        let (event_tx, mut event_rx) = mpsc::channel(INPUT_CAPACITY);
         let mut join_set = JoinSet::new();
         let mut running = HashMap::new();
         // The actors taken in before it ran - as the channel was built, and
@@ -134,7 +157,11 @@ impl ChannelLoop {
                 // under its id starts.
                 biased;
                 // Never closed: `run` keeps a sender for the actors joining later.
-                Some(event) = event_rx.recv() => self.handle_actor_event(event, &running).await,
+                Some(event) = event_rx.recv() => {
+                    for event in taken_together(event, &mut event_rx) {
+                        self.handle_actor_event(event, &running).await;
+                    }
+                }
                 Some(request) = requests_rx.recv() => {
                     self.apply_change(request, &mut running, &event_tx, &mut join_set)
                         .await;
@@ -4138,5 +4165,77 @@ mod tests {
             .modify_message(message.id, Some("again".to_string()), None, Vec::new())
             .await
             .expect("for the channel to reject");
+    }
+
+    /// Issue 626: what was queued as the channel took an envelope is taken with it, the pieces of
+    /// each sender's partial message taken in by its last envelope - past what another sent in
+    /// between, which keeps its place, but not past another envelope of its own -; what arrives
+    /// while they are taken waits for the next round.
+    #[test]
+    fn the_queued_pieces_of_a_partial_message_are_taken_as_one() {
+        use caelumora_domain::actor::testing::context_in;
+        use caelumora_domain::message::testing::make_message;
+        let context = context_in(ChannelId::new());
+        let talker = ActorId::Agent(AgentId::new());
+        let other = ActorId::Agent(AgentId::new());
+        let partial = |sender: ActorId, text: &str| {
+            let piece = Message {
+                sender_id: sender,
+                role: MessageRole::Assistant,
+                content: Some(text.to_string()),
+                ..make_message(MessageId::new())
+            };
+            Envelope::new(
+                EventContext { sender_id: sender, ..context.clone() },
+                ActorEvent::PartialMessageGenerated(piece),
+            )
+        };
+        let started = |sender: ActorId| {
+            Envelope::new(
+                EventContext { sender_id: sender, ..context.clone() },
+                ActorEvent::ResponseStarted { turn_id: TurnId::new() },
+            )
+        };
+        let (tx, mut queue) = mpsc::channel(INPUT_CAPACITY);
+        for envelope in [
+            partial(talker, "lo"),
+            started(other),
+            partial(talker, ", "),
+            partial(other, "Hi"),
+            partial(talker, "world"),
+            started(talker),
+            partial(talker, "again"),
+        ] {
+            tx.try_send(envelope).expect("room");
+        }
+        let taken = taken_together(partial(talker, "Hel"), &mut queue);
+        tx.try_send(partial(talker, "!")).expect("room");
+
+        let said: Vec<_> = taken
+            .iter()
+            .map(|envelope| match &envelope.event {
+                ActorEvent::PartialMessageGenerated(message) => {
+                    (envelope.context.sender_id, message.content.clone().unwrap_or_default())
+                }
+                event => (envelope.context.sender_id, event.kind().to_string()),
+            })
+            .collect();
+        let as_said = |sender, text: &str| (sender, text.to_string());
+        assert_eq!(
+            said,
+            [
+                as_said(talker, "Hello, world"),
+                as_said(other, "ResponseStarted"),
+                as_said(other, "Hi"),
+                as_said(talker, "ResponseStarted"),
+                as_said(talker, "again"),
+            ],
+            "the pieces of each sender as one, every sender's envelopes in their order"
+        );
+        let next = queue.try_recv().expect("what arrived later is queued still");
+        let ActorEvent::PartialMessageGenerated(message) = &next.event else {
+            panic!("a partial, got {}", next.event.kind())
+        };
+        assert_eq!(message.content.as_deref(), Some("!"), "for the next round");
     }
 }
