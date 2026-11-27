@@ -200,6 +200,11 @@ and states as the JSON store does (`FileDocuments`, `JsonStates`), in places of 
     one name as names compare, are both left out and logged, since which of them won would depend on
     the order of a directory. `caelumora id <file>` prints the id of a file, and whether its name
     derives it (`HomeStore::identity_of`): one a template or an agent refers to should have its own.
+    What is wrong with the files of a kind, `HomeStore::problems_of` tells, which the terminal
+    shows as it starts: each left out, as no definition of the kind or as one of two of an id or a
+    name, and each read without fields it writes (`unread_fields`) - mistyped most likely, since a
+    field its type does not know is ignored, and a type with a name in its fields cannot refuse one
+    (`#[serde(flatten)]` beside `deny_unknown_fields`).
 *   **Several programs may use one data directory at a time**: a lock of the file system per kind
     keeps their writes apart (`locks/<kind>`), and what one wrote the other finds when it next
     reads, though it hears of nothing. A session runs in one of them, held by the lock of its file

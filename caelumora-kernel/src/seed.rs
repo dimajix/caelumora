@@ -8,20 +8,21 @@ use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use caelumora_domain::agent::Personality;
 use caelumora_domain::component::ComponentBundle;
-use caelumora_domain::config::parse_yaml;
+use caelumora_domain::config::{parse_yaml, unread_fields};
 use caelumora_domain::store::{StoreResult, StoreResultExt, Stored};
 use caelumora_domain::template::SessionTemplate;
+use caelumora_domain::value::name::ScopedName;
 use caelumora_security::confidentiality::ConfidentialityPolicy;
 use caelumora_security::SecurityContext;
 use caelumora_store::{EntityStore, EntityStores};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tracing::info;
+use tracing::{info, warn};
 
 /// The documents of one seed file. A key it does not know is a section of
 /// a plugin's; one that no plugin claims is an error when it is seeded.
@@ -57,7 +58,7 @@ pub trait SeedSection: Debug + Send + Sync {
 /// A personality as a seed writes it: as the store keeps it, but with the
 /// roles its agents are limited to named by their names - written by hand
 /// (issue 23) -, resolved to their ids when it is applied.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SeedPersonality {
     #[serde(default)]
     roles: Option<Vec<String>>,
@@ -83,7 +84,8 @@ impl SeedPersonality {
 }
 
 impl Seed {
-    /// Reads the seed file at `path`.
+    /// Reads the seed file at `path`, and logs the fields its documents write that they do not
+    /// keep (`unread`) - mistyped most likely, since a field nothing reads changes nothing.
     ///
     /// # Errors
     /// If the file cannot be read or is no seed; the error names the file
@@ -91,8 +93,31 @@ impl Seed {
     pub fn read(path: &Path) -> Result<Self> {
         let content = fs::read_to_string(path)
             .with_context(|| format!("Cannot read the seed file {}", path.display()))?;
-        parse_yaml(&content)
-            .with_context(|| format!("Cannot parse the seed file {}", path.display()))
+        let parsed = || format!("Cannot parse the seed file {}", path.display());
+        let seed: Self = parse_yaml(&content).with_context(parsed)?;
+        let written: Value = parse_yaml(&content).with_context(parsed)?;
+        for unread in seed.unread(&written) {
+            warn!("The seed file {} writes fields not read, of {unread}", path.display());
+        }
+        Ok(seed)
+    }
+
+    /// The documents of `written`, the seed as it was written, with fields that the documents
+    /// read from it do not keep, as `unread_in` tells them; the sections of the plugins are their
+    /// plugins'.
+    fn unread(&self, written: &Value) -> Vec<String> {
+        let section = |name: &str| written.get(name);
+        let bundles = &self.component_bundles;
+        let mut told =
+            unread_in("component bundle", section("component_bundles"), bundles, |b| &b.name);
+        let templates = &self.session_templates;
+        told.extend(unread_in("session template", section("session_templates"), templates, |t| {
+            &t.name
+        }));
+        told.extend(unread_in("personality", section("personalities"), &self.personalities, |p| {
+            &p.personality.name
+        }));
+        told
     }
 
     /// Puts every document into `stores` whose id they do not have yet (`create_unless_taken`) - so
@@ -143,6 +168,25 @@ impl Seed {
         }
         Ok(())
     }
+}
+
+/// The documents of a section of the seed, `written` as it was written, whose fields the documents
+/// read from it, `read` in its order, do not keep (`unread_fields`) - mistyped most likely, since a
+/// field nothing reads changes nothing -, each told as the `kind`, its name and those fields: for
+/// a `SeedSection` to log, as `Seed::read` logs those of its own sections.
+pub fn unread_in<T: Serialize>(
+    kind: &str,
+    written: Option<&Value>,
+    read: &[T],
+    name: impl Fn(&T) -> &ScopedName,
+) -> Vec<String> {
+    let written = written.and_then(Value::as_array).into_iter().flatten();
+    let unread =
+        written.zip(read).map(|(written, read)| (name(read), unread_fields(written, read)));
+    unread
+        .filter(|(_, fields)| !fields.is_empty())
+        .map(|(name, fields)| format!("the {kind} {name}: {}", fields.join(", ")))
+        .collect()
 }
 
 /// Creates `value` in `store` as the system unless its id is taken - also by one marked deleted,
@@ -301,6 +345,27 @@ mod tests {
             .map(|page| page.items)
             .unwrap();
         assert!(stored.is_empty(), "nothing stored");
+    }
+
+    /// A field a document of the seed writes and does not keep is told with the document; the
+    /// roles a personality names by their names are the seed's own, and kept.
+    #[test]
+    fn the_fields_a_seeded_document_does_not_read_are_told() {
+        let yaml = "personalities:\n\
+            - id: ff9a5e56-e5ea-43f9-9114-2098a6f417a9\n  name: limited\n  roles: [staff]\n\
+            \x20 descripton: A typo\n\
+            component_bundles:\n\
+            - id: 0b6c7f0e-3d55-4a77-b0a3-5f2a1f3c9e10\n  name: shared\n  components: []\n\
+            \x20 scpoe: global\n";
+        let seed: Seed = parse_yaml(yaml).unwrap();
+        let written: Value = parse_yaml(yaml).unwrap();
+
+        let unread = seed.unread(&written);
+
+        assert_eq!(
+            unread,
+            ["the component bundle shared: scpoe", "the personality limited: descripton"]
+        );
     }
 
     /// A directory names the `.yaml` files in it and its subdirectories, by their paths; a file is
