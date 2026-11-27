@@ -240,7 +240,7 @@ where
 /// The parts of prompt components on `path` that stand given (`given_as_they_stand`), each entry
 /// (`TranscriptEntry::part_of`) with its message as it stands (issue 537): what stands of the
 /// components' parts, for a turn to give where they changed (`AgentChannelState::give_parts`) and
-/// a compaction to carry over (`Transcript::carried_parts`).
+/// a compaction to carry over (`carried_over`).
 pub(crate) fn parts_as_given<'a, P>(path: P) -> Vec<(&'a Node<TranscriptEntry>, Message)>
 where
     P: IntoIterator<Item = &'a Node<TranscriptEntry>>,
@@ -250,6 +250,19 @@ where
         .into_iter()
         .filter(|(node, _)| node.entry.part_of().is_some())
         .collect()
+}
+
+/// The entries of `path` - a path of a transcript from its root - that a compaction carries over
+/// rather than replacing them (issue 537): the parts of prompt components that stand on it, as the
+/// model is given them (`parts_as_given`). Copied after the replacement (`Transcript::compact`),
+/// they stay as they are, and so count as kept wherever the path is cut; what is handed a model to
+/// write the replacement leaves them out (`ContextResolver::conversation_until`).
+pub(crate) fn carried_over<'a, P>(path: P) -> HashSet<Digest>
+where
+    P: IntoIterator<Item = &'a Node<TranscriptEntry>>,
+    P::IntoIter: Clone,
+{
+    parts_as_given(path).into_iter().map(|(node, _)| node.digest).collect()
 }
 
 /// The message `id` as `nodes` - a transcript's, in the order they were
@@ -297,13 +310,10 @@ impl Transcript {
         as_they_stand(self.entries(thread)).filter_map(|(_, message)| message).collect()
     }
 
-    /// The entries of the branch of `thread` a compaction carries over
-    /// rather than replacing them (issue 537): the parts of prompt
-    /// components that stand on it, as the model is given them
-    /// (`parts_as_given`). Copied after the replacement (`compact`), they
-    /// stay as they are, and so count as kept wherever the branch is cut.
-    pub fn carried_parts(&self, thread: ThreadId) -> HashSet<Digest> {
-        parts_as_given(self.entries(thread)).into_iter().map(|(node, _)| node.digest).collect()
+    /// The entries of the branch of `thread` a compaction carries over rather than replacing them
+    /// (`carried_over`).
+    pub fn carried_over(&self, thread: ThreadId) -> HashSet<Digest> {
+        carried_over(self.entries(thread))
     }
 
     /// The entries of the path `digest` names: from the root up to and
@@ -415,7 +425,7 @@ impl Transcript {
     /// branch of its own from the root. On it come `replacement` - what stands for
     /// the older entries -, given to read, each as its source if it is
     /// knowledge (issue 389); then the parts of prompt components that stand
-    /// before the entries kept (`carried_parts`, issue 537); then the entries
+    /// before the entries kept (`carried_over`, issue 537); then the entries
     /// of the branch from `keep_from` on - `None`: none - as they stand;
     /// and last where the compaction's part of the branch ends
     /// (`TranscriptEntry::Compacted`, issue 387).
@@ -454,7 +464,7 @@ impl Transcript {
                 .map(|(node, standing)| (node.digest, node.entry.copy_standing(standing)))
                 .collect();
         let kept = copies.split_off(start);
-        let carried = self.carried_parts(thread);
+        let carried = self.carried_over(thread);
         let (parts, replaced): (Vec<_>, Vec<_>) =
             copies.into_iter().partition(|(old, _)| carried.contains(old));
         if replacement.is_empty() && parts.is_empty() && kept.iter().all(|(_, copy)| copy.is_none())

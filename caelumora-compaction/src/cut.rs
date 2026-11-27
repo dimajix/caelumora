@@ -31,7 +31,7 @@ type Entry = (Digest, Vec<KnowledgeSource>, Option<Message>);
 pub(crate) struct Cut {
     replaced: Vec<Entry>,
     kept: Vec<Entry>,
-    /// How many prompt parts before the cut are carried over (`Transcript::carried_parts`).
+    /// How many prompt parts before the cut are carried over (`Transcript::carried_over`).
     carried: usize,
     /// The last entry before the cut: up to it the part replaced is read.
     until: Digest,
@@ -53,7 +53,7 @@ impl Cut {
         under_way: TurnId,
     ) -> Option<Self> {
         let whole = kept_whole(transcript.entries(thread).map(|node| &node.entry));
-        let carried = transcript.carried_parts(thread);
+        let carried = transcript.carried_over(thread);
         // What can be given again as the model sees it: not what a turn given up as `Lowered`
         // read, which it does not see (issue 538).
         let mut known: HashMap<Digest, Vec<KnowledgeSource>> =

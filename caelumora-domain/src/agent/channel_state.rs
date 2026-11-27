@@ -511,7 +511,7 @@ impl AgentChannelState {
     /// with `replacement` - what stands for the older messages: a summary, the
     /// skills given again, each given to read with the knowledge it is, if
     /// it is one -, the parts of prompt components that stand before the
-    /// entries kept (`Transcript::carried_parts`, issue 537), and the entries
+    /// entries kept (`Transcript::carried_over`, issue 537), and the entries
     /// of its branch from `keep_from` on - `None`: none - as they stand
     /// (`Transcript::compact`). The turn's context moves to the new head,
     /// and the history records the compaction (`HistoryEntry::Compacted`),

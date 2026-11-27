@@ -722,7 +722,7 @@ old one but does not continue it:
 *   **Prompt parts are carried over.** A part the turn placed after an entry kept follows its
     copy, one placed after an entry replaced follows the replacement - the notes before the
     turn's input as well as the step of a plan. A part given into the transcript that stands before
-    the part kept is copied as it stands after the replacement (`Transcript::carried_parts`, issue
+    the part kept is copied as it stands after the replacement (`Transcript::carried_over`, issue
     537): what replaces the older messages leaves it as it is. A plan whose instructions were
     replaced is named again where its current step stood: its steps, which are done and which is
     under way, then the instruction (`Turn::compact`).
