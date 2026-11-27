@@ -89,8 +89,9 @@ continues that one instead of starting a session, or starts one if there is none
 another is not resumed. All three need the directory the program works in, which a configuration
 given by `--config` may not name. `caelumora id <file>` prints the id a skill, a personality, a
 bundle or a template is kept by, and whether its name derives it - a file renamed then loses it,
-unless the id is written into it. What `~/.config/caelumora/config.yaml` says lies over these
-defaults, key by key (see `docs/CONFIGURATION.md`); `--config <file>` replaces them, as
+unless the id is written into it. As it starts, it tells which of these files it leaves out and
+why, and which fields of them it does not read. What `~/.config/caelumora/config.yaml` says lies
+over these defaults, key by key (see `docs/CONFIGURATION.md`); `--config <file>` replaces them, as
 `--config examples/config.yaml --template sassy-session` does with the demo data of `examples/seed`.
 The TUI writes its log to `~/.local/state/caelumora/tui.log`.
 

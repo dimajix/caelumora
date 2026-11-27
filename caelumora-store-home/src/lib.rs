@@ -10,12 +10,12 @@ mod places;
 pub mod plugin;
 
 pub use content::{HomeContent, HomeContentConfig};
-pub use definitions::{DefinitionFiles, FileFormat, Identity};
+pub use definitions::{DefinitionFiles, DefinitionProblem, FileFormat, Identity};
 
 use async_trait::async_trait;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::session::SessionId;
-use caelumora_domain::store::{EntityKind, StoreResult};
+use caelumora_domain::store::{EntityKind, StoreResult, Stored};
 use caelumora_store::documents::{DocumentOf, DocumentStorage};
 use caelumora_store::history::HistoryStore;
 use caelumora_store::places::StorePlaces;
@@ -25,7 +25,7 @@ use caelumora_store::{PersistenceBackend, StateStore};
 use caelumora_store_json::{
     lock_file, to_backend_error, FileDocuments, JsonFormat, JsonStates, DEFAULT_JOURNAL_FLOOR,
 };
-use definitions::{identity_in, Definitions};
+use definitions::{identity_in, Definitions, KindFiles};
 use layout::{HomeDocuments, HomeStates};
 use places::Places;
 use serde::Deserialize;
@@ -104,6 +104,18 @@ impl HomeStore {
     /// read, or is no definition of its kind.
     pub async fn identity_of(&self, path: &Path) -> StoreResult<Identity> {
         identity_in(&self.places, &self.definitions, path).await
+    }
+
+    /// The files of the definitions of `T`'s kind and what is wrong with each, those without a
+    /// problem left out: what a person who writes them is to be told, since every read leaves out
+    /// a file it cannot read, and a field `T` does not keep changes nothing. None for a kind that
+    /// is not kept as definitions.
+    ///
+    /// # Errors
+    /// If a directory of definitions cannot be read.
+    pub async fn problems_of<T: Stored>(&self) -> StoreResult<Vec<(PathBuf, DefinitionProblem)>> {
+        let Some(files) = self.definitions.get(T::KIND.name()) else { return Ok(Vec::new()) };
+        KindFiles::new(Arc::clone(&self.places), T::KIND, files).problems::<T>().await
     }
 }
 
@@ -781,6 +793,41 @@ mod tests {
         let names: Vec<_> = listed.iter().map(|p| p.name.as_str().to_string()).collect();
         assert_eq!(names, ["alone"]);
         assert!(stores.personalities.get(&system, id.into()).await.is_err());
+    }
+
+    /// What is wrong with the files of a kind is told for each - left out as no definition, or with
+    /// another of its id, or read without fields it writes -, a file without a problem not at all,
+    /// nor a kind not kept as definitions.
+    #[tokio::test]
+    async fn what_is_wrong_with_the_files_of_definitions_is_told() {
+        let dir = tempdir().unwrap();
+        let personalities = dir.path().join("config/personalities");
+        fs::create_dir_all(&personalities).unwrap();
+        let id = Uuid::new_v4();
+        fs::write(personalities.join("one.yaml"), format!("id: {id}\n")).unwrap();
+        fs::write(personalities.join("copy.yaml"), format!("id: {id}\n")).unwrap();
+        fs::write(personalities.join("broken.yaml"), "description: [\n").unwrap();
+        fs::write(personalities.join("typed.yaml"), "kind: neither\n").unwrap();
+        fs::write(personalities.join("mistyped.yaml"), "descripton: A typo\npurging: false\n")
+            .unwrap();
+        fs::write(personalities.join("plain.yaml"), "description: A plain one\n").unwrap();
+        let store = store(dir.path());
+
+        let mut problems = store.problems_of::<Personality>().await.unwrap();
+
+        problems.sort_by(|one, other| one.0.cmp(&other.0));
+        let told: Vec<(&str, &DefinitionProblem)> = problems
+            .iter()
+            .map(|(path, problem)| (path.file_name().unwrap().to_str().unwrap(), problem))
+            .collect();
+        assert_eq!(told.len(), 5, "{told:?}");
+        assert!(matches!(told[0], ("broken.yaml", DefinitionProblem::Unreadable(_))), "{told:?}");
+        assert_eq!(told[1], ("copy.yaml", &DefinitionProblem::Shared));
+        let unread = DefinitionProblem::Unread(vec!["descripton".to_string()]);
+        assert_eq!(told[2], ("mistyped.yaml", &unread));
+        assert_eq!(told[3], ("one.yaml", &DefinitionProblem::Shared));
+        assert!(matches!(told[4], ("typed.yaml", DefinitionProblem::Unreadable(_))), "{told:?}");
+        assert!(store.problems_of::<Project>().await.unwrap().is_empty(), "no definitions");
     }
 
     /// A deleted definition frees its name, and takes it again when it is restored.

@@ -98,7 +98,9 @@ it registers, a plugin
 *   claims its section of the configuration (`config::<C>(name)`), read as `C`, under `plugins`, and
     of the seed files (`seed_section`, a `SeedSection`), at their top level - the seed holds what
     the plugins keep, and no library claims a section of it, so that it has nothing to keep apart;
-    one that no plugin claims is an error, so that a misspelt section is found.
+    one that no plugin claims is an error, so that a misspelt section is found. A plugin logs the
+    fields a document of its section writes and does not read (`seed::unread_in`), as the seed
+    logs those of its own sections, so that a misspelt field is found too.
 
 Its views are an extension trait on `Views`, built from what `Views` opens: the viewer's `context`,
 the `access_policy` and `confidentiality` policies, its manager as a `service`, `channel_reading`,

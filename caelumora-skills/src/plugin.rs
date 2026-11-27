@@ -11,12 +11,12 @@ use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_kernel::plugin::Plugin;
-use caelumora_kernel::seed::{create_unless_taken, SeedSection};
+use caelumora_kernel::seed::{create_unless_taken, unread_in, SeedSection};
 use caelumora_store::EntityStore;
 use serde_json::Value;
 use std::fmt;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{info, warn};
 
 /// Skills, as a plugin.
 #[derive(Debug, Default)]
@@ -60,8 +60,14 @@ impl fmt::Debug for SeededSkills {
 
 #[async_trait]
 impl SeedSection for SeededSkills {
+    /// Seeds the skills of `section`, and logs the fields a skill writes that it does not keep
+    /// (`unread_in`).
     async fn seed(&self, section: Value) -> Result<()> {
-        for mut skill in serde_json::from_value::<Vec<Skill>>(section)? {
+        let skills: Vec<Skill> = serde_json::from_value(section.clone())?;
+        for unread in unread_in("skill", Some(&section), &skills, |skill| &skill.name) {
+            warn!("The seed writes fields not read, of {unread}");
+        }
+        for mut skill in skills {
             if create_unless_taken(self.0.as_ref(), &mut skill).await? {
                 info!("Seeded skill {} ({})", skill.name, skill.id);
             }

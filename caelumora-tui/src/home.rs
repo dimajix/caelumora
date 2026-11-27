@@ -289,6 +289,30 @@ mod tests {
         assert!(!helper.exists(), "also beside what the person kept of its kind");
     }
 
+    /// The files a first start writes have nothing wrong with them; a field a person mistypes in
+    /// one of their own is told with its file.
+    #[tokio::test]
+    async fn what_is_wrong_with_the_definitions_a_person_wrote_is_told() {
+        use crate::printed::Printed;
+        use crate::problems_of_definitions;
+        let dir = tempfile::tempdir().unwrap();
+        let home = home(dir.path());
+        home.first_start().unwrap();
+        let config = home.config(dir.path()).unwrap();
+
+        let problems = problems_of_definitions(&config).await.unwrap();
+
+        assert!(problems.is_empty(), "nothing wrong with the first start's: {problems:?}");
+        let mistyped = home.config.join("personalities/mistyped.yaml");
+        fs::write(&mistyped, "descripton: A typo\n").unwrap();
+        let problems = problems_of_definitions(&config).await.unwrap();
+        let told = format!("{}: fields not read: descripton", mistyped.display());
+        assert!(
+            matches!(&problems[..], [Printed::Notice(notice)] if *notice == told),
+            "{problems:?}"
+        );
+    }
+
     /// Issue 609: the default session started from the files of a first start, in a kernel built
     /// as the program builds it, has an assistant offered to start sub-agents of the helper
     /// written beside it, and the helper can be built.

@@ -1,3 +1,7 @@
+//! What a person writes for the program, and how it is read: the configuration (`AppConfig`) and
+//! its sections, YAML as the program reads it (`parse_yaml`), and the fields of what was written
+//! that the value read from it does not keep (`unread_fields`).
+
 use crate::approval::ApprovalRule;
 use crate::command::default_commands;
 use crate::component::ComponentConfig;
@@ -390,6 +394,61 @@ pub fn parse_yaml<T: DeserializeOwned>(yaml: &str) -> ConfigResult<T> {
     Ok(serde_saphyr::from_str_with_options(yaml, options)?)
 }
 
+/// The fields of `written`, by their paths (`components[2].fail_polcy`), that `read` - the value
+/// read from it - does not keep: written for nothing, mistyped most likely. It compares `written`
+/// with `read` as it is written again, field by field, into mappings both have and into lists of
+/// one length; a field written empty (`null`, `false`, `0`, `""`, `[]`, `{}`) counts as kept,
+/// since a value at its default may be left out when written. A field written at a default that is
+/// not empty and is left out when written - `reach: everywhere` of an approval rule - is told as
+/// well: what is written cannot tell it from a field nothing reads. A field of a type that reads
+/// what is written otherwise than it writes it - a shorthand, another shape - is not compared, nor
+/// is anything of a `read` that cannot be written.
+pub fn unread_fields<T: Serialize>(written: &Value, read: &T) -> Vec<String> {
+    let mut unread = Vec::new();
+    if let Ok(kept) = serde_json::to_value(read) {
+        collect_unread(written, &kept, "", &mut unread);
+    }
+    unread
+}
+
+/// Adds to `unread` the paths of the fields of `written`, found at `path`, that `kept` does not
+/// have, as `unread_fields` tells them.
+fn collect_unread(written: &Value, kept: &Value, path: &str, unread: &mut Vec<String>) {
+    match (written, kept) {
+        (Value::Object(written), Value::Object(kept)) => {
+            for (key, value) in written {
+                let inner = match path {
+                    "" => key.clone(),
+                    _ => format!("{path}.{key}"),
+                };
+                match kept.get(key) {
+                    Some(kept) => collect_unread(value, kept, &inner, unread),
+                    None if is_empty(value) => {}
+                    None => unread.push(inner),
+                }
+            }
+        }
+        (Value::Array(written), Value::Array(kept)) if written.len() == kept.len() => {
+            for (index, (written, kept)) in written.iter().zip(kept).enumerate() {
+                collect_unread(written, kept, &format!("{path}[{index}]"), unread);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Whether `value` is written empty, as a value at its default may be.
+fn is_empty(value: &Value) -> bool {
+    match value {
+        Value::Null => true,
+        Value::Bool(set) => !set,
+        Value::Number(number) => number.as_f64() == Some(0.0),
+        Value::String(text) => text.is_empty(),
+        Value::Array(items) => items.is_empty(),
+        Value::Object(fields) => fields.is_empty(),
+    }
+}
+
 impl AppConfig {
     /// Reads and parses the configuration file at `path`.
     ///
@@ -431,8 +490,52 @@ impl AppConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::Personality;
     use crate::role::RoleId;
     use crate::security::{Grant, Subject};
+    use serde_json::json;
+
+    /// What a person mistyped is told by its path, at the top and within a component; what is
+    /// written empty, a field of a free shape and what is kept are not.
+    #[test]
+    fn the_fields_a_value_does_not_keep_are_told_by_their_paths() {
+        let written = json!({
+            "id": "6f1c1b5e-58a5-4e8e-9d55-0a4d3c6c2b11",
+            "name": "helper",
+            "hears_during_turnz": { "from": "users" },
+            "purging": false,
+            "components": [
+                { "id": "prompt", "kind": "system_prompt", "params": { "anything": 1 } },
+                { "id": "end", "kind": "turn_end", "fail_polcy": "FailOpen" },
+            ],
+        });
+        let read: Personality = serde_json::from_value(written.clone()).unwrap();
+
+        let unread = unread_fields(&written, &read);
+
+        assert_eq!(unread, ["components[1].fail_polcy", "hears_during_turnz"]);
+    }
+
+    /// A field written at a default that is not empty, which is left out when written, cannot be
+    /// told from one nothing reads, and is told as well.
+    #[test]
+    fn a_field_written_at_a_default_that_is_not_empty_is_told_as_well() {
+        #[derive(Serialize, Deserialize)]
+        struct Reaching {
+            #[serde(default = "everywhere", skip_serializing_if = "is_everywhere")]
+            reach: String,
+        }
+        fn everywhere() -> String {
+            "everywhere".to_string()
+        }
+        fn is_everywhere(reach: &str) -> bool {
+            reach == "everywhere"
+        }
+        let written = json!({ "reach": "everywhere" });
+        let read: Reaching = serde_json::from_value(written.clone()).unwrap();
+
+        assert_eq!(unread_fields(&written, &read), ["reach"]);
+    }
 
     #[test]
     fn a_store_backend_is_named_by_its_type() {

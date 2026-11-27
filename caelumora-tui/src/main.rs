@@ -29,7 +29,10 @@ use caelumora_artifacts::library::ArtifactsLibrary;
 use caelumora_artifacts::plugin::ArtifactsPlugin;
 use caelumora_compaction::library::CompactionLibrary;
 use caelumora_decision::plugin::DecisionPlugin;
+use caelumora_domain::agent::Personality;
+use caelumora_domain::component::ComponentBundle;
 use caelumora_domain::config::AppConfig;
+use caelumora_domain::template::SessionTemplate;
 use caelumora_kernel::controller::UserController;
 use caelumora_kernel::event::EventBus;
 use caelumora_kernel::kernel::{Kernel, KernelBuilder};
@@ -51,8 +54,9 @@ use caelumora_notes::plugin::NotesPlugin;
 use caelumora_open_terminal::plugin::OpenTerminalPlugin;
 use caelumora_skills::library::SkillsLibrary;
 use caelumora_skills::plugin::SkillsPlugin;
+use caelumora_skills::skill::Skill;
 use caelumora_store_home::plugin::HomeStorePlugin;
-use caelumora_store_home::{HomeStore, HomeStoreConfig, HOME};
+use caelumora_store_home::{DefinitionProblem, HomeStore, HomeStoreConfig, HOME};
 use caelumora_store_json::plugin::JsonStorePlugin;
 use caelumora_store_postgres::plugin::PostgresStorePlugin;
 use caelumora_subagents::library::SubagentsLibrary;
@@ -324,6 +328,14 @@ async fn main() -> Result<()> {
     };
     // Made before a session is opened, so that what fails here needs no shutdown.
     let mut screen = args.drawing().screen()?;
+    // Told, not refused: what is wrong with a definition is the person's to mend.
+    screen.print(match problems_of_definitions(&config).await {
+        Ok(problems) => problems,
+        Err(e) => {
+            let message = format!("The definitions cannot be checked: {e:#}");
+            vec![Printed::Error { kind: ErrorKind::Failed, message }]
+        }
+    });
     // Caught from before a session is opened, so that no signal ends the program without its
     // shutdown.
     let signalled = signalled();
@@ -427,6 +439,40 @@ async fn talk(
     Ok(())
 }
 
+/// The store `config` keeps its entities in, as files, `None` where it keeps them in another
+/// than `home`: one of its own, beside the kernel's, to ask about the files themselves.
+///
+/// # Errors
+/// If the parameters of the store are no `home`'s, or its directories cannot be made.
+fn home_store(config: &AppConfig) -> Result<Option<HomeStore>> {
+    let stores = &config.persistence.entity_store;
+    if stores.kind != HOME {
+        return Ok(None);
+    }
+    let params = HomeStoreConfig::read(&Value::Object(stores.params.clone()))
+        .context("the parameters of the store of the entities")?;
+    Ok(Some(HomeStore::new(&params)?))
+}
+
+/// What is wrong with the definitions the person wrote - the skills, personalities, bundles and
+/// templates the store `home` keeps as files -, a notice a file: what every read leaves out, or
+/// reads without fields it writes, is told nowhere else but in the log. None where `config` keeps
+/// its entities in another store.
+///
+/// # Errors
+/// As `home_store`; if a directory of definitions cannot be read.
+async fn problems_of_definitions(config: &AppConfig) -> Result<Vec<Printed>> {
+    let Some(store) = home_store(config)? else { return Ok(Vec::new()) };
+    let mut problems = store.problems_of::<Skill>().await?;
+    problems.extend(store.problems_of::<Personality>().await?);
+    problems.extend(store.problems_of::<ComponentBundle>().await?);
+    problems.extend(store.problems_of::<SessionTemplate>().await?);
+    let notice = |(path, problem): (PathBuf, DefinitionProblem)| {
+        Printed::Notice(format!("{}: {problem}", path.display()))
+    };
+    Ok(problems.into_iter().map(notice).collect())
+}
+
 /// Prints the identity of the definition in `file`, as the stores of `config` read it: its kind,
 /// its name and its id, and whether its name derives the id - which a file renamed loses.
 ///
@@ -435,17 +481,14 @@ async fn talk(
 /// definition of it.
 #[expect(clippy::print_stdout, reason = "the TUI writes to the terminal")]
 async fn print_identity(config: &AppConfig, file: &Path) -> Result<()> {
-    let stores = &config.persistence.entity_store;
-    if stores.kind != HOME {
+    let Some(store) = home_store(config)? else {
         anyhow::bail!(
             "The configuration keeps its entities in the store `{}`, which keeps no definitions as \
              files; `id` asks the store `{HOME}`",
-            stores.kind
+            config.persistence.entity_store.kind
         );
-    }
-    let params = HomeStoreConfig::read(&Value::Object(stores.params.clone()))
-        .context("the parameters of the store of the entities")?;
-    let identity = HomeStore::new(&params)?
+    };
+    let identity = store
         .identity_of(file)
         .await
         .with_context(|| format!("{} is no definition", file.display()))?;

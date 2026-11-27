@@ -4,9 +4,9 @@
 
 use crate::places::{file_name_of, name_of_file, Places};
 use async_trait::async_trait;
-use caelumora_domain::config::parse_yaml;
+use caelumora_domain::config::{parse_yaml, unread_fields};
 use caelumora_domain::scope::Scope;
-use caelumora_domain::store::{EntityKind, StoreError, StoreResult};
+use caelumora_domain::store::{EntityKind, StoreError, StoreResult, Stored};
 use caelumora_domain::value::name::ScopedName;
 use caelumora_store::documents::{Document, DocumentOf};
 use caelumora_store_json::{entries_in, to_backend_error, DocumentFormat, DocumentLayout};
@@ -15,6 +15,7 @@ use futures::{StreamExt, TryStreamExt};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, HashMap};
+use std::fmt;
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -154,6 +155,27 @@ struct Head {
     deleted: Option<Value>,
 }
 
+/// What is wrong with one file of definitions (`HomeStore::problems_of`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DefinitionProblem {
+    /// No definition of its kind, and so left out of every read: why.
+    Unreadable(String),
+    /// One id or name with another file, and so left out with it.
+    Shared,
+    /// Read, but these fields of it are not (`unread_fields`).
+    Unread(Vec<String>),
+}
+
+impl fmt::Display for DefinitionProblem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unreadable(why) => write!(f, "left out, no definition of its kind: {why}"),
+            Self::Shared => write!(f, "left out, one id or name with another file"),
+            Self::Unread(fields) => write!(f, "fields not read: {}", fields.join(", ")),
+        }
+    }
+}
+
 /// The directory of the definitions of a kind the file at `path` lies in: its directory, or the
 /// one above for a deleted one.
 fn kind_dir(path: &Path) -> Option<&Path> {
@@ -214,6 +236,18 @@ fn named_by_name(path: &Path) -> bool {
     path.parent().and_then(Path::file_name).is_none_or(|name| name != DELETED)
 }
 
+/// The text of the file of a definition at `path`, `None` for a file that is gone.
+///
+/// # Errors
+/// Why the file cannot be read.
+async fn text_of(path: &Path) -> Result<Option<String>, String> {
+    match fs::read_to_string(path).await {
+        Ok(text) => Ok(Some(text)),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(format!("it cannot be read: {err}")),
+    }
+}
+
 /// The fields of a definition in YAML.
 fn fields_of(yaml: &str) -> StoreResult<Map<String, Value>> {
     if yaml.trim().is_empty() {
@@ -257,62 +291,58 @@ struct Listed {
     key: Option<String>,
 }
 
-/// The definitions of one kind as files named by their names: where they lie (`DocumentLayout`),
-/// in the directory `dir` of the configuration directory for the global scope and of the directory
-/// of their scope otherwise, and how they look in their files (`DocumentFormat`), which leave out
-/// what the file and its place tell - the name, a scope its directory has, an id derived from its
-/// name, what reading it without gives - and give it back when it is read. Two files of one id, or
-/// of one name as names compare, are both left out and reported: which of them would win depends
-/// on the order of a directory.
+/// The files of the definitions of one kind, as they are found and read: in the directory `dir` of
+/// the configuration directory for the global scope and of the directory of their scope otherwise,
+/// each holding what is not told by the file and its place - the name, a scope its directory has,
+/// an id derived from its name -, which reading gives back. Two files of one id, or of one name as
+/// names compare, are both left out and reported: which of them would win depends on the order of
+/// a directory.
 #[derive(Debug)]
-pub(crate) struct Definitions {
+pub(crate) struct KindFiles {
     places: Arc<Places>,
     kind: EntityKind,
     dir: String,
     format: FileFormat,
-    document_of: DocumentOf,
-    lock: PathBuf,
 }
 
-impl Definitions {
-    /// The definitions of `kind`, written as `files` says, told by `document_of`, a write holding
-    /// the lock of the file `lock`.
-    pub(crate) fn new(
-        places: Arc<Places>,
-        kind: EntityKind,
-        files: &DefinitionFiles,
-        document_of: DocumentOf,
-        lock: PathBuf,
-    ) -> Self {
+impl KindFiles {
+    /// The files of the definitions of `kind`, written as `files` says, below `places`.
+    pub(crate) fn new(places: Arc<Places>, kind: EntityKind, files: &DefinitionFiles) -> Self {
         let (dir, format) = (files.dir.clone(), files.format.clone());
-        Self { places, kind, dir, format, document_of, lock }
+        Self { places, kind, dir, format }
+    }
+
+    /// The definition in the file at `path`, holding `text`, as `read` reads it.
+    ///
+    /// # Errors
+    /// As `read`.
+    fn parse(&self, path: &Path, text: &str) -> StoreResult<Value> {
+        read(&self.places, self.kind.name(), &self.format, path, text)
     }
 
     /// The id and the name of the definition in the file at `path`; `None` for a file that is
-    /// gone, or none, which is logged.
-    async fn head(&self, path: &Path) -> Option<(Uuid, Option<String>)> {
-        let text = match fs::read_to_string(path).await {
-            Ok(text) => text,
-            Err(err) if err.kind() == ErrorKind::NotFound => return None,
-            Err(err) => {
-                warn!("The file {:?} cannot be read: {}", path, err);
-                return None;
-            }
-        };
+    /// gone.
+    ///
+    /// # Errors
+    /// Why the file holds no definition of the kind.
+    async fn head(&self, path: &Path) -> Result<Option<(Uuid, Option<String>)>, String> {
+        let Some(text) = text_of(path).await? else { return Ok(None) };
         let head = self
             .parse(path, &text)
-            .and_then(|body| serde_json::from_value::<Head>(body).map_err(to_backend_error));
-        match head {
-            Ok(head) => Some((head.id, head.deleted.is_none().then(|| head.name.key()))),
-            Err(err) => {
-                warn!("The file {:?} is no {}: {}", path, self.kind, err);
-                None
-            }
-        }
+            .and_then(|body| serde_json::from_value::<Head>(body).map_err(to_backend_error))
+            .map_err(|err| err.to_string())?;
+        Ok(Some((head.id, head.deleted.is_none().then(|| head.name.key()))))
     }
 
-    /// Every definition of the kind, those of an id or a name another has left out and reported.
+    /// Every definition of the kind.
     async fn listed(&self) -> StoreResult<Vec<Listed>> {
+        Ok(self.listing().await?.0)
+    }
+
+    /// Every definition of the kind, and the files left out with what is wrong with them: those
+    /// that hold none (`DefinitionProblem::Unreadable`), and those of an id or a name another has
+    /// (`DefinitionProblem::Shared`). What is left out is logged.
+    async fn listing(&self) -> StoreResult<(Vec<Listed>, Vec<(PathBuf, DefinitionProblem)>)> {
         let extension = self.format.extension();
         let mut files = Vec::new();
         for holder in self.places.holders_of_definitions().await? {
@@ -328,9 +358,15 @@ impl Definitions {
             }
         }
         let mut listed = Vec::new();
+        let mut left_out = Vec::new();
         for path in files {
-            if let Some((id, key)) = self.head(&path).await {
-                listed.push(Listed { id, path, key });
+            match self.head(&path).await {
+                Ok(Some((id, key))) => listed.push(Listed { id, path, key }),
+                Ok(None) => {}
+                Err(why) => {
+                    warn!("The file {:?} is no {}: {}", path, self.kind, why);
+                    left_out.push((path, DefinitionProblem::Unreadable(why)));
+                }
             }
         }
         let mut ids: HashMap<Uuid, Vec<PathBuf>> = HashMap::new();
@@ -344,10 +380,47 @@ impl Definitions {
         for paths in ids.values().chain(keys.values()).filter(|paths| paths.len() > 1) {
             warn!("These files are one {} and are left out: {:?}", self.kind, paths);
         }
-        listed.retain(|entry| {
+        let (listed, shared): (Vec<Listed>, Vec<Listed>) = listed.into_iter().partition(|entry| {
             ids[&entry.id].len() == 1 && entry.key.as_ref().is_none_or(|key| keys[key].len() == 1)
         });
-        Ok(listed)
+        left_out.extend(shared.into_iter().map(|entry| (entry.path, DefinitionProblem::Shared)));
+        Ok((listed, left_out))
+    }
+
+    /// The files of the definitions of the kind, `T`'s, and what is wrong with each
+    /// (`HomeStore::problems_of`): those left out of every read (`listing`), those that hold no
+    /// `T` (`DefinitionProblem::Unreadable`), and those with fields a `T` does not keep
+    /// (`DefinitionProblem::Unread`).
+    ///
+    /// # Errors
+    /// If a directory of definitions cannot be read.
+    pub(crate) async fn problems<T: Stored>(
+        &self,
+    ) -> StoreResult<Vec<(PathBuf, DefinitionProblem)>> {
+        let (listed, mut problems) = self.listing().await?;
+        for Listed { path, .. } in listed {
+            if let Some(problem) = self.problem_of::<T>(&path).await {
+                problems.push((path, problem));
+            }
+        }
+        Ok(problems)
+    }
+
+    /// What is wrong with the file at `path` read as a `T`, `None` if nothing is or it is gone.
+    async fn problem_of<T: Stored>(&self, path: &Path) -> Option<DefinitionProblem> {
+        let text = match text_of(path).await {
+            Ok(text) => text?,
+            Err(why) => return Some(DefinitionProblem::Unreadable(why)),
+        };
+        let read = self.parse(path, &text).and_then(|body| {
+            let read: T = serde_json::from_value(body.clone()).map_err(to_backend_error)?;
+            Ok(unread_fields(&body, &read))
+        });
+        match read {
+            Ok(unread) if unread.is_empty() => None,
+            Ok(unread) => Some(DefinitionProblem::Unread(unread)),
+            Err(err) => Some(DefinitionProblem::Unreadable(err.to_string())),
+        }
     }
 
     /// Where the definition of `name` is written in the directory `dir` of its kind.
@@ -361,20 +434,44 @@ impl Definitions {
         }
         Ok(dir.join(file))
     }
+}
+
+/// The definitions of one kind as files named by their names (`KindFiles`): where they lie
+/// (`DocumentLayout`), and how they look in their files (`DocumentFormat`), which leave out what
+/// the file and its place tell, and what reading it without gives.
+#[derive(Debug)]
+pub(crate) struct Definitions {
+    files: KindFiles,
+    document_of: DocumentOf,
+    lock: PathBuf,
+}
+
+impl Definitions {
+    /// The definitions of `kind`, written as `files` says, told by `document_of`, a write holding
+    /// the lock of the file `lock`.
+    pub(crate) fn new(
+        places: Arc<Places>,
+        kind: EntityKind,
+        files: &DefinitionFiles,
+        document_of: DocumentOf,
+        lock: PathBuf,
+    ) -> Self {
+        Self { files: KindFiles::new(places, kind, files), document_of, lock }
+    }
 
     /// Refuses `path` if something lies there.
     async fn free(&self, path: PathBuf) -> StoreResult<PathBuf> {
         match fs::try_exists(&path).await.map_err(to_backend_error)? {
-            true => Err(StoreError::NameTaken { entity: self.kind.name() }),
+            true => Err(StoreError::NameTaken { entity: self.files.kind.name() }),
             false => Ok(path),
         }
     }
 }
 
 impl DocumentFormat for Definitions {
-    /// As `read`.
+    /// As `KindFiles::parse`.
     fn parse(&self, path: &Path, text: &str) -> StoreResult<Value> {
-        read(&self.places, self.kind.name(), &self.format, path, text)
+        self.files.parse(path, text)
     }
 
     /// An id the file it takes the place of held (`previous`) stays in it, also one its name
@@ -390,8 +487,9 @@ impl DocumentFormat for Definitions {
         };
         let dir =
             kind_dir(path).ok_or(StoreError::Backend("a file of no directory".to_string()))?;
-        let scope = serde_json::to_value(scope_in(&self.places, self.kind.name(), dir)?)
-            .map_err(to_backend_error)?;
+        let scope =
+            serde_json::to_value(scope_in(&self.files.places, self.files.kind.name(), dir)?)
+                .map_err(to_backend_error)?;
         if fields.get("scope") == Some(&scope) {
             fields.remove("scope");
         }
@@ -402,9 +500,9 @@ impl DocumentFormat for Definitions {
             fields.remove("name");
         }
         let had_id = previous
-            .and_then(|text| self.format.written_fields(text).ok())
+            .and_then(|text| self.files.format.written_fields(text).ok())
             .is_some_and(|written| written.contains_key("id"));
-        if !had_id && derived_id(self.kind.name(), name) == document.id {
+        if !had_id && derived_id(self.files.kind.name(), name) == document.id {
             fields.remove("id");
         }
         for (field, same) in LEFT_OUT {
@@ -420,7 +518,7 @@ impl DocumentFormat for Definitions {
             true => Ok(String::new()),
             false => serde_saphyr::to_string(fields).map_err(to_backend_error),
         };
-        match &self.format {
+        match &self.files.format {
             FileFormat::Yaml => yaml(&fields),
             FileFormat::Markdown { body } => {
                 let text = match fields.remove(body) {
@@ -436,19 +534,26 @@ impl DocumentFormat for Definitions {
 #[async_trait]
 impl DocumentLayout for Definitions {
     async fn find(&self, id: Uuid) -> StoreResult<Option<PathBuf>> {
-        Ok(self.listed().await?.into_iter().find(|entry| entry.id == id).map(|entry| entry.path))
+        Ok(self
+            .files
+            .listed()
+            .await?
+            .into_iter()
+            .find(|entry| entry.id == id)
+            .map(|entry| entry.path))
     }
 
     async fn place(&self, document: &Document) -> StoreResult<PathBuf> {
         let Some(name) = &document.name else {
-            return Err(StoreError::Validation(format!("a {} has a name", self.kind)));
+            return Err(StoreError::Validation(format!("a {} has a name", self.files.kind)));
         };
-        let dir = self.places.directory_of_definitions(&name.scope).await?.join(&self.dir);
-        self.free(self.path_of(&dir, name)?).await
+        let dir =
+            self.files.places.directory_of_definitions(&name.scope).await?.join(&self.files.dir);
+        self.free(self.files.path_of(&dir, name)?).await
     }
 
     fn all(&self) -> BoxStream<'_, StoreResult<(Uuid, PathBuf)>> {
-        stream::once(self.listed())
+        stream::once(self.files.listed())
             .map_ok(|listed| {
                 stream::iter(
                     listed.into_iter().map(|entry| Ok::<_, StoreError>((entry.id, entry.path))),
@@ -469,12 +574,12 @@ impl DocumentLayout for Definitions {
             kind_dir(path).ok_or(StoreError::Backend("a file of no directory".to_string()))?;
         let target = match (&document.name, document.removal_id) {
             (_, Some(_)) => {
-                let file = format!("{}.{}", document.id, self.format.extension());
+                let file = format!("{}.{}", document.id, self.files.format.extension());
                 dir.join(DELETED).join(file)
             }
-            (Some(name), None) => self.path_of(dir, name)?,
+            (Some(name), None) => self.files.path_of(dir, name)?,
             (None, None) => {
-                return Err(StoreError::Validation(format!("a {} has a name", self.kind)))
+                return Err(StoreError::Validation(format!("a {} has a name", self.files.kind)))
             }
         };
         if target == path {
