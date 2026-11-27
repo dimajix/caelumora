@@ -1,6 +1,7 @@
-//! A channel as the terminal follows it for the user: what it prints of what the channel shows,
-//! and what the user's commands there need of it (issue 561).
+//! A channel as the terminal follows it for the user: what it prints and shows of what the
+//! channel shows, and what the user's commands there need of it (issues 561, 615).
 
+use crate::activity::Place;
 use crate::printed::{beginning, ErrorKind, Printed, Said, Saying, Words};
 use crate::typeable::Typeable;
 use crate::under_way::UnderWay;
@@ -27,6 +28,7 @@ use caelumora_kernel::actor::Shown;
 use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::view::{ChannelView, Views};
 use std::collections::{HashMap, HashSet};
+use std::iter;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -128,6 +130,11 @@ pub(crate) struct OpenThread {
 }
 
 impl OpenThread {
+    /// What the footer calls it (issue 615): the agent it was delegated to, else `thread`.
+    pub(crate) fn name(&self) -> &str {
+        self.delegated_to.as_deref().unwrap_or("thread")
+    }
+
     /// `Thread of` the agent it was delegated to, else `Thread`.
     pub(crate) fn title(&self) -> String {
         match &self.delegated_to {
@@ -278,6 +285,40 @@ impl Followed {
     /// 615).
     pub(crate) fn threads(&self) -> &[OpenThread] {
         &self.threads
+    }
+
+    /// The channel as a place the user can be (issue 615): where they are if it is `talked_in` -
+    /// nothing marked, since the status line and its threads tell what goes on there, and it asks
+    /// what waits itself -, else marked where an agent is at work in any of its threads or
+    /// something waits for the user.
+    pub(crate) fn place(&self, talked_in: bool) -> Place {
+        Place {
+            name: self.name().to_string(),
+            current: talked_in,
+            at_work: !talked_in && !self.under_way.is_empty(),
+            waits: !talked_in && self.waits_for_user(),
+        }
+    }
+
+    /// The line and the threads open as places the user can be (issue 615), each marked where an
+    /// agent is at work in it but the thread followed, which the status line tells. What waits
+    /// for the user there, the channel asks itself.
+    pub(crate) fn thread_places(&self) -> Vec<Place> {
+        let line = (self.line(), "line");
+        let open = self.threads.iter().map(|thread| (thread.id, thread.name()));
+        iter::once(line)
+            .chain(open)
+            .map(|(id, name)| {
+                let current = id == self.thread;
+                let answering = self.under_way.iter().any(|answer| answer.thread == id);
+                Place {
+                    name: name.to_string(),
+                    current,
+                    at_work: !current && answering,
+                    waits: false,
+                }
+            })
+            .collect()
     }
 
     /// Reads anew the threads open in the channel as its view lists them (issue 595), each with

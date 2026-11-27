@@ -199,3 +199,13 @@ Each step a commit of its own, reviewed before the next.
   a thread opens or closes or its delegate gives its first brief; `/thread list`, `/thread
   follow` and the notice of talking in a channel use what it keeps. Whether the kernel is to
   announce a delegation, for this terminal and the web UI alike, is put before the maintainer.
+- **2026-11-27** — Step 2 done: `Activity` names the session, the answers of the thread followed,
+  the channels followed and the line and the threads open of the channel talked in, each a
+  `Place` (`Elsewhere` gone); `Channels::activity` marks every place but where the user is. The
+  full-screen view draws below the line typed a rule and the footer (`footer_rows`): the places,
+  fitted as D5 says, in the colours of D7, and the session's name below; neither in a window
+  lower than `FOOTER_HEIGHT` rows, or where what is asked needs the room. The status line shows
+  the answers of the thread followed alone. Unlike the interface sketched in *Decision*,
+  `Place::at_work` is a flag, since the footer names no agent at work, and `Activity` carries the
+  session's name (D4); unlike D1, the session's row stands whatever the width. Documented in
+  README.md.

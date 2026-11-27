@@ -343,7 +343,7 @@ impl Talk {
         channel.is_some_and(|f| f.is_to_answer(request.id))
     }
 
-    /// What is at work in the channels followed (`Channels::activity`).
+    /// What goes on in the session followed (`Channels::activity`).
     pub(crate) fn activity(&self) -> Activity {
         self.channels.activity()
     }

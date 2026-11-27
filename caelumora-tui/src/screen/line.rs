@@ -91,7 +91,7 @@ impl Screen for LineScreen {
 
     /// Nothing: an answer is told once as it begins (`Printed::Answering`), and no more until it
     /// says something, so that a screen reader reads what is said, not where an agent stands - and
-    /// nothing of what is at work elsewhere, which does not concern the user (issue 572).
+    /// nothing of what goes on elsewhere, which does not concern the user (issues 572, 615).
     fn show_activity(&mut self, _activity: &Activity) {}
 
     /// Writes what is asked once, as it is shown, with its choices numbered and how to answer.
