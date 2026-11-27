@@ -617,6 +617,33 @@ async fn the_commands_of_the_groups_refuse_what_they_cannot_use() {
     world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
+/// `/channel create` makes its channel with an approver deciding by `Any`, as the web UI's dialog
+/// does, whose actor runs - without one, a call needing approval waits for ever (issue 610).
+#[tokio::test]
+async fn a_channel_made_by_command_has_an_approver() {
+    use caelumora_domain::approval::ApprovalStrategy;
+    use caelumora_domain::channel::InternalActor;
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let alice = session.channels()[0].user_actor(world.alice).unwrap();
+
+    alice.execute_command(None, "channel create side").await.expect("hers to make");
+
+    let side = session.channel_named("side").expect("made and running");
+    let stored =
+        world.kernel.entity_stores().channels.get(&World::system(), side.id()).await.unwrap();
+    assert!(
+        matches!(
+            stored.internal_actors.as_slice(),
+            [InternalActor::Approver(approver)] if approver.strategy == ApprovalStrategy::Any
+        ),
+        "{:?}",
+        stored.internal_actors
+    );
+    assert!(side.actor(stored.internal_actors[0].actor_id()).is_some(), "and its actor runs");
+    world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 /// `/agent create` names the agent after the personality, unless the last `as` names it - so
 /// that a personality's name may hold one (issue 555).
 #[tokio::test]

@@ -8,7 +8,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
-| [610](610-a-channel-made-by-command-has-no-approver.md) | open | high | bug | `/channel create` makes its channel of `ChannelSpec::new(name)`, which names no internal actors, so the new channel has no approver, and an agent that calls a tool needing approval in it waits for a decision nobody can give, without a timeout and without anyone being asked. |
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | low | bug | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
 | [588](588-a-person-s-call-is-released-without-its-result.md) | open | low | bug | A message carrying a person's call (issue 587) is reclassified and fitted into a lowered channel by its own classification alone, while its tool results keep theirs, so whoever is given the message is labelled below what it read, or loses more than the result. |
 

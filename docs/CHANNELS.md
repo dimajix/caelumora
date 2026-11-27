@@ -350,9 +350,9 @@ configuration, starts its task with the others as `run` begins, delivers to it b
 takes in what it sends. They are configured, like everything else of a channel: a template names
 them for each channel (`ChannelTemplate::internal_actors`, an approver with its strategy, `Any`
 unless named), and so does a request to create one (`ChannelSpec::internal_actors`; the web UI's
-dialog names an approver). A channel has the internal actors it is given and no others - but the
-delegates of its threads, which come with delegating (see
-[Delegating into a thread](#delegating-into-a-thread)) -, and there is no fallback: without an
+dialog and `/channel create` name an approver deciding by `Any`). A channel has the internal
+actors it is given and no others - but the delegates of its threads, which come with delegating
+(see [Delegating into a thread](#delegating-into-a-thread)) -, and there is no fallback: without an
 approver, nobody decides what needs approval, and tools that ask for it do not work there.
 
 The participants of a requested channel come from the session's participants, the creator always
