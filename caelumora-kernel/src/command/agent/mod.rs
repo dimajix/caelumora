@@ -1,7 +1,9 @@
 //! The built-in command group `agent` (issue 560): the commands on the agents of a session -
-//! `agent list`, `create`, `delete`, `wakeup` and `usage` -, contributed by one component, one file
-//! per command. The commands an agent carries out itself are its own (`caelumora_agents::command`).
+//! `agent list`, `create`, `delete`, `wakeup`, `cancel` and `usage` -, contributed by one
+//! component, one file per command. The commands an agent carries out itself are its own
+//! (`caelumora_agents::command`).
 
+mod cancel;
 mod create;
 mod delete;
 mod list;
@@ -18,14 +20,15 @@ use caelumora_domain::command::AGENT_GROUP_KIND;
 use std::sync::Arc;
 
 /// The commands of the group `agent`: `/agent list`, `/agent create`, `/agent delete`,
-/// `/agent wakeup` (`/wakeup`) and `/agent usage` - `/agent create` making agents with `agents`,
-/// `/agent delete` deleting them with it.
+/// `/agent wakeup` (`/wakeup`), `/agent cancel` (`/cancel`) and `/agent usage` - `/agent create`
+/// making agents with `agents`, `/agent delete` deleting them with it.
 pub(crate) fn commands(agents: &Arc<AgentManager>) -> Vec<Arc<dyn ChannelCommand>> {
     vec![
         Arc::new(list::ListCommand::new()),
         Arc::new(create::CreateCommand::new(Arc::clone(agents))),
         Arc::new(delete::DeleteCommand::new(Arc::clone(agents))),
         Arc::new(wakeup::WakeupCommand::new()),
+        Arc::new(cancel::CancelCommand::new()),
         Arc::new(usage::UsageCommand::new()),
     ]
 }

@@ -5432,9 +5432,10 @@ async fn a_command_of_the_session_is_seen_and_run_by_whoever_reads_the_channel()
         [
             "bob: ShowCommand(alice's) yes",
             "bob: ExecuteCommand(alice's) yes",
-            // What /help lists, one for each command: /agent create, delete, list, usage,
-            // wakeup, /channel briefing, create, delete, describe, join, leave, list, rename,
-            // summary, /help, /participant add, list, nudge, remove.
+            // What /help lists, one for each command: /agent cancel, create, delete, list,
+            // usage, wakeup, /channel briefing, create, delete, describe, join, leave, list,
+            // rename, summary, /help, /participant add, list, nudge, remove.
+            "bob: ShowCommand(alice's) yes",
             "bob: ShowCommand(alice's) yes",
             "bob: ShowCommand(alice's) yes",
             "bob: ShowCommand(alice's) yes",

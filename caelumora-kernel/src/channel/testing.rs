@@ -11,6 +11,8 @@
 use crate::channel::thread::Thread;
 use crate::channel::ResolvedParticipant;
 use crate::channel::{ChannelLoop, Ending, ThreadSpec};
+use crate::command::help::HelpCommand;
+use crate::command::{agent, participant, ChannelCommand, CommandExecutor};
 use crate::controller::SessionController;
 use crate::kernel::{ChannelRuntime, Kernel, ParticipantRuntime};
 use crate::procedure::channel::Reclassify;
@@ -24,7 +26,8 @@ use anyhow::{Error, Result};
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use caelumora_api::actor::Actor;
-use caelumora_api::command::CommandError;
+use caelumora_api::command::{CommandError, CommandProvider};
+use caelumora_api::component::ComponentImpl;
 use caelumora_api::transport::{EventReceiver, EventSender};
 use caelumora_domain::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_domain::agent::{AgentChannelState, AgentId, Personality};
@@ -37,6 +40,7 @@ use caelumora_domain::channel::{
     Channel, Circle, Delegation, HistoryAccess, InternalActor, Opening, Participant, ThreadId,
     ThreadOrigin, ThreadState,
 };
+use caelumora_domain::component::ComponentFailPolicy;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::content::ContentId;
 use caelumora_domain::history::testing::{items_of, messages_of};
@@ -61,7 +65,7 @@ use std::convert::Infallible;
 use std::future::Future;
 use std::mem;
 use std::sync;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::Receiver;
@@ -156,7 +160,27 @@ pub async fn alice_and_an_agent(
     (context, agent.id, alice.id)
 }
 
-/// The channel of `alice` and `agent`, with its approver, in `kernel`, built but not running.
+/// An executor of the built-in commands a channel of a test runs - `/help`, the groups
+/// `participant` and `agent` -, under `kernel`'s policy.
+pub(crate) fn builtin_commands(kernel: &Kernel) -> CommandExecutor {
+    let builtin = |id: &str, commands: Vec<Arc<dyn ChannelCommand>>| ComponentImpl {
+        id: id.to_string(),
+        fail_policy: ComponentFailPolicy::FailOpen,
+        facet: Arc::new(commands) as Arc<dyn CommandProvider<dyn ChannelCommand>>,
+    };
+    CommandExecutor::new(
+        Arc::clone(kernel.access_policy()),
+        vec![
+            builtin("help", vec![Arc::new(HelpCommand::new())]),
+            builtin("participant", participant::commands()),
+            builtin("agent", agent::commands(kernel.agent_manager())),
+        ],
+    )
+    .unwrap()
+}
+
+/// The channel of `alice` and `agent`, with its approver and the built-in commands
+/// (`builtin_commands`), in `kernel`, built but not running.
 pub async fn channel_of_alice_and(
     kernel: Arc<Kernel>,
     alice: UserId,
@@ -172,8 +196,11 @@ pub async fn channel_of_alice_and(
     // joins (issue 420).
     kernel.entity_stores().channels.create(&SecurityContext::system(), &mut channel).await.unwrap();
     kernel.state_store().put_channel_state(channel.id, &mut founded(&channel)).await.unwrap();
-    let session_id = channel.session_id;
-    ChannelLoop::new(ChannelRuntime::outside_a_session(kernel, bare_session(session_id), channel))
+    let commands = Arc::new(builtin_commands(&kernel));
+    let session =
+        kernel.controller_manager().new_session_controller(bare_session(channel.session_id));
+    let channel = kernel.controller_manager().new_channel_controller(channel);
+    ChannelLoop::new(ChannelRuntime::new(kernel, commands, session, channel, Weak::new()))
         .await
         .unwrap()
 }

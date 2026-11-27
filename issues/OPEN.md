@@ -48,7 +48,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 |---|---|---|---|---|
 | [208](208-generated-artifacts.md) | open | high | feature | The images and resources of an MCP tool's result and the file parts of an external agent's answer are dropped; only their text is kept, and an MCP result without text is put into the context as JSON, base64 and all. |
 | [298](298-pick-users-and-roles-to-share-with.md) | open | medium | feature | The web UI shares a workspace or an artifact only with the members of a session or channel, not with a user or a role by name, since the REST API lists neither. |
-| [611](611-the-terminal-cannot-cancel-a-turn.md) | open | medium | feature | The terminal has no way to end the turn an agent is in: the kernel can cancel a channel, a thread or one participant, and the web UI does so over REST, but no command or key of `caelumora-tui` reaches it, so a turn that hangs or goes astray can only be ended by taking the agent out of the channel. |
 
 ## Context and knowledge
 

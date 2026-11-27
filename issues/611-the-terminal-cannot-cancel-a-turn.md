@@ -1,6 +1,6 @@
 # 611 — The terminal cannot cancel an agent's turn
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -59,3 +59,15 @@ Recommended: option 1.
 
 - **2026-11-26** — Opened after an agent waiting for an approval nobody could give in the terminal
   could only be stopped by taking it out of the channel.
+- **2026-11-27** — Done by option 1, as the maintainer decided, with the short form `/cancel` as
+  `/agent wakeup` has `/wakeup`. `/agent cancel` is a command of the group `agent`, built as
+  `/agent wakeup` is: without an agent it ends the turns of the thread it is issued in, or of the
+  whole channel issued in the line (`ChannelLoop::cancel`), and keeps them quiet; with one, that
+  agent's turn (`ChannelLoop::cancel_actor`), which leaves it in the channel. Both ask for
+  `CancelChannel`, and the answer goes to the whole channel - "Ended any turn of …", since neither
+  method tells whether a turn was under way. A cancelled turn withdraws its approval requests as
+  before. Tests hold the turn of the agent named ended and the agent still in the channel, the
+  thread or the channel cancelled and quiet as it is issued, and the refusal by `CancelChannel`;
+  the scripted channel of the tests (`channel_of_alice_and`) runs the built-in commands for it.
+  `docs/COMMANDS.md`, `docs/CHANNELS.md`, `docs/COMPONENTS.md` and `docs/PERMISSION-CHECKS.md`
+  name it. No key of the full screen was added.

@@ -319,10 +319,10 @@ impl CommandExecutor {
 /// argument `wanted` of the command `command` names (`named`, issues 277, 278, 560): the one way
 /// the commands of the channel that take someone find them and word that they did not - those
 /// who take part `in this channel`, the agents `of this session`, as `place` says. What they are
-/// sought among is the command's: `/agent wakeup` and `/participant nudge` act on an actor, and
-/// seek among those running; `/participant remove` among those the issuer reads taking part,
-/// `/channel leave` among the issuer's own agents of those, `/agent usage` among the agents of
-/// those; `/agent delete` among the session's agents the issuer may read.
+/// sought among is the command's: `/agent wakeup`, `/agent cancel` and `/participant nudge` act on
+/// an actor, and seek among those running; `/participant remove` among those the issuer reads
+/// taking part, `/channel leave` among the issuer's own agents of those, `/agent usage` among the
+/// agents of those; `/agent delete` among the session's agents the issuer may read.
 ///
 /// # Errors
 /// `CommandError::InvalidArguments` naming the handles of `among`, if `wanted` names none, or

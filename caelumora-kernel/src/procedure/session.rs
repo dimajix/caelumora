@@ -1656,6 +1656,7 @@ mod tests {
         assert_eq!(
             names(executor).await,
             vec![
+                "agent cancel",
                 "agent create",
                 "agent delete",
                 "agent list",

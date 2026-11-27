@@ -558,7 +558,7 @@ with `RemoteEndpoint::url_of` - each segment encoded as one, the query kept -, n
 | `summary_compaction` | `CompactionStrategy` | - | Of the library `caelumora-compaction`, registered where it is joined. The default strategy: the agent's own model summarises the older part of its context, and answers after the summary which of what can be given again it still needs ([AGENT-TURN.md](AGENT-TURN.md#compaction)). For agents run here only: it takes the agent's `LanguageModelClient`. |
 | `help` | `CommandProvider<dyn ChannelCommand>` | - | The user command `/help` ([COMMANDS.md](COMMANDS.md#built-in-commands)). |
 | `participant` | `CommandProvider<dyn ChannelCommand>` | - | The command group `participant`: `/participant list`, `add`, `remove` and `nudge` ([COMMANDS.md](COMMANDS.md#built-in-commands)). |
-| `agent` | `CommandProvider<dyn ChannelCommand>` | - | The command group `agent`: `/agent list`, `create`, `delete` and `wakeup`. Uses the `AgentManager`. |
+| `agent` | `CommandProvider<dyn ChannelCommand>` | - | The command group `agent`: `/agent list`, `create`, `delete`, `wakeup`, `cancel` and `usage`. Uses the `AgentManager`. |
 | `channel` | `CommandProvider<dyn ChannelCommand>` | - | The command group `channel`: `/channel list`, `describe`, `create`, `delete`, `join`, `rename`, `summary` and `briefing`. |
 | `shell` | `CommandProvider<dyn ChannelCommand>` | - | The command group `workspace`: `/workspace run`, a shell command a person runs in the session's workspace ([COMMANDS.md](COMMANDS.md#a-command-run-in-the-workspace)). In no default set of commands. |
 

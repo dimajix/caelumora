@@ -156,7 +156,8 @@ the owners alone the channel's owner.
 A command the user may not see is answered exactly like an unknown one, so hidden commands cannot be
 found by trying names, by their names and their short forms alike, nor listed in a group. Whatever
 the command does is checked on its own as well, in the issuer's context - the one their views of
-the session read in, too (`UserActor::security_context`): `/agent wakeup` asks for `WakeChannel`.
+the session read in, too (`UserActor::security_context`): `/agent wakeup` asks for `WakeChannel`,
+`/agent cancel` for `CancelChannel`, as cancelling over REST does.
 `/participant nudge` asks nothing more: it asks someone to respond, as an `@`-mention does, which
 asks nothing of the policy either. `/participant add` asks what taking someone in asks
 (`procedure::participant::TakeIn::added`: `UpdateSession` unless they are in the session already,
@@ -188,39 +189,40 @@ in it, of someone who takes part there; a `/workspace run` says its call there; 
 agent is asked of an agent that takes part there, and rejected at the channel's door otherwise; a
 channel-wide answer is announced there. `/agent wakeup` without an agent wakes the thread it is
 issued in and ends its quiet - in the line, the whole channel (issue 595), as stopping from the
-line's view stops the whole channel.
+line's view stops the whole channel. `/agent cancel` without an agent ends the turns of that
+thread - in the line, of the whole channel - and keeps it quiet, as the stop buttons of the web UI
+do.
 
 ### Private or channel-wide answers
 
 A command answers the issuer alone (`/help`, `/participant list`, `/participant nudge`,
 `/participant add`, `/participant remove`, `/agent list`, `/agent create`, `/agent delete`,
-`/agent usage`, the group `channel`, `/workspace run`) or the whole channel (`/agent wakeup`): that
-`/participant add` brought someone in or `/participant remove` took someone out, the channel tells
-everyone anyway. A channel-wide answer
-is announced by the issuer's actor as `CommandExecuted`, forwarded to the users only, shown but
-never stored. The issuer gets the answer back from `execute_command` either way, since the channel
-never routes an envelope back to its sender; the REST response carries it only when it is private,
-since the web UI receives the announcement on its stream. A command of an agent answers later, on
-the stream; an answer for the issuer alone is routed to them alone.
+`/agent usage`, the group `channel`, `/workspace run`) or the whole channel (`/agent wakeup`,
+`/agent cancel`): that `/participant add` brought someone in or `/participant remove` took someone
+out, the channel tells everyone anyway. A channel-wide answer is announced by the issuer's actor as
+`CommandExecuted`, forwarded to the users only, shown but never stored. The issuer gets the answer
+back from `execute_command` either way, since the channel never routes an envelope back to its
+sender; the REST response carries it only when it is private, since the web UI receives the
+announcement on its stream. A command of an agent answers later, on the stream; an answer for the
+issuer alone is routed to them alone.
 
 ### Naming an agent
 
 Every command that names someone - taking part in the channel, or an agent of the session - names
 them by one rule (`value::name::named`, `command::named_one`). The text is taken as a name first,
-compared as names are; only if it is nobody's name is it taken as a handle, with or without its
-`@`, normalised as a mention is. A handle is coarser than a name, so it can name several; a command
-then refuses with their names rather than picking one. What it is sought among is the command's:
-`/agent wakeup` and `/participant nudge` act on an actor, and seek among those running;
-`/participant remove` seeks among those `/participant list` lists, as the issuer reads the channel,
-so that it also removes one that cannot run - but one that no longer exists, which has no name to
-be named by; `/channel leave` among the agents of the issuer's own among them, `/agent usage`
-among every agent of them; `/agent delete` seeks among the agents `/agent list` lists, taking part
-or not. A
-channel is named by its whole name, which is the only one of its session (`/channel describe`,
-`/channel notes`, `CommandContext::channel_view_or_named`); one the issuer may not read is
-answered like one that does not exist. `/channel delete` deletes the channel it is issued in as
-well, and `/channel leave` takes the issuer out of it: a command runs in the issuer's call, not in
-the channel, so its answer still reaches them. `/channel join` alone does not
+compared as names are; only if it is nobody's name is it taken as a handle, with or without its `@`,
+normalised as a mention is. A handle is coarser than a name, so it can name several; a command then
+refuses with their names rather than picking one. What it is sought among is the command's:
+`/agent wakeup`, `/agent cancel` and `/participant nudge` act on an actor, and seek among those
+running; `/participant remove` seeks among those `/participant list` lists, as the issuer reads the
+channel, so that it also removes one that cannot run - but one that no longer exists, which has no
+name to be named by; `/channel leave` among the agents of the issuer's own among them,
+`/agent usage` among every agent of them; `/agent delete` seeks among the agents `/agent list`
+lists, taking part or not. A channel is named by its whole name, which is the only one of its
+session (`/channel describe`, `/channel notes`, `CommandContext::channel_view_or_named`); one the
+issuer may not read is answered like one that does not exist. `/channel delete` deletes the channel
+it is issued in as well, and `/channel leave` takes the issuer out of it: a command runs in the
+issuer's call, not in the channel, so its answer still reaches them. `/channel join` alone does not
 seek among the channels the issuer reads, since who may join a channel reads nothing of it before
 they did ([SECURITY.md](SECURITY.md#access-lists)): it takes the running channel of that name, and
 answers one the issuer may not join - by its access list, or not cleared for it -, or that does not
@@ -323,6 +325,7 @@ external agent alike.
 | `/agent create` | - | the channel | `agent` | `<personality> [as <name>]` | private | Makes an agent of the personality named, in the session's scope - in the channel's for a personality of the channel's scope -, named after the personality unless named; `/participant add` brings it in. |
 | `/agent delete` | - | the channel | `agent` | `<agent>` | private | Deletes the agent of the session named, among those `/agent list` lists; one taking part rests in its channels until it is restored. |
 | `/agent wakeup` | `/wakeup` | the channel | `agent` | `[agent]` | channel-wide | Wakes the sleeping agents of the channel - of the thread it is issued in, if not the line -, or the one named. |
+| `/agent cancel` | `/cancel` | the channel | `agent` | `[agent]` | channel-wide | Ends the turns of the agents of the channel - of the thread it is issued in, if not the line -, keeping it quiet, or the turn of the one named; they stay in the channel, and an approval a turn waited for is withdrawn. |
 | `/agent usage` | - | the channel | `agent` | `[agent]` | private | Tells how full the context of each agent taking part in the channel is, or of the one named - its tokens against its size, where known - and the input and output tokens of all its calls; without an agent, adds up the calls of them all. |
 | `/channel list` | - | the channel | `channel` | - | private | Lists the channels of the session the user may read: whether it is this one, whether the user takes part, and its summary. |
 | `/channel describe` | - | the channel | `channel` | `[channel]` | private | Describes this channel, or the one of the session named: its summary, briefing, classification and language. |
