@@ -17,6 +17,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 |---|---|---|---|---|
 | [381](381-inactive-channels-held-in-memory.md) | open | medium | feature | A channel nobody has spoken in for days keeps its loop, its actors and their states in memory until its session is stopped, and nothing notices that it is idle. Part of epic [378](378-resource-management-epic.md). |
 | [382](382-agents-held-without-a-session.md) | open | medium | feature | An agent stays loaded with its memory while nothing uses it, and what still holds it once its sessions are unloaded has not been checked. Part of epic [378](378-resource-management-epic.md). |
+| [612](612-an-agent-cannot-keep-an-appointment.md) | open | medium | feature | An agent works only when someone speaks to it: it cannot note that something is to be done at a time or again and again - a reminder, a daily report, a meeting - and nothing wakes it then, so whatever is to happen later needs a person to ask for it at that time. |
 
 ## Identity and access management
 

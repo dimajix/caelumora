@@ -156,6 +156,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [596](596-a-user-cannot-start-a-sub-agent-by-command.md) | done | Only an agent starts a sub-agent, by the tools of `caelumora-subagents` (issue 558); a user cannot have an agent start one by a command of the agent, though 558 asked for a command. |
 | [598](598-a-sub-agent-nobody-ends-stays.md) | done | A sub-agent of `caelumora-subagents` (issue 558) is ended only by the agent that started it (`end_subagent`); one it never ends stays - an agent, a participant of the session and an open thread - for as long as the session lasts, and across restarts. |
 | [602](602-an-actor-takes-part-in-one-thread-of-its-channel-alone.md) | done | Every actor of a channel - an agent's, a user's - takes part in exactly one of its threads (issue 557), so an agent of the line cannot take part in a thread a person opens at a message of the line, a user writes only in the thread they take part in, and a nudge of someone in another thread asks nobody - though 557 decided one actor per agent and channel, with a head of its transcript per thread. |
+| [612](612-an-agent-cannot-keep-an-appointment.md) | open | An agent works only when someone speaks to it: it cannot note that something is to be done at a time or again and again - a reminder, a daily report, a meeting - and nothing wakes it then, so whatever is to happen later needs a person to ask for it at that time. |
 
 ## Identity and access management
 
