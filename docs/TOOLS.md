@@ -398,8 +398,10 @@ URL, with the tool `fetch_page`:
     their type names, as UTF-8 where it names none. A page of another type - a PDF, an image - or
     of none is refused, naming the type, as is one larger than 5 MiB. The text is given a page at a
     time, as `read_file` gives a file (`start_line`, `start_offset`, `line_count`, 64 KiB at once),
-    with the URL the page was found at, after redirects, and its title. Every call fetches the page
-    again; nothing is cached. What failed names the URL without credentials, query and fragment.
+    with the URL the page was found at, after redirects, and its title - as text, where the
+    Markdown escapes what it would give a meaning (`\*`, `\<`, `\&`, issue 620). Every call fetches
+    the page again; nothing is cached. What failed names the URL without credentials, query and
+    fragment.
 *   **What it keeps.** With `keep_whole_above_bytes`, the text of a page above that size, asked for
     with none of `start_line`, `start_offset` and `line_count`, is kept whole beside its result, as
     a text the tool gives its model ([content](#content-a-tool-gives-its-model)), named after the

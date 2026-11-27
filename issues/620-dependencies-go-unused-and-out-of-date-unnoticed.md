@@ -181,3 +181,6 @@ Each step a commit of its own, reviewed before the next.
   `Into<Value>` instead of serializing them - a field is lent (`&step.description`), a slice copied
   (`given.to_vec()`), an id or a name written as a string, in six crates. `PromptTexts::render`
   takes what serializes, as before, through `minijinja`'s `Serde`.
+- **2026-11-27** — Step 6 done: `htmd` 0.6. A page is parsed once, by `html_to_tree`, which 0.6
+  makes public; its title is the text of its `title` element, no longer found in its source by hand
+  and converted, and its text the Markdown of the tree, escapes and all - as TOOLS.md says.

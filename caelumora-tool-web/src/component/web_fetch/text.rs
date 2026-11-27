@@ -5,6 +5,7 @@
 //! Markdown left out (issue 553).
 
 use encoding_rs::Encoding;
+use htmd::node::Tree;
 use htmd::HtmlToMarkdown;
 use reqwest::Url;
 
@@ -50,23 +51,28 @@ pub(super) fn page(url: Url, media_type: &str, body: Vec<u8>, encoding: &'static
         return Page { url, title: None, text: decoded.into_owned(), original: None };
     }
     let converter = HtmlToMarkdown::builder().skip_tags(LEFT_OUT.to_vec()).build();
-    let title = title_of(&decoded, &converter);
     // A page html5ever cannot read is rare, as it reads what a browser reads; it is given as
     // it came rather than not at all.
-    let text = converter.convert(&decoded).unwrap_or_else(|_| decoded.to_string());
+    let read = converter
+        .html_to_tree(&decoded)
+        .and_then(|tree| Ok((title_of(&tree), converter.convert(&tree)?)));
+    let Ok((title, text)) = read else {
+        return Page { url, title: None, text: decoded.into_owned(), original: Some(body) };
+    };
     Page { url, title, text, original: Some(body) }
 }
 
-/// The title `html` names, its entities resolved by `converter`; none for one that is empty.
-fn title_of(html: &str, converter: &HtmlToMarkdown) -> Option<String> {
-    // Lower case in ASCII alone, so that every position is one of `html` too.
-    let lower = html.to_ascii_lowercase();
-    let tag = lower.find("<title")?;
-    let start = tag + lower[tag..].find('>')? + 1;
-    let end = start + lower[start..].find("</title")?;
-    let title = converter.convert(&html[start..end]).ok()?;
-    let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
-    (!title.is_empty()).then_some(title)
+/// The title the page of `tree` names, as its text - not as Markdown, which would escape what
+/// Markdown gives a meaning; none for one that is empty.
+fn title_of(tree: &Tree) -> Option<String> {
+    let title = tree.root().find(|node| node.tag_name() == Some("title"))?;
+    let text: String = title
+        .children()
+        .iter()
+        .filter_map(|node| node.text().map(|text| text.to_string()))
+        .collect();
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!text.is_empty()).then_some(text)
 }
 
 #[cfg(test)]
@@ -120,6 +126,16 @@ mod tests {
         for unreadable in ["application/pdf", "image/png", "application/octet-stream"] {
             assert!(!super::readable(unreadable), "{unreadable}");
         }
+    }
+
+    #[test]
+    fn a_page_s_title_is_its_text_and_its_text_markdown() {
+        let page = utf8(
+            "text/html",
+            "<title>\n  *Stars* &lt;b&gt; &amp; [links]\n</title><p>*Stars* &lt;b&gt; &amp; more</p>",
+        );
+        assert_eq!(page.title.as_deref(), Some("*Stars* <b> & [links]"), "nothing escaped");
+        assert_eq!(page.text, "\\*Stars\\* \\<b> \\& more", "escaped for Markdown");
     }
 
     #[test]
