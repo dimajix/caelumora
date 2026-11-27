@@ -461,6 +461,17 @@ impl Envelope {
         self.context.initiator_id == initiator
     }
 
+    /// Whether it gives a brief (issues 557, 619): a `GivenToRead` its thread's own delegate sends,
+    /// as against what that delegate gives back where the thread was opened. What it claims to be;
+    /// whether it gives the open brief the channel checks (`Delegation::gives_brief`).
+    pub fn is_brief(&self) -> bool {
+        matches!(
+            (&self.event, self.context.sender_id),
+            (ActorEvent::GivenToRead { .. }, ActorId::Delegate(delegated))
+                if delegated == self.context.thread_id
+        )
+    }
+
     /// What the channel tells its sender where it does not let it in, for `reason` (issue 304): an
     /// `EventRejected`, naming its kind and the message it was or was about.
     pub fn rejection(&self, reason: Rejection) -> ActorEvent {
@@ -827,6 +838,31 @@ mod tests {
             shown(&in_other, ActorEvent::ApprovalRequested { request, to: None }),
             "its call waits"
         );
+    }
+
+    /// Issue 619: a brief is what a thread's delegate gives to read in that thread, not what it
+    /// gives back elsewhere, nor what another gives or the delegate says.
+    #[test]
+    fn a_brief_is_given_by_the_delegate_of_the_thread_it_is_given_in() {
+        let (session, channel) = (SessionId::new(), ChannelId::new());
+        let thread = ThreadId::new();
+        let delegate = ActorId::Delegate(thread);
+        let recipient = ActorId::Agent(AgentId::new());
+        let in_thread = EventContext {
+            thread_id: thread,
+            ..EventContext::new(session, channel, delegate, "delegate")
+        };
+        let back = EventContext { thread_id: ThreadId::line(channel), ..in_thread.clone() };
+        let by_another = EventContext { sender_id: recipient, ..in_thread.clone() };
+        let given =
+            || ActorEvent::GivenToRead { recipient, message: make_message(MessageId::new()) };
+        let envelope = |context: &EventContext, event| Envelope::new(context.clone(), event);
+
+        assert!(envelope(&in_thread, given()).is_brief());
+        assert!(!envelope(&back, given()).is_brief(), "given back where the thread was opened");
+        assert!(!envelope(&by_another, given()).is_brief(), "given by another");
+        let said = ActorEvent::CompleteMessageGenerated(make_message(MessageId::new()));
+        assert!(!envelope(&in_thread, said).is_brief(), "said, not given");
     }
 
     /// Issue 594: what concerns a viewer wherever they look - an approval from its request to its

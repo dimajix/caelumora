@@ -1012,7 +1012,7 @@ impl ChannelLoop {
             held.is_some_and(|delegation| {
                 // A brief into a quiet thread would ask nobody, not even once it is woken: refused,
                 // its delegate gives back that the recipient could not be asked (issue 557).
-                let gives = if thread == delegated {
+                let gives = if event.is_brief() {
                     delegation.gives_brief(recipient, message) && !self.is_quiet(thread)
                 } else {
                     thread == origin.thread && delegation.gives_back(recipient, message)
@@ -1160,11 +1160,7 @@ impl ChannelLoop {
         // thread that was not, and asks its recipient as decided then: a cancel meanwhile would
         // leave it given and never asked, its giver waiting for nothing.
         let thread = event.context.thread_id;
-        let brief = matches!(
-            (&event.event, event.context.sender_id),
-            (ActorEvent::GivenToRead { .. }, ActorId::Delegate(delegated)) if delegated == thread
-        );
-        let quiet = !brief && self.is_quiet(thread);
+        let quiet = !event.is_brief() && self.is_quiet(thread);
         let decision = self.deliveries(event, routing, position, quiet).await;
 
         // Whom the moderator asks to respond is woken first, before anything

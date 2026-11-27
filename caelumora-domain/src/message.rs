@@ -334,6 +334,12 @@ impl Message {
             && (self.says_something() || self.is_a_persons_call())
     }
 
+    /// Whether it is a turn's answer (AGENT-TURN.md *What leaves the agent*, issue 619): a message
+    /// of the model, not a step of a plan, calling no tool.
+    pub fn is_answer(&self) -> bool {
+        self.role == MessageRole::Assistant && !self.internal && self.tool_calls.is_empty()
+    }
+
     /// What a participant hears of the message when someone else said it (`is_heard`), the same
     /// live and on catching up, for every kind of agent: as a `user` message, its words and
     /// attachments - and a person's calls with their results, which are what they did in the
@@ -798,6 +804,25 @@ pub(crate) mod tests {
                 "nothing to hear in {:?}",
                 unheard.role
             );
+        }
+    }
+
+    /// Issue 619: a turn's answer is a message of the model calling no tool, with words or
+    /// without, not a step of a plan, a tool's message or a person's.
+    #[test]
+    fn a_turns_answer_is_the_models_message_that_calls_no_tool() {
+        let said = |role| Message { role, ..make_message(MessageId::new()) };
+        assert!(said(MessageRole::Assistant).is_answer());
+        let empty = Message { content: None, ..said(MessageRole::Assistant) };
+        assert!(empty.is_answer(), "with words or without");
+
+        let calling = Message {
+            tool_calls: vec![call("1", ToolVisibility::SHOWN)],
+            ..said(MessageRole::Assistant)
+        };
+        let step = Message { internal: true, ..said(MessageRole::Assistant) };
+        for not_one in [calling, step, said(MessageRole::Tool), said(MessageRole::User)] {
+            assert!(!not_one.is_answer(), "no answer: {not_one:?}");
         }
     }
 

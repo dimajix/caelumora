@@ -1,6 +1,6 @@
 # 619 — A sub-agent gives back everything it said
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** medium
 **Area:** Sessions and channels
@@ -73,7 +73,91 @@ back where an answer was cut and the turn had no answer but remarks.
 - Covered by tests of the delegate; CHANNELS.md (*Delegating into a thread*) and TOOLS.md
   (*Sub-agents*) say what is given back.
 
+## Decision
+
+Decided by the maintainer on 2026-11-27, after weighing the options below.
+
+**D1 - The answer is the turn's last message, if it is one.** The delegate keeps the last message
+of each turn of the recipient it sees, and gives back its text if it is the turn's answer
+(`Message::is_answer`: an assistant message, not internal, calling no tool) and has words; else
+that the turn ended without an answer. It keeps collecting what is said, since a turn's end read
+from the history after a restart carries no messages. A remark followed by calls hidden from
+others alone (private notes, agent memory) and an end without words looks like an answer: rare,
+documented and held by a test, rather than a mark of its own on the message.
+
+**D2 - Remarks are no answer.** A turn that ends with remarks but no answer - one cancelled while
+it called a tool included - gives back that it ended without an answer. An answer cut short by a
+cancel is still the turn's last message and is given back as far as it came.
+
+**D3 - A bound of 16 000 characters, a constant of the delegate.** What goes beyond it is cut at a
+character boundary, with a notice of the kernel's texts (`delegation_cut`). No setting: nobody
+would set it.
+
+**D4 - The brief is framed of its own.** The recipient takes a brief in as given of its own kind
+(`GivenSource::Brief`), and its profile frames it with the kernel's `given_brief`: who gave it, and
+that its answer alone - its last message, calling no tool - goes back and is all the giver reads
+of its work. The framing is the recipient's, since the channel admits a brief only as given; it
+reaches an external agent as well. The terminal's helper no longer says it itself.
+
+Rejected:
+
+- **The turn marks its answer on the message** - a stored field for a rare case.
+- **A setting of `plugins.subagents` for the bound** - passed through the channel for a value
+  nobody chooses.
+- **A model summarising what came back** (D of *Considerations*).
+- **Brief and what comes back told apart in the event** - an event or a field of its own: it
+  changes stored history and every place handling `GivenToRead`, for what the envelope tells
+  already.
+
+## Plan
+
+The interfaces as agreed on 2026-11-27. Each step a commit of its own, reviewed before the next.
+
+### Step 1 - The answer and the brief named, without a change of behaviour
+
+The rule of a turn's answer and the rule of a brief each move to one place.
+
+```rust
+// caelumora-domain/src/message.rs
+/// Whether this is a turn's answer: the agent's own words, not a step of a plan, calling no tool.
+pub fn is_answer(&self) -> bool
+
+// caelumora-domain/src/actor/envelope.rs
+/// Whether it gives a brief (issues 557, 619): a `GivenToRead` its thread's own delegate sends,
+/// as against what that delegate gives back where the thread was opened.
+pub fn is_brief(&self) -> bool
+```
+
+`Turn::say` uses `is_answer`; the channel's routing and `admit_given` use `is_brief`.
+
+### Step 2 - The answer alone, bounded (D1-D3)
+
+`DelegateActor` keeps the last message per turn instead of every heard one, gives back its text if
+it is an answer, cut at `MAX_ANSWER` (16 000 characters) with `kernel.delegation_cut`. Tests of the
+delegate; CHANNELS.md (*Delegating into a thread*) and TOOLS.md (*Sub-agents*).
+
+### Step 3 - The brief framed (D4)
+
+```rust
+// caelumora-domain/src/transcript.rs
+pub enum GivenSource { /* ... */
+    /// A brief delegated to the agent in its thread (issues 557, 619).
+    Brief }
+
+// caelumora-domain/src/agent/channel_state.rs
+/// Records `message`, a brief given to the agent, as given (`GivenSource::Brief`).
+pub fn given_brief(&mut self, thread: ThreadId, message: Message)
+```
+
+The intake takes a brief in by `Envelope::is_brief`; `ModelProfile::given_to_read` is given the
+source and frames a brief with `kernel.given_brief`; the helper's prompt is adjusted. Tests of the
+framing, also for an external agent; AGENT-TURN.md (*What is given to read*).
+
 ## History
 
 - **2026-11-27** — Opened from the discussion of issue 591: what a sub-agent gives back, read in
   the code, is everything it said in the turn, not a deliberate answer.
+- **2026-11-27** — Decided by the maintainer (*Decision*), planned in three steps (*Plan*); in
+  progress.
+- **2026-11-27** — Step 1 done: the rule of a turn's answer (`Message::is_answer`) and of a brief
+  (`Envelope::is_brief`) each in one place, without a change of behaviour.
