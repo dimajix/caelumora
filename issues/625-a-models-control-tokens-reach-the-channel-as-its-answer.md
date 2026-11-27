@@ -1,6 +1,6 @@
 # 625 — A model's control tokens reach the channel as its answer
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** medium
 **Area:** Integrations
@@ -60,3 +60,19 @@ message `"\n<​channel|>"`.
 ## History
 
 - **2026-11-27** — Opened on what the experiment of issue 616 recorded.
+- **2026-11-27** — Done. `ControlTokens` knows of each token its kind (`TokenKind`): control tokens
+  (type 3) are taken out of what the model produces, user-defined ones (type 4, qwen3's `<think>`)
+  are kept there - a model may write them as text - and defused in what is sent, as before. What
+  streams in, words and thinking each, goes through a `TokenFilter`, which holds back what may
+  still become part of a token with what follows: Ollama's parser for gemma4 holds back only the
+  beginnings of `<|channel>` and `<|tool_call>` (its source, `main`, read on 2026-11-27), so a
+  piece may end inside `<|tool_response>`; whether its runner ever splits a token was not
+  checked. What the filter lets through is what taking the tokens out of the whole would leave -
+  taking out repeats until none is left -, and the whole is made of the pieces streamed. An answer
+  or thinking that is blank is none, also one without any token: `"\n<channel|>"` says nothing,
+  though its `"\n"` was streamed. What was taken out is logged at `debug!` once per answer. Names
+  and arguments of tool calls are left as Ollama parsed them. Ollama's gemma4 parser takes
+  `<|tool_response>` out only right after a call; not reported upstream.
+  Tests: `control_tokens::tests`, `a_control_token_the_model_writes_is_taken_out_of_its_answer`,
+  `an_answer_of_control_tokens_alone_is_none`, and in `caelumora-agents`
+  `an_answer_that_says_nothing_ends_the_turn_as_an_empty_one`.

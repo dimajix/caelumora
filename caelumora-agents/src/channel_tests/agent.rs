@@ -1304,6 +1304,26 @@ async fn an_agent_given_something_to_read_wakes_takes_it_in_and_answers() {
     running.abort();
 }
 
+/// Issue 625: an answer that says nothing - what the Ollama client gives of one made of control
+/// tokens alone - ends the turn as an empty one, and the agent is idle again.
+#[tokio::test]
+async fn an_answer_that_says_nothing_ends_the_turn_as_an_empty_one() {
+    let nothing =
+        Message { role: MessageRole::Assistant, ..Message::new(Classification::CHANNEL_DEFAULT) };
+    let Stuck { channel, agent, helper, mut events, running, .. } =
+        with_an_agent(Arc::new(Scripted::new([nothing])), Default::default()).await;
+
+    let ended = answered(&mut events, agent).await;
+    assert!(ended.iter().all(|m| !m.says_something()), "{ended:?}");
+    settled(&helper, ActorState::Idle).await;
+    let history = channel.whole_history().await;
+    assert!(
+        history.iter().filter(|m| m.sender_id == ActorId::Agent(agent)).all(|m| !m.is_heard()),
+        "nothing of it heard: {history:?}"
+    );
+    running.abort();
+}
+
 /// Issue 557: a message the emit processors drop is not said, and the calls it carries are not run:
 /// the turn ends without them - a second call of the model would never be answered.
 #[tokio::test]
