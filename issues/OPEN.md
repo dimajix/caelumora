@@ -65,6 +65,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [550](550-a-skill-is-an-entity-alone.md) | open | medium | feature | A skill exists only as a `Skill` entity and cannot come from a Markdown file with a header, as other agent tools keep them, and it says nothing of itself but its name and one line, so nothing but the model's reading of that line can bring it into a turn without being asked. |
 | [582](582-a-soul-the-agent-writes-itself.md) | open | medium | feature | An agent is what its personality makes it, word for word, so it cannot develop a character, a manner or values of its own over time, and what it learns about itself is either lost or mixed into its memory of facts. |
 | [606](606-no-notes-belong-to-the-channel.md) | open | medium | feature | Every note in a channel belongs to the agent that wrote it and is read there only while that agent takes part, so a channel has no notes of its own - nothing that stays on its board when its author leaves, that users can write, or that another than its author can correct. |
+| [622](622-a-compaction-summarises-the-brief-a-sub-agent-works-on.md) | open | medium | feature | A compaction replaces the brief an agent was delegated - the task it works on and the framing that tells it that only its answer goes back - with what its summary keeps of it, while it carries the parts of prompt components over as they stand, so a sub-agent working long on a brief may lose its task's wording and how to answer it. |
 
 ## Maintenance
 
