@@ -4,13 +4,12 @@
 //! an agent carries out itself are the agents' (`agent_commands`).
 
 use super::*;
-use crate::command::CommandContext;
 use crate::error::is_forbidden;
 use crate::testing::{attributes, shown, World};
-use caelumora_api::command::{CommandError, CommandResult};
+use caelumora_api::command::CommandError;
 use caelumora_domain::actor::Rejection;
 use caelumora_domain::agent::{AgentId, Personality};
-use caelumora_domain::command::{CommandOutput, CommandVisibility};
+use caelumora_domain::command::CommandVisibility;
 use caelumora_domain::message::TokenUsage;
 use caelumora_domain::query::Query;
 use caelumora_domain::scope::Scope;
@@ -218,7 +217,7 @@ async fn wakeup_wakes_the_agent_named_and_refuses_an_ambiguous_name() {
 }
 
 /// Issue 611: `/agent cancel` with an agent ends its turn and leaves it in the channel, which is
-/// not kept quiet; everybody is told, by the command's name.
+/// not kept quiet; everybody is told, by the command's name, and whether it had a turn.
 #[tokio::test]
 async fn cancel_ends_the_turn_of_the_agent_named_and_leaves_it_in_the_channel() {
     let Stuck { channel, context, agent, helper, running, .. } = stuck_in_a_turn().await;
@@ -228,18 +227,21 @@ async fn cancel_ends_the_turn_of_the_agent_named_and_leaves_it_in_the_channel() 
     assert_eq!(reply.command, "agent cancel", "by its short form");
     assert_eq!(
         (reply.output.as_deref(), reply.visibility),
-        (Some("Ended any turn of helper."), CommandVisibility::Channel),
+        (Some("Ended the turn of helper."), CommandVisibility::Channel),
         "told to everybody"
     );
     settled(&helper, ActorState::Idle).await;
     assert_eq!(channel.turn_of(ActorId::Agent(agent)), None, "its turn is ended");
     assert!(channel.actor(ActorId::Agent(agent)).is_some(), "and it is still in the channel");
     assert!(!channel.is_quiet(ThreadId::line(channel.id())), "the others are still asked");
+
+    let reply = actor.execute_command(None, "cancel @helper").await.expect("/cancel runs");
+    assert_eq!(reply.output.as_deref(), Some("helper had no turn."), "nothing left to end");
     running.abort();
 }
 
 /// Issue 611: `/agent cancel` issued in a thread ends the turns of that thread and keeps it quiet;
-/// issued in the line, those of the whole channel.
+/// issued in the line, those of the whole channel. It names whose turns it ended.
 #[tokio::test]
 async fn cancel_ends_the_turns_of_the_thread_it_is_issued_in_or_of_the_channel() {
     use caelumora_domain::channel::ThreadOrigin;
@@ -253,7 +255,7 @@ async fn cancel_ends_the_turns_of_the_thread_it_is_issued_in_or_of_the_channel()
     let reply = actor.execute_command(Some(thread), "agent cancel").await.expect("it runs");
     assert_eq!(
         reply.output.as_deref(),
-        Some("Ended any turns of this thread; it is quiet until someone speaks.")
+        Some("No agent had a turn; this thread is quiet until someone speaks.")
     );
     assert!(channel.is_quiet(thread) && !channel.is_quiet(line), "the thread alone");
     assert!(channel.turn_of(helper.id()).is_some(), "the turn in the line goes on");
@@ -261,7 +263,7 @@ async fn cancel_ends_the_turns_of_the_thread_it_is_issued_in_or_of_the_channel()
     let reply = actor.execute_command(None, "agent cancel").await.expect("it runs");
     assert_eq!(
         reply.output.as_deref(),
-        Some("Ended any turns of this channel; it is quiet until someone speaks.")
+        Some("Ended the turn of helper; this channel is quiet until someone speaks.")
     );
     settled(&helper, ActorState::Idle).await;
     assert_eq!(channel.turn_of(helper.id()), None, "its turn is ended");
@@ -287,30 +289,6 @@ async fn cancel_reports_refusals_and_unknown_agents() {
     let actor = channel.user_actor(alice.id).unwrap();
     let error = actor.execute_command(None, "cancel @nobody").await.expect_err("no such agent");
     assert!(matches!(as_command_error(&error), CommandError::InvalidArguments { .. }), "{error}");
-}
-
-/// Runs `/participant nudge` with `args` in `channel`'s line as alice.
-async fn nudge(channel: &ChannelLoop, alice: UserId, args: &str) -> CommandResult<CommandOutput> {
-    nudge_in(channel, ThreadId::line(channel.id()), alice, args).await
-}
-
-/// Runs `/participant nudge` with `args` in `thread` of `channel` as alice.
-async fn nudge_in(
-    channel: &ChannelLoop,
-    thread: ThreadId,
-    alice: UserId,
-    args: &str,
-) -> CommandResult<CommandOutput> {
-    use crate::command::participant;
-    let executor = CommandExecutor::empty(Arc::new(AllowAllPolicy::new()));
-    let issuer = channel.user_actor(alice).expect("alice takes part");
-    let context = CommandContext { issuer: &issuer, channel, executor: &executor, thread };
-    let commands = participant::commands();
-    let nudge = commands
-        .iter()
-        .find(|c| c.description().name.as_str() == "participant nudge")
-        .expect("a command of the group");
-    nudge.execute(args, &context).await
 }
 
 /// The next end of a turn of `agent` on `events`, with its envelope.
@@ -339,10 +317,11 @@ async fn a_nudged_agent_responds_in_the_name_of_who_nudged_it_and_the_history_ke
     settled(&helper, ActorState::Idle).await;
     let mut following = channel.user_actor(alice).unwrap().watch();
 
-    let output = nudge(&channel, alice, "@helper").await.expect("/nudge runs");
+    let actor = channel.user_actor(alice).unwrap();
+    let reply = actor.execute_command(None, "nudge @helper").await.expect("/nudge runs");
     assert_eq!(
-        (output.text.as_str(), output.visibility),
-        ("Asked helper to respond.", CommandVisibility::Private),
+        (reply.output.as_deref(), reply.visibility),
+        (Some("Asked helper to respond."), CommandVisibility::Private),
         "told to the issuer alone"
     );
 
@@ -430,10 +409,11 @@ async fn a_user_says_and_nudges_in_the_thread_they_name() {
     assert_eq!((rejected.as_str(), reason), ("NudgeRequested", Rejection::Invalid), "not there");
 
     // A `/nudge` asks in the thread it is issued in, of whom takes part there.
-    let output = nudge_in(&channel, thread, alice, "@helper").await.expect("asked");
-    assert_eq!(output.text, "Asked helper to respond.");
-    let error = nudge_in(&channel, elsewhere, alice, "@helper").await.expect_err("not there");
-    assert!(matches!(error, CommandError::InvalidArguments { .. }), "{error}");
+    let reply = actor.execute_command(Some(thread), "nudge @helper").await.expect("asked");
+    assert_eq!(reply.output.as_deref(), Some("Asked helper to respond."));
+    let error =
+        actor.execute_command(Some(elsewhere), "nudge @helper").await.expect_err("not there");
+    assert!(matches!(as_command_error(&error), CommandError::InvalidArguments { .. }), "{error}");
     running.abort();
 }
 
@@ -521,7 +501,8 @@ async fn a_nudge_wakes_the_agent_it_names_and_ends_a_quiet_channel() {
     settled(&helper, ActorState::Idle).await;
     channel.cancel(&context, None).await.expect("permitted");
 
-    nudge(&channel, alice_of(&context), "helper").await.expect("/nudge runs");
+    let actor = channel.user_actor(alice_of(&context)).unwrap();
+    actor.execute_command(None, "nudge helper").await.expect("/nudge runs");
 
     let finished = turn_finished(&mut events, agent).await;
     let ActorEvent::TurnFinished { messages, .. } = &finished.event else { unreachable!() };
@@ -540,10 +521,10 @@ async fn a_nudge_wakes_the_agent_it_names_and_ends_a_quiet_channel() {
 #[tokio::test]
 async fn an_agent_in_a_turn_is_asked_as_any() {
     let Stuck { channel, context, running, .. } = stuck_in_a_turn().await;
-    let alice = alice_of(&context);
+    let actor = channel.user_actor(alice_of(&context)).unwrap();
 
-    let output = nudge(&channel, alice, "@helper").await.expect("answered, not failed");
-    assert_eq!(output.text, "Asked helper to respond.");
+    let reply = actor.execute_command(None, "nudge @helper").await.expect("answered, not failed");
+    assert_eq!(reply.output.as_deref(), Some("Asked helper to respond."));
     running.abort();
 }
 
@@ -570,12 +551,13 @@ async fn a_turn_that_cannot_be_answered_again_is_rejected_at_the_door() {
 async fn only_someone_else_in_the_channel_is_nudged() {
     let Stuck { channel, context, running, .. } = stuck_in_a_turn().await;
     let alice = alice_of(&context);
-
-    for args in ["@nobody", "alice"] {
-        let error = nudge(&channel, alice, args).await.expect_err("names nobody else here");
-        assert!(matches!(error, CommandError::InvalidArguments { .. }), "{args:?}: {error}");
-    }
     let actor = channel.user_actor(alice).unwrap();
+
+    for line in ["nudge @nobody", "nudge alice"] {
+        let error = actor.execute_command(None, line).await.expect_err("names nobody else here");
+        let error = as_command_error(&error);
+        assert!(matches!(error, CommandError::InvalidArguments { .. }), "{line:?}: {error}");
+    }
     let error = actor.request_response(ActorId::User(alice), None).await.expect_err("herself");
     assert!(
         matches!(error.downcast_ref::<ChannelError>(), Some(ChannelError::NudgesItself { .. })),
@@ -603,8 +585,9 @@ async fn a_nudged_user_is_shown_who_asks_them_to_respond() {
     });
     let mut his = channel.user_actor(bob.id).unwrap().watch();
 
-    let output = nudge(&channel, alice.id, "Bob").await.expect("/nudge runs");
-    assert_eq!(output.text, "Asked bob to respond.");
+    let actor = channel.user_actor(alice.id).unwrap();
+    let reply = actor.execute_command(None, "nudge Bob").await.expect("/nudge runs");
+    assert_eq!(reply.output.as_deref(), Some("Asked bob to respond."));
 
     let asked =
         time::timeout(Duration::from_secs(5), his.recv()).await.expect("he is asked").unwrap();

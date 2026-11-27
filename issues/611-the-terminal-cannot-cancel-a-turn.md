@@ -71,3 +71,13 @@ Recommended: option 1.
   the scripted channel of the tests (`channel_of_alice_and`) runs the built-in commands for it.
   `docs/COMMANDS.md`, `docs/CHANNELS.md`, `docs/COMPONENTS.md` and `docs/PERMISSION-CHECKS.md`
   name it. No key of the full screen was added.
+- **2026-11-27** — As the maintainer decided after the review, the answer tells what was ended:
+  `Actor::cancel` returns whether the actor had a turn to end - as `retry_turn` and
+  `interrupt_tool_call` return whether they hit -, `ChannelLoop::cancel` the names of those that
+  had, and `ChannelLoop::cancel_actor` whether the actor had, as `wakeup` and `wakeup_actor` do.
+  `/agent cancel` answers "Ended the turn of …" or "… had no turn." Beside it, the tests of
+  `/participant nudge` run it through `UserActor::execute_command` instead of a helper of their
+  own, and the security suite holds the permissions `/agent cancel` and `/agent wakeup` ask, for
+  the channel and for one agent. `RunControl::cancel` decides under the turn's lock, as `retry`
+  does, so that a turn resumed meanwhile is not answered as none; its tests and those of an
+  agent's cancel hold what it returns, for a turn running and one set aside.

@@ -257,11 +257,13 @@ impl Actor for ScriptedAgent {
         self.woken.store(true, Ordering::SeqCst);
     }
 
-    fn cancel(&self, thread: Option<ThreadId>) {
-        let there = |thread| self.answering().is_some_and(|(there, _)| there == thread);
-        if thread.is_none_or(there) {
+    fn cancel(&self, thread: Option<ThreadId>) -> bool {
+        let there = |(there, _)| thread.is_none_or(|thread| thread == there);
+        let under_way = self.answering().is_some_and(there);
+        if under_way {
             self.ask(Interrupt::Cancel);
         }
+        under_way
     }
 
     fn turn_under_way(&self, thread: ThreadId) -> Option<TurnId> {

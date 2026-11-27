@@ -90,8 +90,10 @@ impl Actor for StandIn {
         self.woken.store(true, Ordering::SeqCst);
     }
 
-    fn cancel(&self, _: Option<ThreadId>) {
+    // It had a turn if a cancel could end its state.
+    fn cancel(&self, _: Option<ThreadId>) -> bool {
         self.cancelled.store(true, Ordering::SeqCst);
+        self.state().interruptible()
     }
 
     fn stop(&self) {}

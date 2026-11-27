@@ -2533,10 +2533,13 @@ async fn a_cancel_ends_a_turn_waiting_for_approval_at_once() {
     let line = ThreadId::line(channel.id());
     settled(&helper, ActorState::WaitingForUser).await;
 
-    channel.cancel(&context, None).await.expect("permitted");
+    let ended = channel.cancel(&context, None).await.expect("permitted");
+    assert_eq!(ended, [helper.name().to_string()], "it had a turn to end (issue 611)");
 
     // Without anyone deciding on the call.
     settled(&helper, ActorState::Idle).await;
+    let ended = channel.cancel(&context, None).await.expect("permitted");
+    assert!(ended.is_empty(), "nothing is left to end: {ended:?}");
 
     // The request is withdrawn, and the approver tells the users
     // (issue 148).
@@ -2642,10 +2645,12 @@ async fn a_turn_set_aside_ends_with_its_thread_and_what_was_said_there_waits_for
     settled(&helper, ActorState::WaitingForUser).await;
     say("meanwhile").await.unwrap();
 
-    channel.cancel(&context, Some(line)).await.expect("permitted");
+    let ended = channel.cancel(&context, Some(line)).await.expect("permitted");
+    assert!(ended.is_empty(), "nothing of it in the line (issue 611): {ended:?}");
     time::sleep(Duration::from_millis(50)).await;
     assert_eq!(helper.state(), ActorState::WaitingForUser, "a cancel of the line ends it not");
-    channel.cancel(&context, Some(thread)).await.expect("permitted");
+    let ended = channel.cancel(&context, Some(thread)).await.expect("permitted");
+    assert_eq!(ended, [helper.name().to_string()], "the turn set aside there (issue 611)");
     let ended = answered_in(&mut events, agent).await;
     assert_eq!(ended.0, thread, "a cancel of its thread ends it");
     // Asked before the cancel, it answers what was said meanwhile, its model then silent.

@@ -1136,10 +1136,10 @@ impl Actor for ExternalAgentActor {
         self.body.control.state()
     }
 
-    fn cancel(&self, thread: Option<ThreadId>) {
+    fn cancel(&self, thread: Option<ThreadId>) -> bool {
         info!("Cancelling external agent {} {}", self.id(), self.name());
         // Only an answer under way: between answers there is nothing to end.
-        self.body.control.cancel(thread);
+        self.body.control.cancel(thread)
     }
 
     // It keeps one remote state in its channel (issue 602).
