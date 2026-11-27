@@ -123,6 +123,11 @@ What waits, as found on 2026-11-27:
 - **TypeScript 7** - `typescript-eslint` (8.74) takes TypeScript `>=4.8.4 <6.1.0`.
 - **`@types/node` 26** - the Node the web UI is built with here is 22; the types of 24 are ahead
   of it already.
+- **The fix of `postcss-selector-parser`** (GHSA-rj75-hqrm-r3gf, moderate: quadratic parsing of
+  flat selectors) - `npm audit` reports it through `@tailwindcss/typography`, and its only fix
+  (`npm audit fix --force`) installs `@tailwindcss/typography` 0.5.4, a step back and breaking. The
+  package runs as the CSS is built, not in the browser; it waits for a release of
+  `@tailwindcss/typography` that takes the fixed parser (added on 2026-11-27, step 2).
 
 Rejected:
 
@@ -158,3 +163,5 @@ Each step a commit of its own, reviewed before the next.
   progress.
 - **2026-11-27** — Step 1 done: `caelumora-rest-client` removed, the domain of
   `caelumora-subagents` part of `api`, `unused_dependencies` denied by the lint table.
+- **2026-11-27** — Step 2 done: `cargo update` (101 packages locked anew) and `npm update` within
+  their ranges; behind afterwards only what waits (TypeScript 7, `@types/node` 26).
