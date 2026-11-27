@@ -1,11 +1,10 @@
 //! The channels of a session the terminal follows for the user, and the one they talk in (issue
 //! 561).
 
-use crate::activity::{Activity, Elsewhere};
+use crate::activity::Activity;
 use crate::followed::Followed;
 use crate::printed::Printed;
 use crate::typeable::Typeable;
-use crate::under_way::UnderWay;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::approval::{ApprovalId, ApprovalRequest};
 use caelumora_domain::channel::{Channel, ChannelId, JOINED};
@@ -115,33 +114,21 @@ impl Channels {
         self.followed(self.talked_in?)
     }
 
-    /// What is at work in the channels followed, and where something waits for the user (issue
-    /// 572): the answers under way in the thread followed of the channel talked in, in the order
-    /// they began; of every channel, in their order, who is at work outside the thread followed,
-    /// and of every other whether something waits for the user.
+    /// What goes on in the session followed (issues 572, 615): its name; the answers under way in
+    /// the thread followed of the channel talked in, in the order they began; every channel
+    /// followed, in their order, as a place (`Followed::place`); and the line and the threads open
+    /// of the channel talked in (`Followed::thread_places`).
     pub(crate) fn activity(&self) -> Activity {
-        let mut activity = Activity::default();
+        let mut activity =
+            Activity { session: self.session.name().to_string(), ..Activity::default() };
         for followed in &self.followed {
             let talked_in = self.talked_in == Some(followed.channel_id());
-            let is_here = |answer: &UnderWay| talked_in && answer.thread == followed.thread();
-            let (here, there): (Vec<_>, Vec<_>) =
-                followed.under_way().iter().cloned().partition(is_here);
             if talked_in {
-                activity.here = here;
+                let here = followed.under_way().iter().filter(|a| a.thread == followed.thread());
+                activity.here = here.cloned().collect();
+                activity.threads = followed.thread_places();
             }
-            // An agent at work in several threads is one at work.
-            let mut at_work = Vec::new();
-            let mut agents = Vec::new();
-            for answer in there {
-                if !agents.contains(&answer.agent) {
-                    agents.push(answer.agent);
-                    at_work.push(answer.name);
-                }
-            }
-            let waits = !talked_in && followed.waits_for_user();
-            if waits || !at_work.is_empty() {
-                activity.elsewhere.push(Elsewhere { channel: followed.name(), at_work, waits });
-            }
+            activity.channels.push(followed.place(talked_in));
         }
         activity
     }
@@ -302,7 +289,7 @@ impl Channels {
         match shown {
             Ok(Shown::Envelope(envelope)) => {
                 let is_told = talked_in || followed.concerns_user(&envelope);
-                let printed = followed.take_in(&envelope);
+                let printed = followed.take_in(&envelope).await;
                 if is_told {
                     told(printed)
                 } else {
@@ -422,6 +409,7 @@ fn changes_taking_part(event: &GlobalEvent, me: ActorId) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::activity::Place;
     use crate::followed::testing::{
         an_agent_in, answered, approval, approval_waiting_in, from, message,
     };
@@ -602,55 +590,131 @@ mod tests {
         assert_eq!(channels.talked_in().map(|f| f.channel_id()), Some(side.id()));
     }
 
-    /// Issue 572: what is at work is the answers under way in the thread followed of the channel
-    /// talked in; of every channel, who is at work outside it - in another thread of the channel
-    /// talked in too -; of another channel, whether something waits for the user there - not of
-    /// the channel talked in, which asks it itself.
+    /// Issues 572, 615: what goes on is the session's name; the answers under way in the thread
+    /// followed of the channel talked in; and every channel followed, marked where an agent is at
+    /// work - in any of its threads - or something waits for the user, but the channel talked in,
+    /// whose threads are marked instead, and which asks what waits itself.
     #[tokio::test]
-    async fn what_is_at_work_is_told_of_the_thread_followed_and_marked_of_the_others() {
+    async fn what_goes_on_is_told_of_the_thread_followed_and_marked_of_the_other_places() {
         let (mut channels, session_loop, _, _) = followed().await;
         let first = channels.talked_in().expect("talked in").channel_id();
         let main = session_loop.channel(first).expect("the first channel");
         let side = named(&session_loop, "side");
-        let activity = channels.activity();
-        assert!(activity.here.is_empty() && activity.elsewhere.is_empty(), "nothing at work");
-
-        let started = |channel: &ChannelLoop, agent, thread_id| {
-            let envelope =
-                from(channel, agent, ActorEvent::ResponseStarted { turn_id: TurnId::new() });
-            let envelope =
-                Envelope { context: EventContext { thread_id, ..envelope.context }, ..envelope };
-            Happened::Shown(channel.id(), Ok(Shown::Envelope(envelope)))
+        let place = |channel: &ChannelLoop, current, at_work, waits| Place {
+            name: channel.name().to_string(),
+            current,
+            at_work,
+            waits,
         };
+        let line =
+            || Place { name: "line".to_string(), current: true, at_work: false, waits: false };
+        let activity = channels.activity();
+        assert_eq!(activity.session, session_loop.name().to_string());
+        assert!(activity.here.is_empty(), "nothing at work");
+        assert_eq!(
+            activity.channels,
+            [place(&main, true, false, false), place(&side, false, false, false)]
+        );
+        assert_eq!(activity.threads, [line()], "the line of the channel talked in");
+
         let helper = ActorId::Agent(AgentId::new());
-        let sub = ActorId::Agent(AgentId::new());
         let coder_id = AgentId::new();
         let coder = ActorId::Agent(coder_id);
         channels.take_in(started(&main, helper, ThreadId::line(main.id()))).await;
-        channels.take_in(started(&main, sub, ThreadId::new())).await;
-        channels.take_in(started(&main, sub, ThreadId::new())).await;
-        channels.take_in(started(&side, coder, ThreadId::line(side.id()))).await;
-        let request =
-            ActorEvent::ApprovalRequested { request: approval(&side, coder_id), to: None };
-        channels.take_in(envelope_shown(&side, coder, request)).await;
-        let request =
-            ActorEvent::ApprovalRequested { request: approval(&main, coder_id), to: None };
-        channels.take_in(envelope_shown(&main, coder, request)).await;
+        channels.take_in(started(&side, coder, ThreadId::new())).await;
+        for channel in [&side, &main] {
+            let request =
+                ActorEvent::ApprovalRequested { request: approval(channel, coder_id), to: None };
+            channels.take_in(envelope_shown(channel, coder, request)).await;
+        }
 
         let activity = channels.activity();
         let here: Vec<_> = activity.here.iter().map(|answer| answer.agent).collect();
         assert_eq!(here, [helper]);
-        let at_work = |channel: &ChannelLoop, agent: ActorId, waits| Elsewhere {
-            channel: channel.name(),
-            at_work: vec![agent.to_string()],
-            waits,
-        };
         assert_eq!(
-            activity.elsewhere,
-            [at_work(&main, sub, false), at_work(&side, coder, true)],
-            "in the order of the channels, the one talked in for its other threads, an agent at \
-             work in two of them once"
+            activity.channels,
+            [place(&main, true, false, false), place(&side, false, true, true)],
+            "where the user is, nothing marked; elsewhere, at work in another thread too"
         );
+        assert_eq!(activity.threads, [line()], "the status line tells the line's answer");
+    }
+
+    /// What `channel` shows as `agent` begins to answer in `thread_id`.
+    fn started(channel: &ChannelLoop, agent: ActorId, thread_id: ThreadId) -> Happened {
+        let envelope = from(channel, agent, ActorEvent::ResponseStarted { turn_id: TurnId::new() });
+        let envelope =
+            Envelope { context: EventContext { thread_id, ..envelope.context }, ..envelope };
+        Happened::Shown(channel.id(), Ok(Shown::Envelope(envelope)))
+    }
+
+    /// Issue 615: the threads open in a channel followed are kept as one opens, is delegated into -
+    /// with the sub-agent it was delegated to - and closes.
+    #[tokio::test]
+    async fn the_threads_open_are_kept_with_whom_they_were_delegated_to() {
+        use caelumora_domain::agent::testing::make_personality;
+        use caelumora_domain::channel::{Circle, ThreadOrigin};
+        use caelumora_kernel::channel::ThreadSpec;
+        use caelumora_store::testing::stored_agent;
+        let (mut channels, session_loop, owner, kernel) = alone().await;
+        let channel_id = channels.talked_in().expect("talked in").channel_id();
+        let channel = session_loop.channel(channel_id).expect("its first channel");
+        // Not in the session yet: a closed thread takes in those it is founded with alone, and one
+        // that owns them is closed with them.
+        let stores = kernel.entity_stores();
+        let personality = make_personality("helper");
+        let agent = stored_agent(stores, "helper", personality, owner.caller_id).await.id;
+        let agent = ActorId::Agent(agent);
+        let ActorId::User(user) = owner.caller_id else { unreachable!("a user") };
+        let line = ThreadId::line(channel_id);
+        let origin = ThreadOrigin { thread: line, message: channel.said_by(user, line).await };
+        let spec = ThreadSpec {
+            circle: Circle::Closed,
+            founders: vec![agent],
+            owns_founders: true,
+            ..ThreadSpec::new(origin)
+        };
+        let thread = channel.open_thread_by_procedure(&owner, spec).await.expect("opened");
+        until_threads(&mut channels, &[(thread, "Thread")]).await;
+        // In the footer as a thread, until it is delegated.
+        let places = |channels: &Channels| -> Vec<(String, bool, bool)> {
+            let threads = channels.activity().threads;
+            threads.into_iter().map(|t| (t.name, t.current, t.at_work)).collect()
+        };
+        let place = |name: &str, current, at_work| (name.to_string(), current, at_work);
+        assert_eq!(places(&channels), [place("line", true, false), place("thread", false, false)]);
+
+        channel.delegate(&owner, thread, agent, "find it".to_string()).await.expect("delegated");
+        until_threads(&mut channels, &[(thread, "Thread of helper")]).await;
+        // Then by the agent it was delegated to, marked while one is at work there.
+        channels.take_in(started(&channel, agent, thread)).await;
+        assert_eq!(places(&channels), [place("line", true, false), place("helper", false, true)]);
+        // Following it, it is where the user is, and the line is marked where one is at work.
+        let followed = channels.talked_in_mut().expect("talked in");
+        followed.follow(thread, "the thread of helper").await;
+        channels.take_in(started(&channel, agent, line)).await;
+        assert_eq!(places(&channels), [place("line", false, true), place("helper", true, false)]);
+
+        assert!(channel.close_thread_by_procedure(&owner, thread).await.expect("closed"));
+        until_threads(&mut channels, &[]).await;
+    }
+
+    /// Takes in what happens next, until the channel talked in keeps the threads `wanted` open,
+    /// each with its title, within five seconds.
+    async fn until_threads(channels: &mut Channels, wanted: &[(ThreadId, &str)]) {
+        let kept = |channels: &Channels| -> Vec<(ThreadId, String)> {
+            let threads = channels.talked_in().map(Followed::threads).unwrap_or_default();
+            threads.iter().map(|thread| (thread.id, thread.title())).collect()
+        };
+        let wanted: Vec<(ThreadId, String)> =
+            wanted.iter().map(|(id, title)| (*id, title.to_string())).collect();
+        let taken_in = async {
+            while kept(channels) != wanted {
+                let happened = channels.next().await;
+                channels.take_in(happened).await;
+            }
+        };
+        let waited = time::timeout(Duration::from_secs(5), taken_in).await;
+        assert!(waited.is_ok(), "kept {:?}, not {wanted:?}", kept(channels));
     }
 
     /// The end of an approval told of another channel is told as well, marked with its name:

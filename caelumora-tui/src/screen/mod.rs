@@ -28,7 +28,8 @@ pub(crate) trait Screen: Send {
     /// Shows `printed`, after what was shown before.
     fn print(&mut self, printed: Vec<Printed>);
 
-    /// Shows what is at work in the channels followed, `activity`, as it stands now (issue 572).
+    /// Shows what goes on in the session followed, `activity`, as it stands now (issues 572,
+    /// 615).
     fn show_activity(&mut self, activity: &Activity);
 
     /// Shows what is asked of the user now, `asked` - as waiting only, where it is put aside

@@ -1,9 +1,9 @@
-//! How the full-screen terminal draws what it prints and what is at work: in lines styled by
-//! what they tell (issues 569, 572).
+//! How the full-screen terminal draws what it prints and what goes on: in lines styled by what
+//! they tell (issues 569, 572, 615).
 
 use super::call::{ending_line, ShownCall};
 use super::PROMPT;
-use crate::activity::{Activity, Elsewhere};
+use crate::activity::{Activity, Place};
 use crate::printed::{Printed, Said, Saying, Words};
 use crate::screen::words::{
     attachment, error_word, how_to_answer, how_to_approve, missed, question_rows, to_decide,
@@ -130,14 +130,11 @@ pub(super) fn live_lines(under_way: &[UnderWay]) -> Vec<Line<'static>> {
     lines
 }
 
-/// The status line of what is at work, `activity`, at `now`, in `width` columns: of each answer
-/// under way in the thread followed, who answers, where they stand, and for how long; then of each
-/// channel where agents are at work elsewhere or something waits for the user, a mark (issue
-/// 572) - or, where the marks do not fit, how many are at work elsewhere and whether something
-/// waits there; empty where nothing is.
-pub(super) fn status_line(activity: &Activity, now: Instant, width: u16) -> Line<'static> {
+/// The status line of the answers under way in the thread followed, `here`, at `now`: of each,
+/// who answers, where they stand, and for how long; empty where none is.
+pub(super) fn status_line(here: &[UnderWay], now: Instant) -> Line<'static> {
     let mut spans = Vec::new();
-    for answer in &activity.here {
+    for answer in here {
         if !spans.is_empty() {
             spans.push(Span::raw("  "));
         }
@@ -151,50 +148,101 @@ pub(super) fn status_line(activity: &Activity, now: Instant, width: u16) -> Line
         let state = state_words(answer.state);
         spans.push(Span::styled(format!(" {state} · {}s", elapsed.as_secs()), Style::new().dim()));
     }
-    let marks: Vec<Vec<Span<'static>>> = activity.elsewhere.iter().map(elsewhere_mark).collect();
-    // Each mark after two spaces, as each answer is - but the first, where no answer leads.
-    let needed: usize = marks.iter().map(|mark| Line::from(mark.clone()).width() + 2).sum();
-    let needed = if spans.is_empty() { needed.saturating_sub(2) } else { needed };
-    let fits = Line::from(spans.clone()).width() + needed <= usize::from(width);
-    let marks = if fits { marks } else { vec![summed_up(&activity.elsewhere)] };
-    for mark in marks.into_iter().filter(|mark| !mark.is_empty()) {
-        if !spans.is_empty() {
-            spans.push(Span::raw("  "));
+    Line::from(spans)
+}
+
+/// The rows of the footer below the line typed, of `activity`, in `width` columns (issue 615):
+/// the places the user can be (`places_row`), and the session.
+pub(super) fn footer_rows(activity: &Activity, width: u16) -> Vec<Line<'static>> {
+    let places = places_row([&activity.channels, &activity.threads], usize::from(width));
+    let session = Line::styled(format!(" session {}", activity.session), Style::new().dim());
+    vec![places, session]
+}
+
+/// The row of the places the user can be, `lists` - the channels followed, then, set apart, the
+/// line and the threads of the channel talked in -, in `width` columns: as many as fit, where the
+/// user is first, then the places marked, then the rest, each list in its order and telling how
+/// many of it were left out.
+fn places_row(lists: [&[Place]; 2], width: usize) -> Line<'static> {
+    let mut shown = lists.map(|list| vec![false; list.len()]);
+    for standing in [Standing::Here, Standing::Marked, Standing::Quiet] {
+        for (of, list) in lists.iter().enumerate() {
+            for (at, place) in list.iter().enumerate() {
+                if Standing::of(place) != standing {
+                    continue;
+                }
+                shown[of][at] = true;
+                // Where the user is stands even where it does not fit.
+                if standing != Standing::Here && places_line(lists, &shown).width() > width {
+                    shown[of][at] = false;
+                }
+            }
         }
-        spans.extend(mark);
+    }
+    places_line(lists, &shown)
+}
+
+/// How a place stands in the footer, which says how early it is given room and how it is drawn:
+/// where the user is, marked, or where nothing goes on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Standing {
+    Here,
+    Marked,
+    Quiet,
+}
+
+impl Standing {
+    /// How `place` stands: where the user is - nothing is marked there -, else marked or quiet.
+    fn of(place: &Place) -> Self {
+        match (place.current, place.is_marked()) {
+            (true, _) => Self::Here,
+            (false, true) => Self::Marked,
+            (false, false) => Self::Quiet,
+        }
+    }
+}
+
+/// The places of `lists` that are `shown`, each list's set apart from the other's, and of each
+/// list how many were left out.
+fn places_line(lists: [&[Place]; 2], shown: &[Vec<bool>; 2]) -> Line<'static> {
+    let dim = Style::new().dim();
+    let mut spans = vec![Span::raw(" ")];
+    for (list, shown) in lists.iter().zip(shown).filter(|(list, _)| !list.is_empty()) {
+        if spans.len() > 1 {
+            spans.push(Span::styled("  │  ", dim));
+        }
+        let places = list.iter().zip(shown).filter(|(_, shown)| **shown);
+        for (at, (place, _)) in places.enumerate() {
+            if at > 0 {
+                spans.push(Span::styled(" · ", dim));
+            }
+            spans.extend(place_spans(place));
+        }
+        let left_out = shown.iter().filter(|shown| !**shown).count();
+        if left_out > 0 {
+            spans.push(Span::styled(format!(" +{left_out}"), dim));
+        }
     }
     Line::from(spans)
 }
 
-/// The mark of a channel where agents are at work elsewhere or something waits for the user,
-/// `elsewhere`: its name, who is at work there - how many, where they are several -, and that
-/// something waits.
-fn elsewhere_mark(elsewhere: &Elsewhere) -> Vec<Span<'static>> {
-    let mut spans = vec![Span::styled(format!("[{}]", elsewhere.channel), Style::new().dim())];
-    match elsewhere.at_work.as_slice() {
-        [] => {}
-        [agent] => spans.push(Span::raw(format!(" {agent}"))),
-        several => spans.push(Span::raw(format!(" {} at work", several.len()))),
-    }
-    if elsewhere.waits {
-        let lead = if elsewhere.at_work.is_empty() { " " } else { " · " };
-        spans.push(Span::styled(format!("{lead}waits for you"), Style::new().yellow()));
-    }
-    spans
-}
-
-/// The marks of the channels `elsewhere` summed up, where they do not fit: how many agents are at
-/// work elsewhere, and whether something waits for the user there.
-fn summed_up(elsewhere: &[Elsewhere]) -> Vec<Span<'static>> {
-    let at_work: usize = elsewhere.iter().map(|elsewhere| elsewhere.at_work.len()).sum();
+/// `place` as the footer shows it (issue 615, D7): a yellow `!` where something waits for the
+/// user, a cyan `●` where an agent is at work, then its name - bold where the user is, dimmed
+/// where nothing goes on. The colour is never the only mark.
+fn place_spans(place: &Place) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
-    if at_work > 0 {
-        spans.push(Span::styled(format!("+{at_work} at work elsewhere"), Style::new().dim()));
+    if place.waits {
+        spans.push(Span::styled("!", Style::new().yellow()));
     }
-    if elsewhere.iter().any(|elsewhere| elsewhere.waits) {
-        let lead = if spans.is_empty() { "" } else { " · " };
-        spans.push(Span::styled(format!("{lead}waits for you elsewhere"), Style::new().yellow()));
+    if place.at_work {
+        spans.push(Span::styled("●", Style::new().cyan()));
     }
+    let style = match Standing::of(place) {
+        Standing::Here => Style::new().bold(),
+        Standing::Marked => Style::new(),
+        Standing::Quiet => Style::new().dim(),
+    };
+    spans.push(Span::styled(place.name.clone(), style));
     spans
 }
 
@@ -444,52 +492,76 @@ mod tests {
         );
     }
 
-    /// The status line tells who answers, where they stand and for how long; then, where else
-    /// agents are at work or something waits for the user, by a mark of each channel - or, where
-    /// the marks do not fit, summed up (issue 572).
+    /// The status line tells who answers, where they stand and for how long - nothing else
+    /// (issue 615).
     #[test]
-    fn the_status_line_tells_who_answers_where_and_how_long_and_marks_the_others() {
+    fn the_status_line_tells_who_answers_where_and_how_long() {
         let now = Instant::now();
         let since = now.checked_sub(Duration::from_secs(12)).unwrap_or(now);
         let agent = ActorId::Agent(AgentId::new());
         let state = Some(ActorState::ExecutingTools);
         let (thread, turn) = (ThreadId::new(), TurnId::new());
         let answer = UnderWay::began(agent, "helper".to_string(), thread, turn, state);
-        let here = vec![UnderWay { since, ..answer }];
-        let line = |activity: &Activity, width| status_line(activity, now, width).to_string();
-        let alone = Activity { here: here.clone(), elsewhere: Vec::new() };
-        assert!(
-            line(&alone, 80).ends_with("helper is running tools · 12s"),
-            "{}",
-            line(&alone, 80)
-        );
-        assert!(line(&Activity::default(), 80).is_empty());
+        let told = status_line(&[UnderWay { since, ..answer }], now).to_string();
+        assert!(told.ends_with("helper is running tools · 12s"), "{told}");
+        assert!(status_line(&[], now).to_string().is_empty());
+    }
 
-        let mark = |channel: &str, at_work: &[&str], waits| Elsewhere {
-            channel: Name::new(channel).unwrap(),
-            at_work: at_work.iter().map(|agent| agent.to_string()).collect(),
+    /// Issue 615: the footer shows the channels and, set apart, the threads of the channel talked
+    /// in - where the user is bold, a place where something waits led by a yellow `!`, one where an
+    /// agent is at work by a cyan `●`, one where nothing goes on dimmed -, and the session below;
+    /// where they do not all fit, where the user is first, then what is marked, and how many of
+    /// each list were left out.
+    #[test]
+    fn the_footer_shows_where_the_user_is_and_marks_the_other_places() {
+        let place = |name: &str, current, at_work, waits| Place {
+            name: name.to_string(),
+            current,
+            at_work,
             waits,
         };
-        let elsewhere = vec![
-            mark("side", &["coder"], false),
-            mark("ops", &["a", "b"], true),
-            mark("hr", &[], true),
-        ];
-        let marked = Activity { here, elsewhere };
-        let told = line(&marked, 200);
-        assert!(
-            told.ends_with(
-                "12s  [side] coder  [ops] 2 at work · waits for you  [hr] waits for you"
-            ),
-            "{told}"
+        let activity = Activity {
+            session: "here-3f2a91c0".to_string(),
+            here: Vec::new(),
+            channels: vec![
+                place("main", true, false, false),
+                place("side", false, true, false),
+                place("ops", false, false, true),
+                place("dev", false, false, false),
+            ],
+            threads: vec![
+                place("line", true, false, false),
+                place("researcher", false, true, false),
+            ],
+        };
+        let rows = footer_rows(&activity, 80);
+        assert_eq!(
+            texts(&rows),
+            [" main · ●side · !ops · dev  │  line · ●researcher", " session here-3f2a91c0"]
         );
-        let summed = line(&marked, 60);
-        assert!(
-            summed.ends_with("12s  +3 at work elsewhere · waits for you elsewhere"),
-            "{summed}"
+        let style_of = |text: &str| -> Style {
+            let span = rows[0].spans.iter().find(|span| span.content == text);
+            span.map(|span| span.style).unwrap_or_else(|| panic!("{text} in {:?}", rows[0]))
+        };
+        assert_eq!(style_of("main"), Style::new().bold(), "where the user is");
+        assert_eq!(style_of("●"), Style::new().cyan());
+        assert_eq!(style_of("!"), Style::new().yellow());
+        assert_eq!(style_of("side"), Style::new(), "something goes on there");
+        assert_eq!(style_of("dev"), Style::new().dim(), "nothing goes on there");
+        assert_eq!(rows[1].style, Style::new().dim(), "the session");
+
+        let narrow = texts(&footer_rows(&activity, 36));
+        assert_eq!(narrow[0], " main · ●side · !ops +1  │  line +1", "the marked first");
+        let narrower = texts(&footer_rows(&activity, 20));
+        assert_eq!(narrower[0], " main +3  │  line +1");
+        let narrowest = texts(&footer_rows(&activity, 12));
+        assert_eq!(
+            narrowest[0], " main +3  │  line +1",
+            "where the user is, even where it does not fit"
         );
-        let only = Activity { here: Vec::new(), elsewhere: vec![mark("side", &["coder"], false)] };
-        assert_eq!(line(&only, 80), "[side] coder", "no answer here, the mark alone");
+        let alone = Activity { threads: Vec::new(), ..activity };
+        let alone = texts(&footer_rows(&alone, 80));
+        assert_eq!(alone[0], " main · ●side · !ops · dev", "no channel talked in, no threads");
     }
 
     /// The parts of words are told apart by whether they mention a participant, empty ones left

@@ -106,3 +106,7 @@ turn, that of all its answers - the line's no longer lost where a thread is foll
 in several threads counted once; the status line marks the other channels or sums them up, `line`
 shows nothing of it. Following a thread reads the answers under way no more: they are kept of
 every thread. Documented in README.md.
+
+**2026-11-27** - Issue 615 (D2) moved the marks of the other places from the status line into a
+footer below the line typed, which lists every channel and every thread of the channel talked in;
+the status line keeps the answers of the thread followed.

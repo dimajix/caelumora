@@ -98,9 +98,13 @@ The TUI writes its log to `~/.local/state/caelumora/tui.log`.
 The TUI is drawn in one of two ways, chosen with `--screen` (issue 569). `full`, the default, takes
 the whole window, as Claude Code does: what the channel shows above - scrolled with Page Up and
 Page Down, Shift and the arrows, or the mouse wheel, and following its end again with Ctrl+End -,
-the answers of agents as they stream at its end, a status line that tells who answers and where
-they stand - and, by the channel's name, who is at work elsewhere, in another thread too, and where
-an approval or questions wait for the user (issue 572) -, and the line typed below. A tool call
+the answers of agents as they stream at its end, a status line that tells who answers there and
+where they stand, and the line typed below. Below that, set apart by a rule, a footer tells where
+the user is (issue 615): the channels they take part in, and the line and the threads of the
+channel talked in, a thread by the sub-agent it was delegated to, as many as fit, and the
+session's name. Where the user is stands in bold, a cyan `●` marks where an agent is at work, a
+yellow `!` where an approval or questions wait for the user. A window lower than 10 rows leaves
+the footer out, and so does one where what is asked needs the room. A tool call
 stands with how it ended, headed by what its tool says it does and folded: a click on its head
 unfolds it to its arguments and its result - for a command, what it printed - and folds it again,
 Ctrl+O every call at once (issue 586). Dragging the mouse marks text, which is copied to the

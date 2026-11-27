@@ -2,7 +2,8 @@
 //! line typed below, as Claude Code draws it (issue 569). Tab completes what is typed from what can
 //! be typed, showing what remains above the line (issue 579). A tool call stands with its result,
 //! folded: a click on its head unfolds it and folds it again, Ctrl+O every call at once (issue
-//! 586).
+//! 586). Below the line typed, a footer tells where the user is and what goes on elsewhere (issue
+//! 615).
 
 mod call;
 mod choosing;
@@ -40,7 +41,7 @@ use std::io;
 use std::panic;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use styled::{kept, live_lines, status_line, typed_line, Kept};
+use styled::{footer_rows, kept, live_lines, status_line, typed_line, Kept};
 use tokio::time::{self, Interval, MissedTickBehavior};
 use tracing::warn;
 
@@ -61,6 +62,9 @@ const CANDIDATE_ROWS: u16 = 3;
 
 /// What sets the candidates of a completion apart from each other in a row.
 const SPACING: &str = "   ";
+
+/// How many rows the window has at least to show the footer below the line typed (issue 615).
+const FOOTER_HEIGHT: u16 = 10;
 
 /// How many rows `line` takes at `width` columns, broken at words as it is drawn - which
 /// ratatui's `Paragraph::line_count` counts, under its feature `unstable-rendered-line-info`.
@@ -91,13 +95,13 @@ pub(crate) struct FullScreen {
 /// What the full-screen window shows, and how keys, the mouse and pasted text change it: what was
 /// printed and what streams, scrolled by the user alone, its tool calls unfolded and folded by a
 /// click on their heads or Ctrl+O; what is asked of the user; the status line of the answers under
-/// way; the candidates of a completion; the line typed, which Tab completes; and what the user
-/// marks with the mouse, and the choice they click.
+/// way; the candidates of a completion; the line typed, which Tab completes; the footer of where
+/// the user is; and what the user marks with the mouse, and the choice they click.
 #[derive(Debug, Default)]
 struct Window {
     /// What was printed, and what streams after it.
     scrollback: Scrollback,
-    /// What is at work in the channels followed (issue 572).
+    /// What goes on in the session followed (issues 572, 615).
     activity: Activity,
     /// What is asked of the user, as it is chosen among; told on the rule only, where it is put
     /// aside.
@@ -245,9 +249,9 @@ impl Window {
         self.typeable = typeable;
     }
 
-    /// Shows what is at work, `activity`: what the answers of the thread followed streamed after
-    /// what was printed, and in the status line where they stand and where else agents are at work
-    /// or something waits for the user (issue 572).
+    /// Shows what goes on, `activity`: what the answers of the thread followed streamed after what
+    /// was printed, in the status line where they stand, and in the footer where the user is and
+    /// where else agents are at work or something waits for them (issues 572, 615).
     fn show_activity(&mut self, activity: &Activity) {
         self.scrollback.set_live(live_lines(&activity.here));
         self.activity = activity.clone();
@@ -391,28 +395,38 @@ impl Window {
     /// Draws the window on `frame` at `now`: what was printed and what streams; what is asked; the
     /// status line where answers are under way; the candidates of a completion, in the room left
     /// (`candidate_rows`); a rule, which tells where the user scrolled up; the line typed, with
-    /// the cursor in it; and over all, what the user marks.
+    /// the cursor in it; below a rule of its own the footer, in a window of `FOOTER_HEIGHT` rows
+    /// at least, where everything else still fits; and over all, what the user marks.
     fn draw(&mut self, frame: &mut Frame, now: Instant) {
         let area = frame.area();
         let (rows, cursor) = self.input.rows(PROMPT, area.width);
         let input_rows = u16::try_from(rows.len()).unwrap_or(u16::MAX).min(INPUT_ROWS);
-        let at_work = !self.activity.here.is_empty() || !self.activity.elsewhere.is_empty();
-        let status_rows = u16::from(at_work);
+        let status_rows = u16::from(!self.activity.here.is_empty());
         let asked_rows = self.choosing.as_ref().map_or(0, |choosing| choosing.height(area.width));
         let asked_rows = u16::try_from(asked_rows).unwrap_or(u16::MAX).min(area.height / 2);
-        // What is left beside the line typed, the rule, what is asked, the status line and a row of
-        // what was printed: the candidates never push the line typed out of the window.
-        let room = area.height.saturating_sub(input_rows + 1 + asked_rows + status_rows + 1);
+        // The line typed, its rule, what is asked, the status line and a row of what was printed.
+        let taken = input_rows + 1 + asked_rows + status_rows + 1;
+        // The footer gives way where it would push any of them out of the window.
+        let footer = footer_rows(&self.activity, area.width);
+        let footer_taken = u16::try_from(footer.len() + 1).unwrap_or(u16::MAX);
+        let fits = area.height >= FOOTER_HEIGHT && taken + footer_taken <= area.height;
+        let footer = if fits { footer } else { Vec::new() };
+        let footer_rows = u16::try_from(footer.len()).unwrap_or(u16::MAX);
+        let footer_rule = u16::from(!footer.is_empty());
+        // What is left: the candidates never push the line typed out of the window.
+        let room = area.height.saturating_sub(taken + footer_rule + footer_rows);
         let candidates =
             candidate_rows(&self.candidates, area.width, usize::from(CANDIDATE_ROWS.min(room)));
         let candidate_rows = u16::try_from(candidates.len()).unwrap_or(u16::MAX);
-        let [printed, asking, status, offered, rule, typed] = Layout::vertical([
+        let [printed, asking, status, offered, rule, typed, below, footed] = Layout::vertical([
             Constraint::Min(1),
             Constraint::Length(asked_rows),
             Constraint::Length(status_rows),
             Constraint::Length(candidate_rows),
             Constraint::Length(1),
             Constraint::Length(input_rows),
+            Constraint::Length(footer_rule),
+            Constraint::Length(footer_rows),
         ])
         .areas(area);
         self.asked_area = asking;
@@ -424,10 +438,12 @@ impl Window {
         if let Some(choosing) = &self.choosing {
             frame.render_widget(Paragraph::new(choosing.rows()).wrap(Wrap { trim: false }), asking);
         }
-        frame.render_widget(status_line(&self.activity, now, status.width), status);
+        frame.render_widget(status_line(&self.activity.here, now), status);
         frame.render_widget(Paragraph::new(candidates), offered);
         let waits = self.choosing.as_ref().and_then(Choosing::waiting);
         frame.render_widget(rule_line(self.scrollback.below(), waits, rule), rule);
+        frame.render_widget(rule_line(0, None, below), below);
+        frame.render_widget(Paragraph::new(footer), footed);
 
         // The rows about the cursor, where the line takes more than are shown.
         let first = cursor.y.saturating_sub(input_rows.saturating_sub(1));
@@ -492,7 +508,7 @@ fn rule_line(below: usize, waits: Option<String>, area: Rect) -> Line<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::activity::Elsewhere;
+    use crate::activity::Place;
     use crate::asking::Asking;
     use crate::under_way::UnderWay;
     use caelumora_domain::actor::ActorId;
@@ -607,7 +623,7 @@ mod tests {
         let agent = ActorId::Agent(AgentId::new());
         let thread = ThreadId::line(ChannelId::new());
         let answer = UnderWay::began(agent, "helper".to_string(), thread, TurnId::new(), None);
-        window.show_activity(&Activity { here: vec![answer], elsewhere: Vec::new() });
+        window.show_activity(&Activity { here: vec![answer], ..Activity::default() });
         for c in "hi".chars() {
             window.take_key(&key(KeyCode::Char(c)), 5);
         }
@@ -617,13 +633,47 @@ mod tests {
         assert_eq!(rows[4], "─".repeat(30));
         assert_eq!(rows[5], "> hi");
         assert_eq!(cursor, Position::new(4, 5));
+    }
 
-        // Nothing under way here, an agent at work elsewhere: the status line tells so alone.
-        let side = Name::new("side").unwrap();
-        let elsewhere = Elsewhere { channel: side, at_work: vec!["coder".into()], waits: false };
-        window.show_activity(&Activity { here: Vec::new(), elsewhere: vec![elsewhere] });
-        let (rows, _) = drawn(&mut window, 30, 6);
-        assert_eq!(rows[3], "[side] coder", "{rows:?}");
+    /// Issue 615: below the line typed, set apart by a rule, the footer tells where the user is,
+    /// what goes on elsewhere and the session; nothing under way in the thread followed, there is
+    /// no status line. A window too low for it shows none.
+    #[test]
+    fn the_window_shows_the_footer_below_the_line_typed() {
+        let mut window = Window::default();
+        window.print(&Printed::Notice("Talking in main now".to_string()));
+        let place = |name: &str, current, at_work| Place {
+            name: name.to_string(),
+            current,
+            at_work,
+            waits: false,
+        };
+        window.show_activity(&Activity {
+            session: "here".to_string(),
+            here: Vec::new(),
+            channels: vec![place("main", true, false), place("side", false, true)],
+            threads: vec![place("line", true, false)],
+        });
+        let (rows, cursor) = drawn(&mut window, 30, FOOTER_HEIGHT);
+        assert_eq!(rows[0], "Talking in main now");
+        assert_eq!(rows[5], "─".repeat(30), "the rule above the line typed: {rows:?}");
+        assert_eq!(rows[6], ">", "the line typed, empty");
+        assert_eq!(rows[7], "─".repeat(30), "the rule below it");
+        assert_eq!(rows[8], " main · ●side  │  line");
+        assert_eq!(rows[9], " session here");
+        assert_eq!(cursor, Position::new(2, 6));
+
+        let (rows, cursor) = drawn(&mut window, 30, FOOTER_HEIGHT - 1);
+        assert_eq!(rows[usize::from(FOOTER_HEIGHT) - 2], ">", "the line typed last: {rows:?}");
+        assert_eq!(cursor, Position::new(2, FOOTER_HEIGHT - 2));
+
+        // What is asked takes the room: the footer gives way, the line typed keeps its row.
+        window.ask(Some(&Asked::Shown(several(&["a", "b", "c", "d"]))));
+        let (rows, cursor) = drawn(&mut window, 60, FOOTER_HEIGHT);
+        let last = usize::from(FOOTER_HEIGHT) - 1;
+        assert_eq!(rows[last], ">", "the line typed last: {rows:?}");
+        assert!(!rows.iter().any(|row| row.contains("session here")), "{rows:?}");
+        assert_eq!(cursor, Position::new(2, FOOTER_HEIGHT - 1));
     }
 
     /// A line typed is answered as it ends, and shown as sent; scrolled up, the rule tells how

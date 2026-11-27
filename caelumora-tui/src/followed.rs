@@ -1,6 +1,7 @@
-//! A channel as the terminal follows it for the user: what it prints of what the channel shows,
-//! and what the user's commands there need of it (issue 561).
+//! A channel as the terminal follows it for the user: what it prints and shows of what the
+//! channel shows, and what the user's commands there need of it (issues 561, 615).
 
+use crate::activity::Place;
 use crate::printed::{beginning, ErrorKind, Printed, Said, Saying, Words};
 use crate::typeable::Typeable;
 use crate::under_way::UnderWay;
@@ -27,6 +28,7 @@ use caelumora_kernel::actor::Shown;
 use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::view::{ChannelView, Views};
 use std::collections::{HashMap, HashSet};
+use std::iter;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -38,8 +40,8 @@ const HISTORY_ITEMS: usize = 50;
 /// REST server does (`docs/CHANNELS.md`, issue 386): the channel, the views it is read through in
 /// their name and what their actor in it shows, the approvals pending there and those the user
 /// answered, which questions it knows, the answers under way, the quiet calls whose results are to
-/// come, the messages printed from its history, what `/retry` asks to be given again, and the
-/// thread of it the user follows (issue 595).
+/// come, the messages printed from its history, what `/retry` asks to be given again, the thread
+/// of it the user follows (issue 595), and its threads open (issue 615).
 pub(crate) struct Followed {
     /// The channel followed, in which the user's actor is reached where they act: a run of it may
     /// have ended and another begun since it was followed - they left and joined again. Held, not
@@ -111,16 +113,35 @@ pub(crate) struct Followed {
     /// The thread of the channel the user follows (issue 595): what is printed is what its view
     /// shows, and what they type goes there. The line unless they chose another.
     thread: ThreadId,
+    /// The threads open in the channel, its line not among them, as they were read last
+    /// (`read_threads`, issue 615).
+    threads: Vec<OpenThread>,
 }
 
-/// A thread open in the channel, as `/thread list` tells it (issue 595).
+/// A thread open in the channel, as the terminal keeps it (issues 595, 615).
 #[derive(Debug, Clone)]
 pub(crate) struct OpenThread {
     pub(crate) id: ThreadId,
-    /// `Thread of` the agent it was delegated to - a sub-agent's -, else `Thread`.
-    pub(crate) title: String,
-    /// Its title, who takes part, and the beginning of the message it hangs at.
-    pub(crate) told: String,
+    /// The agent it was delegated to - a sub-agent -, by name; `None` while it was delegated to
+    /// none.
+    delegated_to: Option<String>,
+    /// The message it hangs at.
+    hangs_at: MessageId,
+}
+
+impl OpenThread {
+    /// What the footer calls it (issue 615): the agent it was delegated to, else `thread`.
+    pub(crate) fn name(&self) -> &str {
+        self.delegated_to.as_deref().unwrap_or("thread")
+    }
+
+    /// `Thread of` the agent it was delegated to, else `Thread`.
+    pub(crate) fn title(&self) -> String {
+        match &self.delegated_to {
+            Some(name) => format!("Thread of {name}"),
+            None => "Thread".to_string(),
+        }
+    }
 }
 
 impl Followed {
@@ -153,6 +174,7 @@ impl Followed {
             from_history: HashSet::new(),
             given_up: None,
             thread,
+            threads: Vec::new(),
         };
         followed.catch_up().await;
         Some(followed)
@@ -182,13 +204,13 @@ impl Followed {
     /// The answers under way are read anew as well, from the running channel
     /// (`read_under_way`): one whose end was missed is under way no more, one whose start was
     /// missed is, and those known keep what they streamed. Nothing is printed of them; the screen
-    /// shows them (`Screen::show_activity`).
+    /// shows them (`Screen::show_activity`). So are the threads open (`read_threads`), which stay
+    /// as they were known where they cannot be read.
     pub(crate) async fn catch_up(&mut self) -> Vec<Printed> {
         let mut printed = Vec::new();
+        self.read_threads().await;
         // A thread followed whose closing was missed - the watch lagged - is left for the line.
-        if self.thread != self.line()
-            && !self.open_threads().await.iter().any(|t| t.id == self.thread)
-        {
+        if self.thread != self.line() && !self.threads.iter().any(|t| t.id == self.thread) {
             printed.push(self.back_to_the_line());
         }
         if let Some(mut pending) = self.read_pending_approvals().await {
@@ -259,32 +281,107 @@ impl Followed {
         ThreadId::line(self.channel_id())
     }
 
-    /// The threads open in the channel as its view lists them (issue 595), each with what tells
-    /// it: whose sub-agent's it is, who takes part, the beginning of the message it hangs at;
-    /// none where the channel cannot be read.
-    pub(crate) async fn open_threads(&self) -> Vec<OpenThread> {
-        let Ok(view) = self.view().await else { return Vec::new() };
+    /// The threads open in the channel, its line not among them, as they were read last (issue
+    /// 615).
+    pub(crate) fn threads(&self) -> &[OpenThread] {
+        &self.threads
+    }
+
+    /// The channel as a place the user can be (issue 615): where they are if it is `talked_in` -
+    /// nothing marked, since the status line and its threads tell what goes on there, and it asks
+    /// what waits itself -, else marked where an agent is at work in any of its threads or
+    /// something waits for the user.
+    pub(crate) fn place(&self, talked_in: bool) -> Place {
+        Place {
+            name: self.name().to_string(),
+            current: talked_in,
+            at_work: !talked_in && !self.under_way.is_empty(),
+            waits: !talked_in && self.waits_for_user(),
+        }
+    }
+
+    /// The line and the threads open as places the user can be (issue 615), each marked where an
+    /// agent is at work in it but the thread followed, which the status line tells. What waits
+    /// for the user there, the channel asks itself.
+    pub(crate) fn thread_places(&self) -> Vec<Place> {
+        let line = (self.line(), "line");
+        let open = self.threads.iter().map(|thread| (thread.id, thread.name()));
+        iter::once(line)
+            .chain(open)
+            .map(|(id, name)| {
+                let current = id == self.thread;
+                let answering = self.under_way.iter().any(|answer| answer.thread == id);
+                Place {
+                    name: name.to_string(),
+                    current,
+                    at_work: !current && answering,
+                    waits: false,
+                }
+            })
+            .collect()
+    }
+
+    /// Reads anew the threads open in the channel as its view lists them (issue 595), each with
+    /// the sub-agent it was delegated to; where the channel cannot be read, they stay as they were
+    /// known, as the approvals pending do.
+    async fn read_threads(&mut self) {
+        let view = match self.view().await {
+            Ok(view) => view,
+            Err(e) => {
+                warn!("Cannot read the threads of channel {}: {}", self.channel_id(), e);
+                return;
+            }
+        };
         let snapshot = view.snapshot(Detail::PARTICIPANTS | Detail::THREADS).await;
         let participants = &snapshot.participants;
         let name_of = |id: ActorId| participants.iter().find(|m| m.id == id)?.name.clone();
-        let mut listed = Vec::new();
-        for thread in &snapshot.threads {
-            let title = match thread.recipient.and_then(name_of) {
-                Some(name) => format!("Thread of {name}"),
-                None => "Thread".to_string(),
-            };
-            let taking_part: Vec<String> = participants
+        self.threads = snapshot
+            .threads
+            .iter()
+            .map(|thread| OpenThread {
+                id: thread.id,
+                delegated_to: thread.recipient.and_then(name_of),
+                hangs_at: thread.opening.origin.message,
+            })
+            .collect();
+    }
+
+    /// Whether `envelope` changes the threads open as they were read last (issue 615): a thread
+    /// opened or closed, or the first brief its delegate gives in a thread - sent by the delegate
+    /// of that thread -, which tells that it was delegated, as nothing else does.
+    fn changes_threads(&self, envelope: &Envelope) -> bool {
+        let thread = envelope.context.thread_id;
+        match envelope.event {
+            ActorEvent::ThreadOpened { .. } | ActorEvent::ThreadClosed { .. } => true,
+            ActorEvent::GivenToRead { .. } => {
+                envelope.context.sender_id == ActorId::Delegate(thread)
+                    && !self.threads.iter().any(|t| t.id == thread && t.delegated_to.is_some())
+            }
+            _ => false,
+        }
+    }
+
+    /// What tells each thread open in `/thread list` (issue 595), in their order: its title, who
+    /// takes part in it now, and the beginning of the message it hangs at; nothing more than its
+    /// title where the channel cannot be read.
+    pub(crate) async fn told_threads(&self) -> Vec<String> {
+        let Ok(view) = self.view().await else {
+            return self.threads.iter().map(OpenThread::title).collect();
+        };
+        let participants = view.snapshot(Detail::PARTICIPANTS).await.participants;
+        let mut told = Vec::new();
+        for thread in &self.threads {
+            let taking_part: Vec<&str> = participants
                 .iter()
                 .filter(|m| m.threads.contains(&thread.id))
-                .filter_map(|m| m.name.clone())
+                .filter_map(|m| m.name.as_deref())
                 .collect();
-            let hangs_at = view.message(thread.opening.origin.message).await.ok();
+            let hangs_at = view.message(thread.hangs_at).await.ok();
             let words = hangs_at.and_then(|said| said.content).unwrap_or_default();
             let at = beginning(&words);
-            let told = format!("{title} ({}), at \"{at}\"", taking_part.join(", "));
-            listed.push(OpenThread { id: thread.id, title, told });
+            told.push(format!("{} ({}), at \"{at}\"", thread.title(), taking_part.join(", ")));
         }
-        listed
+        told
     }
 
     /// What tells the user they talk in the channel now: what was said in it so far (`history`),
@@ -293,8 +390,7 @@ impl Followed {
         let mut printed = self.history().await;
         printed.push(Printed::Notice(format!("Talking in {} now", self.name())));
         if self.thread != self.line() {
-            let open = self.open_threads().await;
-            let title = open.into_iter().find(|t| t.id == self.thread).map(|t| t.title);
+            let title = self.threads.iter().find(|t| t.id == self.thread).map(OpenThread::title);
             let title = title.unwrap_or_else(|| "a thread".to_string());
             printed.push(Printed::Notice(format!("Following {title}: /thread line for the line")));
         }
@@ -445,13 +541,17 @@ impl Followed {
     /// need of it - the answers under way of every thread (`keep_under_way`) -, and answers what
     /// the terminal prints of it - of what was sent in the user's name, what `take_in_own` prints;
     /// of another thread, only what the view of the thread followed shows of it (`shows`, issues
-    /// 557, 595). The thread followed closed, the user follows the line again.
-    pub(crate) fn take_in(&mut self, envelope: &Envelope) -> Vec<Printed> {
+    /// 557, 595). The thread followed closed, the user follows the line again. Where it changed the
+    /// threads open, they are read anew (`changes_threads`, issue 615).
+    pub(crate) async fn take_in(&mut self, envelope: &Envelope) -> Vec<Printed> {
         let mut printed = Vec::new();
         if let ActorEvent::ThreadClosed { thread } = envelope.event {
             if thread == self.thread {
                 printed.push(self.back_to_the_line());
             }
+        }
+        if self.changes_threads(envelope) {
+            self.read_threads().await;
         }
         self.keep_under_way(envelope);
         if !self.shows(envelope) {
@@ -1060,7 +1160,7 @@ pub(crate) mod testing {
     pub(crate) async fn next_taken_in(followed: &mut Followed) -> Vec<Printed> {
         loop {
             if let Ok(Shown::Envelope(shown)) = followed.next().await {
-                return followed.take_in(&shown);
+                return followed.take_in(&shown).await;
             }
         }
     }
@@ -1236,19 +1336,18 @@ mod tests {
             Followed::new(Arc::clone(&channel), views).await.expect("the owner takes part");
         let agent = ActorId::Agent(an_agent_in(&kernel, &session_loop, &ctx, channel.id()).await);
         let mentioning = Message { addressees: vec![agent], ..message(agent, "@helper is here") };
-        let mut mentions = |event: ActorEvent| {
-            let printed = followed.take_in(&from(&channel, agent, event));
+        let mentions = |printed: Vec<Printed>| {
             let [Printed::Said { said: Said { words: Some(words), .. }, .. }] = printed.as_slice()
             else {
                 panic!("the message is printed: {printed:?}");
             };
             words.mentions.clone()
         };
-        let said = ActorEvent::CompleteMessageGenerated(mentioning.clone());
-        assert_eq!(mentions(said), vec![0..7], "the handle of who joined");
+        let said = from(&channel, agent, ActorEvent::CompleteMessageGenerated(mentioning.clone()));
+        assert_eq!(mentions(followed.take_in(&said).await), vec![0..7], "the handle of who joined");
         channel.remove_participant(&ctx, agent).await.expect("the owner may remove it");
-        let edited = ActorEvent::MessageModified(mentioning);
-        assert!(mentions(edited).is_empty(), "not the handle of who left");
+        let edited = from(&channel, agent, ActorEvent::MessageModified(mentioning));
+        assert!(mentions(followed.take_in(&edited).await).is_empty(), "not the handle of who left");
     }
 
     /// What the channel did not let in of the user's is told to them as rejected, apart from what
@@ -1261,7 +1360,7 @@ mod tests {
             message: None,
             reason: Rejection::ClassificationRefused,
         };
-        let told = lines(&followed.take_in(&from(&channel, ActorId::System, rejected)));
+        let told = lines(&followed.take_in(&from(&channel, ActorId::System, rejected)).await);
         assert_eq!(told.len(), 1, "{told:?}");
         assert!(
             told[0]
@@ -1281,7 +1380,7 @@ mod tests {
             message: None,
             reason: Rejection::Forbidden,
         };
-        let told = lines(&followed.take_in(&from(&channel, approver, refused)));
+        let told = lines(&followed.take_in(&from(&channel, approver, refused)).await);
         assert_eq!(told.len(), 1, "{told:?}");
         assert!(
             told[0].starts_with("Refused: ")
@@ -1295,8 +1394,11 @@ mod tests {
         let (mut followed, channel, me) = followed().await;
         let other = ActorId::User(UserId::new());
         let said = |sender| ActorEvent::CompleteMessageGenerated(message(sender, "hello"));
-        assert!(followed.take_in(&from(&channel, me, said(me))).is_empty());
-        assert_eq!(lines(&followed.take_in(&from(&channel, other, said(other)))), ["other: hello"]);
+        assert!(followed.take_in(&from(&channel, me, said(me))).await.is_empty());
+        assert_eq!(
+            lines(&followed.take_in(&from(&channel, other, said(other))).await),
+            ["other: hello"]
+        );
     }
 
     /// Issue 587: a call the user made, which they typed as a command, is printed with its result
@@ -1316,7 +1418,7 @@ mod tests {
         };
         let event = from(&channel, me, ActorEvent::CompleteMessageGenerated(called));
         assert!(followed.concerns_user(&event), "wherever they talk");
-        let told = lines(&followed.take_in(&event));
+        let told = lines(&followed.take_in(&event).await);
         assert_eq!(told.len(), 2, "{told:?}");
         assert!(told[0].contains("calls run_command") && told[1].contains("answered"), "{told:?}");
     }
@@ -1335,34 +1437,37 @@ mod tests {
         };
         let said = ActorEvent::CompleteMessageGenerated(message(agent, "aside"));
         assert!(!followed.concerns_user(&in_other(said.clone())));
-        assert!(followed.take_in(&in_other(said)).is_empty(), "said in another thread");
+        assert!(followed.take_in(&in_other(said)).await.is_empty(), "said in another thread");
         let mentioning = Message { addressees: vec![me], ..message(agent, "@owner, look") };
         let mentioning = ActorEvent::CompleteMessageGenerated(mentioning);
         assert!(followed.concerns_user(&in_other(mentioning.clone())), "it addresses them");
-        assert_eq!(lines(&followed.take_in(&in_other(mentioning))), ["other: @owner, look"]);
+        assert_eq!(lines(&followed.take_in(&in_other(mentioning)).await), ["other: @owner, look"]);
         assert_eq!(followed.last_answer, None, "no answer of the line to ask for again");
         let request =
             ActorEvent::ApprovalRequested { request: approval(&channel, agent_id), to: None };
         assert!(followed.concerns_user(&in_other(request.clone())));
-        assert_eq!(followed.take_in(&in_other(request)).len(), 1, "its call waits");
+        assert_eq!(followed.take_in(&in_other(request)).await.len(), 1, "its call waits");
         // An answer begun in another thread ends with its turn there.
         let turn_id = TurnId::new();
-        assert!(followed.take_in(&in_other(ActorEvent::ResponseStarted { turn_id })).is_empty());
+        assert!(followed
+            .take_in(&in_other(ActorEvent::ResponseStarted { turn_id }))
+            .await
+            .is_empty());
         assert_eq!(followed.under_way().len(), 1, "kept, though nothing is printed of it");
         let finished = ActorEvent::TurnFinished { turn_id, messages: Vec::new() };
-        assert!(followed.take_in(&in_other(finished)).is_empty());
+        assert!(followed.take_in(&in_other(finished)).await.is_empty());
         assert!(followed.under_way().is_empty(), "ended, in another thread");
 
         let origin =
             ThreadOrigin { thread: ThreadId::line(channel.id()), message: MessageId::new() };
         let opened = ActorEvent::ThreadOpened { thread: thread_id, origin };
-        let printed = lines(&followed.take_in(&from(&channel, agent, opened)));
+        let printed = lines(&followed.take_in(&from(&channel, agent, opened)).await);
         assert_eq!(printed, [format!("{agent} opened a thread")]);
         let recipient = ActorId::Agent(AgentId::new());
         let given = ActorEvent::GivenToRead { recipient, message: message(agent, "found it") };
         let delegate = ActorId::Delegate(thread_id);
         assert_eq!(
-            lines(&followed.take_in(&from(&channel, delegate, given))),
+            lines(&followed.take_in(&from(&channel, delegate, given)).await),
             ["Given back to read from a thread:", "other: found it"]
         );
     }
@@ -1387,10 +1492,10 @@ mod tests {
         assert_eq!(followed.thread(), thread_id);
 
         let said = |text| ActorEvent::CompleteMessageGenerated(message(agent, text));
-        assert!(followed.take_in(&from(&channel, agent, said("in the line"))).is_empty());
+        assert!(followed.take_in(&from(&channel, agent, said("in the line"))).await.is_empty());
         let in_it = message(agent, "in it");
         let answered = ActorEvent::CompleteMessageGenerated(in_it.clone());
-        assert_eq!(lines(&followed.take_in(&in_thread(answered))), ["other: in it"]);
+        assert_eq!(lines(&followed.take_in(&in_thread(answered)).await), ["other: in it"]);
         let actor = followed.actor().expect("the owner's actor runs");
         let error = followed.retry(&actor).await.expect_err("no such message in the channel");
         let error = error.downcast::<ChannelError>().expect("refused by the actor");
@@ -1400,15 +1505,15 @@ mod tests {
         );
         let request =
             ActorEvent::ApprovalRequested { request: approval(&channel, agent_id), to: None };
-        assert_eq!(followed.take_in(&from(&channel, agent, request)).len(), 1, "it waits");
+        assert_eq!(followed.take_in(&from(&channel, agent, request)).await.len(), 1, "it waits");
         let mentioning = Message { addressees: vec![me], ..message(agent, "@owner, here") };
         let mentioning = ActorEvent::CompleteMessageGenerated(mentioning);
-        let shown = lines(&followed.take_in(&from(&channel, agent, mentioning)));
+        let shown = lines(&followed.take_in(&from(&channel, agent, mentioning)).await);
         assert_eq!(shown, ["other: @owner, here"], "mentioning them in the line");
 
         let closed = from(&channel, agent, ActorEvent::ThreadClosed { thread: thread_id });
         assert!(followed.concerns_user(&closed), "told wherever they talk");
-        let printed = lines(&followed.take_in(&closed));
+        let printed = lines(&followed.take_in(&closed).await);
         assert_eq!(printed[0], "The thread you followed is closed: following main again");
         assert_eq!(followed.thread(), ThreadId::line(channel.id()), "the line followed again");
         assert!(!followed.retry(&actor).await.unwrap(), "nothing of the thread to give again");
@@ -1423,18 +1528,22 @@ mod tests {
         let agent = ActorId::Agent(agent_id);
         let request = approval(&channel, agent_id);
         let id = request.id;
-        let shown = lines(&followed.take_in(&from(
-            &channel,
-            agent,
-            ActorEvent::ApprovalRequested { request, to: None },
-        )));
+        let shown = lines(
+            &followed
+                .take_in(&from(
+                    &channel,
+                    agent,
+                    ActorEvent::ApprovalRequested { request, to: None },
+                ))
+                .await,
+        );
         assert!(shown.first().is_some_and(|line| line.contains(&id.0.to_string())), "{shown:?}");
         let withdrawn = ActorEvent::ApprovalRequestWithdrawn { id };
         assert_eq!(
-            lines(&followed.take_in(&from(&channel, agent, withdrawn.clone()))),
+            lines(&followed.take_in(&from(&channel, agent, withdrawn.clone())).await),
             [format!("Approval {} withdrawn: the turn ended", id.0)]
         );
-        assert!(followed.take_in(&from(&channel, agent, withdrawn)).is_empty(), "told once");
+        assert!(followed.take_in(&from(&channel, agent, withdrawn)).await.is_empty(), "told once");
         assert!(!followed.is_pending(id), "no longer pending");
 
         // Over once the approver tells the verdict, or that it timed out; another user's answer
@@ -1447,25 +1556,31 @@ mod tests {
         for verdict in over {
             let request = approval(&channel, agent_id);
             let id = request.id;
-            followed.take_in(&from(
-                &channel,
-                agent,
-                ActorEvent::ApprovalRequested { request, to: None },
-            ));
-            assert!(followed.take_in(&from(&channel, other, answered(other, id, None))).is_empty());
-            assert!(followed.take_in(&from(&channel, approver, verdict(decided(id)))).is_empty());
+            followed
+                .take_in(&from(
+                    &channel,
+                    agent,
+                    ActorEvent::ApprovalRequested { request, to: None },
+                ))
+                .await;
+            assert!(followed
+                .take_in(&from(&channel, other, answered(other, id, None)))
+                .await
+                .is_empty());
+            assert!(followed
+                .take_in(&from(&channel, approver, verdict(decided(id))))
+                .await
+                .is_empty());
             assert!(!followed.is_pending(id), "over");
         }
         let request = approval(&channel, agent_id);
         let id = request.id;
-        followed.take_in(&from(
-            &channel,
-            agent,
-            ActorEvent::ApprovalRequested { request, to: None },
-        ));
-        followed.take_in(&from(&channel, other, answered(other, id, None)));
+        followed
+            .take_in(&from(&channel, agent, ActorEvent::ApprovalRequested { request, to: None }))
+            .await;
+        followed.take_in(&from(&channel, other, answered(other, id, None))).await;
         assert!(followed.is_pending(id), "still pending after another's answer");
-        assert!(followed.take_in(&from(&channel, me, answered(me, id, None))).is_empty());
+        assert!(followed.take_in(&from(&channel, me, answered(me, id, None))).await.is_empty());
         assert!(!followed.is_pending(id), "the user's own answer: theirs to give no longer");
         assert!(followed.waiting().is_empty(), "nor shown again as waiting for them");
     }
@@ -1477,20 +1592,18 @@ mod tests {
         let request = approval(&channel, agent_id);
         let id = request.id;
         let agent = ActorId::Agent(agent_id);
-        followed.take_in(&from(
-            &channel,
-            agent,
-            ActorEvent::ApprovalRequested { request, to: None },
-        ));
+        followed
+            .take_in(&from(&channel, agent, ActorEvent::ApprovalRequested { request, to: None }))
+            .await;
         let answer = |by: ActorId, by_rule| from(&channel, by, answered(by, id, by_rule));
         let other = ActorId::User(UserId::new());
-        assert!(followed.take_in(&answer(me, None)).is_empty(), "typed by the user");
+        assert!(followed.take_in(&answer(me, None)).await.is_empty(), "typed by the user");
         assert!(
-            followed.take_in(&answer(other, Some(ApprovalRuleId::new()))).is_empty(),
+            followed.take_in(&answer(other, Some(ApprovalRuleId::new()))).await.is_empty(),
             "not theirs"
         );
         assert_eq!(
-            lines(&followed.take_in(&answer(me, Some(ApprovalRuleId::new())))),
+            lines(&followed.take_in(&answer(me, Some(ApprovalRuleId::new()))).await),
             [format!("Approval {} answered by your rule", id.0)]
         );
     }
@@ -1596,15 +1709,13 @@ mod tests {
         assert!(followed.concerns_user(&typed));
         assert!(!followed.concerns_user(&by_rule(other)), "another's answer");
 
-        assert!(followed.take_in(&withdrawn).is_empty(), "not shown: nothing told");
-        followed.take_in(&from(
-            &channel,
-            agent,
-            ActorEvent::ApprovalRequested { request, to: None },
-        ));
-        assert!(followed.take_in(&typed).is_empty(), "typed by the user: nothing told");
-        assert_eq!(followed.take_in(&by_rule(me)).len(), 1, "given by their rule: told");
-        assert!(followed.take_in(&granted).is_empty(), "decided: nothing told");
+        assert!(followed.take_in(&withdrawn).await.is_empty(), "not shown: nothing told");
+        followed
+            .take_in(&from(&channel, agent, ActorEvent::ApprovalRequested { request, to: None }))
+            .await;
+        assert!(followed.take_in(&typed).await.is_empty(), "typed by the user: nothing told");
+        assert_eq!(followed.take_in(&by_rule(me)).await.len(), 1, "given by their rule: told");
+        assert!(followed.take_in(&granted).await.is_empty(), "decided: nothing told");
     }
 
     /// What waits for the user as a channel is followed - the approvals the agents' turns wait
@@ -1638,8 +1749,8 @@ mod tests {
         let requested = ApprovalRequest { id, ..approval(&channel, agent_id) };
         let requested =
             from(&channel, agent, ActorEvent::ApprovalRequested { request: requested, to: None });
-        assert!(followed.take_in(&requested).is_empty(), "the approval, known");
-        assert!(followed.take_in(&asked).is_empty(), "the questions, known");
+        assert!(followed.take_in(&requested).await.is_empty(), "the approval, known");
+        assert!(followed.take_in(&asked).await.is_empty(), "the questions, known");
 
         // Asked after the channel was followed, not shown yet: shown as the channel shows them,
         // and not shown again as waiting before.
@@ -1675,12 +1786,15 @@ mod tests {
         let requested = ApprovalRequest { id, ..approval(&channel, agent_id) };
         let requested =
             from(&channel, agent, ActorEvent::ApprovalRequested { request: requested, to: None });
-        assert!(followed.take_in(&requested).is_empty(), "nor as the agent asks for it again");
+        assert!(
+            followed.take_in(&requested).await.is_empty(),
+            "nor as the agent asks for it again"
+        );
         assert!(!followed.is_pending(id) && followed.waiting().is_empty(), "nor waiting");
 
         let approver = ActorId::Approver(ApproverId::new());
         let granted = ActorEvent::ApprovalGranted(ApprovalVerdict::new(id, agent_id));
-        assert!(followed.take_in(&from(&channel, approver, granted)).is_empty());
+        assert!(followed.take_in(&from(&channel, approver, granted)).await.is_empty());
         followed.catch_up().await;
         assert!(followed.is_pending(id), "once it ended, known as the turns hold it");
     }
@@ -1708,15 +1822,15 @@ mod tests {
             message: None,
             reason: Rejection::Invalid,
         };
-        followed.take_in(&from(&channel, approver, refused));
+        followed.take_in(&from(&channel, approver, refused)).await;
         followed.catch_up().await;
         assert!(!followed.is_pending(id) && followed.waiting().is_empty(), "refused, still so");
 
         let granted = ActorEvent::ApprovalGranted(ApprovalVerdict::new(id, agent_id));
-        followed.take_in(&from(&channel, approver, granted));
+        followed.take_in(&from(&channel, approver, granted)).await;
         followed.catch_up().await;
         assert!(followed.is_pending(id), "ended, known anew as the turns hold it");
-        followed.take_in(&from(&channel, me, answered(me, id, Some(ApprovalRuleId::new()))));
+        followed.take_in(&from(&channel, me, answered(me, id, Some(ApprovalRuleId::new())))).await;
         followed.catch_up().await;
         assert!(!followed.is_pending(id), "answered by a rule of the user's");
     }
@@ -1758,7 +1872,7 @@ mod tests {
         let calling = Message { tool_calls: calls, ..message(agent, "let me look") };
         let said = ActorEvent::CompleteMessageGenerated(calling);
         assert_eq!(
-            lines(&followed.take_in(&from(&channel, agent, said))),
+            lines(&followed.take_in(&from(&channel, agent, said)).await),
             ["other: let me look", "other calls terminal, its arguments not shown"]
         );
 
@@ -1773,7 +1887,7 @@ mod tests {
         let ended = Message { content: None, tool_results: results, ..message(agent, "") };
         let step = ActorEvent::IntermediateMessageGenerated(ended);
         assert_eq!(
-            lines(&followed.take_in(&from(&channel, agent, step))),
+            lines(&followed.take_in(&from(&channel, agent, step)).await),
             [
                 "terminal answered: done",
                 "other calls attach, its arguments not shown",
@@ -1789,19 +1903,21 @@ mod tests {
         let (mut followed, channel, _) = followed().await;
         let agent = ActorId::Agent(AgentId::new());
         let turn_id = TurnId::new();
-        let shown =
-            |followed: &mut Followed, event| followed.take_in(&from(&channel, agent, event));
-        shown(&mut followed, ActorEvent::ResponseStarted { turn_id });
-        shown(&mut followed, ActorEvent::StateChanged(ActorState::ExecutingTools));
+        let shown = |event| from(&channel, agent, event);
+        followed.take_in(&shown(ActorEvent::ResponseStarted { turn_id })).await;
+        followed.take_in(&shown(ActorEvent::StateChanged(ActorState::ExecutingTools))).await;
         for chunk in ["Hel", "lo"] {
             let partial = Message { reasoning: Some("hm".to_string()), ..message(agent, chunk) };
-            assert!(shown(&mut followed, ActorEvent::PartialMessageGenerated(partial)).is_empty());
+            let partial = shown(ActorEvent::PartialMessageGenerated(partial));
+            assert!(followed.take_in(&partial).await.is_empty());
         }
         let answer = &followed.under_way()[0];
         assert_eq!((answer.turn, answer.state), (turn_id, Some(ActorState::ExecutingTools)));
         assert_eq!((answer.content.as_str(), answer.reasoning.as_str()), ("Hello", "hmhm"));
 
-        shown(&mut followed, ActorEvent::CompleteMessageGenerated(message(agent, "Hello")));
+        followed
+            .take_in(&shown(ActorEvent::CompleteMessageGenerated(message(agent, "Hello"))))
+            .await;
         let answer = &followed.under_way()[0];
         assert!(answer.content.is_empty() && answer.reasoning.is_empty(), "complete");
     }
@@ -1822,16 +1938,16 @@ mod tests {
         };
         let here = TurnId::new();
         let there = TurnId::new();
-        followed.take_in(&in_thread(line, ActorEvent::ResponseStarted { turn_id: here }));
+        followed.take_in(&in_thread(line, ActorEvent::ResponseStarted { turn_id: here })).await;
         let started = in_thread(aside, ActorEvent::ResponseStarted { turn_id: there });
-        assert!(followed.take_in(&started).is_empty(), "nothing printed of another thread");
+        assert!(followed.take_in(&started).await.is_empty(), "nothing printed of another thread");
         let kept = |followed: &Followed| {
             let answers = followed.under_way().iter();
             answers.map(|a| (a.thread, a.turn, a.content.clone())).collect::<Vec<_>>()
         };
         for (thread, text) in [(line, "here"), (aside, "there")] {
             let partial = ActorEvent::PartialMessageGenerated(message(agent, text));
-            followed.take_in(&in_thread(thread, partial));
+            followed.take_in(&in_thread(thread, partial)).await;
         }
         assert_eq!(
             kept(&followed),
@@ -1845,10 +1961,10 @@ mod tests {
             followed.under_way().iter().map(|answer| answer.state).collect::<Vec<_>>()
         };
         let running = ActorEvent::StateChanged(ActorState::ExecutingTools);
-        followed.take_in(&in_thread(aside, running));
+        followed.take_in(&in_thread(aside, running)).await;
         assert_eq!(state(&followed), [None, Some(ActorState::ExecutingTools)], "its turn's");
         let waiting = ActorEvent::StateChanged(ActorState::WaitingForUser);
-        followed.take_in(&in_thread(line, waiting));
+        followed.take_in(&in_thread(line, waiting)).await;
         assert_eq!(
             state(&followed),
             [Some(ActorState::WaitingForUser); 2],
@@ -1856,7 +1972,7 @@ mod tests {
         );
 
         let anew = TurnId::new();
-        followed.take_in(&in_thread(aside, ActorEvent::ResponseStarted { turn_id: anew }));
+        followed.take_in(&in_thread(aside, ActorEvent::ResponseStarted { turn_id: anew })).await;
         assert_eq!(
             kept(&followed),
             [(line, here, String::new()), (aside, anew, String::new())],
@@ -1864,7 +1980,7 @@ mod tests {
         );
         let reason = GivenUpReason::Failed { message: "unreachable".to_string() };
         let given_up = ActorEvent::TurnGivenUp { turn_id: here, reason };
-        followed.take_in(&in_thread(line, given_up));
+        followed.take_in(&in_thread(line, given_up)).await;
         assert_eq!(kept(&followed), [(aside, anew, String::new())], "the other turn runs on");
     }
 
@@ -1875,7 +1991,7 @@ mod tests {
         let (mut followed, channel, _) = followed().await;
         let agent = ActorId::Agent(AgentId::new());
         let started = ActorEvent::ResponseStarted { turn_id: TurnId::new() };
-        followed.take_in(&from(&channel, agent, started));
+        followed.take_in(&from(&channel, agent, started)).await;
         assert_eq!(followed.under_way().len(), 1);
         followed.catch_up().await;
         assert!(followed.under_way().is_empty(), "no turn of it runs in the channel");
@@ -1899,7 +2015,7 @@ mod tests {
         let begun = async {
             loop {
                 if let Ok(Shown::Envelope(envelope)) = followed.next().await {
-                    followed.take_in(&envelope);
+                    followed.take_in(&envelope).await;
                     if !followed.under_way().is_empty() {
                         break;
                     }
@@ -1908,7 +2024,7 @@ mod tests {
         };
         time::timeout(Duration::from_secs(5), begun).await.expect("the agent begins to answer");
         let partial = ActorEvent::PartialMessageGenerated(message(agent, "Hel"));
-        followed.take_in(&from(&channel, agent, partial));
+        followed.take_in(&from(&channel, agent, partial)).await;
 
         followed.catch_up().await;
         let kept =
@@ -1927,9 +2043,11 @@ mod tests {
         let agent = ActorId::Agent(AgentId::new());
         let quiet = ToolCall { presentation: ToolPresentation::QUIET, ..make_tool_call("attach") };
         let calling = Message { tool_calls: vec![quiet.clone()], ..message(agent, "") };
-        followed.take_in(&from(&channel, agent, ActorEvent::CompleteMessageGenerated(calling)));
+        followed
+            .take_in(&from(&channel, agent, ActorEvent::CompleteMessageGenerated(calling)))
+            .await;
         let finished = ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: Vec::new() };
-        followed.take_in(&from(&channel, agent, finished));
+        followed.take_in(&from(&channel, agent, finished)).await;
 
         let result = ToolCallResult::of(
             &quiet,
@@ -1938,11 +2056,11 @@ mod tests {
             Default::default(),
         );
         let ended = Message { tool_results: vec![result], ..message(agent, "") };
-        let printed = lines(&followed.take_in(&from(
-            &channel,
-            agent,
-            ActorEvent::CompleteMessageGenerated(ended),
-        )));
+        let printed = lines(
+            &followed
+                .take_in(&from(&channel, agent, ActorEvent::CompleteMessageGenerated(ended)))
+                .await,
+        );
         assert_eq!(printed, ["attach failed: no"], "its call forgotten");
     }
 
@@ -1960,9 +2078,9 @@ mod tests {
             let ended = Message { tool_results: vec![result], ..message(agent, "") };
             from(&channel, agent, ActorEvent::CompleteMessageGenerated(ended))
         };
-        let succeeded = followed.take_in(&ended(ToolResultStatus::Ok, "attached"));
+        let succeeded = followed.take_in(&ended(ToolResultStatus::Ok, "attached")).await;
         assert!(lines(&succeeded).is_empty(), "left out: {:?}", lines(&succeeded));
-        let failed = followed.take_in(&ended(ToolResultStatus::Failed, "no"));
+        let failed = followed.take_in(&ended(ToolResultStatus::Failed, "no")).await;
         assert_eq!(lines(&failed), ["attach failed: no"]);
     }
 
@@ -1974,8 +2092,9 @@ mod tests {
         let agent = ActorId::Agent(AgentId::new());
         let quiet = ToolCall { presentation: ToolPresentation::QUIET, ..make_tool_call("attach") };
         let calling = Message { tool_calls: vec![quiet.clone()], ..message(agent, "") };
-        let called =
-            followed.take_in(&from(&channel, agent, ActorEvent::CompleteMessageGenerated(calling)));
+        let called = followed
+            .take_in(&from(&channel, agent, ActorEvent::CompleteMessageGenerated(calling)))
+            .await;
         assert!(lines(&called).is_empty(), "the call kept back");
         let result = ToolCallResult {
             presentation: ToolPresentation::DEFAULT,
@@ -1987,11 +2106,11 @@ mod tests {
             )
         };
         let ended = Message { tool_results: vec![result], ..message(agent, "") };
-        let printed = lines(&followed.take_in(&from(
-            &channel,
-            agent,
-            ActorEvent::CompleteMessageGenerated(ended),
-        )));
+        let printed = lines(
+            &followed
+                .take_in(&from(&channel, agent, ActorEvent::CompleteMessageGenerated(ended)))
+                .await,
+        );
         assert_eq!(printed.len(), 2, "the call and its result: {printed:?}");
         assert_eq!(printed[1], "attach answered: attached");
     }
@@ -2004,9 +2123,9 @@ mod tests {
         let helper = ActorId::Agent(AgentId::new());
         let another = ActorId::User(UserId::new());
         let started = ActorEvent::ResponseStarted { turn_id: TurnId::new() };
-        let begun = lines(&followed.take_in(&from(&channel, helper, started.clone())));
+        let begun = lines(&followed.take_in(&from(&channel, helper, started.clone())).await);
         assert_eq!(begun, [format!("{helper} is answering.")]);
-        assert!(followed.take_in(&from(&channel, another, started)).is_empty(), "no agent");
+        assert!(followed.take_in(&from(&channel, another, started)).await.is_empty(), "no agent");
     }
 
     #[tokio::test]
@@ -2018,28 +2137,31 @@ mod tests {
         let refused = |e: Error| e.downcast::<ChannelError>().expect("refused by the actor");
 
         let said = ActorEvent::CompleteMessageGenerated(message(agent, "an answer"));
-        followed.take_in(&from(&channel, agent, said));
+        followed.take_in(&from(&channel, agent, said)).await;
         let error = refused(followed.retry(&actor).await.unwrap_err());
         assert!(matches!(error, ChannelError::MessageNotFound { .. }), "the last answer: {error}");
         // A turn under way in another thread is not the thread followed's to ask for (issue 572).
         let aside = from(&channel, agent, ActorEvent::ResponseStarted { turn_id: TurnId::new() });
         let thread_id = ThreadId::new();
         followed
-            .take_in(&Envelope { context: EventContext { thread_id, ..aside.context }, ..aside });
+            .take_in(&Envelope { context: EventContext { thread_id, ..aside.context }, ..aside })
+            .await;
         let error = refused(followed.retry(&actor).await.unwrap_err());
         assert!(matches!(error, ChannelError::MessageNotFound { .. }), "passed over: {error}");
 
         // A turn is asked for again as it is - whether it can be the channel's to decide as it
         // admits the request (issue 567) -, a message is looked at first.
         let turn_id = TurnId::new();
-        followed.take_in(&from(&channel, agent, ActorEvent::ResponseStarted { turn_id }));
+        followed.take_in(&from(&channel, agent, ActorEvent::ResponseStarted { turn_id })).await;
         assert!(followed.retry(&actor).await.unwrap(), "the turn, asked for");
 
-        followed.take_in(&from(
-            &channel,
-            agent,
-            ActorEvent::TurnFinished { turn_id, messages: Vec::new() },
-        ));
+        followed
+            .take_in(&from(
+                &channel,
+                agent,
+                ActorEvent::TurnFinished { turn_id, messages: Vec::new() },
+            ))
+            .await;
         let error = refused(followed.retry(&actor).await.unwrap_err());
         assert!(matches!(error, ChannelError::MessageNotFound { .. }), "the last again: {error}");
 
@@ -2047,11 +2169,11 @@ mod tests {
             turn_id: TurnId::new(),
             reason: GivenUpReason::Failed { message: "unreachable".to_string() },
         };
-        followed.take_in(&from(&channel, agent, given_up));
+        followed.take_in(&from(&channel, agent, given_up)).await;
         assert!(followed.retry(&actor).await.unwrap(), "the turn given up, asked for");
 
         let said = ActorEvent::CompleteMessageGenerated(message(agent, "another answer"));
-        followed.take_in(&from(&channel, agent, said));
+        followed.take_in(&from(&channel, agent, said)).await;
         let error = refused(followed.retry(&actor).await.unwrap_err());
         assert!(matches!(error, ChannelError::MessageNotFound { .. }), "said since: {error}");
     }
@@ -2089,7 +2211,7 @@ mod tests {
             loop {
                 if let Ok(Shown::Envelope(envelope)) = followed.next().await {
                     if matches!(envelope.event, ActorEvent::CompleteMessageGenerated(_)) {
-                        break followed.take_in(&envelope);
+                        break followed.take_in(&envelope).await;
                     }
                 }
             }
@@ -2159,8 +2281,9 @@ mod tests {
             tool_results: vec![result(&quiet, ToolResultStatus::Ok)],
             ..message(agent, "")
         };
-        let shown =
-            followed.take_in(&from(&channel, agent, ActorEvent::CompleteMessageGenerated(late)));
+        let shown = followed
+            .take_in(&from(&channel, agent, ActorEvent::CompleteMessageGenerated(late)))
+            .await;
         assert!(shown.is_empty(), "its call printed from the history, quiet: {:?}", lines(&shown));
     }
 
@@ -2183,7 +2306,7 @@ mod tests {
             ["Earlier in main", "Given back to read from a thread:", "other: found it"]
         );
         let live = ActorEvent::GivenToRead { recipient, message: found };
-        assert!(followed.take_in(&from(&channel, by, live)).is_empty(), "printed already");
+        assert!(followed.take_in(&from(&channel, by, live)).await.is_empty(), "printed already");
     }
 
     #[tokio::test]

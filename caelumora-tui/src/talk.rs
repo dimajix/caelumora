@@ -343,7 +343,7 @@ impl Talk {
         channel.is_some_and(|f| f.is_to_answer(request.id))
     }
 
-    /// What is at work in the channels followed (`Channels::activity`).
+    /// What goes on in the session followed (`Channels::activity`).
     pub(crate) fn activity(&self) -> Activity {
         self.channels.activity()
     }
@@ -463,15 +463,16 @@ impl Talk {
             Some(followed) => followed,
             None => return vec![self.channels.hint()],
         };
-        let threads = followed.open_threads().await;
+        let threads = followed.threads();
         let ids = threads.iter().map(|thread| thread.id).collect();
         self.listed_threads = Some((followed.channel_id(), ids));
         if threads.is_empty() {
             return vec![Printed::Notice(format!("No thread is open in {}", followed.name()))];
         }
-        let lines = threads.iter().enumerate().map(|(at, thread)| {
+        let told = followed.told_threads().await;
+        let lines = threads.iter().zip(told).enumerate().map(|(at, (thread, told))| {
             let mark = if thread.id == followed.thread() { " (followed)" } else { "" };
-            format!("{}. {} - {}{mark}", at + 1, thread.told, thread.id.0)
+            format!("{}. {told} - {}{mark}", at + 1, thread.id.0)
         });
         vec![Printed::Plain(lines.collect::<Vec<_>>().join("\n"))]
     }
@@ -483,7 +484,7 @@ impl Talk {
         let Some(followed) = self.channels.talked_in_mut() else {
             return vec![self.channels.hint()];
         };
-        let threads = followed.open_threads().await;
+        let threads = followed.threads().to_vec();
         // A number names a thread of the list shown last in this channel, an id what is open.
         let numbered = which.trim().parse::<usize>().ok().and_then(|n| n.checked_sub(1));
         let listed = listed.filter(|(channel, _)| *channel == followed.channel_id());
@@ -496,7 +497,7 @@ impl Talk {
                 .map_err(|e| Printed::Notice(e.told("open threads"))),
         };
         match found {
-            Ok(thread) => followed.follow(thread.id, &thread.title).await,
+            Ok(thread) => followed.follow(thread.id, &thread.title()).await,
             Err(printed) => vec![printed],
         }
     }
@@ -1168,9 +1169,19 @@ mod tests {
         let origin = ThreadOrigin { thread: line, message: channel.said_by(user, line).await };
         let opening = channel.open_thread_by_procedure(&running.owner, ThreadSpec::new(origin));
         let thread = opening.await.expect("opened");
-
         channel.said_by(user, thread).await;
-        let listed = typed(&mut talk, "/thread list").await.join("\n");
+        // Listed once the terminal learnt of it, as the channel showed its opening (issue 615).
+        let listing = async {
+            loop {
+                let listed = typed(&mut talk, "/thread list").await.join("\n");
+                if !listed.starts_with("No thread is open") {
+                    return listed;
+                }
+                let occurred = talk.next().await;
+                talk.take_in(occurred).await;
+            }
+        };
+        let listed = time::timeout(Duration::from_secs(5), listing).await.expect("listed");
         assert!(
             listed.starts_with("1. Thread (") && listed.contains(&thread.0.to_string()),
             "{listed}"

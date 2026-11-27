@@ -34,3 +34,7 @@ the terminal's foreground colour.
 ## History
 
 **2026-11-14** - Opened from the maintainer's use of the terminal.
+
+**2026-11-27** - Issue 615 (D7) gives the full-screen view's footer its colours, with the meanings
+`styled.rs` has already - cyan at work, yellow waiting for the user, dimmed what is secondary -,
+never as the only mark. The status line and the rest stay this issue's.
