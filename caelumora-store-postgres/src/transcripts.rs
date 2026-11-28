@@ -212,7 +212,12 @@ impl TranscriptStore for PostgresStore {
         let key = key(agent, channel);
         let wanted: Vec<String> = digests.iter().map(ToString::to_string).collect();
         let found: Vec<(String, String)> = sqlx::query_as("SELECT digest, text FROM prompt_texts WHERE agent_id = $1 AND channel_id = $2 AND digest = ANY($3)")
-            .bind(&key[0]).bind(&key[1]).bind(&wanted).fetch_all(pool).await.map_err(failed(&transcript_of(agent, channel)))?;
+            .bind(&key[0])
+            .bind(&key[1])
+            .bind(&wanted)
+            .fetch_all(pool)
+            .await
+            .map_err(failed(&transcript_of(agent, channel)))?;
         let found: BTreeMap<String, String> = found.into_iter().collect();
         Ok(digests
             .iter()

@@ -284,18 +284,27 @@ impl Tool for McpTool {
             let result = time::timeout(server.params.timeout(), call).await;
             let _ = service.cancel().await;
 
-            let result = result.map_err(|_| McpError::Timeout(format!("MCP tool call to '{}' timed out", name)))?
+            let result = result
+                .map_err(|_| McpError::Timeout(format!("MCP tool call to '{}' timed out", name)))?
                 .map_err(|e| {
                     // A server that does not know the tool answers so (MCP's
                     // "Unknown tool"): it has others now.
-                    if matches!(&e, ServiceError::McpError(error) if error.code == ErrorCode::INVALID_PARAMS) {
+                    if matches!(
+                        &e,
+                        ServiceError::McpError(error) if error.code == ErrorCode::INVALID_PARAMS
+                    ) {
                         server.discovered.invalidate();
                     }
-                    McpError::ToolCallFailed(format!("MCP tool call to '{}' failed: {}", name, server.params.endpoint.redact_in(&e.to_string())))
+                    McpError::ToolCallFailed(format!(
+                        "MCP tool call to '{}' failed: {}",
+                        name,
+                        server.params.endpoint.redact_in(&e.to_string())
+                    ))
                 })?;
 
             server.output_of(name, result)
-        }.await;
+        }
+        .await;
 
         call_result.map_err(|e| ToolError::ExecutionFailed(e.to_string()))
     }

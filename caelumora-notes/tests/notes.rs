@@ -619,7 +619,10 @@ async fn an_agents_private_notes_are_shown_by_command_to_its_owner_alone() {
     let (refused, asked) = world.asked(bob.execute_command(None, "private-notes @helper")).await;
     let refused = refused.expect_err("not his");
     assert!(
-        matches!(as_command_error(&refused), CommandError::Unknown(name) if name == "private-notes"),
+        matches!(
+            as_command_error(&refused),
+            CommandError::Unknown(name) if name == "private-notes"
+        ),
         "unknown to him: {refused}"
     );
     assert_eq!(

@@ -435,7 +435,16 @@ fn render<'a>(
     if own.is_empty() && others.is_empty() {
         return Ok(String::new());
     }
-    prompts.render(TEXT, context! { own => numbered(own), others, write => WRITE_NOTE_TOOL_NAME, update => UPDATE_NOTE_TOOL_NAME, revoke => REVOKE_NOTE_TOOL_NAME })
+    prompts.render(
+        TEXT,
+        context! {
+            own => numbered(own),
+            others,
+            write => WRITE_NOTE_TOOL_NAME,
+            update => UPDATE_NOTE_TOOL_NAME,
+            revoke => REVOKE_NOTE_TOOL_NAME,
+        },
+    )
 }
 
 pub(crate) fn register(registry: &mut LibraryComponents<'_>) {

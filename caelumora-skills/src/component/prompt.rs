@@ -20,7 +20,15 @@ impl SkillsComponent {
         if skills.is_empty() {
             return Ok(String::new());
         }
-        let skills: Vec<_> = skills.iter().map(|skill| context! { name => skill.name.name.to_string(), description => skill.description.to_string() }).collect();
+        let skills: Vec<_> = skills
+            .iter()
+            .map(|skill| {
+                context! {
+                    name => skill.name.name.to_string(),
+                    description => skill.description.to_string(),
+                }
+            })
+            .collect();
         self.prompts.render(
             &format!("{NAMESPACE}.catalogue"),
             context! { skills, load_skill => LOAD_SKILL_TOOL_NAME },

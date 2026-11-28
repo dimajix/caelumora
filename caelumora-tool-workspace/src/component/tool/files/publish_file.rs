@@ -172,7 +172,10 @@ mod tests {
             .execute(&json!({ "path": "out" }), None, &mut turn)
             .await;
         assert!(
-            matches!(&directory, Err(ToolError::InvalidParameter(why)) if why.contains("directory")),
+            matches!(
+                &directory,
+                Err(ToolError::InvalidParameter(why)) if why.contains("directory")
+            ),
             "{directory:?}"
         );
         let missing = tool_named(&tool, PUBLISH_FILE)
@@ -187,7 +190,12 @@ mod tests {
 
         drop(turn);
         assert!(
-            matches!(&read[..], [source] if source.about::<Workspace>().is_some_and(|(_, d)| d.is_none()) && source.place() == Some("out/report.csv")),
+            matches!(
+                &read[..],
+                [source]
+                    if source.about::<Workspace>().is_some_and(|(_, d)| d.is_none())
+                        && source.place() == Some("out/report.csv")
+            ),
             "its place, not its content, which the model was not given: {read:?}"
         );
         assert!(knowledge(&state).is_empty(), "recorded by the executor, not by the tool");

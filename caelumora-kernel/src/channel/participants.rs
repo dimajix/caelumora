@@ -87,7 +87,9 @@ impl ChannelLoop {
             .channel()
             .participants
             .iter()
-            .filter(|p| matches!(p, Participant::Agent(id) if only.is_none_or(|only| only.contains(id))))
+            .filter(|p| {
+                matches!(p, Participant::Agent(id) if only.is_none_or(|only| only.contains(id)))
+            })
             .cloned()
             .collect();
         for participant in agents {
@@ -682,7 +684,10 @@ mod tests {
             .await
             .expect_err("bob is not cleared for HR");
         assert!(
-            matches!(refused.downcast_ref::<ChannelError>(), Some(ChannelError::NotCleared { participant, .. }) if *participant == bob_id),
+            matches!(
+                refused.downcast_ref::<ChannelError>(),
+                Some(ChannelError::NotCleared { participant, .. }) if *participant == bob_id
+            ),
             "{refused}"
         );
         let hr = session
@@ -754,7 +759,10 @@ mod tests {
             entries
                 .iter()
                 .filter(|e| {
-                    matches!(e, HistoryEntry::ParticipantJoined { participant: p, .. } if *p == participant)
+                    matches!(
+                        e,
+                        HistoryEntry::ParticipantJoined { participant: p, .. } if *p == participant
+                    )
                 })
                 .count()
         };
@@ -801,6 +809,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[expect(clippy::too_many_lines, reason = "to be split, longer since laid out (issue 624)")]
     async fn a_participant_added_later_sees_the_history_granted_and_is_announced() {
         use crate::channel::ChannelError;
         let kernel = test_kernel();
@@ -859,8 +868,18 @@ mod tests {
             "all of it: a founder"
         );
         assert!(
-            matches!(recorded.as_slice(), [HistoryEntry::ParticipantJoined { participant: founder, .. }, HistoryEntry::HistoryShared { participant, from: f, by, .. }, HistoryEntry::ParticipantJoined { participant: joined, .. }]
-            if *founder == ctx.caller_id && *participant == other && *f == from && *by == ctx.caller_id && *joined == other),
+            matches!(
+                recorded.as_slice(),
+                [
+                    HistoryEntry::ParticipantJoined { participant: founder, .. },
+                    HistoryEntry::HistoryShared { participant, from: f, by, .. },
+                    HistoryEntry::ParticipantJoined { participant: joined, .. }
+                ] if *founder == ctx.caller_id
+                    && *participant == other
+                    && *f == from
+                    && *by == ctx.caller_id
+                    && *joined == other
+            ),
             "after the founder's own join (issue 420): {recorded:?}"
         );
         for (reader, seen) in [(other, 1), (ctx.caller_id, 0), (ActorId::User(UserId::new()), 0)] {
@@ -886,8 +905,14 @@ mod tests {
             "stored, not only in memory"
         );
         let events = rx.drain().await;
-        assert!(events.iter().any(|e| matches!(e.about::<Channel>(), Some(((_, cid), change)) if cid == channel.id() && change.data::<ActorId>(JOINED) == Some(other))),
-                "the join is announced: {events:?}");
+        assert!(
+            events.iter().any(|e| matches!(
+                e.about::<Channel>(),
+                Some(((_, cid), change))
+                    if cid == channel.id() && change.data::<ActorId>(JOINED) == Some(other)
+            )),
+            "the join is announced: {events:?}"
+        );
 
         // What is written after joining is visible.
         writer.send_message(None, Some("four".to_string()), None, Vec::new()).await.unwrap();
@@ -942,15 +967,26 @@ mod tests {
 
         let entries =
             recorded(&channel, |e| matches!(e, HistoryEntry::ParticipantJoined { .. })).await;
-        assert!(matches!(&entries[0], HistoryEntry::ParticipantJoined { participant, .. } if *participant == ctx.caller_id),
-            "first the founder, who joined as anyone does, given nothing before (issue 420): {entries:?}");
+        assert!(
+            matches!(
+                &entries[0],
+                HistoryEntry::ParticipantJoined { participant, .. } if *participant == ctx.caller_id
+            ),
+            "first the founder, who joined as anyone does, given nothing before (issue 420): {entries:?}"
+        );
         assert!(
             entries[1].said().is_some_and(|m| m.content.as_deref() == Some("before")),
             "after what was said before: {entries:?}"
         );
         assert!(
-            matches!(&entries[2], HistoryEntry::ParticipantJoined { participant, name, by, by_name, .. }
-            if *participant == other && name == "other" && *by == ctx.caller_id && by_name == "owner"),
+            matches!(
+                &entries[2],
+                HistoryEntry::ParticipantJoined { participant, name, by, by_name, .. }
+                    if *participant == other
+                        && name == "other"
+                        && *by == ctx.caller_id
+                        && by_name == "owner"
+            ),
             "who, and by whose act, named as they are: {entries:?}"
         );
         assert_eq!(
@@ -960,7 +996,10 @@ mod tests {
         );
         let visible = channel.visible_entries(other).await;
         assert!(
-            matches!(visible.as_slice(), [HistoryEntry::ParticipantJoined { participant, .. }] if *participant == other),
+            matches!(
+                visible.as_slice(),
+                [HistoryEntry::ParticipantJoined { participant, .. }] if *participant == other
+            ),
             "the newcomer sees its own join, and nothing before it: {visible:?}"
         );
         let told = shown(&mut mine, |e| matches!(e, ActorEvent::ParticipantJoined { .. })).await;
@@ -974,13 +1013,19 @@ mod tests {
         let entries =
             recorded(&channel, |e| matches!(e, HistoryEntry::ParticipantLeft { .. })).await;
         assert!(
-            matches!(entries.last(), Some(HistoryEntry::ParticipantLeft { participant, by, .. }) if *participant == other && *by == ctx.caller_id),
+            matches!(
+                entries.last(),
+                Some(HistoryEntry::ParticipantLeft { participant, by, .. })
+                    if *participant == other && *by == ctx.caller_id
+            ),
             "{entries:?}"
         );
         let told = shown(&mut mine, |e| matches!(e, ActorEvent::ParticipantLeft { .. })).await;
-        assert!(
-            matches!(told.event, ActorEvent::ParticipantLeft { participant, ref name, .. } if participant == other && name == "other")
-        );
+        assert!(matches!(
+            told.event,
+            ActorEvent::ParticipantLeft { participant, ref name, .. }
+                if participant == other && name == "other"
+        ));
         kernel.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
@@ -1040,8 +1085,14 @@ mod tests {
             .expect("kept as a former participant (issue 164)");
         assert_eq!(former.left.by, ctx.caller_id, "with who removed it");
         let events = rx.drain().await;
-        assert!(events.iter().any(|e| matches!(e.about::<Channel>(), Some(((_, cid), change)) if cid == channel.id() && change.data::<ActorId>(LEFT).is_some())),
-                "the leave is announced: {events:?}");
+        assert!(
+            events.iter().any(|e| matches!(
+                e.about::<Channel>(),
+                Some(((_, cid), change))
+                    if cid == channel.id() && change.data::<ActorId>(LEFT).is_some()
+            )),
+            "the leave is announced: {events:?}"
+        );
 
         let refusal = |error: Error| error.downcast::<ChannelError>().expect("a ChannelError");
         let gone = channel.remove_participant(&ctx, other).await.expect_err("not in it any more");
@@ -1327,8 +1378,10 @@ mod tests {
             let until = left_until(&main, actor).await;
             let ranges = main.attendance(actor).await;
             assert!(
-                matches!(ranges.as_slice(), [at]
-                    if at.range.start == founding && at.range.end == until),
+                matches!(
+                    ranges.as_slice(),
+                    [at] if at.range.start == founding && at.range.end == until
+                ),
                 "{again:?}: one range, from its founding to where it left: {ranges:?}"
             );
             world.kernel.stop_session(&alice, session.id()).await.unwrap();
@@ -1345,8 +1398,11 @@ mod tests {
         assert!(!shared, "{case}: nothing shared is recorded");
         let visible = channel.visible_entries(newcomer).await;
         assert!(
-            matches!(visible.first(), Some(HistoryEntry::ParticipantJoined { participant, .. })
-                if *participant == newcomer),
+            matches!(
+                visible.first(),
+                Some(HistoryEntry::ParticipantJoined { participant, .. })
+                    if *participant == newcomer
+            ),
             "{case}: its own join first: {visible:?}"
         );
     }
@@ -1497,7 +1553,12 @@ mod tests {
         // Time for its run to record what it would.
         time::sleep(Duration::from_millis(100)).await;
         let page = history.page(main.id(), &Reader::Channel, Position::START, None, 1000, None);
-        let left = |entry: &&HistoryEntry| matches!(entry, HistoryEntry::ParticipantLeft { participant, .. } if *participant == helper);
+        let left = |entry: &&HistoryEntry| {
+            matches!(
+                entry,
+                HistoryEntry::ParticipantLeft { participant, .. } if *participant == helper
+            )
+        };
         assert_eq!(page.await.unwrap().entries().filter(left).count(), 0, "no leave recorded");
         world.kernel.stop_session(&alice, session.id()).await.unwrap();
     }
@@ -1550,7 +1611,12 @@ mod tests {
         let leaves = async || {
             let page = history.page(main.id(), &Reader::Channel, Position::START, None, 1000, None);
             let page = page.await.unwrap();
-            let left = |entry: &&HistoryEntry| matches!(entry, HistoryEntry::ParticipantLeft { participant, .. } if *participant == helper);
+            let left = |entry: &&HistoryEntry| {
+                matches!(
+                    entry,
+                    HistoryEntry::ParticipantLeft { participant, .. } if *participant == helper
+                )
+            };
             page.entries().filter(left).count()
         };
         assert_eq!(leaves().await, 1, "once");

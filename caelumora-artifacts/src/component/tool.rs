@@ -85,7 +85,9 @@ impl PublishArtifactTool {
 impl From<ArtifactError> for ToolError {
     fn from(error: ArtifactError) -> Self {
         match error {
-            ArtifactError::Invalid(_) | ArtifactError::ClassifiedOtherwise(_) => ToolError::InvalidParameter(error.to_string()),
+            ArtifactError::Invalid(_) | ArtifactError::ClassifiedOtherwise(_) => {
+                ToolError::InvalidParameter(error.to_string())
+            }
             ArtifactError::Content(ContentError::Changed) => ToolError::InvalidParameter("the file changed while it was published; publish it again once it is written".to_string()),
             ArtifactError::Content(e) => e.into(),
             ArtifactError::StorageGone(e) => e.into(),

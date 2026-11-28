@@ -460,8 +460,10 @@ mod tests {
         fs::remove_file(dir.path().join("z_image.yaml")).unwrap();
         let missing = Workflow::read(&dir.path().join("z_image")).unwrap_err();
         assert!(
-            matches!(&missing, WorkflowError::FileUnreadable { file, .. }
-                if file == "z_image.yaml"),
+            matches!(
+                &missing,
+                WorkflowError::FileUnreadable { file, .. } if file == "z_image.yaml"
+            ),
             "{missing}"
         );
         let shown = missing.to_string();

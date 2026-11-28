@@ -202,8 +202,11 @@ async fn an_agent_starts_a_sub_agent_asks_it_again_as_it_reads_its_answer_and_le
         .expect("said");
     let given_back = |text: &'static str| {
         move |e: &HistoryEntry| {
-            matches!(e, HistoryEntry::GivenToRead { recipient, message, .. }
-                if *recipient == lead && message.content.as_deref() == Some(text))
+            matches!(
+                e,
+                HistoryEntry::GivenToRead { recipient, message, .. }
+                    if *recipient == lead && message.content.as_deref() == Some(text)
+            )
         }
     };
     // The lead's turn that reads the second answer ends without a word: the thread is closed.
@@ -542,8 +545,10 @@ async fn a_sub_agent_is_asked_once_in_a_turn_whatever_another_is_given() {
         Message { tool_calls: calls, ..said("") }
     });
     let judge: Answer = Box::new(|messages| {
-        let asked_once = matches!(asked(messages).as_slice(),
-            [first, second] if first == "ok" && refused_as_briefed(second));
+        let asked_once = matches!(
+            asked(messages).as_slice(),
+            [first, second] if first == "ok" && refused_as_briefed(second)
+        );
         said(if asked_once { "asked once" } else { "asked otherwise" })
     });
     let answers = vec![fixed(start), fixed(said("started")), start_and_ask_twice, judge];
@@ -671,8 +676,11 @@ async fn a_sub_agent_let_go_counts_no_more() {
     // The lead's turn that read the second answer ended: its delegation let go.
     let read_the_second = |entries: &[HistoryEntry]| {
         let given_back = entries.iter().position(|e| {
-            matches!(e, HistoryEntry::GivenToRead { recipient, message, .. }
-                if *recipient == lead && message.content.as_deref() == Some("found more"))
+            matches!(
+                e,
+                HistoryEntry::GivenToRead { recipient, message, .. }
+                    if *recipient == lead && message.content.as_deref() == Some("found more")
+            )
         });
         given_back.is_some_and(|at| {
             entries[at..]
@@ -791,20 +799,30 @@ async fn an_owner_has_an_agent_start_a_sub_agent_by_command() {
         .expect("opened by the lead");
     assert_eq!(origin.thread, line, "where the command was issued");
     let brief = entries.iter().any(|e| {
-        matches!(e, HistoryEntry::GivenToRead { by: ActorId::Delegate(t), message, .. }
-            if *t == thread && message.sender_id == lead
-                && message.content.as_deref() == Some("Find it."))
+        matches!(
+            e,
+            HistoryEntry::GivenToRead { by: ActorId::Delegate(t), message, .. }
+                if *t == thread
+                    && message.sender_id == lead
+                    && message.content.as_deref() == Some("Find it.")
+        )
     });
     assert!(brief, "the brief delegated by the lead: {entries:?}");
     let given_back = entries.iter().position(|e| {
-        matches!(e, HistoryEntry::GivenToRead { recipient, message, .. }
-            if *recipient == lead && message.content.as_deref() == Some("found it"))
+        matches!(
+            e,
+            HistoryEntry::GivenToRead { recipient, message, .. }
+                if *recipient == lead && message.content.as_deref() == Some("found it")
+        )
     });
     assert!(given_back.is_some(), "given back to the lead: {entries:?}");
     assert_eq!(main.thread_said_in("thanks").await, line, "the lead responded in the line");
     let recorded = entries.iter().any(|e| {
-        matches!(e, HistoryEntry::CommandExecuted { command, issuer, .. }
-            if command == SUBAGENT_COMMAND_NAME && *issuer == ActorId::User(world.alice))
+        matches!(
+            e,
+            HistoryEntry::CommandExecuted { command, issuer, .. }
+                if command == SUBAGENT_COMMAND_NAME && *issuer == ActorId::User(world.alice)
+        )
     });
     assert!(recorded, "the command recorded: {entries:?}");
 
@@ -876,8 +894,10 @@ async fn a_sub_agent_is_started_by_command_by_an_owner_on_a_listed_personality_a
     let refused = bob.execute_command(None, &line).await;
     let refused = refused.expect_err("not his");
     assert!(
-        matches!(refused.downcast_ref::<CommandError>(),
-            Some(CommandError::Unknown(name)) if name == SUBAGENT_COMMAND_NAME),
+        matches!(
+            refused.downcast_ref::<CommandError>(),
+            Some(CommandError::Unknown(name)) if name == SUBAGENT_COMMAND_NAME
+        ),
         "unknown to him: {refused}"
     );
 

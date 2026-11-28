@@ -1200,9 +1200,10 @@ mod tests {
         let context =
             seen.context_of(answer.id).await.expect("what the call was given (issue 205)");
         assert_eq!(context.items.len(), 1, "the messages of the one call, no prompt parts");
-        assert!(
-            matches!(&context.items[0], ContextItem::Conversation { message } if message.id == question.id)
-        );
+        assert!(matches!(
+            &context.items[0],
+            ContextItem::Conversation { message } if message.id == question.id
+        ));
         assert!(context.tool_sets.is_empty(), "and no tools: those are the remote agent's");
         assert_eq!(
             seen.classification_of(answer.id).await.unwrap(),
@@ -1793,7 +1794,12 @@ mod tests {
             "hers alone"
         );
 
-        let not_found = |result: Result<(), StoreError>, entity: &str| matches!(result, Err(StoreError::NotFound { entity: found, .. }) if found == entity);
+        let not_found = |result: Result<(), StoreError>, entity: &str| {
+            matches!(
+                result,
+                Err(StoreError::NotFound { entity: found, .. }) if found == entity
+            )
+        };
         assert!(
             not_found(mark(&bob, hello.id).await, "message"),
             "not before where his view begins"
@@ -2412,7 +2418,10 @@ mod tests {
         assert!(matches!(refused, ViewError::Forbidden { .. }), "{refused}");
         let hr_from_team = from_team.channel_named("hr").await.unwrap();
         assert!(
-            matches!(whole(&hr_from_team).await, Err(ViewError::NoChannelNamed(name)) if name == "hr"),
+            matches!(
+                whole(&hr_from_team).await,
+                Err(ViewError::NoChannelNamed(name)) if name == "hr"
+            ),
             "nothing released: as if it did not exist"
         );
         assert!(matches!(

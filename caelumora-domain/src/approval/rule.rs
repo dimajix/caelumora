@@ -569,9 +569,10 @@ mod tests {
     #[test]
     fn a_matcher_that_cannot_be_matched_is_refused() {
         assert_eq!(matcher(" ", &[]).check(), Err(RuleError::NoTool));
-        assert!(
-            matches!(matcher("shell", &[("command", "(")]).check(), Err(RuleError::InvalidPattern { argument, .. }) if argument == "command")
-        );
+        assert!(matches!(
+            matcher("shell", &[("command", "(")]).check(),
+            Err(RuleError::InvalidPattern { argument, .. }) if argument == "command"
+        ));
         assert_eq!(
             matcher("shell", &[("command", &"a".repeat(MAX_PATTERN_CHARS + 1))]).check(),
             Err(RuleError::PatternTooLong("command".to_string()))

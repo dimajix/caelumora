@@ -661,7 +661,12 @@ mod tests {
             "classified as it is"
         );
         assert!(
-            matches!(testing::tool_named(&tool, READ_ATTACHMENT).execute(&json!({ "ref": "a2" }), None, &mut turn).await, Err(ToolError::InvalidParameter(e)) if e.contains("image/png")),
+            matches!(
+                testing::tool_named(&tool, READ_ATTACHMENT)
+                    .execute(&json!({ "ref": "a2" }), None, &mut turn)
+                    .await,
+                Err(ToolError::InvalidParameter(e)) if e.contains("image/png")
+            ),
             "an image is no text"
         );
 
@@ -675,7 +680,12 @@ mod tests {
             "shown, as it is attached"
         );
         assert!(
-            matches!(testing::tool_named(&tool, VIEW_ATTACHMENT).execute(&json!({ "ref": "a1" }), None, &mut turn).await, Err(ToolError::InvalidParameter(e)) if e.contains("text/plain")),
+            matches!(
+                testing::tool_named(&tool, VIEW_ATTACHMENT)
+                    .execute(&json!({ "ref": "a1" }), None, &mut turn)
+                    .await,
+                Err(ToolError::InvalidParameter(e)) if e.contains("text/plain")
+            ),
             "a text is no image"
         );
         assert!(

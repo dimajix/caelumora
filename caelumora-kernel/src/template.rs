@@ -454,7 +454,10 @@ mod tests {
         .await
         .expect_err("the global one is of another personality");
         assert!(
-            matches!(refused.downcast_ref::<AgentError>(), Some(AgentError::OfAnotherPersonality(name)) if *name == "helper"),
+            matches!(
+                refused.downcast_ref::<AgentError>(),
+                Some(AgentError::OfAnotherPersonality(name)) if *name == "helper"
+            ),
             "{refused}"
         );
         assert_eq!(
@@ -529,7 +532,12 @@ mod tests {
             stores.agents.list(&system, &Query::all()).await.map(|page| page.items).unwrap();
         assert_eq!(agents.len(), 1, "no second one");
         assert!(
-            matches!(participants[0].1, Participant::Agent(id) if id == agents[0].id && agents[0].security_attributes.owner_id != ActorId::User(owner)),
+            matches!(
+                participants[0].1,
+                Participant::Agent(id)
+                    if id == agents[0].id
+                        && agents[0].security_attributes.owner_id != ActorId::User(owner)
+            ),
             "the other's"
         );
     }
@@ -627,7 +635,10 @@ mod tests {
             .await
             .expect_err("not one outside it");
             assert!(
-                matches!(refused.downcast_ref::<AgentError>(), Some(AgentError::PersonalityOutOfScope(name)) if *name == "planner"),
+                matches!(
+                    refused.downcast_ref::<AgentError>(),
+                    Some(AgentError::PersonalityOutOfScope(name)) if *name == "planner"
+                ),
                 "{scope:?}: {refused}"
             );
         }
@@ -667,9 +678,10 @@ mod tests {
             resolve(&store, &policies, &as_user(owner), &template, SessionId::new(), owner)
                 .await
                 .unwrap();
-        assert!(
-            matches!(participants[0], (ref name, Participant::User(id)) if name == "user" && id == owner)
-        );
+        assert!(matches!(
+            participants[0],
+            (ref name, Participant::User(id)) if name == "user" && id == owner
+        ));
 
         let unbound = self::template(vec![ParticipantTemplate::User { name: "guest".to_string() }]);
         let error = resolve(&store, &policies, &as_user(owner), &unbound, SessionId::new(), owner)

@@ -1361,8 +1361,19 @@ mod tests {
             kernel.views(Viewer::new(as_user(&bob))).session(session.id()).await.is_ok(),
             "so he reads it now"
         );
-        assert!(events.drain().await.iter().any(|e| matches!(e.about::<Session>(), Some((id, change)) if id == session.id()
-            && matches!(change.update::<SessionUpdateEvent>(), Some(SessionUpdateEvent::ParticipantJoined(p)) if p.actor_id() == bob_id))), "announced");
+        assert!(
+            events.drain().await.iter().any(|e| matches!(
+                e.about::<Session>(),
+                Some((id, change))
+                    if id == session.id()
+                        && matches!(
+                            change.update::<SessionUpdateEvent>(),
+                            Some(SessionUpdateEvent::ParticipantJoined(p))
+                                if p.actor_id() == bob_id
+                        )
+            )),
+            "announced"
+        );
 
         let again = session
             .add_participant(&as_user(&alice), bob_id, None)
@@ -1727,8 +1738,13 @@ mod tests {
         assert!(main.participant_ids().contains(&actor), "it runs in the channel");
         // Announced, and followed by the session follower as any agent.
         let announced = |events: &[GlobalEvent]| {
-            events.iter().any(|e| matches!(e.about::<Session>().and_then(|(_, change)| change.update::<SessionUpdateEvent>()),
-            Some(SessionUpdateEvent::ParticipantJoined(p)) if p.actor_id() == actor))
+            events.iter().any(|e| {
+                matches!(
+                    e.about::<Session>()
+                        .and_then(|(_, change)| change.update::<SessionUpdateEvent>()),
+                    Some(SessionUpdateEvent::ParticipantJoined(p)) if p.actor_id() == actor
+                )
+            })
         };
         assert!(announced(&events.drain().await), "announced");
         time::sleep(Duration::from_millis(50)).await;

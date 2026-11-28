@@ -536,7 +536,14 @@ mod tests {
         locks.elsewhere.lock().unwrap().insert(id);
         let refused = executor.run(Lift::new(&ctx, own, "results", mine.clone())).await;
         assert!(
-            matches!(&refused, Err(ProjectError::Session(e)) if matches!(e.downcast_ref(), Some(SessionError::RunsElsewhere(it)) if *it == id)),
+            matches!(
+                &refused,
+                Err(ProjectError::Session(e))
+                    if matches!(
+                        e.downcast_ref(),
+                        Some(SessionError::RunsElsewhere(it)) if *it == id
+                    )
+            ),
             "left to the other: {refused:?}"
         );
         locks.elsewhere.lock().unwrap().remove(&id);

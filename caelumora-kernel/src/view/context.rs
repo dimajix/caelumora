@@ -366,9 +366,10 @@ mod tests {
         let view = AgentContextView::of_state(actor, channel, state, history).await;
         let items = items_of(&view).await;
         assert!(
-            items.iter().any(
-                |item| matches!(item, HistoryEntry::Said { message, .. } if message.id == step.id)
-            ),
+            items.iter().any(|item| matches!(
+                item,
+                HistoryEntry::Said { message, .. } if message.id == step.id
+            )),
             "in its history as it was said"
         );
         assert!(
@@ -377,7 +378,13 @@ mod tests {
             ) && view.in_transcript(&[step.id]).await.expect("read").contains(&step.id)
         );
         let seen = view.context_of(step.id).await.expect("what it was produced from is recorded");
-        assert!(seen.items.iter().any(|item| matches!(item, ContextItem::Conversation { message } if message.id == question.id)), "the question it answered");
+        assert!(
+            seen.items.iter().any(|item| matches!(
+                item,
+                ContextItem::Conversation { message } if message.id == question.id
+            )),
+            "the question it answered"
+        );
     }
 
     #[tokio::test]
@@ -486,9 +493,10 @@ mod tests {
             .context_of(told.id)
             .await
             .expect("resolved");
-        assert!(
-            matches!(&seen.items[0], ContextItem::Prompt { classification: Some(c), .. } if *c == confidential)
-        );
+        assert!(matches!(
+            &seen.items[0],
+            ContextItem::Prompt { classification: Some(c), .. } if *c == confidential
+        ));
 
         // A reference to a prompt that was never kept cannot be resolved.
         let lost = produced("lost");

@@ -150,8 +150,11 @@ impl Recipients {
             ActorId::Agent(_) => attended.iter().any(|at| at.holds(seq, happened_in)),
             _ => attended.iter().any(|at| at.range.contains(&seq)),
         };
-        let its_thread = matches!(actor, ActorId::Delegate(thread)
-            if happened_in.is_none_or(|happened_in| happened_in == thread));
+        let its_thread = matches!(
+            actor,
+            ActorId::Delegate(thread)
+                if happened_in.is_none_or(|happened_in| happened_in == thread)
+        );
         self.named.contains(&actor)
             || (self.approvers && matches!(actor, ActorId::Approver(_)))
             || (self.users && its_thread)
@@ -777,7 +780,10 @@ mod tests {
         let again = Recorded::of(&ended, agent, Audience::Everybody)
             .and_then(|recorded| recorded.envelope(Position::START));
         assert!(
-            matches!(again.map(|e| e.event), Some(ActorEvent::TurnFinished { messages, .. }) if messages.is_empty()),
+            matches!(
+                again.map(|e| e.event),
+                Some(ActorEvent::TurnFinished { messages, .. }) if messages.is_empty()
+            ),
             "without its answer"
         );
         assert!(

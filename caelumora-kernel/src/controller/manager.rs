@@ -829,7 +829,10 @@ mod tests {
 
         let terminal = controller.reader(&SecurityContext::system()).await;
         assert!(
-            matches!(&terminal, Err(WorkspaceError::StorageGone(StorageGone(name))) if name == "removed"),
+            matches!(
+                &terminal,
+                Err(WorkspaceError::StorageGone(StorageGone(name))) if name == "removed"
+            ),
             "{:?}",
             terminal.err()
         );

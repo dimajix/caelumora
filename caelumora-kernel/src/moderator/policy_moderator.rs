@@ -1237,8 +1237,11 @@ mod tests {
             max_agent_hops: 2,
             not_asked: vec![agents[2]],
         };
-        assert_eq!(told(&moderator.route(&event, &SecurityContext::default()).await), [(HashSet::from([user, agents[0], agents[2]]), cut_off)],
-            "the users, the sender and whom it mentioned - not agents[1] -, naming the message cut off");
+        assert_eq!(
+            told(&moderator.route(&event, &SecurityContext::default()).await),
+            [(HashSet::from([user, agents[0], agents[2]]), cut_off)],
+            "the users, the sender and whom it mentioned - not agents[1] -, naming the message cut off"
+        );
 
         let event = hops_from(agents[0], 2, Vec::new());
         let ActorEvent::TurnFinished { messages, .. } = &event.event else { unreachable!() };

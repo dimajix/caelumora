@@ -449,7 +449,10 @@ mod tests {
         let alice = make_user("alice");
         answering(&alice).authenticate("alice", &Credential::Password("a")).await.unwrap();
         assert!(
-            matches!(&announced.taken()[..], [event] if event.about::<User>() == Some((alice.id, &EntityChange::Created))),
+            matches!(
+                &announced.taken()[..],
+                [event] if event.about::<User>() == Some((alice.id, &EntityChange::Created))
+            ),
             "a new user is made"
         );
         answering(&alice).authenticate("alice", &Credential::Password("a")).await.unwrap();
@@ -461,15 +464,34 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(found.roles, [staff], "on a renewal, as the provider answers");
-        assert!(
-            matches!(&announced.taken()[..], [event] if matches!(event.about::<User>(), Some((id, change)) if id == alice.id && matches!(change.update::<UserUpdateEvent>(), Some(UserUpdateEvent::RolesChanged(roles)) if roles == [staff])))
-        );
+        assert!(matches!(
+            &announced.taken()[..],
+            [event]
+                if matches!(
+                    event.about::<User>(),
+                    Some((id, change))
+                        if id == alice.id
+                            && matches!(
+                                change.update::<UserUpdateEvent>(),
+                                Some(UserUpdateEvent::RolesChanged(roles)) if roles == [staff]
+                            )
+                )
+        ));
         let stored = store.get(&SecurityContext::system(), alice.id).await.unwrap();
         assert_eq!(stored.roles, [staff], "and stored");
 
         answering(&alice).authenticate("alice", &Credential::Password("a")).await.unwrap();
         assert!(
-            matches!(&announced.taken()[..], [event] if matches!(event.about::<User>().and_then(|(_, change)| change.update::<UserUpdateEvent>()), Some(UserUpdateEvent::RolesChanged(roles)) if roles.is_empty())),
+            matches!(
+                &announced.taken()[..],
+                [event]
+                    if matches!(
+                        event
+                            .about::<User>()
+                            .and_then(|(_, change)| change.update::<UserUpdateEvent>()),
+                        Some(UserUpdateEvent::RolesChanged(roles)) if roles.is_empty()
+                    )
+            ),
             "taken at a login"
         );
     }

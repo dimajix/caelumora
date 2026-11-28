@@ -82,8 +82,11 @@ against this list, rule by rule, before it is reported (the self-review of
     beside the procedures -, and no procedure announces anything or carries out another
     ([A module's manager](#a-modules-manager);
     [ARCHITECTURE.md](ARCHITECTURE.md#managers-and-controllers)).
-*   Rust code is laid out by rustfmt: `cargo fmt --all --check` passes
-    ([Comments and documentation](#comments-and-documentation)).
+*   Rust code is laid out by rustfmt: `cargo fmt --all --check` passes. What it leaves as written -
+    the inside of a macro call it cannot parse, a statement around a string literal it cannot fit -
+    is broken by hand within 100 characters as rustfmt would break it
+    ([Comments and documentation](#comments-and-documentation); `scripts/code-width.sh` checks the
+    width).
 *   `cargo clippy --workspace --all-targets` stays silent
     ([Comments and documentation](#comments-and-documentation)).
 
@@ -127,12 +130,23 @@ against this list, rule by rule, before it is reported (the self-review of
 *   **Code is laid out by rustfmt** (issue 487), with the settings of `rustfmt.toml`: `cargo
     fmt --all` before a commit; the pre-commit hook refuses Rust code that `cargo fmt --all --check`
     does not pass. Code is not laid out by hand. rustfmt keeps code within 100 characters, as
-    comments are wrapped, but breaks no string literal: a line with one may be longer. It leaves
-    two things as they are written, and their layout is the author's: comments, and the inside of
-    a macro call it cannot parse - `matches!` with a guard, `tokio::select!`, a `macro_rules!` of
-    our own -, which is broken by hand within 100 characters as rustfmt would break it. The commit
-    that laid out the whole code is named in `.git-blame-ignore-revs`, which `git blame` passes over
-    once a clone has it enabled (`git config blame.ignoreRevsFile .git-blame-ignore-revs`).
+    comments are wrapped, where a layout of its own can: it breaks no string literal, so that a line
+    with one may be longer, and some lines it lays out longer itself, which stay - the head of a
+    test with a long name, a return type, the pattern of a `let … else`, `async move { … }` on one
+    line. Three things it leaves as they are written, and their layout is the author's: comments;
+    the inside of a macro call it cannot parse - `matches!` with a guard, `context!`,
+    `tokio::select!`, `stream!`, a `macro_rules!` of our own -; and a statement that holds a string
+    literal it cannot fit. Their code is broken by hand within 100 characters as rustfmt would
+    break it (issue 624): a `matches!` as a call, its arguments on lines of their own once they do
+    not fit on one, and the guard on the line after a pattern it does not fit beside, one level
+    further in. In `let f = |e| { matches!(…) }` rustfmt takes the block away while the
+    `matches!` stands on one line, and joins it to a line too long; there the `matches!` is broken
+    within the block. `scripts/code-width.sh` checks the width, in every Rust file or in those it
+    is given: rustfmt is asked whose a line longer than 100 characters is, by breaking it in a copy
+    of the file, and a line it leaves broken is the author's. The pre-commit hook gives it the Rust
+    files a commit adds or changes. The commit that laid out the whole code is named in
+    `.git-blame-ignore-revs`, which `git blame` passes over once a clone has it enabled
+    (`git config blame.ignoreRevsFile .git-blame-ignore-revs`).
 *   **No clippy warnings.** `cargo clippy --workspace --all-targets` stays silent; the pre-commit
     hook in `.githooks` refuses a commit of Rust code otherwise, once a clone has it enabled
     (`git config core.hooksPath .githooks`). Where a lint is wrong for a case, say why with
@@ -154,7 +168,8 @@ against this list, rule by rule, before it is reported (the self-review of
 *   **Long functions.** `too_many_lines` warns of a function longer than 100 lines. A new function,
     or one that grows past the limit, is split rather than given an `expect`. One that was
     longer before the lint (issue 452), or that rustfmt made longer when it laid out the code
-    (issue 490), carries `#[expect(clippy::too_many_lines, reason = "…")]` naming its issue, which
+    (issue 490) - or the macro calls in it, broken by hand by its rules once (issue 624) -,
+    carries `#[expect(clippy::too_many_lines, reason = "…")]` naming its issue, which
     fires as unfulfilled once the function is shorter, and is then removed: these attributes are
     the list of what is still to be simplified, and it only gets shorter. `cognitive_complexity` is
     not on: it counts what the logging macros expand to, which differs with the features a build

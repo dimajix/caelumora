@@ -387,7 +387,11 @@ mod tests {
 
         let innermost = causes(&error).last().copied().unwrap();
         assert!(
-            matches!(innermost, ComponentError::Cycle { component, facet, other } if component == "egg" && facet == "Named" && other == "hen"),
+            matches!(
+                innermost,
+                ComponentError::Cycle { component, facet, other }
+                    if component == "egg" && facet == "Named" && other == "hen"
+            ),
             "{error}"
         );
     }

@@ -1027,7 +1027,11 @@ async fn an_artifact_goes_with_its_session_only_as_far_as_whoever_deletes_it_may
     let (refused, asked) = world.asked(world.kernel.delete_session(&alice, session_id)).await;
     let refused = refused.expect_err("bob's artifact is left");
     assert!(
-        matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ScopeNotEmpty(ScopeNotEmpty { left, .. })) if *left == [(Artifact::KIND, 1)]),
+        matches!(
+            refused.downcast_ref::<SessionError>(),
+            Some(SessionError::ScopeNotEmpty(ScopeNotEmpty { left, .. }))
+                if *left == [(Artifact::KIND, 1)]
+        ),
         "{refused}"
     );
     assert!(

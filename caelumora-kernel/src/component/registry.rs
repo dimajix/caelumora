@@ -1019,7 +1019,12 @@ mod tests {
                 .await
                 .unwrap_err();
             assert!(
-                matches!(&error, ComponentError::Build { component, cause, .. } if component == named && matches!(cause.as_ref(), ComponentError::DuplicateId(_))),
+                matches!(
+                    &error,
+                    ComponentError::Build { component, cause, .. }
+                        if component == named
+                            && matches!(cause.as_ref(), ComponentError::DuplicateId(_))
+                ),
                 "{error}"
             );
         }

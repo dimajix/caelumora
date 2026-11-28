@@ -438,7 +438,12 @@ impl HistoryEntry {
 
     /// Whether it ends a turn of `actor`, finished or given up.
     pub fn ends_turn_of(&self, actor: ActorId) -> bool {
-        matches!(self, HistoryEntry::TurnFinished { actor: of, .. } | HistoryEntry::TurnGivenUp { actor: of, .. } if *of == actor)
+        matches!(
+            self,
+            HistoryEntry::TurnFinished { actor: of, .. }
+            | HistoryEntry::TurnGivenUp { actor: of, .. }
+                if *of == actor
+        )
     }
 
     /// The message, if this is one said.
@@ -986,8 +991,11 @@ mod tests {
         }
         let opened = HistoryEntry::ThreadOpened { thread, origin, by, by_name: String::new(), at };
         assert!(
-            matches!(opened.event(), Some(ActorEvent::ThreadOpened { thread: t, origin: o })
-                if t == thread && o == origin),
+            matches!(
+                opened.event(),
+                Some(ActorEvent::ThreadOpened { thread: t, origin: o })
+                    if t == thread && o == origin
+            ),
             "delivered again as it was"
         );
     }
@@ -1016,8 +1024,11 @@ mod tests {
         let user = ActorId::User(UserId::new());
         assert!(recipients.goes_to(user, &in_thread, Some(thread)), "to the users");
         assert!(
-            matches!(given.event(), Some(ActorEvent::GivenToRead { recipient: r, message: m })
-                if r == recipient && m.id == message.id),
+            matches!(
+                given.event(),
+                Some(ActorEvent::GivenToRead { recipient: r, message: m })
+                    if r == recipient && m.id == message.id
+            ),
             "delivered again as it was"
         );
     }

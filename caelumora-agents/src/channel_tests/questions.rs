@@ -281,8 +281,13 @@ async fn questions_nobody_asked_is_left_to_answer_go_unanswered_and_the_turn_goe
 
     channel.remove_participant(&context, alice).await.expect("she may leave her channel");
     time::timeout(Duration::from_secs(5), async {
-        while !matches!(events.recv().await.expect("the channel is running").event, ActorEvent::QuestionClosed { id, .. } if id == asked.id) {}
-    }).await.expect("the questions are closed");
+        while !matches!(
+            events.recv().await.expect("the channel is running").event,
+            ActorEvent::QuestionClosed { id, .. } if id == asked.id
+        ) {}
+    })
+    .await
+    .expect("the questions are closed");
     let said: Vec<_> =
         answered(&mut events, agent).await.iter().filter_map(|m| m.content.clone()).collect();
     assert_eq!(said, ["Done."], "the turn goes on without the answers");
@@ -302,7 +307,15 @@ async fn questions_nobody_asked_is_left_to_answer_go_unanswered_and_the_turn_goe
         .iter()
         .position(|e| matches!(e, TranscriptEntry::Message(m) if !m.tool_results.is_empty()))
         .expect("the results");
-    let left = entries.iter().position(|e| matches!(e, TranscriptEntry::ParticipantLeft { participant, .. } if *participant == alice)).expect("noted");
+    let left = entries
+        .iter()
+        .position(|e| {
+            matches!(
+                e,
+                TranscriptEntry::ParticipantLeft { participant, .. } if *participant == alice
+            )
+        })
+        .expect("noted");
     assert!(left > results, "{entries:?}");
     running.abort();
 }

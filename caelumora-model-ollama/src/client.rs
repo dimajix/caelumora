@@ -851,7 +851,9 @@ where
                 continue;
             }
             // Ollama reports errors that occur mid-stream as `{"error": ...}`.
-            if let Ok(OllamaErrorResponse { error }) = serde_json::from_str::<OllamaErrorResponse>(&line) {
+            if let Ok(OllamaErrorResponse { error }) =
+                serde_json::from_str::<OllamaErrorResponse>(&line)
+            {
                 yield Err(ModelError::Backend { endpoint, model, message: error });
                 return;
             }
@@ -997,7 +999,12 @@ impl LanguageModelProvider for OllamaModel {
             let status = response.status();
             if !status.is_success() {
                 let body = response.text().await.unwrap_or_default();
-                yield Err(ModelError::Rejected { endpoint, model, status: status.as_u16(), message: backend_error_message(&body) });
+                yield Err(ModelError::Rejected {
+                    endpoint,
+                    model,
+                    status: status.as_u16(),
+                    message: backend_error_message(&body),
+                });
                 return;
             }
             let bytes =
@@ -1541,7 +1548,10 @@ mod tests {
         let alone = client_with(json!({ "endpoint": { "url": url }, "model": "qwen3:cloud" }));
         let events: Vec<_> = alone.chat_completion(&context, &[]).await.collect().await;
         assert!(
-            matches!(events.as_slice(), [Err(ModelError::InvalidResponse { reason, .. })] if reason.contains("'tokenizer'")),
+            matches!(
+                events.as_slice(),
+                [Err(ModelError::InvalidResponse { reason, .. })] if reason.contains("'tokenizer'")
+            ),
             "{events:?}"
         );
         assert!(fake.sent.lock().unwrap().is_empty(), "nothing sent unprotected");
@@ -1567,7 +1577,11 @@ mod tests {
         );
         let events: Vec<_> = listless.chat_completion(&context, &[]).await.collect().await;
         assert!(
-            matches!(events.as_slice(), [Err(ModelError::InvalidResponse { reason, .. })] if reason.contains("'qwen3:cloud', the 'tokenizer' of 'qwen3:other'")),
+            matches!(
+                events.as_slice(),
+                [Err(ModelError::InvalidResponse { reason, .. })]
+                    if reason.contains("'qwen3:cloud', the 'tokenizer' of 'qwen3:other'")
+            ),
             "names the tokenizer as such: {events:?}"
         );
     }
@@ -1594,7 +1608,10 @@ mod tests {
             .collect();
         assert_eq!(parts, vec!["Grü", "ße"]);
         assert!(
-            matches!(events.last(), Some(Ok(MessageEvent::Complete(m))) if m.content.as_deref() == Some("Grüße")),
+            matches!(
+                events.last(),
+                Some(Ok(MessageEvent::Complete(m))) if m.content.as_deref() == Some("Grüße")
+            ),
             "{events:?}"
         );
     }

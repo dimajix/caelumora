@@ -372,7 +372,10 @@ mod tests {
             .await
             .expect_err("limited below HR");
         assert!(
-            matches!(refused.downcast_ref::<ChannelError>(), Some(ChannelError::NotCleared { participant, .. }) if *participant == limited),
+            matches!(
+                refused.downcast_ref::<ChannelError>(),
+                Some(ChannelError::NotCleared { participant, .. }) if *participant == limited
+            ),
             "{refused}"
         );
         let channel = session
@@ -435,7 +438,10 @@ mod tests {
                 .await
                 .expect_err("not in a new channel");
             assert!(
-                matches!(refused.downcast_ref::<ChannelError>(), Some(ChannelError::OutOfScope { participant, .. }) if *participant == actor),
+                matches!(
+                    refused.downcast_ref::<ChannelError>(),
+                    Some(ChannelError::OutOfScope { participant, .. }) if *participant == actor
+                ),
                 "{refused}"
             );
             let refused = main
@@ -443,7 +449,10 @@ mod tests {
                 .await
                 .expect_err("nor in one there is");
             assert!(
-                matches!(refused.downcast_ref::<ChannelError>(), Some(ChannelError::OutOfScope { participant, .. }) if *participant == actor),
+                matches!(
+                    refused.downcast_ref::<ChannelError>(),
+                    Some(ChannelError::OutOfScope { participant, .. }) if *participant == actor
+                ),
                 "{refused}"
             );
         }

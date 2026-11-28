@@ -93,7 +93,12 @@ mod tests {
         let failed =
             carry_out(Scripted::failing(|| CompactionError::ModelUnreachable), two_calls).await;
         assert!(
-            matches!(failed, Err(ActivityError::Failed(ref reason)) if reason == "Jonathan could not compact its context: its model could not be asked"),
+            matches!(
+                failed,
+                Err(ActivityError::Failed(ref reason))
+                    if reason
+                        == "Jonathan could not compact its context: its model could not be asked"
+            ),
             "{failed:?}"
         );
     }

@@ -380,7 +380,10 @@ mod tests {
             )
             .await;
         assert!(
-            matches!(&ambiguous, Err(ToolError::InvalidParameter(why)) if why.contains("occurs 2 times")),
+            matches!(
+                &ambiguous,
+                Err(ToolError::InvalidParameter(why)) if why.contains("occurs 2 times")
+            ),
             "{ambiguous:?}"
         );
         let replaced = tool_named(&tool, REPLACE_IN_FILE).execute(&json!({ "path": "docs/plan.md", "old_text": "first step", "new_text": "first move" }), None, &mut turn).await.unwrap();
@@ -405,7 +408,10 @@ mod tests {
             .execute(&json!({ "path": "docs" }), None, &mut turn)
             .await;
         assert!(
-            matches!(&not_empty, Err(ToolError::InvalidParameter(why)) if why.contains("not empty")),
+            matches!(
+                &not_empty,
+                Err(ToolError::InvalidParameter(why)) if why.contains("not empty")
+            ),
             "{not_empty:?}"
         );
         tool_named(&tool, DELETE_FILE)
@@ -484,8 +490,11 @@ mod tests {
         let tool = component(json!({}));
         let file = |name: &str| world.dir().join(name);
         let changed = |result: &ToolResult<ToolOutput>| {
-            matches!(result, Err(ToolError::InvalidParameter(why))
-                if why.contains("changed since you last read or wrote it"))
+            matches!(
+                result,
+                Err(ToolError::InvalidParameter(why))
+                    if why.contains("changed since you last read or wrote it")
+            )
         };
         let write = |path: &str, content: &str| json!({ "path": path, "content": content });
         let replace =

@@ -737,9 +737,13 @@ mod tests {
             matches!(requests[0], ParticipantRequest::User(id) if id == owner),
             "\"user\" is the owner"
         );
-        assert!(
-            matches!(&requests[1], ParticipantRequest::Agent { name: ScopedName { name, scope: Scope::UserScope { user_id } }, .. } if *name == "helper" && *user_id == owner)
-        );
+        assert!(matches!(
+            &requests[1],
+            ParticipantRequest::Agent {
+                name: ScopedName { name, scope: Scope::UserScope { user_id } },
+                ..
+            } if *name == "helper" && *user_id == owner
+        ));
 
         let other = ParticipantTemplate::User { name: "guest".to_string() };
         assert!(

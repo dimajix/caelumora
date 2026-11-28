@@ -295,11 +295,17 @@ where
             let data = match event {
                 Ok(event) => event.data.unwrap_or_default(),
                 Err(sse_stream::Error::Body(e)) => {
-                    yield Err(ExternalAgentError::Connection { endpoint: endpoint.clone(), reason: describe_chain(e.as_ref()) });
+                    yield Err(ExternalAgentError::Connection {
+                        endpoint: endpoint.clone(),
+                        reason: describe_chain(e.as_ref()),
+                    });
                     return;
                 }
                 Err(e) => {
-                    yield Err(ExternalAgentError::InvalidResponse { endpoint: endpoint.clone(), reason: e.to_string() });
+                    yield Err(ExternalAgentError::InvalidResponse {
+                        endpoint: endpoint.clone(),
+                        reason: e.to_string(),
+                    });
                     return;
                 }
             };
@@ -307,7 +313,10 @@ where
                 continue;
             }
             let response = serde_json::from_str::<RpcResponse<StreamResponse>>(&data)
-                .map_err(|e| ExternalAgentError::InvalidResponse { endpoint: endpoint.clone(), reason: e.to_string() })
+                .map_err(|e| ExternalAgentError::InvalidResponse {
+                    endpoint: endpoint.clone(),
+                    reason: e.to_string(),
+                })
                 .and_then(|answer| answer.into_result(&endpoint))
                 .and_then(|answered| answered.map_err(|error| error.rejected(&endpoint)));
             let failed = response.is_err();

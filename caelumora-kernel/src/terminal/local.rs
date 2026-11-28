@@ -578,9 +578,10 @@ mod tests {
         assert_eq!(terminal.stat(&path("docs/a.md")).await.unwrap().size, 5);
 
         terminal.move_entry(&path("docs/a.md"), &path("archive/a.md")).await.unwrap();
-        assert!(
-            matches!(terminal.stat(&path("docs/a.md")).await, Err(TerminalError::NotFound(p)) if p == "docs/a.md")
-        );
+        assert!(matches!(
+            terminal.stat(&path("docs/a.md")).await,
+            Err(TerminalError::NotFound(p)) if p == "docs/a.md"
+        ));
         terminal.write(&path("docs/b.md"), content("b")).await.unwrap();
         assert!(
             matches!(

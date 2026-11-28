@@ -316,7 +316,10 @@ mod tests {
         let someone = ActorId::System;
 
         assert!(
-            matches!(sender.send(as_actor(someone)).await, Err(TransportError::Refused { origin }) if origin == agent),
+            matches!(
+                sender.send(as_actor(someone)).await,
+                Err(TransportError::Refused { origin }) if origin == agent
+            ),
             "another's envelope"
         );
         sender.send(as_actor(agent)).await.expect("its own");

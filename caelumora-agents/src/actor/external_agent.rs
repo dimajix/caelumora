@@ -1100,10 +1100,15 @@ impl Actor for ExternalAgentActor {
                 received = rx.recv() => {
                     let Some(received) = received else { break };
                     // One answer to all that was queued, to the last request.
-                    if let Some(request) = self.hear(&mut state, received, &mut rx, &*output).await {
+                    if let Some(request) =
+                        self.hear(&mut state, received, &mut rx, &*output).await
+                    {
                         let span = envelope_span(&request.context, request.event.kind());
-                        self.respond(&mut state, &request, &mut rx, &*output).instrument(span).await;
-                        self.follow_open_tasks(&mut state, &mut followed, &mut attempted, &*output).await;
+                        self.respond(&mut state, &request, &mut rx, &*output)
+                            .instrument(span)
+                            .await;
+                        self.follow_open_tasks(&mut state, &mut followed, &mut attempted, &*output)
+                            .await;
                     }
                 }
                 Some((task, event)) = followed.next(), if !followed.is_empty() => {
@@ -1318,9 +1323,10 @@ mod tests {
         state.remote.open(&task, OpenTaskState::Working);
         let mut answer = Answer::default();
 
-        assert!(
-            matches!(answer.take(&mut state, Some(&task), ExternalEvent::Partial("Wh".to_string())), Step::Partial(p) if p == "Wh")
-        );
+        assert!(matches!(
+            answer.take(&mut state, Some(&task), ExternalEvent::Partial("Wh".to_string())),
+            Step::Partial(p) if p == "Wh"
+        ));
         assert!(matches!(
             answer.take(
                 &mut state,
@@ -1341,9 +1347,10 @@ mod tests {
         );
 
         let mut answer = Answer::default();
-        assert!(
-            matches!(answer.take(&mut state, Some(&task), ExternalEvent::Failed("no".to_string())), Step::Failed(r) if r == "no")
-        );
+        assert!(matches!(
+            answer.take(&mut state, Some(&task), ExternalEvent::Failed("no".to_string())),
+            Step::Failed(r) if r == "no"
+        ));
         assert!(state.remote.open_tasks.is_empty(), "a failed task is forgotten");
     }
 

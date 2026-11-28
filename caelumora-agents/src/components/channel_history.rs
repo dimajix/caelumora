@@ -337,7 +337,12 @@ mod tests {
         let params = serde_json::json!({ "channel": main.name() });
         let read = tool.execute(&params, None, &mut turn).await.unwrap();
         assert!(
-            matches!(read.knowledge.as_slice(), [k] if k.channel == main.id() && k.session == session.id() && matches!(k.source, KnowledgeSource::History { .. })),
+            matches!(
+                read.knowledge.as_slice(),
+                [k] if k.channel == main.id()
+                    && k.session == session.id()
+                    && matches!(k.source, KnowledgeSource::History { .. })
+            ),
             "{:?}",
             read.knowledge
         );

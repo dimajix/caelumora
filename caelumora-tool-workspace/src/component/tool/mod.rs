@@ -293,7 +293,10 @@ mod tests {
             let refused =
                 agent_testing::tool_named(&tool, name).execute(&params, None, &mut turn).await;
             assert!(
-                matches!(&refused, Err(ToolError::ExecutionFailed(why)) if why.contains("no workspace")),
+                matches!(
+                    &refused,
+                    Err(ToolError::ExecutionFailed(why)) if why.contains("no workspace")
+                ),
                 "{name}: {refused:?}"
             );
         }

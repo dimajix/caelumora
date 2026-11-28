@@ -164,12 +164,14 @@ async fn an_agent_asked_to_answer_again_takes_its_answer_back_and_answers_withou
     let alice = channel.user_actor(alice_of(&context)).unwrap();
 
     alice.request_retry(first.id).await.expect("asked");
-    assert!(
-        matches!(shown_by(&mut events, agent, "RetryAccepted").await, ActorEvent::RetryAccepted { target } if target == RetryTarget::Message(first.id))
-    );
-    assert!(
-        matches!(shown_by(&mut events, agent, "MessageRevoked").await, ActorEvent::MessageRevoked { message, .. } if message == first.id)
-    );
+    assert!(matches!(
+        shown_by(&mut events, agent, "RetryAccepted").await,
+        ActorEvent::RetryAccepted { target } if target == RetryTarget::Message(first.id)
+    ));
+    assert!(matches!(
+        shown_by(&mut events, agent, "MessageRevoked").await,
+        ActorEvent::MessageRevoked { message, .. } if message == first.id
+    ));
     model.gate.add_permits(1);
     let said = |messages: Vec<Message>| {
         messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>()
@@ -342,9 +344,10 @@ async fn an_answer_under_way_asked_for_again_is_given_up_and_answered_anew() {
     retry_of_turn_rejected(&channel, alice_of(&context), agent, TurnId::new()).await;
 
     alice.request_retry_of_turn(ActorId::Agent(agent), turn).await.expect("asked");
-    assert!(
-        matches!(shown_by(&mut events, agent, "RetryAccepted").await, ActorEvent::RetryAccepted { target } if target == RetryTarget::Turn(turn))
-    );
+    assert!(matches!(
+        shown_by(&mut events, agent, "RetryAccepted").await,
+        ActorEvent::RetryAccepted { target } if target == RetryTarget::Turn(turn)
+    ));
     let ActorEvent::ResponseStarted { turn_id: next } =
         shown_by(&mut events, agent, "ResponseStarted").await
     else {
@@ -404,9 +407,10 @@ async fn what_was_said_during_a_turn_asked_for_again_is_answered_in_the_one_that
     .expect("the message is said in the channel");
 
     alice.request_retry_of_turn(ActorId::Agent(agent), turn).await.expect("asked");
-    assert!(
-        matches!(shown_by(&mut events, agent, "RetryAccepted").await, ActorEvent::RetryAccepted { target } if target == RetryTarget::Turn(turn))
-    );
+    assert!(matches!(
+        shown_by(&mut events, agent, "RetryAccepted").await,
+        ActorEvent::RetryAccepted { target } if target == RetryTarget::Turn(turn)
+    ));
     model.gate.add_permits(3);
     let said = |messages: Vec<Message>| {
         messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>()
@@ -1070,10 +1074,16 @@ async fn an_agent_takes_note_of_who_left_without_responding() {
     })
     .await
     .expect("the agent takes note of it");
-    assert!(state.transcript.entries(line).any(|node| matches!(node.entry, TranscriptEntry::ParticipantLeft { participant, by, .. } if participant == context.initiator_id && by == context.initiator_id)));
-    assert!(
-        matches!(channel.visible_entries(ActorId::Agent(agent)).await.last(), Some(HistoryEntry::ParticipantLeft { participant, by, .. }) if *participant == context.initiator_id && *by == context.initiator_id)
-    );
+    assert!(state.transcript.entries(line).any(|node| matches!(
+        node.entry,
+        TranscriptEntry::ParticipantLeft { participant, by, .. }
+            if participant == context.initiator_id && by == context.initiator_id
+    )));
+    assert!(matches!(
+        channel.visible_entries(ActorId::Agent(agent)).await.last(),
+        Some(HistoryEntry::ParticipantLeft { participant, by, .. })
+            if *participant == context.initiator_id && *by == context.initiator_id
+    ));
     time::sleep(Duration::from_millis(50)).await;
     assert_eq!(model.seen.lock().unwrap().len(), 1, "no turn begins for it");
     running.abort();
@@ -1287,9 +1297,10 @@ async fn an_agent_given_something_to_read_wakes_takes_it_in_and_answers() {
     assert_eq!((given[0].id, given[0].sender_id), (brief.id, alice), "its giver its sender");
     let recorded = channel.history_entries().await;
     assert!(
-        recorded.iter().any(
-            |entry| matches!(entry, HistoryEntry::Given { message } if message.id == brief.id)
-        ),
+        recorded.iter().any(|entry| matches!(
+            entry,
+            HistoryEntry::Given { message } if message.id == brief.id
+        )),
         "its record of what it was given: {recorded:?}"
     );
     // What it is given again from the history, as after a restart (issue 223): by name.
@@ -1868,7 +1879,11 @@ async fn a_plan_runs_its_steps_as_intermediate_messages_and_ends_with_the_final_
     assert_eq!(items, ["step 1/2: first", "first done", "step 2/2: second", "second done"]);
     let ended = channel.last_history_entry().await;
     assert!(
-        matches!(ended, Some(HistoryEntry::TurnFinished { turn_id, .. }) if Some(turn_id) == history.last().and_then(|m| m.turn_id)),
+        matches!(
+            ended,
+            Some(HistoryEntry::TurnFinished { turn_id, .. })
+                if Some(turn_id) == history.last().and_then(|m| m.turn_id)
+        ),
         "{ended:?}"
     );
     running.abort();
@@ -2094,9 +2109,10 @@ async fn a_turn_that_failed_is_answered_anew_on_request_and_stays() {
         .request_retry_of_turn(ActorId::Agent(agent), failed)
         .await
         .expect("its last turn, given up as failed (issue 259)");
-    assert!(
-        matches!(shown_by(&mut events, agent, "RetryAccepted").await, ActorEvent::RetryAccepted { target } if target == RetryTarget::Turn(failed))
-    );
+    assert!(matches!(
+        shown_by(&mut events, agent, "RetryAccepted").await,
+        ActorEvent::RetryAccepted { target } if target == RetryTarget::Turn(failed)
+    ));
     let said: Vec<_> =
         answered(&mut events, agent).await.into_iter().filter_map(|m| m.content).collect();
     assert_eq!(said, ["second try"], "answered anew after it");
@@ -2196,9 +2212,10 @@ async fn a_turn_that_reaches_the_limit_of_model_calls_is_given_up_and_may_be_ans
         .request_retry_of_turn(ActorId::Agent(agent), turn)
         .await
         .expect("its last turn, given up at the limit");
-    assert!(
-        matches!(shown_by(&mut events, agent, "RetryAccepted").await, ActorEvent::RetryAccepted { target } if target == RetryTarget::Turn(turn))
-    );
+    assert!(matches!(
+        shown_by(&mut events, agent, "RetryAccepted").await,
+        ActorEvent::RetryAccepted { target } if target == RetryTarget::Turn(turn)
+    ));
     let said: Vec<_> =
         answered(&mut events, agent).await.into_iter().filter_map(|m| m.content).collect();
     assert_eq!(said, ["going on"], "answered anew after it");
@@ -3088,12 +3105,16 @@ async fn a_turn_asked_for_again_while_it_waits_for_an_approval_withdraws_the_req
         .await
         .expect("asked");
     assert!(
-        matches!(shown_by(&mut events, agent, "ApprovalRequestWithdrawn").await, ActorEvent::ApprovalRequestWithdrawn { id } if id == request.id),
+        matches!(
+            shown_by(&mut events, agent, "ApprovalRequestWithdrawn").await,
+            ActorEvent::ApprovalRequestWithdrawn { id } if id == request.id
+        ),
         "nobody is asked any longer"
     );
-    assert!(
-        matches!(shown_by(&mut events, agent, "RetryAccepted").await, ActorEvent::RetryAccepted { target } if target == RetryTarget::Turn(turn))
-    );
+    assert!(matches!(
+        shown_by(&mut events, agent, "RetryAccepted").await,
+        ActorEvent::RetryAccepted { target } if target == RetryTarget::Turn(turn)
+    ));
     let said = |messages: Vec<Message>| {
         messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>()
     };
@@ -3299,7 +3320,11 @@ async fn an_agent_removed_while_a_tool_runs_gives_up_its_turn_and_keeps_the_call
         "the turn's end comes before: {entries:?}"
     );
     assert!(
-        matches!(entries.last(), Some(HistoryEntry::ParticipantLeft { participant, by, .. }) if *participant == ActorId::Agent(agent) && *by == context.caller_id),
+        matches!(
+            entries.last(),
+            Some(HistoryEntry::ParticipantLeft { participant, by, .. })
+                if *participant == ActorId::Agent(agent) && *by == context.caller_id
+        ),
         "in the name of who removed it"
     );
     assert!(
@@ -3559,9 +3584,10 @@ async fn a_cancel_interrupts_a_model_call_that_is_in_flight() {
     })
     .await
     .expect("the cancelled turn ends without the model");
-    assert!(
-        matches!(ended.event, ActorEvent::TurnFinished { ref messages, .. } if messages.is_empty())
-    );
+    assert!(matches!(
+        ended.event,
+        ActorEvent::TurnFinished { ref messages, .. } if messages.is_empty()
+    ));
     settled(&helper, ActorState::Idle).await;
     running.abort();
 }
@@ -3962,9 +3988,10 @@ async fn a_part_given_into_the_transcript_is_recorded_as_given_and_as_withdrawn(
         })
         .expect("the history records the part as given");
     assert!(
-        entries.iter().any(
-            |entry| matches!(entry, HistoryEntry::Withdrawn { message, .. } if *message == given)
-        ),
+        entries.iter().any(|entry| matches!(
+            entry,
+            HistoryEntry::Withdrawn { message, .. } if *message == given
+        )),
         "and where the agent stopped reading it: {entries:?}"
     );
     running.abort();

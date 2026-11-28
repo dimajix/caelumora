@@ -127,7 +127,11 @@ async fn changed_by(
                 return Ok(Vec::new());
             }
             sqlx::query_as("SELECT seq, item FROM history_items WHERE channel_id = $1 AND message_id = ANY($2) ORDER BY seq")
-                .bind(&key[0]).bind(changed).fetch_all(&mut *conn).await.map_err(failed(name))?
+                .bind(&key[0])
+                .bind(changed)
+                .fetch_all(&mut *conn)
+                .await
+                .map_err(failed(name))?
         }
     };
     Ok(read.into_iter().map(item).collect())

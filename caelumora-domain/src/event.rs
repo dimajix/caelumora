@@ -343,9 +343,10 @@ mod tests {
         let read: GlobalEvent = serde_json::from_value(written).unwrap();
         let (read_id, change) = read.about::<Session>().expect("about a session");
         assert_eq!(read_id, id);
-        assert!(
-            matches!(change.update::<SessionUpdateEvent>(), Some(SessionUpdateEvent::NameChanged(name)) if name == "Release")
-        );
+        assert!(matches!(
+            change.update::<SessionUpdateEvent>(),
+            Some(SessionUpdateEvent::NameChanged(name)) if name == "Release"
+        ));
 
         let started = GlobalEvent::custom::<Session>(&id, session::STARTED, &());
         let read: GlobalEvent =

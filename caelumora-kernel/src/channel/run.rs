@@ -173,7 +173,10 @@ impl ChannelLoop {
                         Ok((task, _)) => *task,
                         Err(e) => e.id(),
                     };
-                    let ended = running.iter().find(|(_, actor)| actor.abort_handle.id() == task).map(|(id, _)| *id);
+                    let ended = running
+                        .iter()
+                        .find(|(_, actor)| actor.abort_handle.id() == task)
+                        .map(|(id, _)| *id);
                     if let Some(actor) = ended.and_then(|id| running.remove(&id)) {
                         self.task_ended(actor, &running).await;
                     }
@@ -2991,9 +2994,10 @@ mod tests {
         channel.handle_actor_event(farewell, &running).await;
 
         let heard = events.try_recv().expect("the farewell enters the channel");
-        assert!(
-            matches!(heard.event, ActorEvent::TurnGivenUp { turn_id: id, .. } if id == turn_id)
-        );
+        assert!(matches!(
+            heard.event,
+            ActorEvent::TurnGivenUp { turn_id: id, .. } if id == turn_id
+        ));
         assert_eq!(heard.context.sender_id, going);
     }
 
@@ -3026,14 +3030,21 @@ mod tests {
 
         let announced = events.try_recv().expect("the removal is announced");
         assert!(
-            matches!(announced.event, ActorEvent::ParticipantLeft { participant: p, .. } if p == participant),
+            matches!(
+                announced.event,
+                ActorEvent::ParticipantLeft { participant: p, .. } if p == participant
+            ),
             "{}",
             announced.describe()
         );
         assert_eq!(announced.context.sender_id, context.caller_id, "in the remover's name");
         let shared = events.try_recv().expect("what it is given of the history is told after it");
         assert!(
-            matches!(shared.event, ActorEvent::HistoryShared { participant: p, from: Position::START, by, .. } if p == participant && by == context.caller_id),
+            matches!(
+                shared.event,
+                ActorEvent::HistoryShared { participant: p, from: Position::START, by, .. }
+                    if p == participant && by == context.caller_id
+            ),
             "{}",
             shared.describe()
         );
@@ -3044,7 +3055,10 @@ mod tests {
         );
         let added = events.try_recv().expect("the join is announced after it");
         assert!(
-            matches!(added.event, ActorEvent::ParticipantJoined { participant: p, .. } if p == participant),
+            matches!(
+                added.event,
+                ActorEvent::ParticipantJoined { participant: p, .. } if p == participant
+            ),
             "{}",
             added.describe()
         );
@@ -3674,7 +3688,15 @@ mod tests {
             })
             .await;
         assert!(
-            matches!(asked, Some((HistoryEntry::ResponseRequested { by, reason: RequestReason::Mentioned, .. }, ActorId::System, ref recipients)) if by == ActorId::User(alice.id) && *recipients == Recipients::only(vec![ActorId::User(bob.id)])),
+            matches!(
+                asked,
+                Some((
+                    HistoryEntry::ResponseRequested { by, reason: RequestReason::Mentioned, .. },
+                    ActorId::System,
+                    ref recipients
+                )) if by == ActorId::User(alice.id)
+                    && *recipients == Recipients::only(vec![ActorId::User(bob.id)])
+            ),
             "and whom it asked to respond, after it, in the system's name, and why: {asked:?}"
         );
     }

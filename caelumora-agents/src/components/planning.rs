@@ -431,7 +431,10 @@ mod tests {
         let args = json!({ "summary": "missing steps field" });
 
         assert!(
-            matches!(parse_plan(&args), Err(ToolError::InvalidParameter(ref m)) if m.contains("steps")),
+            matches!(
+                parse_plan(&args),
+                Err(ToolError::InvalidParameter(ref m)) if m.contains("steps")
+            ),
             "serde names what is missing"
         );
     }

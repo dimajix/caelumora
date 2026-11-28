@@ -369,8 +369,18 @@ mod tests {
         // `run` starts it asynchronously.
         time::sleep(Duration::from_millis(50)).await;
         let events = rx.drain().await;
-        let created = events.iter().position(|e| matches!(e.about::<Channel>(), Some(((_, cid), EntityChange::Created)) if cid == channel.id()));
-        let started = events.iter().position(|e| matches!(e.about::<Channel>(), Some(((_, cid), EntityChange::Custom { name: STARTED, .. })) if cid == channel.id()));
+        let created = events.iter().position(|e| {
+            matches!(
+                e.about::<Channel>(),
+                Some(((_, cid), EntityChange::Created)) if cid == channel.id()
+            )
+        });
+        let started = events.iter().position(|e| {
+            matches!(
+                e.about::<Channel>(),
+                Some(((_, cid), EntityChange::Custom { name: STARTED, .. })) if cid == channel.id()
+            )
+        });
         assert!(
             created.is_some() && started.is_some() && created < started,
             "created, then started: {events:?}"
@@ -617,8 +627,15 @@ mod tests {
         );
         assert!(kernel.state_store().get_channel_state(id).await.is_ok(), "with its state");
         let events = rx.drain().await;
-        let stopped = events.iter().position(|e| matches!(e.about::<Channel>(), Some(((_, cid), EntityChange::Custom { name: STOPPED, .. })) if cid == id));
-        let deleted = events.iter().position(|e| matches!(e.about::<Channel>(), Some(((_, cid), EntityChange::Deleted)) if cid == id));
+        let stopped = events.iter().position(|e| {
+            matches!(
+                e.about::<Channel>(),
+                Some(((_, cid), EntityChange::Custom { name: STOPPED, .. })) if cid == id
+            )
+        });
+        let deleted = events.iter().position(|e| {
+            matches!(e.about::<Channel>(), Some(((_, cid), EntityChange::Deleted)) if cid == id)
+        });
         assert!(
             stopped.is_some() && deleted.is_some() && deleted < stopped,
             "deleted as it is marked, then stopped (issue 593): {events:?}"
@@ -650,7 +667,13 @@ mod tests {
                 .contains(&id),
             "listed again"
         );
-        assert!(rx.drain().await.iter().any(|e| matches!(e.about::<Channel>(), Some(((_, cid), EntityChange::Restored)) if cid == id)), "and announced");
+        assert!(
+            rx.drain().await.iter().any(|e| matches!(
+                e.about::<Channel>(),
+                Some(((_, cid), EntityChange::Restored)) if cid == id
+            )),
+            "and announced"
+        );
         assert!(kernel.state_store().get_channel_state(id).await.is_ok());
         let again = session.restore_channel(&ctx, id).await.expect_err("not deleted");
         assert!(
@@ -703,7 +726,12 @@ mod tests {
 
         let events = rx.drain().await;
         let about = |wanted: fn(&EntityChange) -> bool| {
-            events.iter().any(|e| matches!(e.about::<Channel>(), Some(((_, id), change)) if id == channel_id && wanted(change)))
+            events.iter().any(|e| {
+                matches!(
+                    e.about::<Channel>(),
+                    Some(((_, id), change)) if id == channel_id && wanted(change)
+                )
+            })
         };
         assert!(session_loop.channel(channel_id).is_none(), "taken out of the session's channels");
         assert!(

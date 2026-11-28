@@ -117,7 +117,10 @@ mod tests {
             .execute(&json!({ "path": "big.txt", "content": too_large }), None, &mut turn)
             .await;
         assert!(
-            matches!(&refused, Err(ToolError::InvalidParameter(why)) if why.contains("larger than")),
+            matches!(
+                &refused,
+                Err(ToolError::InvalidParameter(why)) if why.contains("larger than")
+            ),
             "{refused:?}"
         );
         assert!(!world.dir().join("big.txt").exists());

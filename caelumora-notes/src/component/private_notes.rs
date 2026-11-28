@@ -222,7 +222,16 @@ fn render(
     if own.is_empty() && elsewhere.is_empty() {
         return Ok(String::new());
     }
-    prompts.render(TEXT, context! { own, elsewhere, write => WRITE_PRIVATE_NOTE_TOOL_NAME, update => UPDATE_PRIVATE_NOTE_TOOL_NAME, revoke => REVOKE_PRIVATE_NOTE_TOOL_NAME })
+    prompts.render(
+        TEXT,
+        context! {
+            own,
+            elsewhere,
+            write => WRITE_PRIVATE_NOTE_TOOL_NAME,
+            update => UPDATE_PRIVATE_NOTE_TOOL_NAME,
+            revoke => REVOKE_PRIVATE_NOTE_TOOL_NAME,
+        },
+    )
 }
 
 pub(crate) fn register(registry: &mut LibraryComponents<'_>) {

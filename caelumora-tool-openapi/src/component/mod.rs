@@ -243,9 +243,10 @@ mod tests {
         assert!(matches!(read(served).unwrap().document(), DocumentSource::Served("a.json")));
         let file = json!({ "endpoint": endpoint, "operations": operations, "spec_file": "k.json" });
         let file = read(file).unwrap();
-        assert!(
-            matches!(file.document(), DocumentSource::File(path) if path == Path::new("k.json"))
-        );
+        assert!(matches!(
+            file.document(),
+            DocumentSource::File(path) if path == Path::new("k.json")
+        ));
         assert_eq!(file.refresh(), Duration::MAX, "read once");
     }
 
