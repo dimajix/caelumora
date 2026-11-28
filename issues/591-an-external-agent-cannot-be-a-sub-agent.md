@@ -111,8 +111,17 @@ the delegation's state says, so that a restart loses nothing. Each step is revie
     next run; one its remote agent no longer knows is given up as failed - told apart by a new
     `ExternalAgentError::UnknownTask`, which A2A's `TaskNotFoundError` becomes, since `Rejected`
     stands for any refusal, a passing one too.
-4.  **A cancel reaches an open task.** A cancel in the external agent's thread cancels its open
-    tasks between requests too, and says what came of them so far, as a cancel of a request does.
+4.  **A cancel reaches an open task**, in three steps, `RunControl` restructured first:
+    *   **4a.** The tool calls a user interrupts on their own leave `RunControl` for a type of the
+        agent's (`CallInterrupts`), each kept with its turn.
+    *   **4b.** The turns set aside are kept by their turn, not their thread: an external agent
+        may have several tasks working in its one thread. No change of behaviour.
+    *   **4c.** A second kind of turn set aside (`Aside::GoingOn`, beside `WaitingForAPerson`): one
+        whose work goes on elsewhere. An external agent sets the turn of a request it defers aside
+        so, `resuming` the turns of its working tasks after a restart, and keeps them in step with
+        its tasks at one point (`keep_going_on`); a cancel reaches them as it reaches a turn set
+        aside, and the external agent cancels each task asked so and says what came of it so far,
+        as a cancel of a request does.
 5.  **External sub-agents.** The sub-agent tool no longer refuses an external personality
     (`SubAgentError::External` goes); tested end to end with a scripted remote agent.
 
@@ -136,3 +145,10 @@ the delegation's state says, so that a restart loses nothing. Each step is revie
 - **2026-11-28** — Steps 1 and 2 done. For step 3 the maintainer decided that a task is given up
   only once its remote agent says it does not know it (`ExternalAgentError::UnknownTask`), and
   followed again otherwise, without limit.
+- **2026-11-28** — Step 3 done. A first version of step 4 kept which tasks a cancel finds beside
+  `RunControl` and had two races; the maintainer decided to restructure `RunControl` first, as part
+  of this issue, before step 4 is built on it (put aside on the branch): steps 4a-4c.
+- **2026-11-28** — Step 4a done. One change of behaviour came with it: `RunControl::stop` and
+  `leave` cancel `ending` at once, so that whoever sees a turn's token cancelled finds the run
+  ending - before, an external agent stopped in that moment could take the stop for a cancel and
+  cancel a remote task the stop should have left working.

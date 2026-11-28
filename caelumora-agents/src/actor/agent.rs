@@ -1,5 +1,6 @@
 use super::body::retry_target;
 use super::body::AgentBody;
+use super::call_interrupts::{interruption, CallInterrupts};
 use super::run_control::Interrupt;
 use crate::activity::ActivityProvider;
 use crate::command::AgentCommand;
@@ -59,6 +60,8 @@ pub(crate) struct AgentActor {
     /// Runs the agent's tool calls with the tools of its components, behind the kernel's permission
     /// checks (issues 127, 280).
     tool_executor: ToolExecutor,
+    /// The calls of its turn's tool step that a user may interrupt on their own (issue 276).
+    call_interrupts: CallInterrupts,
 }
 
 impl AgentActor {
@@ -106,7 +109,15 @@ impl AgentActor {
             Arc::clone(&body.runtime),
         )?;
 
-        Ok(AgentActor { body, model_client, activities, emit_out_processors, tool_executor })
+        let call_interrupts = CallInterrupts::default();
+        Ok(AgentActor {
+            body,
+            model_client,
+            activities,
+            emit_out_processors,
+            tool_executor,
+            call_interrupts,
+        })
     }
 
     /// A message as it leaves the agent, through the emit processors - a
@@ -871,8 +882,8 @@ impl AgentActor {
         // alone, running or still to run, and the step goes on (issue 276).
         let cancelled = self.body.control.token();
         let to_run = turn.tool_calls().to_run();
-        let mut by_user =
-            self.body.control.begin_calls(to_run.iter().filter_map(|(_, call, _)| call.id.clone()));
+        let ids = to_run.iter().filter_map(|(_, call, _)| call.id.clone());
+        let mut by_user = self.call_interrupts.begin(turn.turn_id(), ids);
         for (index, call, answers) in to_run {
             if cancelled.is_cancelled() {
                 return Ok(ActorState::ExecutingTools);
@@ -888,7 +899,7 @@ impl AgentActor {
                     &call,
                     answers.as_ref(),
                     turn,
-                    self.body.control.interruption(cancelled.clone(), interrupt),
+                    interruption(&self.body.control, cancelled.clone(), interrupt),
                 )
                 .await;
             turn.tool_calls().record(index, result);
@@ -1307,7 +1318,7 @@ impl Actor for AgentActor {
     }
 
     fn interrupt_tool_call(&self, turn: TurnId, call: &str, by: String) -> bool {
-        let hit = self.body.control.interrupt_call(turn, call, by);
+        let hit = self.call_interrupts.interrupt(&self.body.control, turn, call, by);
         match hit {
             true => info!(
                 "Agent {} {}: tool call {} of turn {} is interrupted on its own",
