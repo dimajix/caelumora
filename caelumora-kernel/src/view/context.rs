@@ -298,8 +298,7 @@ mod tests {
     use caelumora_domain::digest::{self, prompt};
     use caelumora_domain::history::HistoryEntry;
     use caelumora_domain::message::testing::make_message;
-    use caelumora_domain::message::Message;
-    use caelumora_domain::message::MessageRole;
+    use caelumora_domain::message::{Message, MessageRole};
     use caelumora_domain::work::TurnId;
     use caelumora_domain::work::Work;
 
@@ -340,12 +339,8 @@ mod tests {
         let context = context_in(channel);
         let actor = ActorId::Agent(AgentId::new());
         let mut state = AgentChannelState::default();
-        let question = Message {
-            id: MessageId::new(),
-            role: MessageRole::User,
-            content: Some("question".to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
-        };
+        let question =
+            Message { content: Some("question".to_string()), ..make_message(MessageId::new()) };
         state.perceive(ThreadId::default(), vec![question.clone()]);
         state.begin_turn(
             ThreadId::default(),
@@ -357,11 +352,10 @@ mod tests {
             ),
         );
         let step = Message {
-            id: MessageId::new(),
             sender_id: actor,
             role: MessageRole::Assistant,
             content: Some("thinking".to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            ..make_message(MessageId::new())
         };
         let sent = state.said(ThreadId::default(), step.clone());
         // Its channel's history, as it records what was said (issue 417).
@@ -393,12 +387,8 @@ mod tests {
         let channel = ChannelId::new();
         let context = context_in(channel);
         let actor = ActorId::Agent(AgentId::new());
-        let text = |t: &str| Message {
-            id: MessageId::new(),
-            role: MessageRole::User,
-            content: Some(t.to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
-        };
+        let text =
+            |t: &str| Message { content: Some(t.to_string()), ..make_message(MessageId::new()) };
         // What the agent produced, in a turn of its own.
         let produced =
             |t: &str| Message { turn_id: Some(TurnId::new()), sender_id: actor, ..text(t) };
@@ -546,12 +536,8 @@ mod tests {
         let agent = AgentId::new();
         let channel = ChannelId::new();
         let context = context_in(channel);
-        let text = |t: &str| Message {
-            id: MessageId::new(),
-            role: MessageRole::User,
-            content: Some(t.to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
-        };
+        let text =
+            |t: &str| Message { content: Some(t.to_string()), ..make_message(MessageId::new()) };
         let mut state = AgentChannelState::default();
         let mut history = ChannelState::new(channel);
         let question = text("question");

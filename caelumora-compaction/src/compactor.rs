@@ -235,6 +235,7 @@ mod tests {
         KnowledgeSource, ModelProfile, Placement, PromptPart, SenderFormat,
     };
     use caelumora_domain::digest;
+    use caelumora_domain::message::testing::make_message;
     use caelumora_domain::message::{MessageRole, TokenUsage};
     use caelumora_domain::store::{EntityKind, Stored};
     use caelumora_domain::user::UserId;
@@ -381,7 +382,9 @@ mod tests {
             sender_id: ActorId::User(UserId::new()),
             sender_name: "alice".to_string(),
             content: Some(GIVEN.to_string()),
-            ..Message::new(Classification::general(Confidentiality::Internal))
+            role: MessageRole::System,
+            classification: Classification::general(Confidentiality::Internal),
+            ..make_message(MessageId::new())
         };
         an_agent_given(world, state, vec![(gift, knowledge(world, skill))]);
         skill
@@ -404,7 +407,9 @@ mod tests {
             sender_id: by,
             sender_name: name.to_string(),
             content: Some(text.to_string()),
-            ..Message::new(Classification::PUBLIC)
+            role: MessageRole::System,
+            classification: Classification::PUBLIC,
+            ..make_message(MessageId::new())
         };
         (message, KnowledgeRef { source, ..knowledge(world, world.workspace.id) })
     }
@@ -629,7 +634,8 @@ mod tests {
         let mut state = AgentChannelState::default();
         let heard = |text: &str| Message {
             content: Some(text.to_string()),
-            ..Message::new(Classification::PUBLIC)
+            classification: Classification::PUBLIC,
+            ..make_message(MessageId::new())
         };
         state.perceive(ThreadId::line(world.session.channels()[0].id()), vec![heard("u1")]);
         let mut turn = workspace_turn(&world, &mut state);
@@ -779,8 +785,11 @@ mod tests {
     async fn what_cannot_be_shortened_is_left_as_it_is() {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
-        let u1 =
-            Message { content: Some("u1".to_string()), ..Message::new(Classification::PUBLIC) };
+        let u1 = Message {
+            content: Some("u1".to_string()),
+            classification: Classification::PUBLIC,
+            ..make_message(MessageId::new())
+        };
         state.perceive(ThreadId::line(world.session.channels()[0].id()), vec![u1]);
         let before = state.transcript.digest(ThreadId::line(world.session.channels()[0].id()));
         let strategy = Arc::new(Scripted::default());
@@ -823,8 +832,11 @@ mod tests {
     async fn a_replacement_of_a_part_of_the_turn_under_way_is_the_turns() {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
-        let u1 =
-            Message { content: Some("u1".to_string()), ..Message::new(Classification::PUBLIC) };
+        let u1 = Message {
+            content: Some("u1".to_string()),
+            classification: Classification::PUBLIC,
+            ..make_message(MessageId::new())
+        };
         state.perceive(ThreadId::line(world.session.channels()[0].id()), vec![u1]);
         let compactor = compactor(&Arc::new(Scripted::default()), Vec::new());
         let mut turn = workspace_turn(&world, &mut state);
@@ -858,9 +870,9 @@ mod tests {
         let u1 = Message {
             sender_id: ActorId::User(UserId::new()),
             sender_name: "alice".to_string(),
-            role: MessageRole::User,
             content: Some("u1".to_string()),
-            ..Message::new(Classification::PUBLIC)
+            classification: Classification::PUBLIC,
+            ..make_message(MessageId::new())
         };
         let written = u1.timestamp;
         state.perceive(ThreadId::line(world.session.channels()[0].id()), vec![u1]);
@@ -905,8 +917,11 @@ mod tests {
     async fn a_skill_loaded_in_the_part_replaced_is_given_again_though_its_turn_goes_on() {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
-        let u1 =
-            Message { content: Some("u1".to_string()), ..Message::new(Classification::PUBLIC) };
+        let u1 = Message {
+            content: Some("u1".to_string()),
+            classification: Classification::PUBLIC,
+            ..make_message(MessageId::new())
+        };
         state.perceive(ThreadId::line(world.session.channels()[0].id()), vec![u1]);
         let skill = WorkspaceId::new();
         let compactor =
@@ -916,7 +931,8 @@ mod tests {
             sender_id: ActorId::Agent(world.agent),
             role,
             content: Some(content.repeat(40)),
-            ..Message::new(Classification::PUBLIC)
+            classification: Classification::PUBLIC,
+            ..make_message(MessageId::new())
         };
         turn.record_said(said("a", MessageRole::Assistant));
         turn.record_said(said("r", MessageRole::Tool));
@@ -925,7 +941,9 @@ mod tests {
             Message {
                 sender_id: ActorId::Agent(world.agent),
                 content: Some(GIVEN.to_string()),
-                ..Message::new(Classification::general(Confidentiality::Internal))
+                role: MessageRole::System,
+                classification: Classification::general(Confidentiality::Internal),
+                ..make_message(MessageId::new())
             },
             Some(knowledge(&world, skill)),
         );
@@ -958,8 +976,11 @@ mod tests {
     async fn what_was_given_without_being_knowledge_is_replaced() {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
-        let u1 =
-            Message { content: Some("u1".to_string()), ..Message::new(Classification::PUBLIC) };
+        let u1 = Message {
+            content: Some("u1".to_string()),
+            classification: Classification::PUBLIC,
+            ..make_message(MessageId::new())
+        };
         state.perceive(ThreadId::line(world.session.channels()[0].id()), vec![u1]);
         let strategy = Arc::new(Scripted::default());
         let compactor = compactor(&strategy, vec![Arc::new(Restorer(None))]);
@@ -967,7 +988,9 @@ mod tests {
         turn.give(
             Message {
                 content: Some("read this".repeat(40)),
-                ..Message::new(Classification::PUBLIC)
+                role: MessageRole::System,
+                classification: Classification::PUBLIC,
+                ..make_message(MessageId::new())
             },
             None,
         );

@@ -805,6 +805,8 @@ pub enum Rejection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::message::testing::make_message;
+    use crate::message::MessageRole;
     use crate::tool::testing::make_tool_call;
 
     #[test]
@@ -817,11 +819,14 @@ mod tests {
                 visibility: ToolVisibility::HIDDEN,
                 ..make_tool_call("f")
             }],
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            content: None,
+            role: MessageRole::Assistant,
+            ..make_message(MessageId::new())
         };
         let text = Message {
             content: Some("hi".to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            role: MessageRole::Assistant,
+            ..make_message(MessageId::new())
         };
 
         assert!(

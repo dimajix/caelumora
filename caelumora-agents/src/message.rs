@@ -134,8 +134,8 @@ pub(crate) mod testing {
 mod tests {
     use super::testing::Without;
     use super::*;
-    use caelumora_domain::confidentiality::Classification;
-    use caelumora_domain::message::MessageRole;
+    use caelumora_domain::message::testing::make_message;
+    use caelumora_domain::message::MessageId;
     use std::sync::Arc;
 
     fn stage(
@@ -147,11 +147,7 @@ mod tests {
     }
 
     fn said(text: &str) -> Message {
-        Message {
-            role: MessageRole::User,
-            content: Some(text.to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
-        }
+        Message { content: Some(text.to_string()), ..make_message(MessageId::new()) }
     }
 
     #[tokio::test]

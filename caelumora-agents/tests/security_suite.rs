@@ -54,7 +54,8 @@ use caelumora_domain::confidentiality::{Classification, Confidentiality, Visibil
 use caelumora_domain::context::ModelProfile;
 use caelumora_domain::external_agent::{ConversationId, TaskId};
 use caelumora_domain::group::GroupId;
-use caelumora_domain::message::{Message, MessageEvent};
+use caelumora_domain::message::testing::make_message;
+use caelumora_domain::message::{Message, MessageEvent, MessageId};
 use caelumora_domain::query::Query;
 use caelumora_domain::question::{Addressee, Answers, QuestionId, QuestionRequest, Questions};
 use caelumora_domain::remote::{RemoteAuthConfig, RemoteEndpoint};
@@ -241,7 +242,8 @@ async fn who_sees_a_running_agents_reasoning_follows_its_personality_as_last_tak
     let answer = Message {
         role: MessageRole::Assistant,
         content: Some("an answer".to_string()),
-        ..Message::new(Classification::PUBLIC)
+        classification: Classification::PUBLIC,
+        ..make_message(MessageId::new())
     };
     let world = World::with(&[], &[&AgentsLibrary], |registry| {
         register_scripted(registry, "answering", vec![answer])
@@ -307,7 +309,8 @@ async fn what_only_an_agents_owner_sees_is_recorded_and_reaches_nobody_else() {
         role: MessageRole::Assistant,
         content: Some("an answer".to_string()),
         reasoning: Some("weighing".to_string()),
-        ..Message::new(Classification::PUBLIC)
+        classification: Classification::PUBLIC,
+        ..make_message(MessageId::new())
     };
     let world = World::with(&[], &[&AgentsLibrary], |registry| {
         register_scripted(registry, "answering", vec![answer])
@@ -754,7 +757,8 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
     let answer = Message {
         role: MessageRole::Assistant,
         content: Some("an answer".to_string()),
-        ..Message::new(Classification::PUBLIC)
+        classification: Classification::PUBLIC,
+        ..make_message(MessageId::new())
     };
     let world = World::with(&[], &[&AgentsLibrary], |registry| {
         register_scripted(registry, "answering", vec![answer])
@@ -1198,7 +1202,9 @@ async fn with_a_call_asking_whom(
             arguments: serde_json::json!({}),
             ..make_tool_call("asking")
         }],
-        ..Message::new(Classification::general(Confidentiality::Internal))
+        content: None,
+        classification: Classification::general(Confidentiality::Internal),
+        ..make_message(MessageId::new())
     };
     let world = World::with(&[], &[&AgentsLibrary], |registry| {
         register_scripted(registry, ONCE_MODEL_KIND, vec![call]);
@@ -1911,7 +1917,9 @@ async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_
             arguments: serde_json::json!({}),
             ..make_tool_call("send_out")
         }],
-        ..Message::new(Classification::general(Confidentiality::Internal))
+        content: None,
+        classification: Classification::general(Confidentiality::Internal),
+        ..make_message(MessageId::new())
     };
     let world = World::with(&[], &[&AgentsLibrary], |registry| {
         register_scripted(registry, ONCE_MODEL_KIND, vec![call]);
@@ -2014,7 +2022,8 @@ async fn an_agent_asked_by_an_agent_acts_for_its_own_owner() {
     let relayed = Message {
         role: MessageRole::Assistant,
         content: Some("@doer echo it".to_string()),
-        ..Message::new(internal.clone())
+        classification: internal.clone(),
+        ..make_message(MessageId::new())
     };
     let call = Message {
         role: MessageRole::Assistant,
@@ -2023,7 +2032,9 @@ async fn an_agent_asked_by_an_agent_acts_for_its_own_owner() {
             arguments: serde_json::json!({ "message": "it" }),
             ..make_tool_call("echo")
         }],
-        ..Message::new(internal)
+        content: None,
+        classification: internal,
+        ..make_message(MessageId::new())
     };
     let world = World::with(&[], &[&AgentsLibrary], |registry| {
         register_scripted(registry, "relaying", vec![relayed]);
@@ -2115,7 +2126,9 @@ async fn with_a_reader_of(
             arguments: serde_json::json!({ "channel": "side" }),
             ..make_tool_call("read_history")
         }],
-        ..Message::new(Classification::PUBLIC)
+        content: None,
+        classification: Classification::PUBLIC,
+        ..make_message(MessageId::new())
     };
     let world = World::with(&[], &[&AgentsLibrary], |registry| {
         register_scripted(registry, "reading", vec![call])
@@ -2557,7 +2570,8 @@ async fn bob_speaks_while_alices_turn_works(
     let said = |text: &str| Message {
         role: MessageRole::Assistant,
         content: Some(text.to_string()),
-        ..Message::new(Classification::general(Confidentiality::Internal))
+        classification: Classification::general(Confidentiality::Internal),
+        ..make_message(MessageId::new())
     };
     let model = Arc::new(Held {
         answers: Mutex::new(

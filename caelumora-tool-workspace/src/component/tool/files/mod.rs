@@ -284,7 +284,8 @@ mod tests {
     use caelumora_domain::agent::AgentChannelState;
     use caelumora_domain::digest;
     use caelumora_domain::digest::Digest;
-    use caelumora_domain::message::{Message, MessageRole};
+    use caelumora_domain::message::testing::make_message;
+    use caelumora_domain::message::{Message, MessageId, MessageRole};
     use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_domain::tool::ToolPresentation;
     use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolResultStatus};
@@ -465,7 +466,9 @@ mod tests {
         turn.record_said(Message {
             role: MessageRole::Tool,
             tool_results: vec![ToolCallResult { knowledge: output.knowledge, ..result }],
-            ..Message::new(Classification::PUBLIC)
+            content: None,
+            classification: Classification::PUBLIC,
+            ..make_message(MessageId::new())
         });
     }
 

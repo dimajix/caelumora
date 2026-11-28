@@ -4,6 +4,7 @@ use super::*;
 use crate::tool::ask_user::ASK_USER_KIND;
 use caelumora_domain::channel::ThreadId;
 use caelumora_domain::component::ComponentConfig;
+use caelumora_domain::message::testing::make_message;
 use caelumora_domain::question::{QuestionError, QuestionRequest};
 use caelumora_domain::tool::testing::make_tool_call;
 use caelumora_domain::tool::{ToolCallResult, ToolResultStatus};
@@ -24,12 +25,13 @@ fn a_call_asking(sensitive: bool) -> (Message, Message, ComponentConfig) {
             arguments: serde_json::json!({}),
             ..make_tool_call("asking")
         }],
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        content: None,
+        ..make_message(MessageId::new())
     };
     let done = Message {
         role: MessageRole::Assistant,
         content: Some("Done.".to_string()),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     let components = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
@@ -219,12 +221,13 @@ async fn ask_user_asks_whom_it_names_and_gives_the_model_the_answers() {
             arguments: serde_json::json!({ "questions": [{ "header": "Name", "question": "What should it be called?" }], "ask": [whom] }),
             ..make_tool_call("ask_user")
         }],
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        content: None,
+        ..make_message(MessageId::new())
     };
     let done = Message {
         role: MessageRole::Assistant,
         content: Some("Done.".to_string()),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     let components =
         ComponentConfig { component_nodes: vec![ComponentDescriptor::new("ask", ASK_USER_KIND)] };

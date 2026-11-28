@@ -158,8 +158,8 @@ mod tests {
     use caelumora_domain::agent::{AgentChannelState, AgentId};
     use caelumora_domain::channel::ThreadId;
     use caelumora_domain::confidentiality::{Classification, Confidentiality};
-    use caelumora_domain::message::MessageId;
-    use caelumora_domain::message::MessageRole;
+    use caelumora_domain::message::testing::make_message;
+    use caelumora_domain::message::{MessageId, MessageRole};
     use caelumora_domain::tool::testing::{make_tool_call, make_tool_description};
     use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolResultStatus};
     use caelumora_kernel::testing::Discard;
@@ -186,28 +186,24 @@ mod tests {
         );
         result.started_at = ran.then(Utc::now);
         turn.push_message(Message {
-            id: MessageId::new(),
             role: MessageRole::Assistant,
             tool_calls: vec![call],
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            content: None,
+            ..make_message(MessageId::new())
         });
         turn.push_message(Message {
-            id: MessageId::new(),
             role: MessageRole::Tool,
             tool_results: vec![result],
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            content: None,
+            ..make_message(MessageId::new())
         });
         turn
     }
 
     fn a_state_with(content: &str) -> AgentChannelState {
         let mut state = AgentChannelState::default();
-        let message = Message {
-            id: MessageId::new(),
-            role: MessageRole::User,
-            content: Some(content.to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
-        };
+        let message =
+            Message { content: Some(content.to_string()), ..make_message(MessageId::new()) };
         state.transcript.push(ThreadId::default(), message);
         state
     }
@@ -296,10 +292,10 @@ mod tests {
         };
         let calls = vec![call("1", "send_mail"), call("2", "delete")];
         turn.push_message(Message {
-            id: MessageId::new(),
             role: MessageRole::Assistant,
             tool_calls: calls.clone(),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            content: None,
+            ..make_message(MessageId::new())
         });
         let states = vec![
             ToolCallState::approved(calls[0].clone()),

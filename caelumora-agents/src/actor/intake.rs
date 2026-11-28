@@ -442,7 +442,8 @@ mod tests {
     use caelumora_domain::channel::ThreadId;
     use caelumora_domain::component::ComponentFailPolicy;
     use caelumora_domain::confidentiality::Classification;
-    use caelumora_domain::message::{MessageId, MessageRole};
+    use caelumora_domain::message::testing::make_message;
+    use caelumora_domain::message::MessageId;
     use caelumora_domain::user::UserId;
     use caelumora_domain::work::TurnId;
     use caelumora_domain::work::Work;
@@ -454,11 +455,7 @@ mod tests {
     use tokio::sync::mpsc;
 
     fn said(text: &str) -> Message {
-        Message {
-            role: MessageRole::User,
-            content: Some(text.to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
-        }
+        Message { content: Some(text.to_string()), ..make_message(MessageId::new()) }
     }
 
     fn texts(messages: &[Message]) -> Vec<&str> {
@@ -473,7 +470,6 @@ mod tests {
     async fn what_others_said_with_text_is_given_once() {
         let alice = ActorId::User(UserId::new());
         let of_alice = |text: &str| Message {
-            id: MessageId::new(),
             sender_id: alice,
             sender_name: "alice".to_string(),
             ..said(text)
@@ -1111,7 +1107,7 @@ mod tests {
             TranscriptEntry::Revoked { .. } => "taken back".to_string(),
             _ => "something else".to_string(),
         };
-        state.transcript.push(ThreadId::default(), Message { id: MessageId::new(), ..said(&text) });
+        state.transcript.push(ThreadId::default(), said(&text));
         Box::pin(ready(()))
     }
 
@@ -1121,8 +1117,8 @@ mod tests {
         let (tx, rx) = mpsc::channel(8);
         let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
         let mut state = AgentChannelState::default();
-        let given = Message { id: MessageId::new(), ..said("given") };
-        let kept = Message { id: MessageId::new(), ..said("kept") };
+        let given = said("given");
+        let kept = said("kept");
         state.perceive(ThreadId::default(), vec![given.clone()]);
         state.transcript.start_anew(ThreadId::default());
         state.perceive(ThreadId::default(), vec![kept.clone()]);
@@ -1132,12 +1128,7 @@ mod tests {
                 ..message.clone()
             }))
         };
-        let heard = |text: &str| {
-            envelope(ActorEvent::CompleteMessageGenerated(Message {
-                id: MessageId::new(),
-                ..said(text)
-            }))
-        };
+        let heard = |text: &str| envelope(ActorEvent::CompleteMessageGenerated(said(text)));
         let noting = AgentBody::detached(Vec::new()).handing_over(noted);
         tx.try_send(modified(&given, "given, corrected")).expect("room");
         tx.try_send(heard("and then")).expect("room");
@@ -1181,7 +1172,7 @@ mod tests {
         let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
         let mut state = AgentChannelState::default();
         let noting = AgentBody::detached(Vec::new()).handing_over(noted);
-        let earlier = Message { id: MessageId::new(), ..said("earlier") };
+        let earlier = said("earlier");
         state.perceive(ThreadId::default(), vec![earlier.clone()]);
         state.transcript.start_anew(ThreadId::default());
         let public = Classification::PUBLIC;

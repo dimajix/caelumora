@@ -234,6 +234,8 @@ mod tests {
     use super::*;
     use crate::agent::AgentId;
     use crate::confidentiality::Classification;
+    use crate::message::testing::make_message;
+    use crate::message::MessageRole;
     use crate::user::UserId;
 
     /// Issue 557: a delegation gives its open brief, once, to its recipient; then takes back what
@@ -244,10 +246,9 @@ mod tests {
         let recipient = ActorId::Agent(AgentId::new());
         let brief = |text: &str| Brief {
             message: Message {
-                id: MessageId::new(),
                 sender_id: giver,
                 content: Some(text.to_string()),
-                ..Message::new(Classification::CHANNEL_DEFAULT)
+                ..make_message(MessageId::new())
             },
             given_at: None,
         };
@@ -255,7 +256,13 @@ mod tests {
         let briefs = VecDeque::from([first.clone(), second.clone()]);
         let mut delegation =
             Delegation { giver, recipient, initiator: giver, briefs, word: Word::NotDue };
-        let answer = Message { sender_id: recipient, ..Message::new(Classification::PUBLIC) };
+        let answer = Message {
+            sender_id: recipient,
+            content: None,
+            role: MessageRole::Assistant,
+            classification: Classification::PUBLIC,
+            ..make_message(MessageId::new())
+        };
 
         assert!(delegation.gives_back(giver, &answer), "what came of the open brief, given or not");
         assert!(!delegation.gives_brief(recipient, &second.message), "the open brief first");
@@ -318,11 +325,7 @@ mod tests {
         let giver = ActorId::Agent(AgentId::new());
         let recipient = ActorId::Agent(AgentId::new());
         let brief = || Brief {
-            message: Message {
-                id: MessageId::new(),
-                sender_id: giver,
-                ..Message::new(Classification::CHANNEL_DEFAULT)
-            },
+            message: Message { sender_id: giver, content: None, ..make_message(MessageId::new()) },
             given_at: None,
         };
         let delegated = |briefs: usize| Delegation {
@@ -333,9 +336,10 @@ mod tests {
             word: Word::NotDue,
         };
         let answer = || Message {
-            id: MessageId::new(),
             sender_id: recipient,
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            content: None,
+            role: MessageRole::Assistant,
+            ..make_message(MessageId::new())
         };
         let at = Position::new;
 

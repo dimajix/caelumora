@@ -38,8 +38,8 @@ use caelumora_domain::history::testing::items_of;
 use caelumora_domain::history::{
     Attended, Audience, History, HistoryEntry, HistoryPage, Reader, Recorded, EVERY_POSITION,
 };
-use caelumora_domain::message::MessageId;
-use caelumora_domain::message::{Message, MessageRole};
+use caelumora_domain::message::testing::make_message;
+use caelumora_domain::message::{Message, MessageId, MessageRole};
 use caelumora_domain::project::{Project, ProjectId};
 use caelumora_domain::query::{Field, Filter, Page, Query};
 use caelumora_domain::removal::{Removal, RemovalId};
@@ -1027,10 +1027,7 @@ pub async fn state_store_behaves(store: &dyn StateStore) {
     // An external agent's: its transcript and its remote part.
     let mut talking = AgentChannelState::default();
     talking.remote.conversation = Some(ConversationId("c-1".to_string()));
-    let hello = Message {
-        content: Some("hello".to_string()),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
-    };
+    let hello = make_message(MessageId::new());
     talking.transcript.extend(ThreadId::default(), vec![hello]);
     store
         .put_agent_channel_state(remote_agent, channel, &mut talking)
@@ -1055,10 +1052,7 @@ pub async fn state_store_behaves(store: &dyn StateStore) {
     // Stored in a second put, as what changed since the first (issue 376).
     talking.transcript.extend(
         ThreadId::default(),
-        vec![Message {
-            content: Some("and more".to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
-        }],
+        vec![Message { content: Some("and more".to_string()), ..make_message(MessageId::new()) }],
     );
     store
         .put_agent_channel_state(remote_agent, channel, &mut talking)

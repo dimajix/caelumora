@@ -21,6 +21,7 @@ use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::ModelProfile;
 use caelumora_domain::history::HistoryEntry;
+use caelumora_domain::message::testing::make_message;
 use caelumora_domain::message::{MessageEvent, MessageId, MessageRole};
 use caelumora_domain::tool::testing::make_tool_call;
 use caelumora_domain::tool::{ToolDescription, ToolResultStatus};
@@ -1160,7 +1161,7 @@ async fn a_sleeping_agent_woken_by_a_mention_answers_it() {
         role: MessageRole::Assistant,
         content: Some(text.to_string()),
         tool_calls,
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     let stop = vec![ToolCall {
         id: Some("1".to_string()),
@@ -1215,7 +1216,7 @@ async fn an_agent_given_something_to_read_wakes_takes_it_in_and_answers() {
         role: MessageRole::Assistant,
         content: Some(text.to_string()),
         tool_calls,
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     let stop = vec![ToolCall {
         id: Some("1".to_string()),
@@ -1241,9 +1242,8 @@ async fn an_agent_given_something_to_read_wakes_takes_it_in_and_answers() {
     let brief = Message {
         sender_id: alice,
         sender_name: "alice".to_string(),
-        role: MessageRole::User,
         content: Some("Look this up.".to_string()),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     let given = |thread| {
         let context = EventContext {
@@ -1309,7 +1309,7 @@ async fn an_agent_given_something_to_read_wakes_takes_it_in_and_answers() {
 #[tokio::test]
 async fn an_answer_that_says_nothing_ends_the_turn_as_an_empty_one() {
     let nothing =
-        Message { role: MessageRole::Assistant, ..Message::new(Classification::CHANNEL_DEFAULT) };
+        Message { role: MessageRole::Assistant, content: None, ..make_message(MessageId::new()) };
     let Stuck { channel, agent, helper, mut events, running, .. } =
         with_an_agent(Arc::new(Scripted::new([nothing])), Default::default()).await;
 
@@ -1338,7 +1338,7 @@ async fn the_calls_of_a_message_dropped_on_its_way_out_are_not_run() {
             arguments: serde_json::json!({}),
             ..make_tool_call("dropped")
         }],
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     let components = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
@@ -1373,7 +1373,7 @@ async fn a_step_whose_message_is_dropped_ends_and_the_plan_goes_on() {
     let said = |content: &str| Message {
         role: MessageRole::Assistant,
         content: Some(content.to_string()),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     let calling = |name: &str, arguments| Message {
         tool_calls: vec![ToolCall { id: Some("1".to_string()), arguments, ..make_tool_call(name) }],
@@ -1448,12 +1448,13 @@ async fn a_call_an_emit_processor_changes_runs_as_it_changed_it() {
             arguments: serde_json::json!({}),
             ..make_tool_call("draft")
         }],
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        content: None,
+        ..make_message(MessageId::new())
     };
     let answer = Message {
         role: MessageRole::Assistant,
         content: Some("Done.".to_string()),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     let component_nodes = ["test_whispering_tool", "test_renaming_calls"]
         .map(|kind| ComponentDescriptor::new(kind, kind));
@@ -1492,7 +1493,7 @@ async fn an_emit_processor_that_fails_closed_gives_the_turn_up() {
     let answer = |text: &str| Message {
         role: MessageRole::Assistant,
         content: Some(text.to_string()),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     let failing = |fail_policy| ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
@@ -1541,7 +1542,7 @@ impl LanguageModelClient for StreamsAPart {
         let part = Message {
             role: MessageRole::Assistant,
             content: Some("Hel".to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            ..make_message(MessageId::new())
         };
         stream::iter([Ok(MessageEvent::Partial(part))]).chain(stream::pending()).boxed()
     }
@@ -1566,7 +1567,7 @@ async fn an_agent_that_calls_stop_ends_its_turn_with_the_call_and_sleeps() {
             arguments: serde_json::json!({}),
             ..make_tool_call("stop")
         }],
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     let components = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
@@ -1611,7 +1612,7 @@ async fn an_agent_tells_the_users_where_it_stands_and_that_it_was_woken() {
             arguments: serde_json::json!({}),
             ..make_tool_call("stop")
         }],
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     let components = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
@@ -1674,7 +1675,7 @@ async fn a_plan_whose_steps_need_more_calls_than_a_turn_runs_to_its_end() {
     let said = |content: &str| Message {
         role: MessageRole::Assistant,
         content: Some(content.to_string()),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     let plan = Message {
         role: MessageRole::Assistant,
@@ -1683,7 +1684,8 @@ async fn a_plan_whose_steps_need_more_calls_than_a_turn_runs_to_its_end() {
             arguments: serde_json::json!({ "summary": "two steps", "steps": [{ "description": "first" }, { "description": "second" }] }),
             ..make_tool_call("create_plan")
         }],
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        content: None,
+        ..make_message(MessageId::new())
     };
     let (calculate, calculator) = calculator();
     let calls = MAX_MODEL_CALLS / 2 + 1;
@@ -1747,7 +1749,7 @@ async fn a_plan_runs_its_steps_as_intermediate_messages_and_ends_with_the_final_
     let said = |content: &str| Message {
         role: MessageRole::Assistant,
         content: Some(content.to_string()),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     let plan = Message {
         role: MessageRole::Assistant,
@@ -1756,7 +1758,8 @@ async fn a_plan_runs_its_steps_as_intermediate_messages_and_ends_with_the_final_
             arguments: serde_json::json!({ "summary": "two steps", "steps": [{ "description": "first" }, { "description": "second" }] }),
             ..make_tool_call("create_plan")
         }],
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        content: None,
+        ..make_message(MessageId::new())
     };
     let script = [plan, said("first done"), said("second done"), said("all done")];
     let components = ComponentConfig {
@@ -1880,7 +1883,7 @@ async fn every_message_of_a_turn_carries_the_turn_its_start_announced() {
     let said = |content: &str| Message {
         role: MessageRole::Assistant,
         content: Some(content.to_string()),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     let plan = Message {
         role: MessageRole::Assistant,
@@ -1889,7 +1892,8 @@ async fn every_message_of_a_turn_carries_the_turn_its_start_announced() {
             arguments: serde_json::json!({ "summary": "one step", "steps": [{ "description": "first" }] }),
             ..make_tool_call("create_plan")
         }],
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        content: None,
+        ..make_message(MessageId::new())
     };
     let script = [plan, said("first done"), said("all done")];
     let components = ComponentConfig {
@@ -1975,7 +1979,8 @@ async fn a_turn_is_stored_with_the_step_that_comes_next() {
             arguments: serde_json::json!({ "expression": "1+1" }),
             ..make_tool_call("calculate")
         }],
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        content: None,
+        ..make_message(MessageId::new())
     };
     let components = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
@@ -2075,7 +2080,7 @@ async fn a_turn_that_failed_is_answered_anew_on_request_and_stays() {
     let answer = Message {
         role: MessageRole::Assistant,
         content: Some("second try".to_string()),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     let Stuck { channel, context, agent, mut events, running, .. } = with_an_agent(
         Arc::new(FailsWhere(Mutex::new([None, Some(answer)].into()))),
@@ -2141,7 +2146,7 @@ async fn a_turn_that_reaches_the_limit_of_model_calls_is_given_up_and_may_be_ans
     answers.push_back(Message {
         role: MessageRole::Assistant,
         content: Some("going on".to_string()),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     });
     let Stuck { channel, context, agent, helper, mut events, running } =
         with_an_agent(Arc::new(Scripted::new(answers)), components).await;
@@ -2237,14 +2242,14 @@ async fn a_turn_that_fails_after_a_tool_ran_keeps_what_it_said_and_the_agent_is_
     // The model calls a tool that needs no approval, and fails when
     // asked about its result.
     let calculate = Message {
-        id: MessageId::new(),
         role: MessageRole::Assistant,
         tool_calls: vec![ToolCall {
             id: Some("1".to_string()),
             arguments: serde_json::json!({ "expression": "1+1" }),
             ..make_tool_call("calculate")
         }],
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        content: None,
+        ..make_message(MessageId::new())
     };
     let components = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
@@ -2319,7 +2324,8 @@ async fn an_agent_removed_during_a_turn_gives_it_up() {
             arguments: serde_json::json!({ "expression": "1+1" }),
             ..make_tool_call("calculate")
         }],
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        content: None,
+        ..make_message(MessageId::new())
     };
     let components = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
@@ -2394,14 +2400,14 @@ fn given_next(stored: &AgentChannelState, thread: ThreadId, agent: AgentId) -> V
 fn calculator() -> (Message, ComponentConfig) {
     use caelumora_domain::tool::ToolCall;
     let calculate = Message {
-        id: MessageId::new(),
         role: MessageRole::Assistant,
         tool_calls: vec![ToolCall {
             id: Some("1".to_string()),
             arguments: serde_json::json!({ "expression": "1+1" }),
             ..make_tool_call("calculate")
         }],
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        content: None,
+        ..make_message(MessageId::new())
     };
     let components = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
@@ -2786,7 +2792,8 @@ fn a_call_needing_approval() -> (Message, ComponentConfig) {
             arguments: serde_json::json!({ "seconds": 0 }),
             ..make_tool_call("sleep")
         }],
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        content: None,
+        ..make_message(MessageId::new())
     };
     let components = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
@@ -2962,7 +2969,7 @@ async fn a_turn_waiting_for_approval_can_be_decided_after_a_restart() {
     let done = Message {
         role: MessageRole::Assistant,
         content: Some("Done.".to_string()),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     let Stuck { channel, agent, helper, mut events, running, .. } =
         with_an_agent(Arc::new(Scripted::new([call, done])), components).await;
@@ -3033,7 +3040,8 @@ async fn with_an_agent_in_long_tools(calls: &[&str]) -> (Stuck, Arc<Scripted>) {
                 ..make_tool_call("sleep")
             })
             .collect(),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        content: None,
+        ..make_message(MessageId::new())
     };
     let components = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
@@ -3047,7 +3055,7 @@ async fn with_an_agent_in_long_tools(calls: &[&str]) -> (Stuck, Arc<Scripted>) {
     let unasked = Message {
         role: MessageRole::Assistant,
         content: Some("never given".to_string()),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     let model = Arc::new(Scripted::new([call, unasked]));
     let stuck = with_an_agent(Arc::<Scripted>::clone(&model), components).await;
@@ -3061,7 +3069,7 @@ async fn a_turn_asked_for_again_while_it_waits_for_an_approval_withdraws_the_req
     let instead = Message {
         role: MessageRole::Assistant,
         content: Some("no wait needed".to_string()),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     let Stuck { channel, context, agent, helper, mut events, running } =
         with_an_agent(Arc::new(Scripted::new([call, instead])), components).await;
@@ -3465,12 +3473,13 @@ async fn a_call_with_invalid_arguments_is_answered_without_asking_anyone() {
             arguments: serde_json::json!({}),
             ..make_tool_call("create_plan")
         }],
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        content: None,
+        ..make_message(MessageId::new())
     };
     let answer = Message {
         role: MessageRole::Assistant,
         content: Some("Let me answer directly.".to_string()),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     let components = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
@@ -3653,21 +3662,19 @@ async fn an_agent_that_starts_hears_another_agents_answer_as_its_words_without_t
     );
     // Another agent's answer, as the channel's history keeps it.
     let answer = Message {
-        id: MessageId::new(),
         sender_id: other,
         sender_name: "hermes".to_string(),
         role: MessageRole::Assistant,
         content: Some("Let me check.".to_string()),
         tool_calls: vec![call],
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     let tool = Message {
-        id: MessageId::new(),
         sender_id: other,
         role: MessageRole::Tool,
         content: Some("done".to_string()),
         tool_results: vec![result],
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
 
     channel.record_said(vec![answer.clone(), tool.clone()]).await;
@@ -3712,12 +3719,11 @@ async fn an_agent_hears_a_person_s_call_with_its_result() {
         Classification::CHANNEL_DEFAULT,
     );
     let made = Message {
-        id: MessageId::new(),
         sender_id: context.initiator_id,
-        role: MessageRole::User,
         tool_calls: vec![call],
         tool_results: vec![result],
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        content: None,
+        ..make_message(MessageId::new())
     };
 
     channel.record_said(vec![made.clone()]).await;
@@ -3742,11 +3748,9 @@ async fn an_agent_that_starts_takes_in_what_it_missed_as_what_it_hears() {
         agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(NeverAnswers), components).await;
     let line = ThreadId::line(channel.id());
     let said = |text: &str| Message {
-        id: MessageId::new(),
-        role: MessageRole::User,
         sender_id: context.initiator_id,
         content: Some(text.to_string()),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     let secret = said("the secret is 42");
 
@@ -3773,7 +3777,7 @@ async fn all_an_agent_was_offered_is_in_its_channels_history_and_what_passes_its
     let hi = Message {
         role: MessageRole::Assistant,
         content: Some("Hi.".to_string()),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     let components = ComponentConfig {
         component_nodes: vec![ComponentDescriptor::new("filter", "test_no_secrets")],
@@ -3978,12 +3982,11 @@ async fn an_agent_taken_into_a_thread_forks_its_branch_at_the_message_the_thread
             .await;
     let line = ThreadId::line(channel.id());
     let before = Message {
-        id: MessageId::new(),
         sender_id: ActorId::Agent(AgentId::new()),
         sender_name: "hermes".to_string(),
         role: MessageRole::Assistant,
         content: Some("said before".to_string()),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     let after =
         Message { id: MessageId::new(), content: Some("said after".to_string()), ..before.clone() };
@@ -4043,19 +4046,18 @@ async fn an_agent_mentioned_in_a_thread_is_drawn_in_and_answers_there() {
     let answer = Message {
         role: MessageRole::Assistant,
         content: Some("It is the plan.".to_string()),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     let model = Arc::new(Scripted::new([answer]));
     let (channel, context, agent, alice) =
         agent_channel(Arc::new(AllowAllPolicy::new()), model, Default::default()).await;
     let line = ThreadId::line(channel.id());
     let before = Message {
-        id: MessageId::new(),
         sender_id: ActorId::Agent(AgentId::new()),
         sender_name: "hermes".to_string(),
         role: MessageRole::Assistant,
         content: Some("said before".to_string()),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     channel.record_said(vec![before.clone()]).await;
     let mut events = channel.observe();

@@ -663,7 +663,14 @@ a cut is wrong: it is a [finding](../AGENTS.md#findings), and the visibility is 
     `testing` module of its kind makes - `make_personality`, `make_session`, `make_user`,
     `make_template`, `make_channel`, `make_message` - and writes beside it only what it differs in
     (`Personality { kind, ..make_personality("remote") }`), so that a new field of the kind changes
-    one place and every test says what is particular about its document. What a test records in a
+    one place and every test says what is particular about its document. A message with any field
+    set starts from `make_message` and writes what it differs in - `content: None` and its role
+    included, where they differ (`Message { content: None, attachments, ..make_message(id) }`);
+    only a message without anything in it is `Message::new(classification)`, the empty message the
+    domain makes, as a scripted agent's silent answer is. What stands in for an actor or a model
+    in a test - `testing::ScriptedAgents`, a test model - builds its messages as the one it stands
+    in for does; what a test hands it to answer with is a document like any other
+    (`testing::saying`). What a test records in a
     history by hand happens in a context it names: `actor::testing::context_in` - its channel's
     line, in a session of its own -, or `EventContext::new` where it knows the session; never
     `EventContext::default()`, whose thread is the line of no channel, so that a reader of the

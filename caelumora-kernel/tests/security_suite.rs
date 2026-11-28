@@ -27,6 +27,7 @@ use caelumora_domain::config::AppConfig;
 use caelumora_domain::content::ContentRef;
 use caelumora_domain::event::GlobalEvent;
 use caelumora_domain::group::{Group, GroupId, GroupUpdateEvent};
+use caelumora_domain::message::testing::make_message;
 use caelumora_domain::privacy::PrivacyConfig;
 use caelumora_domain::project::{Project, ProjectId, ProjectUpdateEvent};
 use caelumora_domain::query::Query;
@@ -2006,11 +2007,12 @@ async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
             )
         };
         Message {
-            id: MessageId::new(),
             sender_id: ActorId::Agent(AgentId::new()),
             role: MessageRole::Tool,
             tool_results: vec![result],
-            ..Message::new(main.classification())
+            content: None,
+            classification: main.classification(),
+            ..make_message(MessageId::new())
         }
     };
     let it = || vec![uploaded.clone()];

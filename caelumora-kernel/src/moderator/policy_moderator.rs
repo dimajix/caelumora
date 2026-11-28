@@ -583,6 +583,7 @@ mod tests {
     use caelumora_domain::approval::ApprovalRequest;
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::history::Audience;
+    use caelumora_domain::message::testing::make_message;
     use caelumora_domain::message::{MessageId, MessageRole};
     use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_domain::tool::ToolCall;
@@ -621,11 +622,10 @@ mod tests {
     fn text_from(sender_id: ActorId, content: &str, mentions: Vec<ActorId>) -> Message {
         Message {
             sender_id,
-            role: MessageRole::User,
             content: Some(content.to_string()),
             addressees: mentions.clone(),
             mentions,
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            ..make_message(MessageId::new())
         }
     }
 
@@ -735,21 +735,12 @@ mod tests {
         let agents = add_agents(&moderator);
         let user = ActorId::User(UserId::new());
         let said = |content: &str| {
-            envelope(
-                user,
-                ActorEvent::CompleteMessageGenerated(Message {
-                    id: MessageId::new(),
-                    ..text_from(user, content, vec![])
-                }),
-            )
+            envelope(user, ActorEvent::CompleteMessageGenerated(text_from(user, content, vec![])))
         };
 
         moderator.route(&said("one"), &SecurityContext::default()).await;
-        let in_turn = Message {
-            id: MessageId::new(),
-            turn_id: Some(TurnId::new()),
-            ..text_from(agents[0], "two", vec![])
-        };
+        let in_turn =
+            Message { turn_id: Some(TurnId::new()), ..text_from(agents[0], "two", vec![]) };
         moderator
             .route(
                 &envelope(agents[0], ActorEvent::CompleteMessageGenerated(in_turn.clone())),
@@ -759,8 +750,7 @@ mod tests {
         moderator.route(&said("three"), &SecurityContext::default()).await;
         assert_eq!(recording.last_told().0, ["one", "three"], "the turn has not ended yet");
 
-        let tool_calls_only =
-            Message { id: MessageId::new(), content: None, ..text_from(agents[0], "", vec![]) };
+        let tool_calls_only = Message { content: None, ..text_from(agents[0], "", vec![]) };
         moderator
             .route(
                 &envelope(
@@ -1766,14 +1756,16 @@ mod tests {
                 content: None,
                 tool_calls: vec![call.clone()],
                 addressees: vec![agents[2]],
-                ..Message::new(classified.clone())
+                classification: classified.clone(),
+                ..make_message(MessageId::new())
             };
             let tool = Message {
                 sender_id: sender,
                 role: MessageRole::Tool,
                 content: Some("done".to_string()),
                 tool_results: vec![result.clone()],
-                ..Message::new(classified.clone())
+                classification: classified.clone(),
+                ..make_message(MessageId::new())
             };
 
             // A response of tool calls only, or a turn cancelled before it

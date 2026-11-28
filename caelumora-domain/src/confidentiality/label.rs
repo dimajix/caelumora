@@ -59,6 +59,8 @@ mod tests {
     use crate::confidentiality::Confidentiality::*;
     use crate::content::testing::make_content_ref;
     use crate::content::ContentRef;
+    use crate::message::testing::make_message;
+    use crate::message::{MessageId, MessageRole};
     use crate::tool::testing::make_tool_call;
     use crate::tool::{ToolCall, ToolCallResult};
 
@@ -92,7 +94,13 @@ mod tests {
             "secret".to_string(),
             confidential.clone(),
         );
-        let message = Message { tool_results: vec![result], ..Message::new(internal.clone()) };
+        let message = Message {
+            tool_results: vec![result],
+            content: None,
+            role: MessageRole::Tool,
+            classification: internal.clone(),
+            ..make_message(MessageId::new())
+        };
         let profile = ModelProfile::default();
         assert!(
             causes.set_by_message(&message, &profile),
@@ -103,7 +111,9 @@ mod tests {
                 classification: confidential.clone(),
                 ..make_content_ref("a.png", b"a")
             }],
-            ..Message::new(internal.clone())
+            content: None,
+            classification: internal.clone(),
+            ..make_message(MessageId::new())
         };
         assert!(
             causes.set_by_message(&attached, &ModelProfile { max_images: 4, ..profile }),

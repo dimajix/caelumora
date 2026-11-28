@@ -26,6 +26,7 @@ use caelumora_domain::confidentiality::{Classification, Confidentiality};
 use caelumora_domain::config::AppConfig;
 use caelumora_domain::event::EntityChange;
 use caelumora_domain::ledger::Change;
+use caelumora_domain::message::testing::make_message;
 use caelumora_domain::message::{Message, MessageId, MessageRole};
 use caelumora_domain::removal::Removal;
 use caelumora_domain::turn::{StagedChange, StagedChanges};
@@ -56,7 +57,8 @@ async fn world_noting(text: &str) -> World {
     let answer = Message {
         role: MessageRole::Assistant,
         content: Some("noted".to_string()),
-        ..Message::new(Classification::general(Confidentiality::Internal))
+        classification: Classification::general(Confidentiality::Internal),
+        ..make_message(MessageId::new())
     };
     World::configured(
         &[&NotesPlugin],

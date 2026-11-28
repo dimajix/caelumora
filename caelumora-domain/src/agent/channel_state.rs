@@ -1114,10 +1114,16 @@ mod tests {
 
     fn said(content: &str, classification: Classification) -> Message {
         Message {
-            id: MessageId::new(),
             content: Some(content.to_string()),
-            ..Message::new(classification)
+            classification,
+            ..make_message(MessageId::new())
         }
+    }
+
+    /// What is given to the agent - a part, something given to read, a summary -, saying
+    /// `content`: a system message, as the agent stores every gift.
+    fn given(content: &str, classification: Classification) -> Message {
+        Message { role: MessageRole::System, ..said(content, classification) }
     }
 
     fn a_state_that_heard(content: &str, classification: Classification) -> AgentChannelState {
@@ -1232,10 +1238,15 @@ mod tests {
         let turn_id = state.turn(ThreadId::default()).expect("a turn was begun").work.turn_id;
         let step = state.said(
             ThreadId::default(),
-            Message { internal: true, ..said("thinking", Classification::CHANNEL_DEFAULT) },
+            Message {
+                internal: true,
+                role: MessageRole::Assistant,
+                ..said("thinking", Classification::CHANNEL_DEFAULT)
+            },
         );
         let produced_from = state.turn(ThreadId::default()).unwrap().work.context.clone();
-        let answer = said("3", Classification::CHANNEL_DEFAULT);
+        let answer =
+            Message { role: MessageRole::Assistant, ..said("3", Classification::CHANNEL_DEFAULT) };
         assert!(answer.turn_id.is_none(), "built without it");
         let sent = state.said(ThreadId::default(), answer.clone());
         assert_eq!(
@@ -1298,7 +1309,7 @@ mod tests {
     /// changed, and what no longer holds is taken back.
     #[test]
     fn a_part_is_given_where_it_changed_and_taken_back_where_it_no_longer_holds() {
-        let part = |text: &str| said(text, Classification::PUBLIC);
+        let part = |text: &str| given(text, Classification::PUBLIC);
         let standing = |state: &AgentChannelState| -> Vec<(String, String)> {
             parts_as_given(state.transcript.entries(ThreadId::default()))
                 .into_iter()
@@ -1386,7 +1397,7 @@ mod tests {
     /// turn's messages are, so it does not stand: the next turn gives it again.
     #[test]
     fn a_part_of_a_turn_given_up_as_lowered_is_given_again() {
-        let rules = || ("rules".to_string(), said("[Rules]\nBe brief.", Classification::PUBLIC));
+        let rules = || ("rules".to_string(), given("[Rules]\nBe brief.", Classification::PUBLIC));
         let mut state = a_state_that_heard("hello", Classification::PUBLIC);
         begin(&mut state, Vec::new());
         let lowered = state.turn(ThreadId::default()).unwrap().work.turn_id;
@@ -1419,7 +1430,7 @@ mod tests {
         begin(&mut state, Vec::new());
         let lowered = state.turn(ThreadId::default()).unwrap().work.turn_id;
         let skill = a_workspace_read();
-        let text = || said("Collect.", Classification::PUBLIC);
+        let text = || given("Collect.", Classification::PUBLIC);
         assert!(state.given(ThreadId::default(), text(), Some(skill.clone())));
         state.give_up_turn(
             ThreadId::default(),
@@ -1440,10 +1451,7 @@ mod tests {
         let mut state = a_state_that_heard("hello", Classification::PUBLIC);
         begin(&mut state, Vec::new());
         let turn_id = state.turn(ThreadId::default()).unwrap().work.turn_id;
-        let skill = Message {
-            role: MessageRole::User,
-            ..said("Collect, group, write.", Classification::PUBLIC)
-        };
+        let skill = given("Collect, group, write.", Classification::PUBLIC);
         let source = KnowledgeSource::entity::<Workspace>(
             WorkspaceId::new(),
             Some(digest::prompt("Collect, group, write.")),
@@ -1491,8 +1499,8 @@ mod tests {
         let mut state = a_state_that_heard("hello", Classification::PUBLIC);
         begin(&mut state, Vec::new());
         let calls = a_step_calling(&mut state, &["load_skill"]);
-        let skill = said("Collect, group, write.", Classification::PUBLIC);
-        let summary = said("what was given without being knowledge", Classification::PUBLIC);
+        let skill = given("Collect, group, write.", Classification::PUBLIC);
+        let summary = given("what was given without being knowledge", Classification::PUBLIC);
         let brief = said("a brief delegated meanwhile", Classification::PUBLIC);
 
         state.given(ThreadId::default(), skill.clone(), Some(a_workspace_read()));
@@ -1562,7 +1570,7 @@ mod tests {
         let mut state = a_state_that_heard("hello", Classification::PUBLIC);
         begin(&mut state, Vec::new());
         let skill = a_workspace_read();
-        let public = |content| said(content, Classification::PUBLIC);
+        let public = |content| given(content, Classification::PUBLIC);
         let first = public("Collect.");
         assert!(state.given(ThreadId::default(), first.clone(), Some(skill.clone())), "given");
         let turn_id = state.turn(ThreadId::default()).unwrap().work.turn_id;
@@ -1582,7 +1590,7 @@ mod tests {
             "recorded with the turn all the same"
         );
 
-        let internal = said("Collect.", Classification::general(Confidentiality::Internal));
+        let internal = given("Collect.", Classification::general(Confidentiality::Internal));
         assert!(
             state.given(ThreadId::default(), internal, Some(skill.clone())),
             "classified otherwise"
@@ -1608,7 +1616,7 @@ mod tests {
         begin(&mut state, Vec::new());
         let calls = a_step_calling(&mut state, &["load_skill", "load_skill"]);
         let skill = a_workspace_read();
-        let text = said("Collect.", Classification::PUBLIC);
+        let text = given("Collect.", Classification::PUBLIC);
 
         assert!(
             state.given(ThreadId::default(), text.clone(), Some(skill.clone())),
@@ -1687,7 +1695,7 @@ mod tests {
         assert_eq!(last(&state, "a.txt"), digest("two"), "a search holds no content");
         state.given(
             ThreadId::default(),
-            said("[File: a.txt]", Classification::PUBLIC),
+            given("[File: a.txt]", Classification::PUBLIC),
             Some(knowing("a.txt", digest("given"))),
         );
         assert_eq!(
@@ -1816,7 +1824,7 @@ mod tests {
             state.compact(
                 ThreadId::default(),
                 agent,
-                vec![(said("summary", Classification::PUBLIC), None)],
+                vec![(given("summary", Classification::PUBLIC), None)],
                 &[],
                 None,
                 kernel_catalogue()
@@ -1827,9 +1835,8 @@ mod tests {
         begin(&mut state, Vec::new());
         let summary = Message {
             sender_id: agent,
-            role: MessageRole::User,
             measures: Some(CallMeasures { prompt_tokens: Some(50), ..CallMeasures::default() }),
-            ..said("[Summary] they greeted", Classification::PUBLIC)
+            ..given("[Summary] they greeted", Classification::PUBLIC)
         };
         assert_eq!(
             state.compact(
@@ -1853,7 +1860,7 @@ mod tests {
         let source =
             KnowledgeSource::entity::<Workspace>(WorkspaceId::new(), Some(digest::prompt("steps")));
         let knowledge = knowledge(source, Some(Classification::CHANNEL_DEFAULT));
-        let skill = said("[Skill: steps]", Classification::PUBLIC);
+        let skill = given("[Skill: steps]", Classification::PUBLIC);
         let (from, to) = state
             .compact(
                 ThreadId::default(),
@@ -1950,7 +1957,7 @@ mod tests {
                 completion_tokens: Some(8),
                 ..CallMeasures::default()
             }),
-            ..said("summary", Classification::PUBLIC)
+            ..given("summary", Classification::PUBLIC)
         };
         let question = CallMeasures {
             prompt_tokens: Some(600),
@@ -2019,7 +2026,7 @@ mod tests {
             .compact(
                 ThreadId::default(),
                 agent,
-                vec![(said("summary", Classification::PUBLIC), None)],
+                vec![(given("summary", Classification::PUBLIC), None)],
                 &[],
                 kept_at,
                 kernel_catalogue(),
@@ -2105,7 +2112,11 @@ mod tests {
     fn a_turn_given_up_keeps_what_it_said_and_ends_given_up() {
         let mut state = a_state_that_heard("mail bob", Classification::CHANNEL_DEFAULT);
         begin(&mut state, Vec::new());
-        state.said(ThreadId::default(), said("mailing", Classification::CHANNEL_DEFAULT));
+        let mailing = Message {
+            role: MessageRole::Assistant,
+            ..said("mailing", Classification::CHANNEL_DEFAULT)
+        };
+        state.said(ThreadId::default(), mailing);
 
         let turn_id = turn_slot(&mut state).take().expect("a turn was begun").work.turn_id;
         state.give_up_turn(ThreadId::default(), turn_id, GivenUpReason::Left);
@@ -2205,7 +2216,7 @@ mod tests {
             .compact(
                 ThreadId::default(),
                 agent,
-                vec![(said("[Summary]", Classification::CHANNEL_DEFAULT), None)],
+                vec![(given("[Summary]", Classification::CHANNEL_DEFAULT), None)],
                 &[],
                 None,
                 kernel_catalogue(),

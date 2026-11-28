@@ -16,6 +16,7 @@ use caelumora_domain::agent::{AgentId, Personality};
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::{Classification, Confidentiality};
 use caelumora_domain::ledger::Change;
+use caelumora_domain::message::testing::make_message;
 use caelumora_domain::message::{Message, MessageId, MessageRole};
 use caelumora_domain::removal::Removal;
 use caelumora_domain::turn::{StagedChange, StagedChanges};
@@ -38,7 +39,8 @@ async fn world_remembering(text: &str) -> World {
     let answer = Message {
         role: MessageRole::Assistant,
         content: Some("noted".to_string()),
-        ..Message::new(Classification::general(Confidentiality::Internal))
+        classification: Classification::general(Confidentiality::Internal),
+        ..make_message(MessageId::new())
     };
     World::with(&[&MemoryPlugin], &[&AgentsLibrary, &MemoryLibrary], |registry| {
         register_scripted(registry, "remembering", vec![remember, answer]);

@@ -1477,6 +1477,7 @@ mod tests {
     use caelumora_domain::confidentiality::{Classification, Confidentiality};
     use caelumora_domain::content::ContentRef;
     use caelumora_domain::history::{HistoryEntry, Recipients};
+    use caelumora_domain::message::testing::make_message;
     use caelumora_domain::message::{Message, MessageId, MessageRole};
     use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolContent};
@@ -1609,7 +1610,7 @@ mod tests {
             EventContext { sender_id: bob, ..channel.event_context() },
             ActorEvent::TurnFinished {
                 turn_id: TurnId::new(),
-                messages: vec![Message::new(Classification::CHANNEL_DEFAULT)],
+                messages: vec![make_message(MessageId::new())],
             },
         );
 
@@ -1644,7 +1645,7 @@ mod tests {
             sender_id: talker,
             role: MessageRole::Assistant,
             content: Some("and you?".to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            ..make_message(MessageId::new())
         };
         let answer = Envelope::new(
             context,
@@ -1725,9 +1726,7 @@ mod tests {
         };
         let said = ActorEvent::CompleteMessageGenerated(Message {
             sender_id: her,
-            role: MessageRole::User,
-            content: Some("hello".to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            ..make_message(MessageId::new())
         });
         let running = HashMap::new();
         channel.let_in(from_her(command), &running).await;
@@ -1752,7 +1751,7 @@ mod tests {
                 sender_id: author,
                 role: MessageRole::Assistant,
                 content: Some(text.to_string()),
-                ..Message::new(Classification::CHANNEL_DEFAULT)
+                ..make_message(MessageId::new())
             };
             Envelope::new(
                 EventContext { sender_id: sender, ..channel.event_context() },
@@ -2107,7 +2106,7 @@ mod tests {
                 EventContext { sender_id: ActorId::User(alice.id), ..channel.event_context() },
                 ActorEvent::TurnFinished {
                     turn_id: TurnId::new(),
-                    messages: vec![Message::new(Classification::CHANNEL_DEFAULT)],
+                    messages: vec![make_message(MessageId::new())],
                 },
             )
         };
@@ -2132,7 +2131,10 @@ mod tests {
         let from = |sender: ActorId, classification: Classification| {
             Envelope::new(
                 EventContext { sender_id: sender, ..channel.event_context() },
-                ActorEvent::CompleteMessageGenerated(Message::new(classification)),
+                ActorEvent::CompleteMessageGenerated(Message {
+                    classification,
+                    ..make_message(MessageId::new())
+                }),
             )
         };
         let internal = Classification::general(Confidentiality::Internal);
@@ -2173,11 +2175,9 @@ mod tests {
             Envelope::new(EventContext { sender_id: sender, ..channel.event_context() }, event)
         };
         let said = Message {
-            id: MessageId::new(),
             sender_id: alice_id,
-            role: MessageRole::User,
             content: Some("helo".to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            ..make_message(MessageId::new())
         };
         let modified = |sender: ActorId, content: &str| Message {
             sender_id: sender,
@@ -2354,11 +2354,9 @@ mod tests {
             Envelope::new(EventContext { sender_id: alice_id, ..channel.event_context() }, event)
         };
         let said = |n: usize| Message {
-            id: MessageId::new(),
             sender_id: alice_id,
-            role: MessageRole::User,
             content: Some(format!("message {n}")),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            ..make_message(MessageId::new())
         };
         let (to_alice, _alices) = opened();
         let actors = HashMap::from([(
@@ -2420,11 +2418,9 @@ mod tests {
         let channel = channel_with(&[&alice, &bob], Arc::new(OwnershipPolicy::new())).await;
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));
         let said = Message {
-            id: MessageId::new(),
             sender_id: alice_id,
-            role: MessageRole::User,
             content: Some("helo".to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            ..make_message(MessageId::new())
         };
         let from = |sender: ActorId, event| {
             Envelope::new(EventContext { sender_id: sender, ..channel.event_context() }, event)
@@ -2505,7 +2501,7 @@ mod tests {
         channel.process_envelope(from(alice_id, revoked(never)), &actors).await;
         channel.process_envelope(from(alice_id, modified("hello", &above)), &actors).await;
         channel.process_envelope(from(alice_id, reclassified(&above)), &actors).await;
-        let secret = Message { id: MessageId::new(), ..Message::new(above.clone()) };
+        let secret = Message { classification: above.clone(), ..make_message(MessageId::new()) };
         channel
             .process_envelope(
                 from(alice_id, ActorEvent::CompleteMessageGenerated(secret.clone())),
@@ -2557,11 +2553,10 @@ mod tests {
         // told, rather than it being dropped unseen.
         let gone = ActorId::Agent(AgentId::new());
         let its = Message {
-            id: MessageId::new(),
             sender_id: gone,
             role: MessageRole::Assistant,
             content: Some("said before it left".to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            ..make_message(MessageId::new())
         };
         channel
             .process_envelope(
@@ -3124,11 +3119,8 @@ mod tests {
             Envelope::new(
                 EventContext { sender_id: ActorId::User(alice.id), ..channel.event_context() },
                 ActorEvent::CompleteMessageGenerated(Message {
-                    id: MessageId::new(),
                     sender_id: ActorId::User(alice.id),
-                    role: MessageRole::User,
-                    content: Some("hello".to_string()),
-                    ..Message::new(Classification::CHANNEL_DEFAULT)
+                    ..make_message(MessageId::new())
                 }),
             )
         };
@@ -3205,7 +3197,7 @@ mod tests {
         let said = || {
             from_alice(ActorEvent::TurnFinished {
                 turn_id: TurnId::new(),
-                messages: vec![Message::new(Classification::CHANNEL_DEFAULT)],
+                messages: vec![make_message(MessageId::new())],
             })
         };
         let delivered = async |rx: &mut InboxReceiver| {
@@ -3263,7 +3255,7 @@ mod tests {
             EventContext { sender_id: ActorId::User(alice.id), ..channel.event_context() },
             ActorEvent::TurnFinished {
                 turn_id: TurnId::new(),
-                messages: vec![Message::new(Classification::CHANNEL_DEFAULT)],
+                messages: vec![make_message(MessageId::new())],
             },
         );
         routed(&channel, &HashMap::new(), said).await;
@@ -3299,9 +3291,7 @@ mod tests {
                 EventContext { sender_id: alice, thread_id, ..channel.event_context() },
                 ActorEvent::CompleteMessageGenerated(Message {
                     sender_id: alice,
-                    role: MessageRole::User,
-                    content: Some("hello".to_string()),
-                    ..Message::new(Classification::CHANNEL_DEFAULT)
+                    ..make_message(MessageId::new())
                 }),
             )
         };
@@ -3337,9 +3327,8 @@ mod tests {
                 EventContext { sender_id: alice_id, thread_id, ..channel.event_context() },
                 ActorEvent::CompleteMessageGenerated(Message {
                     sender_id: alice_id,
-                    role: MessageRole::User,
                     content: Some(text.to_string()),
-                    ..Message::new(Classification::CHANNEL_DEFAULT)
+                    ..make_message(MessageId::new())
                 }),
             )
         };
@@ -3416,9 +3405,8 @@ mod tests {
                 EventContext { sender_id: alice_id, thread_id: thread, ..channel.event_context() },
                 ActorEvent::CompleteMessageGenerated(Message {
                     sender_id: alice_id,
-                    role: MessageRole::User,
                     content: Some(text.to_string()),
-                    ..Message::new(Classification::CHANNEL_DEFAULT)
+                    ..make_message(MessageId::new())
                 }),
             )
         };
@@ -3472,7 +3460,7 @@ mod tests {
         let message = Message {
             sender_id: his,
             content: Some("look this up".to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            ..make_message(MessageId::new())
         };
         let brief = Brief { message, given_at: Some(Position::START) };
         let briefs = VecDeque::from([brief]);
@@ -3500,9 +3488,9 @@ mod tests {
         };
         let message = Message {
             sender_id: giver,
-            role: MessageRole::User,
             content: Some("found it".to_string()),
-            ..Message::new(classification)
+            classification,
+            ..make_message(MessageId::new())
         };
         Envelope::new(context, ActorEvent::GivenToRead { recipient, message })
     }
@@ -3553,7 +3541,8 @@ mod tests {
                         message: Message {
                             sender_id: hers,
                             tool_calls: vec![make_tool_call("calculator")],
-                            ..Message::new(fits.clone())
+                            classification: fits.clone(),
+                            ..make_message(MessageId::new())
                         },
                     },
                     ..back.clone()
@@ -3645,9 +3634,8 @@ mod tests {
                 EventContext { sender_id: ActorId::User(alice.id), ..channel.event_context() },
                 ActorEvent::CompleteMessageGenerated(Message {
                     sender_id: ActorId::User(alice.id),
-                    role: MessageRole::User,
                     content: Some(text.to_string()),
-                    ..Message::new(Classification::CHANNEL_DEFAULT)
+                    ..make_message(MessageId::new())
                 }),
             )
         };
@@ -3715,12 +3703,7 @@ mod tests {
             },
         )]);
         let hers = ActorId::User(alice.id);
-        let said = Message {
-            sender_id: hers,
-            role: MessageRole::User,
-            content: Some("hello".to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
-        };
+        let said = Message { sender_id: hers, ..make_message(MessageId::new()) };
         channel
             .let_in(
                 Envelope::new(
@@ -3764,6 +3747,20 @@ mod tests {
         assert!(asked.context.position > delivered.context.position, "recorded after it");
     }
 
+    /// Asks nobody, and keeps what it was given.
+    #[derive(Debug, Default)]
+    struct Told(Mutex<Vec<Envelope>>);
+
+    #[async_trait::async_trait]
+    impl Moderator for Told {
+        async fn route(&self, event: &Envelope, _context: &SecurityContext) -> Routing {
+            self.0.lock().unwrap().push(event.clone());
+            Routing::default()
+        }
+        fn add_actor(&self, _: Arc<dyn Actor>) {}
+        fn remove_actor(&self, _: ActorId) {}
+    }
+
     /// Issue 417: what only its sender's owner sees enters the channel and is
     /// recorded with it, and reaches nobody else - neither the moderator,
     /// which decides on what everybody may see, nor a participant; a message
@@ -3772,18 +3769,6 @@ mod tests {
     async fn what_only_its_owner_sees_is_recorded_and_given_to_nobody_else() {
         use caelumora_domain::confidentiality::Visibility;
         use caelumora_domain::tool::ToolVisibility;
-        /// Asks nobody, and keeps what it was given.
-        #[derive(Debug, Default)]
-        struct Told(Mutex<Vec<Envelope>>);
-        #[async_trait::async_trait]
-        impl Moderator for Told {
-            async fn route(&self, event: &Envelope, _context: &SecurityContext) -> Routing {
-                self.0.lock().unwrap().push(event.clone());
-                Routing::default()
-            }
-            fn add_actor(&self, _: Arc<dyn Actor>) {}
-            fn remove_actor(&self, _: ActorId) {}
-        }
         let alice = make_user("alice");
         let told = Arc::new(Told::default());
         let channel = channel_moderated_by(&[&alice], Arc::<Told>::clone(&told)).await;
@@ -3814,7 +3799,8 @@ mod tests {
             reasoning: Some("weighing".to_string()),
             reasoning_visibility: Visibility::Owner,
             tool_calls: vec![hidden],
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            content: None,
+            ..make_message(MessageId::new())
         };
         let said = |message: Message| {
             Envelope::new(
@@ -3892,13 +3878,7 @@ mod tests {
                 ActorEvent::CompleteMessageGenerated(message.clone()),
             )
         };
-        let heard = Message {
-            id: MessageId::new(),
-            role: MessageRole::User,
-            sender_id: owner,
-            content: Some("hello".to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
-        };
+        let heard = Message { sender_id: owner, ..make_message(MessageId::new()) };
         let step = Message { id: MessageId::new(), internal: true, ..heard.clone() };
         let notice = Message { id: MessageId::new(), role: MessageRole::System, ..heard.clone() };
         let aside = Message { id: MessageId::new(), ..heard.clone() };
@@ -3954,9 +3934,10 @@ mod tests {
                 sender,
                 ActorEvent::CompleteMessageGenerated(Message {
                     sender_id: sender,
-                    role: MessageRole::User,
                     attachments,
-                    ..Message::new(main.classification())
+                    content: None,
+                    classification: main.classification(),
+                    ..make_message(MessageId::new())
                 }),
             )
         };
@@ -3971,9 +3952,10 @@ mod tests {
             bob,
             ActorEvent::CompleteMessageGenerated(Message {
                 sender_id: alice,
-                role: MessageRole::User,
                 attachments: vec![hers.clone()],
-                ..Message::new(main.classification())
+                content: None,
+                classification: main.classification(),
+                ..make_message(MessageId::new())
             }),
         );
         assert_eq!(
@@ -3998,7 +3980,9 @@ mod tests {
                     sender_id: alice,
                     role: MessageRole::Tool,
                     tool_results: vec![result],
-                    ..Message::new(main.classification())
+                    content: None,
+                    classification: main.classification(),
+                    ..make_message(MessageId::new())
                 }),
             )
         };
@@ -4063,7 +4047,9 @@ mod tests {
                             main.classification(),
                         )
                     }],
-                    ..Message::new(main.classification())
+                    content: None,
+                    classification: main.classification(),
+                    ..make_message(MessageId::new())
                 }),
             )
         };
@@ -4174,7 +4160,6 @@ mod tests {
     #[test]
     fn the_queued_pieces_of_a_partial_message_are_taken_as_one() {
         use caelumora_domain::actor::testing::context_in;
-        use caelumora_domain::message::testing::make_message;
         let context = context_in(ChannelId::new());
         let talker = ActorId::Agent(AgentId::new());
         let other = ActorId::Agent(AgentId::new());

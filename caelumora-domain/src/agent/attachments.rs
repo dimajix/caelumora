@@ -96,8 +96,9 @@ impl AttachmentIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::confidentiality::Classification;
     use crate::content::testing::make_content_ref;
+    use crate::message::testing::make_message;
+    use crate::message::MessageRole;
     use crate::tool::testing::make_tool_call;
 
     #[test]
@@ -106,7 +107,8 @@ mod tests {
         let mut index = AttachmentIndex::default();
         let mut first = Message {
             attachments: vec![a.clone()],
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            content: None,
+            ..make_message(MessageId::new())
         };
         index.number(&mut first);
         let mut modified = Message { attachments: vec![b.clone(), a.clone()], ..first.clone() };
@@ -157,7 +159,9 @@ mod tests {
                 files: vec![drawn.clone()],
                 ..ToolCallResult::of(&call, Default::default(), String::new(), Default::default())
             }],
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            content: None,
+            role: MessageRole::Tool,
+            ..make_message(MessageId::new())
         };
         let mut index = AttachmentIndex::default();
         index.number(&mut result);

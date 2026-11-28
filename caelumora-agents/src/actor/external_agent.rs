@@ -1163,6 +1163,7 @@ mod tests {
     use super::*;
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::channel::ChannelId;
+    use caelumora_domain::message::testing::make_message;
     use caelumora_domain::user::UserId;
     use caelumora_store::memory::MemoryStore;
     use caelumora_store::transcript::TranscriptStore;
@@ -1170,12 +1171,10 @@ mod tests {
 
     fn said(sender: ActorId, name: &str, text: &str) -> Message {
         Message {
-            role: MessageRole::User,
             content: Some(text.to_string()),
-            id: MessageId::new(),
             sender_id: sender,
             sender_name: name.to_string(),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            ..make_message(MessageId::new())
         }
     }
 

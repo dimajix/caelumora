@@ -24,6 +24,7 @@ use caelumora_domain::channel::{Channel, ChannelId, ThreadId};
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::{Classification, Confidentiality};
 use caelumora_domain::context::ModelProfile;
+use caelumora_domain::message::testing::make_message;
 use caelumora_domain::message::{Message, MessageEvent, MessageId, MessageRole};
 use caelumora_domain::prompt_catalogue::{PromptCatalogue, PromptTexts, KERNEL, KERNEL_PROMPTS};
 use caelumora_domain::scope::Scope;
@@ -403,17 +404,18 @@ pub fn calling(function: &str, arguments: Value) -> Message {
             arguments,
             ..make_tool_call(function)
         }],
-        ..Message::new(Classification::general(Confidentiality::Internal))
+        content: None,
+        classification: Classification::general(Confidentiality::Internal),
+        ..make_message(MessageId::new())
     }
 }
 
 /// What a model answers to say `text`.
 pub fn saying(text: &str) -> Message {
     Message {
-        id: MessageId::new(),
         role: MessageRole::Assistant,
         content: Some(text.to_string()),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     }
 }
 

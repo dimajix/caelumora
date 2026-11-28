@@ -21,7 +21,8 @@ use caelumora_domain::context::PromptAt;
 use caelumora_domain::digest;
 use caelumora_domain::group::Group;
 use caelumora_domain::history::{Audience, HistoryEntry, Reader, Recorded};
-use caelumora_domain::message::{Message, MessageRole};
+use caelumora_domain::message::testing::make_message;
+use caelumora_domain::message::{Message, MessageId, MessageRole};
 use caelumora_domain::query::{FieldPath, FieldValue, Filter};
 use caelumora_domain::removal::RemovalId;
 use caelumora_domain::role::RoleId;
@@ -325,7 +326,7 @@ async fn what_an_agent_waiting_for_an_approval_stored_survives_a_restart() {
     let (agent, channel) = (AgentId::new(), ChannelId::new());
     let said = |content: &str| Message {
         content: Some(content.to_string()),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
+        ..make_message(MessageId::new())
     };
     let mut channel_state = ChannelState::new(channel);
     channel_state.history.push(&context_in(channel), said("look it up"));
@@ -403,6 +404,32 @@ async fn what_an_agent_waiting_for_an_approval_stored_survives_a_restart() {
     database.drop().await;
 }
 
+/// That `participant` joined, by themselves, for a history a test fills by hand.
+fn joined(participant: ActorId) -> HistoryEntry {
+    HistoryEntry::ParticipantJoined {
+        participant,
+        name: String::new(),
+        by: participant,
+        by_name: String::new(),
+        at: Utc::now(),
+        into_channel: false,
+    }
+}
+
+/// A message said by `by`, saying `content` - as an agent's answer if `by` is an agent -, for a
+/// history a test fills by hand.
+fn said(by: ActorId, content: Option<&str>) -> HistoryEntry {
+    let role = if by.as_agent_id().is_some() { MessageRole::Assistant } else { MessageRole::User };
+    HistoryEntry::Said {
+        message: Message {
+            sender_id: by,
+            role,
+            content: content.map(str::to_string),
+            ..make_message(MessageId::new())
+        },
+    }
+}
+
 /// The database gives a reader of a history what the domain gives them
 /// (issue 451): what they sent, what went to them by name, what went to
 /// every participant while they were one, an approver what went to the
@@ -415,21 +442,6 @@ async fn the_database_gives_a_reader_what_the_model_gives_them() {
     let channel = ChannelId::new();
     let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
     let (agent, approver) = (ActorId::Agent(AgentId::new()), ActorId::Approver(ApproverId::new()));
-    let joined = |participant| HistoryEntry::ParticipantJoined {
-        participant,
-        name: String::new(),
-        by: participant,
-        by_name: String::new(),
-        at: Utc::now(),
-        into_channel: false,
-    };
-    let said = |by: ActorId, content: Option<&str>| HistoryEntry::Said {
-        message: Message {
-            sender_id: by,
-            content: content.map(str::to_string),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
-        },
-    };
     let mut state = ChannelState::new(channel);
     let context = context_in(channel);
     for (entry, sender, audience) in [

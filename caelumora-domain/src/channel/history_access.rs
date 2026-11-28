@@ -82,16 +82,16 @@ pub enum HistoryStart {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::confidentiality::Classification;
+    use crate::message::testing::make_message;
 
     /// Five messages, one a day, the last one `now`.
     fn daily(now: DateTime<Utc>) -> Vec<Message> {
         (0..5)
             .rev()
             .map(|days| Message {
-                id: MessageId::new(),
                 timestamp: now - Duration::days(days),
-                ..Message::new(Classification::CHANNEL_DEFAULT)
+                content: None,
+                ..make_message(MessageId::new())
             })
             .collect()
     }

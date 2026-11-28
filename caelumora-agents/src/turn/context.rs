@@ -203,11 +203,18 @@ mod tests {
     use caelumora_domain::agent::{AgentChannelState, AgentId};
     use caelumora_domain::channel::ThreadId;
     use caelumora_domain::context::{KnowledgeRef, KnowledgeSource, ModelProfile};
+    use caelumora_domain::message::testing::make_message;
     use caelumora_domain::message::MessageId;
     use caelumora_domain::tool::testing::make_tool_description;
     use caelumora_domain::work::Work;
     use caelumora_kernel::testing::Discard;
     use futures::executor;
+
+    /// The contents of the attachments of the first of `messages`, as its model is given them:
+    /// `None` for each it is given without.
+    fn contents(messages: &[Message]) -> Vec<Option<Vec<u8>>> {
+        messages[0].attachments.iter().map(|a| a.content.as_deref().map(<[u8]>::to_vec)).collect()
+    }
 
     /// Issue 282: the model is given along what its profile says - an image, to a model that
     /// sees -, with its content, which the turn has seen then; one whose bytes are not what its
@@ -275,9 +282,10 @@ mod tests {
                 state.perceive(
                     line,
                     vec![Message {
-                        role: MessageRole::User,
                         attachments,
-                        ..Message::new(Classification::PUBLIC)
+                        content: None,
+                        classification: Classification::PUBLIC,
+                        ..make_message(MessageId::new())
                     }],
                 );
                 let profile = ModelProfile { max_images, ..ModelProfile::default() };
@@ -291,14 +299,6 @@ mod tests {
                 (context, turn.situation().label())
             }
         };
-        let contents = |messages: &[Message]| {
-            messages[0]
-                .attachments
-                .iter()
-                .map(|a| a.content.as_deref().map(<[u8]>::to_vec))
-                .collect::<Vec<_>>()
-        };
-
         let (seeing, label) = given(4, vec![image.clone(), notes.clone()]).await;
         assert_eq!(
             contents(&seeing.unwrap()),
@@ -324,7 +324,6 @@ mod tests {
 
         let agent = AgentId::new();
         let thought = |sender: ActorId, content: &str| Message {
-            id: MessageId::new(),
             sender_id: sender,
             role: if sender == ActorId::Agent(agent) {
                 MessageRole::Assistant
@@ -333,7 +332,7 @@ mod tests {
             },
             content: Some(content.to_string()),
             reasoning: Some(format!("why {content}")),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            ..make_message(MessageId::new())
         };
         let other = ActorId::Agent(AgentId::new());
         let mut state = AgentChannelState::default();
@@ -418,10 +417,9 @@ mod tests {
     async fn what_the_agent_saw_can_be_told_for_each_message_it_produced() {
         let agent = AgentId::new();
         let text = |role: MessageRole, content: &str| Message {
-            id: MessageId::new(),
             role,
             content: Some(content.to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            ..make_message(MessageId::new())
         };
         let mut state = AgentChannelState::default();
         let question = text(MessageRole::User, "What is 2+2?");
@@ -514,10 +512,9 @@ mod tests {
             ..make_tool_description(name)
         };
         let answer = |content: &str| Message {
-            id: MessageId::new(),
             role: MessageRole::Assistant,
             content: Some(content.to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
+            ..make_message(MessageId::new())
         };
         let mut state = AgentChannelState::default();
         let first = answer("first");
@@ -593,12 +590,7 @@ mod tests {
 
     /// A message heard from someone, saying `content`.
     fn heard(content: &str) -> Message {
-        Message {
-            id: MessageId::new(),
-            role: MessageRole::User,
-            content: Some(content.to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
-        }
+        Message { content: Some(content.to_string()), ..make_message(MessageId::new()) }
     }
 
     /// The parts of a turn: the time placed in the frame, and `rules` given into the transcript.
