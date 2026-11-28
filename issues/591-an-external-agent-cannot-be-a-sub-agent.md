@@ -152,3 +152,4 @@ the delegation's state says, so that a restart loses nothing. Each step is revie
   `leave` cancel `ending` at once, so that whoever sees a turn's token cancelled finds the run
   ending - before, an external agent stopped in that moment could take the stop for a cancel and
   cancel a remote task the stop should have left working.
+- **2026-11-28** — Step 4b done: the turns set aside are kept by their turn.

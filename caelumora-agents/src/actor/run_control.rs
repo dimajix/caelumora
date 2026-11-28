@@ -69,11 +69,11 @@ pub(crate) struct RunControl {
     /// What `cancel`, `retry`, `stop` or `leave` asked of the run loop (an
     /// `Interrupt`, or `NO_INTERRUPT`), taken after every step.
     interrupt: AtomicU8,
-    /// The turns set aside because they wait for a person (issue 602), by their threads - one a
-    /// thread -, each with what `cancel` or `retry` asked of it meanwhile (`Interrupt::Cancel`,
-    /// `Interrupt::Retry`), which the run loop takes up as it resumes the turn (`resume`). The turn
-    /// that runs is never among them.
-    set_aside: Mutex<BTreeMap<ThreadId, (TurnId, Option<Interrupt>)>>,
+    /// The turns set aside because they wait for a person (issue 602), by their ids, each with its
+    /// thread - one a thread - and what `cancel` or `retry` asked of it meanwhile
+    /// (`Interrupt::Cancel`, `Interrupt::Retry`), which the run loop takes up as it resumes the
+    /// turn (`resume`). The turn that runs is never among them.
+    set_aside: Mutex<BTreeMap<TurnId, (ThreadId, Option<Interrupt>)>>,
     /// Tells the run loop, waiting between turns, that `cancel` or `retry` asked a turn set aside
     /// to end.
     asked: Notify,
@@ -117,7 +117,7 @@ impl RunControl {
         let running = resumed.map(|(_, (thread, _))| thread);
         let waiting = state.threads.iter().filter(|(thread, _)| Some(**thread) != running);
         *control.lock_set_aside() = waiting
-            .filter_map(|(thread, part)| Some((*thread, (part.turn.as_ref()?.work.turn_id, None))))
+            .filter_map(|(thread, part)| Some((part.turn.as_ref()?.work.turn_id, (*thread, None))))
             .collect();
         // What it tells first, as a whole, counts as told.
         control.announced.store(control.standing());
@@ -180,7 +180,7 @@ impl RunControl {
     pub(crate) fn turn_under_way(&self, thread: ThreadId) -> Option<TurnId> {
         match self.under_way() {
             Some((there, turn)) if there == thread => Some(turn),
-            _ => self.lock_set_aside().get(&thread).map(|(turn, _)| *turn),
+            _ => self.set_aside_in(thread),
         }
     }
 
@@ -193,7 +193,7 @@ impl RunControl {
         let mut running = self.lock_turn();
         if let Some((thread, turn)) = running.0.take() {
             let asked = self.take_turn_interrupt();
-            self.lock_set_aside().insert(thread, (turn, asked));
+            self.lock_set_aside().insert(turn, (thread, asked));
             if asked.is_some() {
                 self.asked.notify_one();
             }
@@ -207,7 +207,8 @@ impl RunControl {
     /// loop to take up. `None` if no turn is set aside there.
     pub(crate) fn resume(&self, thread: ThreadId, step: ActorState) -> Option<Option<Interrupt>> {
         let mut running = self.lock_turn();
-        let (turn, asked) = self.lock_set_aside().remove(&thread)?;
+        let turn = self.set_aside_in(thread)?;
+        let (_, asked) = self.lock_set_aside().remove(&turn)?;
         *running = (Some((thread, turn)), self.ending.child_token());
         self.go_to(step);
         self.take_turn_interrupt();
@@ -229,14 +230,20 @@ impl RunControl {
 
     /// The threads of the turns set aside (issue 602).
     pub(crate) fn set_aside_threads(&self) -> BTreeSet<ThreadId> {
-        self.lock_set_aside().keys().copied().collect()
+        self.lock_set_aside().values().map(|(thread, _)| *thread).collect()
+    }
+
+    /// The turn set aside in `thread`, if one is.
+    fn set_aside_in(&self, thread: ThreadId) -> Option<TurnId> {
+        let set_aside = self.lock_set_aside();
+        set_aside.iter().find(|(_, (there, _))| *there == thread).map(|(turn, _)| *turn)
     }
 
     /// The thread of a turn set aside that `cancel` or `retry` asked to end (issue 602), if any:
     /// for the run loop to resume it and end it.
     pub(crate) fn asked_of_set_aside(&self) -> Option<ThreadId> {
         let set_aside = self.lock_set_aside();
-        set_aside.iter().find_map(|(thread, (_, asked))| asked.map(|_| *thread))
+        set_aside.values().find_map(|(thread, asked)| asked.map(|_| *thread))
     }
 
     /// Returns once `cancel` or `retry` asked a turn set aside to end - at once if one did since
@@ -245,19 +252,26 @@ impl RunControl {
         self.asked.notified().await;
     }
 
-    fn lock_set_aside(&self) -> MutexGuard<'_, BTreeMap<ThreadId, (TurnId, Option<Interrupt>)>> {
+    fn lock_set_aside(&self) -> MutexGuard<'_, BTreeMap<TurnId, (ThreadId, Option<Interrupt>)>> {
         self.set_aside.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Asks the turn set aside in `thread` to end as `asked` says - what was asked first wins -,
-    /// and tells the waiting run loop; whether a turn was set aside there.
-    fn ask_set_aside(&self, thread: ThreadId, asked: Interrupt) -> bool {
+    /// Asks the turns set aside that `which` picks, by turn and thread, to end as `asked` says -
+    /// what was asked first wins -, and tells the waiting run loop; whether one was asked.
+    fn ask_set_aside(&self, which: impl Fn(TurnId, ThreadId) -> bool, asked: Interrupt) -> bool {
         let mut set_aside = self.lock_set_aside();
-        let Some((_, already)) = set_aside.get_mut(&thread) else { return false };
-        already.get_or_insert(asked);
+        let mut any = false;
+        for (_, (_, already)) in
+            set_aside.iter_mut().filter(|(turn, (thread, _))| which(**turn, *thread))
+        {
+            already.get_or_insert(asked);
+            any = true;
+        }
         drop(set_aside);
-        self.asked.notify_one();
-        true
+        if any {
+            self.asked.notify_one();
+        }
+        any
     }
 
     /// The turn under way, as `turn_under_way` says, with the thread it runs in (issue 602).
@@ -294,11 +308,12 @@ impl RunControl {
     }
 
     /// Asks for the turns under way in `thread` to end and be taken over - in every thread if
-    /// `None` (issue 602): the one that runs there, and one set aside there -, and returns whether
-    /// there was one (issue 611) - decided under the turn's lock, as `retry` decides, so that a
-    /// turn set aside or resumed meanwhile is found either running or set aside. Outside a turn
-    /// there is nothing to cancel, and a running turn already ending is ended anyway: it is none.
-    /// A turn set aside counts until the run loop has taken it up, as `turn_under_way` counts it.
+    /// `None` (issue 602): the one that runs there, and those set aside there -, and returns
+    /// whether there was one (issue 611) - decided under the turn's lock, as `retry` decides, so
+    /// that a turn set aside or resumed meanwhile is found either running or set aside. Outside a
+    /// turn there is nothing to cancel, and a running turn already ending is ended anyway: it is
+    /// none. A turn set aside counts until the run loop has taken it up, as `turn_under_way` counts
+    /// it.
     pub(crate) fn cancel(&self, thread: Option<ThreadId>) -> bool {
         let under_way = self.lock_turn();
         let there = thread.is_none_or(|thread| under_way.0.is_some_and(|(t, _)| t == thread));
@@ -307,13 +322,8 @@ impl RunControl {
             self.ask(Interrupt::Cancel);
             under_way.1.cancel();
         }
-        let set_aside = match thread {
-            Some(thread) => vec![thread],
-            None => self.set_aside_threads().into_iter().collect(),
-        };
-        let asked = set_aside.into_iter().filter(|t| self.ask_set_aside(*t, Interrupt::Cancel));
-        // Counted, so that every one is asked.
-        asked.count() > 0 || running
+        let there = |_, aside| thread.is_none_or(|thread| aside == thread);
+        self.ask_set_aside(there, Interrupt::Cancel) || running
     }
 
     /// Asks for the turn `turn` to be given up, because its answer is asked
@@ -326,10 +336,7 @@ impl RunControl {
         let under_way = self.lock_turn();
         if under_way.0.map(|(_, under_way)| under_way) != Some(turn) || !self.interruptible() {
             // Or a turn set aside, which waits for a person (issue 602).
-            let set_aside = self.lock_set_aside();
-            let thread = set_aside.iter().find(|(_, (aside, _))| *aside == turn).map(|(t, _)| *t);
-            drop(set_aside);
-            return thread.is_some_and(|thread| self.ask_set_aside(thread, Interrupt::Retry));
+            return self.ask_set_aside(|aside, _| aside == turn, Interrupt::Retry);
         }
         self.ask(Interrupt::Retry);
         under_way.1.cancel();
@@ -454,6 +461,28 @@ mod tests {
         assert_eq!(control.turn_under_way(line), Some(going_on));
         assert_eq!(control.state(), ActorState::Planning, "at the step it stands at");
         assert_eq!(control.set_aside_threads(), BTreeSet::from([there]), "the other set aside");
+    }
+
+    /// Issue 591: one cancel asks every turn set aside it reaches to end - in every thread - and
+    /// each runs again with what was asked of it.
+    #[test]
+    fn a_cancel_asks_every_turn_set_aside_it_reaches() {
+        let mut state = AgentChannelState::default();
+        let work =
+            || Work::new(EventContext::default(), None, Classification::PUBLIC, TimeZone::UTC);
+        let threads = [ThreadId::new(), ThreadId::new()];
+        for thread in threads {
+            state.begin_turn(thread, work());
+            state.turn_mut(thread).expect("its turn").step = ActorState::WaitingForUser;
+        }
+        let control = RunControl::resuming(&state);
+        assert!(control.cancel(None), "there were turns to end");
+        assert!(control.asked_of_set_aside().is_some_and(|asked| threads.contains(&asked)));
+        for thread in threads {
+            let asked = control.resume(thread, ActorState::WaitingForUser);
+            assert_eq!(asked, Some(Some(Interrupt::Cancel)), "each asked");
+            control.set_aside();
+        }
     }
 
     #[test]
