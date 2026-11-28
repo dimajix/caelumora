@@ -21,6 +21,12 @@ pub const CALCULATOR_KIND: &str = "calculator";
 pub const CALCULATE_TOOL_NAME: &str = "calculate";
 
 /// The tool `calculate`, which evaluates a mathematical expression.
+///
+/// What it takes is what `nanoexpr` evaluates in `f64`: the four operations, `%`, powers with
+/// `^`, parentheses, the constants `pi` and `e`, and the usual functions. An expression without a
+/// finite result - a division by zero, a value outside a function's domain, an overflow - fails
+/// as one it cannot read does, and so does one beyond the limits of `nanoexpr`'s evaluator: more
+/// than 8 arguments to a function (`max`, `min`), more than 32 levels of nesting.
 #[derive(Debug)]
 struct CalculateTool {
     description: ToolDescription,
@@ -44,14 +50,12 @@ impl Tool for CalculateTool {
         }
         let Expression { expression } = arguments(params)?;
 
-        let result = meval::eval_str(&expression).map_err(|e| {
+        let result = nanoexpr::evaluate::<f64>(&expression).map_err(|e| {
             ToolError::ExecutionFailed(format!("Failed to evaluate expression: {}", e))
         })?;
 
         // Derived from the arguments alone.
-        let value =
-            serde_json::to_value(result).map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
-        Ok(ToolOutput::of_turn(value, turn))
+        Ok(ToolOutput::of_turn(Value::from(result), turn))
     }
 }
 
@@ -104,21 +108,32 @@ mod tests {
     use crate::testing;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
     use serde_json::json;
+    use std::f64::consts::{E, PI};
 
     #[tokio::test]
-    async fn test_calculator_tool() {
+    async fn it_evaluates_each_kind_of_expression_its_description_names() {
         let calculate =
             testing::tool_named(&tools(&testing::prompts()).unwrap(), CALCULATE_TOOL_NAME);
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
 
         let cases = vec![
+            // The examples of the description of `expression`.
             ("2 + 2", 4.0),
+            ("sin(pi/2)", 1.0),
+            ("exp(1)", E),
+            // The operations, with their precedences.
+            ("10 / 4 - 2 * 3", -3.5),
+            ("10 % 3", 1.0),
             ("2 * (3 + 4)", 14.0),
-            ("sin(0)", 0.0),
-            ("cos(0)", 1.0),
-            ("exp(0)", 1.0),
-            ("10 / 2", 5.0),
+            ("2^3^2", 512.0),
+            ("-2^2", -4.0),
+            ("1.5e3", 1500.0),
+            // The constants and functions.
+            ("pi", PI),
+            ("ln(e)", 1.0),
+            ("cos(0) + sqrt(16) + abs(-3)", 8.0),
+            ("max(1, 2, 3) + atan2(0, 1)", 3.0),
         ];
 
         for (expr, expected) in cases {
@@ -136,14 +151,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_calculator_tool_invalid_expression() {
+    async fn an_expression_unreadable_or_without_a_finite_result_fails() {
         let calculate =
             testing::tool_named(&tools(&testing::prompts()).unwrap(), CALCULATE_TOOL_NAME);
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
 
-        let params = json!({ "expression": "invalid" });
-        let result = calculate.execute(&params, None, &mut turn).await;
-        assert!(result.is_err());
+        let too_deep = format!("{}1{}", "(".repeat(33), ")".repeat(33));
+        let cases = [
+            // Unreadable.
+            "invalid",
+            "2 +",
+            "(1 + 2",
+            "foo(1)",
+            "sqrt(1, 2)",
+            // Without a finite result.
+            "1 / 0",
+            "sqrt(-1)",
+            "ln(0)",
+            "exp(1000)",
+            // Beyond the evaluator's limits.
+            "max(1, 2, 3, 4, 5, 6, 7, 8, 9)",
+            &too_deep,
+        ];
+        for expr in cases {
+            let params = json!({ "expression": expr });
+            let result = calculate.execute(&params, None, &mut turn).await;
+            assert!(result.is_err(), "Expression {} should fail, got {:?}", expr, result);
+        }
     }
 }

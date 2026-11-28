@@ -72,12 +72,13 @@ futures = "0.3"
 # What `web_fetch` gives of a page (issue 544).
 htmd = "0.6"
 jsonwebtoken = { version = "12", default-features = false, features = ["rust_crypto"] }
-meval = "0.2.0"
 mime_guess = "2.0.5"
 # The prompt catalogue (issue 57): templates with loops and conditions, no
 # access to files or the network: the catalogue reads its files and adds their
 # texts as templates of owned names and sources.
 minijinja = { version = "3", default-features = false, features = ["builtins", "multi_template", "serde"] }
+# What the tool `calculate` evaluates (issue 623).
+nanoexpr = "0.2.1"
 nix = { version = "0.32", features = ["signal", "process"] }
 percent-encoding = "2.3"
 rand = "0.10.3"

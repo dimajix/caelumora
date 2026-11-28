@@ -14,11 +14,11 @@ The column _Usage_:
 | License | Packages |
 |---|---|
 | `MIT OR Apache-2.0` | 210 |
-| `MIT` | 99 |
-| `Apache-2.0 OR MIT` | 47 |
+| `MIT` | 100 |
+| `Apache-2.0 OR MIT` | 46 |
 | `Unicode-3.0` | 18 |
 | `Apache-2.0` | 12 |
-| `Unlicense OR MIT` | 10 |
+| `Unlicense OR MIT` | 9 |
 | `Zlib OR Apache-2.0 OR MIT` | 7 |
 | `BSD-3-Clause` | 4 |
 | `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` | 3 |
@@ -143,7 +143,6 @@ The column _Usage_:
 | `find-msvc-tools` | 0.1.16 | `MIT OR Apache-2.0` | runtime |  | https://github.com/rust-lang/cc-rs |
 | `fixedbitset` | 0.5.9 | `MIT OR Apache-2.0` | runtime |  | https://github.com/petgraph/fixedbitset |
 | `flume` | 0.12.0 | `Apache-2.0 OR MIT` | runtime |  | https://github.com/zesterer/flume |
-| `fnv` | 1.0.7 | `Apache-2.0 OR MIT` | runtime |  | https://github.com/servo/rust-fnv |
 | `foldhash` | 0.1.5, 0.2.0 | `Zlib` | runtime |  | https://github.com/orlp/foldhash |
 | `foreign-types` | 0.3.2 | `MIT OR Apache-2.0` | runtime |  | https://github.com/sfackler/foreign-types |
 | `foreign-types-shared` | 0.1.1 | `MIT OR Apache-2.0` | runtime |  | https://github.com/sfackler/foreign-types |
@@ -225,19 +224,19 @@ The column _Usage_:
 | `matchit` | 0.8.4 | `MIT AND BSD-3-Clause` | runtime |  | https://github.com/ibraheemdev/matchit |
 | `md-5` | 0.11.0 | `MIT OR Apache-2.0` | runtime |  | https://github.com/RustCrypto/hashes |
 | `memchr` | 2.8.3 | `Unlicense OR MIT` | runtime |  | https://github.com/BurntSushi/memchr |
-| `meval` | 0.2.0 | `Unlicense OR MIT` | runtime | ✓ | https://github.com/rekka/meval-rs |
 | `mime` | 0.3.18 | `MIT OR Apache-2.0` | runtime |  | https://github.com/hyperium/mime |
 | `mime_guess` | 2.0.5 | `MIT` | runtime | ✓ | https://github.com/abonander/mime_guess |
 | `minijinja` | 3.1.0 | `Apache-2.0` | runtime | ✓ | https://github.com/mitsuhiko/minijinja |
 | `mio` | 1.2.5 | `MIT` | runtime |  | https://github.com/tokio-rs/mio |
 | `multer` | 3.1.0 | `MIT` | runtime |  | https://github.com/rwf2/multer |
 | `multiversion_no_op` | 1.0.0 | `Apache-2.0 OR MIT` | runtime |  | https://github.com/hsivonen/multiversion_no_op |
+| `nanoexpr` | 0.2.1 | `MIT` | runtime | ✓ | https://github.com/AlixANNERAUD/nanoexpr |
 | `native-tls` | 0.2.18 | `MIT OR Apache-2.0` | runtime |  | https://github.com/rust-native-tls/rust-native-tls |
 | `new_debug_unreachable` | 1.0.6 | `MIT` | runtime |  | https://github.com/mbrubeck/rust-debug-unreachable |
 | `nibble_vec` | 0.1.0 | `MIT` | runtime |  | https://github.com/michaelsproul/rust_nibble_vec |
 | `nix` | 0.31.4, 0.32.0 | `MIT` | runtime | ✓ | https://github.com/nix-rust/nix |
 | `nohash-hasher` | 0.2.0 | `Apache-2.0 OR MIT` | runtime |  | https://github.com/paritytech/nohash-hasher |
-| `nom` | 1.2.4, 8.0.0 | `MIT` | runtime |  | https://github.com/rust-bakery/nom |
+| `nom` | 8.0.0 | `MIT` | runtime |  | https://github.com/rust-bakery/nom |
 | `nu-ansi-term` | 0.50.3 | `MIT` | runtime |  | https://github.com/nushell/nu-ansi-term |
 | `num-conv` | 0.2.2 | `MIT OR Apache-2.0` | runtime |  | https://github.com/jhpratt/num-conv |
 | `num-traits` | 0.2.19 | `MIT OR Apache-2.0` | runtime |  | https://github.com/rust-num/num-traits |

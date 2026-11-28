@@ -1,6 +1,6 @@
 # 623 — The calculator rests on an unmaintained parser
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Maintenance
@@ -50,3 +50,16 @@ Recommended: A, the crate chosen by the comparison above; B only if none fits.
 ## History
 
 - **2026-11-27** — Opened on the maintainer's request, from step 2 of issue 620.
+- **2026-11-28** — Compared: `meval` had its last release in September 2018 and its last commit
+  to the code in 2019; a pull request moving it to `nom` 7 has been open since 2022, and the
+  report of the warning since 2023. A newer `nom` cannot be given to it, only a fork of ours.
+  `evalexpr` is under the AGPL. `exmex` 0.21 is maintained, but by its defaults does not know
+  `pi`, reads no `1e3` and gives `-2^2` as 4 and `2^3^2` as 64. `nanoexpr` 0.2.1 evaluates what
+  `meval` did - but `signum`, which it calls `sign`, a function of more than 8 arguments (`max`,
+  `min` of nine numbers) and more than 32 levels of nesting, the limits of its evaluator - and
+  fails on a division by zero, a value outside a function's domain and an overflow, where `meval`
+  gave infinity or NaN, which reached the model as `null`. It depends on nothing but `libm` and
+  has no `unsafe` code; that it is young, of one author, the maintainer accepted, since the
+  calculator calls it in one place and a fork, under MIT, would be self-contained. `calculate`
+  evaluates with `nanoexpr`; its tests hold a case for each kind of expression its description
+  names, and for each way it fails. `nom` 1.2.4 and `fnv` left `Cargo.lock`. Done.

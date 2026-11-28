@@ -506,7 +506,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [391](391-history-and-transcript-review-epic.md) | done | Epic for the review of the history and the transcript of 2026-10-16: the bracket around issues 392–398 and their recommended order. |
 | [444](444-texts-compiled-in-cannot-be-exported.md) | open | A variant of the texts given to models is a directory of files of the form of those compiled in, but whoever runs the program without its sources has no copy of them to begin one with. |
 | [620](620-dependencies-go-unused-and-out-of-date-unnoticed.md) | done | Cargo 1.100 warns of four dependencies two crates declare and do not use - three of `caelumora-rest-client`, the domain of `caelumora-subagents` built without features -, which no check of the workspace refuses, and nothing keeps the dependencies of the Rust workspace and of the web UI up to date, so they fall behind their newest versions unnoticed. |
-| [623](623-the-calculator-rests-on-an-unmaintained-parser.md) | open | The tool `calculate` of the component `calculator` evaluates expressions with `meval` 0.2.0, which has no newer version and pulls in `nom` 1.2.4, whose code Cargo warns a future version of Rust will reject, so the calculator stops building with a coming compiler and no update can help. |
+| [623](623-the-calculator-rests-on-an-unmaintained-parser.md) | done | The tool `calculate` of the component `calculator` evaluates expressions with `meval` 0.2.0, which has no newer version and pulls in `nom` 1.2.4, whose code Cargo warns a future version of Rust will reject, so the calculator stops building with a coming compiler and no update can help. |
 
 ## Code structure
 
