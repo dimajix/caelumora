@@ -1591,6 +1591,83 @@ async fn a_request_whose_task_outlives_it_defers_its_answer_to_the_tasks_end() {
     }
 }
 
+/// Issue 591: an open task whose following breaks off, or that cannot be followed, is followed
+/// again after a pause, within the same run, and its end said; one its remote agent does not know -
+/// as it is followed, or as it is asked to be - is given up as failed, as the turn whose answer was
+/// deferred to it.
+#[tokio::test]
+async fn an_open_task_whose_following_broke_off_is_followed_again_or_given_up_if_unknown() {
+    use crate::external::{ExternalAgentError, ExternalEvent};
+    use caelumora_domain::turn::GivenUpReason;
+
+    let broken = || ExternalAgentError::Connection {
+        endpoint: "https://agent.example".to_string(),
+        reason: "reset".to_string(),
+    };
+    let unknown =
+        || ExternalAgentError::UnknownTask { endpoint: "https://agent.example".to_string() };
+    let request = || vec![Ok(ExternalEvent::Started(task("t-1"))), Err(broken())];
+    let ends = || {
+        vec![Ok(ExternalEvent::Message("Here it is.".to_string())), Ok(ExternalEvent::Completed)]
+    };
+    let remote = || ScriptedExternalAgent::answering(vec![request()]);
+
+    let broke_off = remote().resuming(vec![vec![Err(broken())], ends()]);
+    let refused = remote().failing_to_resume(vec![broken()]).resuming(vec![ends()]);
+    for (remote, how) in [(broke_off, "its following broke off"), (refused, "it was refused")] {
+        let remote = Arc::new(remote);
+        let Stuck { agent, mut events, running, .. } =
+            with_an_external_agent(Arc::clone(&remote)).await;
+        assert!(answered(&mut events, agent).await.is_empty(), "the answer deferred: {how}");
+        let said = answered(&mut events, agent).await;
+        assert_eq!(said[0].content.as_deref(), Some("Here it is."), "followed again: {how}");
+        let resumed = remote.called_as().iter().filter(|(call, _)| *call == "resume").count();
+        assert_eq!(resumed, 2, "followed twice in the same run: {how}");
+        running.abort();
+    }
+
+    let in_its_stream = remote().resuming(vec![vec![Err(unknown())]]);
+    let as_asked = remote().failing_to_resume(vec![unknown()]);
+    for (remote, how) in [(in_its_stream, "in its stream"), (as_asked, "as asked")] {
+        let Stuck { channel, agent, mut events, running, .. } =
+            with_an_external_agent(Arc::new(remote)).await;
+        let ends = time::timeout(Duration::from_secs(5), async {
+            let mut ends = Vec::new();
+            while ends.len() < 2 {
+                let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id != ActorId::Agent(agent) {
+                    continue;
+                }
+                match envelope.event {
+                    ActorEvent::TurnFinished { turn_id, deferred, .. } => {
+                        ends.push((turn_id, None, deferred));
+                    }
+                    ActorEvent::TurnGivenUp { turn_id, reason } => {
+                        ends.push((turn_id, Some(reason), false));
+                    }
+                    _ => {}
+                }
+            }
+            ends
+        })
+        .await
+        .expect("the request answered, and its task given up");
+        assert!(ends[0].2, "the answer deferred: {how}");
+        assert_eq!(ends[1].0, ends[0].0, "the turn whose answer was deferred ends: {how}");
+        assert!(
+            matches!(
+                &ends[1].1,
+                Some(GivenUpReason::Failed { message }) if message.contains("no longer knows")
+            ),
+            "given up as failed, {how}: {:?}",
+            ends[1].1
+        );
+        let state = channel.stored_agent_channel_state(agent).await.unwrap();
+        assert!(state.remote.open_tasks.is_empty(), "and forgotten: {how}");
+        running.abort();
+    }
+}
+
 #[tokio::test]
 async fn an_answer_that_broke_off_is_said_once_in_full_when_its_task_ends() {
     use crate::external::{ExternalAgentError, ExternalEvent};

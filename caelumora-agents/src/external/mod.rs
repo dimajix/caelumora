@@ -97,6 +97,10 @@ pub enum ExternalAgentError {
     /// The response could not be understood.
     #[error("invalid response from the external agent at {endpoint}: {reason}")]
     InvalidResponse { endpoint: String, reason: String },
+    /// The remote agent does not know the task asked about (issue 591): it never had it, or it
+    /// forgot it - the one failure after which an open task is not followed again.
+    #[error("the external agent at {endpoint} does not know the task")]
+    UnknownTask { endpoint: String },
     /// The credential for the remote agent could not be had. Why is for the
     /// log: it names the secret's key.
     #[error("no usable credential for the external agent at {endpoint}")]
@@ -121,9 +125,10 @@ pub type ExternalStream = BoxStream<'static, ExternalAgentResult<ExternalEvent>>
 /// shared, as what follows a task after the call resolves them too.
 #[async_trait]
 pub trait ExternalAgent: Send + Sync + Debug {
-    /// Hands `message` to the remote agent within `conversation` - `None`
-    /// lets it open one, which the stream then names
-    /// (`ExternalEvent::Conversation`) - and streams what comes back.
+    /// Hands `message` to the remote agent within `conversation` - `None` lets it open one, which
+    /// the stream then names (`ExternalEvent::Conversation`) - and streams what comes back. A
+    /// message that answers a task the remote agent does not know fails with
+    /// `ExternalAgentError::UnknownTask` (issue 591).
     async fn send(
         &self,
         secrets: Arc<dyn Secrets>,
@@ -131,9 +136,11 @@ pub trait ExternalAgent: Send + Sync + Debug {
         message: OutboundMessage,
     ) -> ExternalAgentResult<ExternalStream>;
 
-    /// Re-attaches to `task`, left open by an earlier request - after a
-    /// restart - and streams what comes back from where it stands now. A
-    /// task that ended meanwhile yields its end at once.
+    /// Re-attaches to `task`, left open by an earlier request - after a restart, or once following
+    /// it broke off - and streams what comes back from where it stands now. A task that ended
+    /// meanwhile yields its end at once. A task the remote agent does not know fails with
+    /// `ExternalAgentError::UnknownTask`, as the call or in its stream: the one failure after which
+    /// the task is given up rather than followed again (issue 591).
     async fn resume(
         &self,
         secrets: Arc<dyn Secrets>,
@@ -211,6 +218,8 @@ pub(crate) mod testing {
     pub(crate) struct ScriptedExternalAgent {
         answers: Mutex<VecDeque<Vec<ExternalAgentResult<ExternalEvent>>>>,
         resumed: Mutex<VecDeque<Vec<ExternalAgentResult<ExternalEvent>>>>,
+        /// What the next calls of `resume` fail with, before any is answered with a stream.
+        resume_failures: Mutex<VecDeque<ExternalAgentError>>,
         /// Every request, with the conversation it was sent in.
         pub(crate) sent: Mutex<Vec<(Option<ConversationId>, OutboundMessage)>>,
         /// Every task it was asked to cancel.
@@ -239,6 +248,12 @@ pub(crate) mod testing {
         /// Answers `resume` with `events`, once per call, in order.
         pub(crate) fn resuming(self, events: Vec<Vec<ExternalAgentResult<ExternalEvent>>>) -> Self {
             Self { resumed: Mutex::new(events.into()), ..self }
+        }
+
+        /// Fails the next calls of `resume` with `failures`, one per call, in order, before it
+        /// answers any with a stream.
+        pub(crate) fn failing_to_resume(self, failures: Vec<ExternalAgentError>) -> Self {
+            Self { resume_failures: Mutex::new(failures.into()), ..self }
         }
 
         /// Declares what it brings in itself classified `classification`.
@@ -281,11 +296,17 @@ pub(crate) mod testing {
             calls.iter().copied().zip(read.iter().cloned()).collect()
         }
 
+        /// The next stream of `script`: its events, and then open - but a stream with an error
+        /// among them ends after them, as a remote agent's stream ends that breaks.
         fn next(
             script: &Mutex<VecDeque<Vec<ExternalAgentResult<ExternalEvent>>>>,
         ) -> ExternalStream {
             let next = script.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).pop_front();
-            Box::pin(stream::iter(next.unwrap_or_default()).chain(stream::pending()))
+            let events = next.unwrap_or_default();
+            if events.iter().any(Result::is_err) {
+                return Box::pin(stream::iter(events));
+            }
+            Box::pin(stream::iter(events).chain(stream::pending()))
         }
     }
 
@@ -328,7 +349,12 @@ pub(crate) mod testing {
             _: &TaskId,
         ) -> ExternalAgentResult<ExternalStream> {
             self.called("resume", &*secrets).await;
-            Ok(Self::next(&self.resumed))
+            let mut failures =
+                self.resume_failures.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            match failures.pop_front() {
+                Some(failure) => Err(failure),
+                None => Ok(Self::next(&self.resumed)),
+            }
         }
 
         async fn cancel(

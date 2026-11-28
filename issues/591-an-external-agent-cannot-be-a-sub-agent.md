@@ -108,8 +108,9 @@ the delegation's state says, so that a restart loses nothing. Each step is revie
     open, no word due; the turn's later end is the answer.
 3.  **A followed task taken up again.** A task whose followed stream ends or breaks before it does,
     or that cannot be followed, is followed again after a delay that grows, not only at the actor's
-    next run; one its remote agent no longer knows (`ExternalAgentError::Rejected`) is given up as
-    failed.
+    next run; one its remote agent no longer knows is given up as failed - told apart by a new
+    `ExternalAgentError::UnknownTask`, which A2A's `TaskNotFoundError` becomes, since `Rejected`
+    stands for any refusal, a passing one too.
 4.  **A cancel reaches an open task.** A cancel in the external agent's thread cancels its open
     tasks between requests too, and says what came of them so far, as a cancel of a request does.
 5.  **External sub-agents.** The sub-agent tool no longer refuses an external personality
@@ -132,3 +133,6 @@ the delegation's state says, so that a restart loses nothing. Each step is revie
 - **2026-11-28** — The maintainer decided for approach B (*Decision*), with the field on
   `TurnFinished`, and that a followed task is taken up again and a cancel reaches an open task in
   this work too (*Plan*). The first point of *The problem* found tested since 557.
+- **2026-11-28** — Steps 1 and 2 done. For step 3 the maintainer decided that a task is given up
+  only once its remote agent says it does not know it (`ExternalAgentError::UnknownTask`), and
+  followed again otherwise, without limit.

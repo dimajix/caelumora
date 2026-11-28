@@ -28,7 +28,10 @@
 use super::body::AgentBody;
 use crate::command::AgentCommand;
 use crate::error::failure_message;
-use crate::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, OutboundMessage, Said};
+use crate::external::{
+    ExternalAgent, ExternalAgentError, ExternalAgentResult, ExternalEvent, ExternalStream,
+    OutboundMessage, Said,
+};
 use crate::message::PerceiveInProcessor;
 use crate::prompt::external_context::EXTERNAL_CONTEXT_KIND;
 use crate::prompt::ContextProvider;
@@ -64,9 +67,12 @@ use futures::future::BoxFuture;
 use futures::stream;
 use futures::stream::{BoxStream, SelectAll};
 use futures::StreamExt;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
-use tokio_util::sync::CancellationToken;
+use std::time::Duration;
+use tokio::time;
+use tokio::time::Instant;
+use tokio_util::sync::{CancellationToken, DropGuard};
 use tracing::{debug, info, trace, warn, Instrument};
 
 #[derive(Debug)]
@@ -538,29 +544,28 @@ impl ExternalAgentActor {
         self.body.store(state).await;
     }
 
-    /// Re-attaches to every task left working that is not followed yet
-    /// (`ExternalAgent::resume`), in the authority it is done with
-    /// (`initiator_of`): after a restart, or when the answer to a request
-    /// ended before its task did. A task is re-attached once per
-    /// run of the actor, so that a remote side that keeps breaking off does
-    /// not keep it busy; the next run tries again. A task that asked back
-    /// waits for the next request instead. A task whose channel was lowered
-    /// since it began is given up instead of followed (`give_up_task`).
-    /// Nothing is followed once the run is to end (issue 377): the answer
-    /// its channel's stop ended is left to the next run.
+    /// Re-attaches to every task left working that is not followed and is due to be
+    /// (`FollowedTasks`, `ExternalAgent::resume`), in the authority it is done with
+    /// (`initiator_of`): after a restart, when the answer to a request ended before its task did,
+    /// and again, after a pause that grows, when following it broke off or failed (issue 591). A
+    /// task its remote agent does not know is given up as failed (`give_up_unknown`). A task that
+    /// asked back waits for the next request instead. A task whose channel was lowered since it
+    /// began is given up instead of followed (`give_up_task`). A task no longer working is
+    /// followed no longer. Nothing is followed once the run is to end (issue 377): the answer its
+    /// channel's stop ended is left to the next run.
     async fn follow_open_tasks(
         &self,
         state: &mut AgentChannelState,
-        followed: &mut Followed,
-        attempted: &mut HashSet<TaskId>,
+        followed: &mut FollowedTasks,
         output: &dyn EventSender,
     ) {
+        let working: Vec<TaskId> = state.remote.working().cloned().collect();
+        followed.keep_working(&working);
         if self.body.control.is_ending() {
             return;
         }
-        let working = state.remote.working().cloned();
-        for task in working.collect::<Vec<_>>() {
-            if !attempted.insert(task.clone()) {
+        for task in working {
+            if !followed.is_due(&task, Instant::now()) {
                 continue;
             }
             if let Some(work) = state.remote.work_of(&task) {
@@ -573,63 +578,104 @@ impl ExternalAgentActor {
             match self.remote.resume(secrets, &task).await {
                 Ok(stream) => {
                     debug!("External agent {} follows its open task again", self.id());
-                    let tag = task.clone();
-                    let tagged = stream
-                        .map(move |event| (tag.clone(), Some(event)))
-                        .chain(stream::once(async move { (task, None) }));
-                    followed.push(Box::pin(tagged));
+                    let unsaid = state.remote.unsaid_of(&task);
+                    followed.follow(task, stream, unsaid);
+                }
+                Err(ExternalAgentError::UnknownTask { .. }) => {
+                    self.give_up_unknown(state, &task, followed, output).await;
                 }
                 Err(e) => {
-                    warn!("External agent {} cannot follow its open task: {:#}", self.id(), e)
+                    warn!("External agent {} cannot follow its open task: {:#}", self.id(), e);
+                    followed.lost(&task, Instant::now());
                 }
             }
         }
     }
 
-    /// Takes in `event` of the followed `task` - `None` once its stream
-    /// ends. When the task has ended or asks back, what came of it is said
-    /// in the channel (`speak`); `pending` holds what came so far of each.
+    /// Gives up the open `task`, which its remote agent does not know (issue 591): followed no
+    /// longer, forgotten and stored so, and its failure said as the turn of the request that began
+    /// it (`speak`), so that whoever waits for its answer is not left waiting.
+    async fn give_up_unknown(
+        &self,
+        state: &mut AgentChannelState,
+        task: &TaskId,
+        followed: &mut FollowedTasks,
+        output: &dyn EventSender,
+    ) {
+        info!(
+            "External agent {} {} gives up its open task: its remote agent does not know it",
+            self.id(),
+            self.name()
+        );
+        let work = state.remote.work_of(task);
+        state.remote.close(task);
+        followed.forget(task);
+        let reason = "its remote agent no longer knows the task".to_string();
+        self.speak(state, work, Err(reason), output).await;
+    }
+
+    /// Takes in `event` of the followed `task` - `None` once its stream ends. When the task has
+    /// ended or asks back, what came of it is said in the channel (`speak`). A stream that ends
+    /// before its task does is followed again, after a pause (issue 591); one that tells that the
+    /// remote agent does not know the task gives it up (`give_up_unknown`). A task followed no
+    /// longer - closed meanwhile - says nothing more.
     async fn on_followed(
         &self,
         state: &mut AgentChannelState,
         task: TaskId,
         event: Option<ExternalAgentResult<ExternalEvent>>,
-        pending: &mut HashMap<TaskId, Answer>,
+        followed: &mut FollowedTasks,
         output: &dyn EventSender,
     ) {
         // Read before the task may be closed by what comes of it.
         let work = state.remote.work_of(&task);
-        let answer = pending
-            .entry(task.clone())
-            .or_insert_with(|| Answer::after(state.remote.unsaid_of(&task)));
+        let Some(answer) = followed.answer(&task) else { return };
         let outcome = match event {
-            // It is known to be open and working, and nobody waits for its
-            // pieces: what it says is said once it ends.
-            Some(Ok(event)) => match answer.take(state, Some(&task), event) {
-                Step::Continue | Step::Started(_) | Step::Partial(_) => return,
-                Step::Ended => Ok(()),
-                Step::Failed(reason) => Err(reason),
-            },
-            // The task has not ended: nothing is said of it. What came so
-            // far waits for whatever comes after, if anything.
+            // It is known to be open and working, and nobody waits for its pieces: what it says is
+            // said once it ends. Something of its work - not only where it stands - begins the
+            // next pause anew.
+            Some(Ok(event)) => {
+                let of_its_work =
+                    !matches!(event, ExternalEvent::Conversation(_) | ExternalEvent::Started(_));
+                let step = answer.take(state, Some(&task), event);
+                if of_its_work {
+                    followed.heard_of(&task);
+                }
+                match step {
+                    Step::Continue | Step::Started(_) | Step::Partial(_) => return,
+                    Step::Ended => Ok(()),
+                    Step::Failed(reason) => Err(reason),
+                }
+            }
+            Some(Err(ExternalAgentError::UnknownTask { .. })) => {
+                self.give_up_unknown(state, &task, followed, output).await;
+                return;
+            }
+            // The task has not ended: nothing is said of it. What came so far waits for whatever
+            // comes after, if anything.
             Some(Err(e)) => {
                 warn!("External agent {}: following its open task failed: {:#}", self.id(), e);
                 return;
             }
-            // Ended with the task still open, as far as anyone knows: what
-            // came of it is dropped, not said cut off - the next run follows
-            // it again and says it when it ends.
+            // Ended with the task still open, as far as anyone knows: what came of it is dropped,
+            // not said cut off - it is followed again after a pause, and said when it ends. A task
+            // that ended or asks back is followed no longer.
             None => {
-                if pending.remove(&task).is_some_and(|a| !a.is_empty()) {
+                if !answer.is_empty() {
                     warn!(
                         "External agent {}: the open task's stream ended before the task did",
                         self.id()
                     );
                 }
+                if state.remote.working().any(|working| *working == task) {
+                    followed.lost(&task, Instant::now());
+                } else {
+                    followed.forget(&task);
+                }
                 return;
             }
         };
-        let answer = pending.remove(&task).unwrap_or_default();
+        let answer = followed.forget(&task).unwrap_or_default();
         // Said now, if it asks back and stays open.
         state.remote.set_unsaid(&task, None);
         // Not said at all if its channel was lowered since it began.
@@ -796,9 +842,132 @@ impl ExternalAgentActor {
     }
 }
 
-/// The streams of the open tasks an actor follows, each event with its
-/// task, and `None` when the stream ends.
-type Followed = SelectAll<BoxStream<'static, (TaskId, Option<ExternalAgentResult<ExternalEvent>>)>>;
+/// The first pause before an open task is followed again whose following broke off or failed
+/// (issue 591); each further try in a row waits twice as long, up to `FOLLOW_AGAIN_MOST`.
+const FOLLOW_AGAIN_FIRST: Duration = Duration::from_secs(1);
+
+/// The longest pause before an open task is followed again.
+const FOLLOW_AGAIN_MOST: Duration = Duration::from_secs(300);
+
+/// What an event of a followed task comes as: with its task, and `None` once its stream ends.
+type FollowedEvent = (TaskId, Option<ExternalAgentResult<ExternalEvent>>);
+
+/// The open tasks an actor follows in its run (issue 591): the stream of each followed, with what
+/// came of it so far, and of each lost - whose stream ended or broke before the task did, or that
+/// could not be followed - when it is followed again: after a pause that doubles with each try in
+/// a row, from `FOLLOW_AGAIN_FIRST` up to `FOLLOW_AGAIN_MOST`, so that a remote side that keeps
+/// breaking off does not keep the actor busy. It keeps only tasks still working (`keep_working`).
+#[derive(Default)]
+struct FollowedTasks {
+    /// The streams followed, each event with its task.
+    streams: SelectAll<BoxStream<'static, FollowedEvent>>,
+    /// Where each task followed or lost stands.
+    tasks: HashMap<TaskId, Following>,
+}
+
+/// Where an open task an actor follows stands.
+enum Following {
+    /// Its stream is followed: what came of it so far, and how many tries in a row failed before.
+    /// The stream is cut off once this is dropped - the task lost, forgotten or followed anew -,
+    /// so that only the stream it is followed by now feeds it (`_cut`).
+    Followed { answer: Answer, tries: u32, _cut: DropGuard },
+    /// Following it failed `tries` times in a row; it is followed again from `due` on.
+    Lost { tries: u32, due: Instant },
+}
+
+impl FollowedTasks {
+    /// Follows `task` by `stream`, its end included, `unsaid` having come of it before and not been
+    /// said (issue 195); the stream is cut off once the task is followed by it no longer.
+    fn follow(&mut self, task: TaskId, stream: ExternalStream, unsaid: Option<String>) {
+        let tries = self.tries(&task);
+        let cut = CancellationToken::new();
+        let (tag, end, cut_off) = (task.clone(), task.clone(), cut.clone());
+        let tagged = stream
+            .map(move |event| (tag.clone(), Some(event)))
+            .chain(stream::once(async move { (end, None) }))
+            .take_until(async move { cut_off.cancelled().await });
+        self.streams.push(Box::pin(tagged));
+        let answer = Answer::after(unsaid);
+        let followed = Following::Followed { answer, tries, _cut: cut.drop_guard() };
+        self.tasks.insert(task, followed);
+    }
+
+    /// How many tries in a row at following `task` failed.
+    fn tries(&self, task: &TaskId) -> u32 {
+        match self.tasks.get(task) {
+            Some(Following::Followed { tries, .. } | Following::Lost { tries, .. }) => *tries,
+            None => 0,
+        }
+    }
+
+    /// Whether it follows any stream.
+    fn follows_any(&self) -> bool {
+        !self.streams.is_empty()
+    }
+
+    /// The next event of a task followed; `None` if it follows none.
+    async fn next(&mut self) -> Option<FollowedEvent> {
+        self.streams.next().await
+    }
+
+    /// Whether `task` is to be followed at `now`: neither followed nor lost, or due again.
+    fn is_due(&self, task: &TaskId, now: Instant) -> bool {
+        match self.tasks.get(task) {
+            None => true,
+            Some(Following::Followed { .. }) => false,
+            Some(Following::Lost { due, .. }) => *due <= now,
+        }
+    }
+
+    /// What came so far of `task`, if it is followed.
+    fn answer(&mut self, task: &TaskId) -> Option<&mut Answer> {
+        match self.tasks.get_mut(task) {
+            Some(Following::Followed { answer, .. }) => Some(answer),
+            _ => None,
+        }
+    }
+
+    /// Something of the work of `task`, which is followed, was heard: a try that worked, so that
+    /// the next pause begins anew.
+    fn heard_of(&mut self, task: &TaskId) {
+        if let Some(Following::Followed { tries, .. }) = self.tasks.get_mut(task) {
+            *tries = 0;
+        }
+    }
+
+    /// Following `task` broke off or failed at `now`: what came of it is dropped, and it is
+    /// followed again after a pause twice as long as the one before.
+    fn lost(&mut self, task: &TaskId, now: Instant) {
+        let tries = self.tries(task);
+        let pause = FOLLOW_AGAIN_FIRST.saturating_mul(2u32.saturating_pow(tries));
+        let due = now + pause.min(FOLLOW_AGAIN_MOST);
+        self.tasks.insert(task.clone(), Following::Lost { tries: tries + 1, due });
+    }
+
+    /// `task` is followed no longer - it ended, asks back, or was given up -; what came of it, if
+    /// it was followed. Its stream is cut off.
+    fn forget(&mut self, task: &TaskId) -> Option<Answer> {
+        match self.tasks.remove(task) {
+            Some(Following::Followed { answer, .. }) => Some(answer),
+            _ => None,
+        }
+    }
+
+    /// Keeps the tasks of `working` alone: one no longer working is followed no longer, its stream
+    /// cut off.
+    fn keep_working(&mut self, working: &[TaskId]) {
+        self.tasks.retain(|task, _| working.contains(task));
+    }
+
+    /// When the next task lost is due to be followed again, if one is lost.
+    fn next_due(&self) -> Option<Instant> {
+        let lost = self.tasks.values().filter_map(|followed| match followed {
+            Following::Lost { due, .. } => Some(*due),
+            Following::Followed { .. } => None,
+        });
+        lost.min()
+    }
+}
 
 /// What came back so far.
 #[derive(Default)]
@@ -1096,25 +1265,31 @@ impl Actor for ExternalAgentActor {
         self.body.announce(self.body.control.state(), &*output).await;
         // The open tasks it follows between requests, and what came of them
         // so far. While it answers a request, what they send waits.
-        let mut followed = Followed::new();
-        let mut attempted = HashSet::new();
-        let mut pending = HashMap::new();
-        self.follow_open_tasks(&mut state, &mut followed, &mut attempted, &*output).await;
+        let mut followed = FollowedTasks::default();
+        self.follow_open_tasks(&mut state, &mut followed, &*output).await;
         loop {
-            // What others said, a request to respond, or an open task's news.
+            // What others said, a request to respond, an open task's news, or a lost one due.
+            let next_due = followed.next_due();
+            let due = time::sleep_until(next_due.unwrap_or_else(Instant::now));
             tokio::select! {
                 () = self.body.control.ending() => break,
                 received = rx.recv() => {
                     let Some(received) = received else { break };
                     // One answer to all that was queued, to the last request.
-                    if let Some(request) = self.hear(&mut state, received, &mut rx, &*output).await {
+                    let request = self.hear(&mut state, received, &mut rx, &*output).await;
+                    if let Some(request) = request {
                         let span = envelope_span(&request.context, request.event.kind());
-                        self.respond(&mut state, &request, &mut rx, &*output).instrument(span).await;
-                        self.follow_open_tasks(&mut state, &mut followed, &mut attempted, &*output).await;
+                        let responding = self.respond(&mut state, &request, &mut rx, &*output);
+                        responding.instrument(span).await;
+                        self.follow_open_tasks(&mut state, &mut followed, &*output).await;
                     }
                 }
-                Some((task, event)) = followed.next(), if !followed.is_empty() => {
-                    self.on_followed(&mut state, task, event, &mut pending, &*output).await;
+                Some((task, event)) = followed.next(), if followed.follows_any() => {
+                    self.on_followed(&mut state, task, event, &mut followed, &*output).await;
+                }
+                // A task lost is due to be followed again (issue 591).
+                () = due, if next_due.is_some() => {
+                    self.follow_open_tasks(&mut state, &mut followed, &*output).await;
                 }
             }
             // Where it stands now, if it moved without telling: after a
@@ -1174,6 +1349,67 @@ mod tests {
     use caelumora_store::memory::MemoryStore;
     use caelumora_store::transcript::TranscriptStore;
     use caelumora_store::StateStore;
+
+    /// Issue 591: a task lost is due again after a pause that doubles with each try in a row, up
+    /// to the longest, and begins anew once something of its work was heard; a task followed is
+    /// not due, nor is one followed again after it was lost; one no longer working is kept no
+    /// longer.
+    #[test]
+    fn a_task_lost_is_followed_again_after_a_pause_that_grows() {
+        let mut followed = FollowedTasks::default();
+        let task = TaskId("t-1".to_string());
+        let open = || -> ExternalStream { Box::pin(stream::pending()) };
+        let now = Instant::now();
+        assert!(followed.is_due(&task, now), "never followed");
+        followed.follow(task.clone(), open(), None);
+        assert!(!followed.is_due(&task, now), "followed");
+        let pauses: Vec<u64> = (0..11)
+            .map(|_| {
+                followed.lost(&task, now);
+                followed.next_due().map_or(0, |due| (due - now).as_secs())
+            })
+            .collect();
+        assert_eq!(pauses, [1, 2, 4, 8, 16, 32, 64, 128, 256, 300, 300], "doubling, bounded");
+        assert!(!followed.is_due(&task, now) && followed.is_due(&task, now + FOLLOW_AGAIN_MOST));
+
+        followed.follow(task.clone(), open(), None);
+        assert_eq!(followed.next_due(), None, "followed again: nothing due");
+        followed.lost(&task, now);
+        assert_eq!(followed.next_due(), Some(now + FOLLOW_AGAIN_MOST), "the tries kept");
+        followed.follow(task.clone(), open(), None);
+        followed.heard_of(&task);
+        followed.lost(&task, now);
+        assert_eq!(followed.next_due(), Some(now + FOLLOW_AGAIN_FIRST), "anew once heard of");
+
+        followed.keep_working(&[]);
+        assert!(followed.next_due().is_none() && followed.is_due(&task, now), "not working");
+        followed.follow(task.clone(), open(), Some("so far".to_string()));
+        let answer = followed.forget(&task).and_then(Answer::finish);
+        assert_eq!(answer.as_deref(), Some("so far"), "what came of it before");
+        assert!(followed.answer(&task).is_none(), "forgotten");
+    }
+
+    /// Issue 591: a task followed anew is fed by its new stream alone - the old one cut off, its
+    /// end too -, so that nothing is taken in twice.
+    #[tokio::test]
+    async fn a_task_followed_anew_is_fed_by_its_new_stream_alone() {
+        let mut followed = FollowedTasks::default();
+        let task = TaskId("t-1".to_string());
+        let says = |text: &str| -> ExternalStream {
+            let said = stream::iter(vec![Ok(ExternalEvent::Message(text.to_string()))]);
+            Box::pin(said.chain(stream::pending()))
+        };
+        followed.follow(task.clone(), says("before"), None);
+        followed.forget(&task);
+        followed.follow(task.clone(), says("now"), None);
+        let (_, event) = followed.next().await.expect("an event");
+        assert!(
+            matches!(&event, Some(Ok(ExternalEvent::Message(text))) if text == "now"),
+            "of the stream followed now: {event:?}"
+        );
+        let more = time::timeout(Duration::from_millis(50), followed.next()).await;
+        assert!(more.is_err(), "nothing of the old stream, not even its end");
+    }
 
     fn said(sender: ActorId, name: &str, text: &str) -> Message {
         Message {

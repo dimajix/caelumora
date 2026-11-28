@@ -16,6 +16,9 @@ pub(super) const CARD_PATH: [&str; 2] = [".well-known", "agent-card.json"];
 /// The protocol binding used: JSON-RPC over HTTP.
 pub(super) const JSONRPC_BINDING: &str = "JSONRPC";
 
+/// The JSON-RPC error code of a task the agent does not know.
+const TASK_NOT_FOUND: i64 = -32001;
+
 /// The JSON-RPC error code of a task that cannot be cancelled any more.
 pub(super) const TASK_NOT_CANCELABLE: i64 = -32002;
 
@@ -107,10 +110,15 @@ impl<T> RpcResponse<T> {
 }
 
 impl RpcError {
-    /// The error of a request the agent at `endpoint` refused so.
+    /// The error of a request the agent at `endpoint` refused so: of a task it does not know
+    /// (issue 591), else rejected with its message and code.
     pub(super) fn rejected(self, endpoint: &str) -> ExternalAgentError {
+        let endpoint = endpoint.to_string();
+        if self.code == TASK_NOT_FOUND {
+            return ExternalAgentError::UnknownTask { endpoint };
+        }
         ExternalAgentError::Rejected {
-            endpoint: endpoint.to_string(),
+            endpoint,
             message: format!("{} ({})", self.message, self.code),
         }
     }
@@ -292,6 +300,22 @@ mod tests {
 
     fn sent(value: impl Serialize) -> Value {
         serde_json::to_value(value).expect("json")
+    }
+
+    /// Issue 591: an agent's error that it does not know the task is told apart from any other
+    /// it refuses a request with.
+    #[test]
+    fn an_unknown_task_is_told_apart_from_a_request_rejected() {
+        let error = |code| RpcError { code, message: "no".to_string() };
+        let endpoint = "https://agent.example";
+        assert!(matches!(
+            error(TASK_NOT_FOUND).rejected(endpoint),
+            ExternalAgentError::UnknownTask { .. }
+        ));
+        assert!(matches!(
+            error(TASK_NOT_CANCELABLE).rejected(endpoint),
+            ExternalAgentError::Rejected { message, .. } if message == "no (-32002)"
+        ));
     }
 
     #[test]
