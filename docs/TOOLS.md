@@ -669,25 +669,28 @@ before it answered, what a sub-agent is given waits behind the brief and is answ
 its own. In the turn that gave it a brief, by `start_subagent` or `ask_subagent`, the tool refuses
 to ask it - its answer cannot come before that turn ends -, told the model as a failure with what
 to do instead (issue 616): the tool reads what the turn did from the results of its calls
-(`Turn::tool_results`), and the channel's delegation stays a queue of briefs for every giver.
+(`Turn::tool_results`), and the channel's delegation stays a queue of briefs for every giver. A
+sub-agent may be an external agent too (issue 591): where its remote task outlives the request it
+was given the brief in, the agent is first given back that the answer follows - no word of its own
+due on that -, and the task's end later as the answer.
 
 They are offered where the work's session runs, and act through the `SubAgentWriter` the plugin
 binds to the turn's work (issue 516), in its context: the agent gives, its owner owns the sub-agent,
 made in the channel's scope, of the personality of that name the owner finds from the channel - the
-innermost they may read, as `/agent create` finds one -, an internal one alone (issue 591), cleared
-no wider than the agent that starts it (issue 597: where that agent is limited, every role the
-personality names is named by its limit too; refused as a parameter, since another personality may
-do), named by an adjective and the personality (`curious-researcher`), never by a name the channel
-has had. Only the agent that started a sub-agent asks or ends it. Starting one asks for approval
-only where the component is configured so (`requires_approval`), and is bounded by the limits the
-operator sets in the plugin's section of the configuration (`plugins.subagents`, issue 597): no more
-sub-agents open at once in a tree of a channel - an agent and all that descend from it there, those
-let go not counted - than `max_open`, refused as a parameter, since ending one makes room; none
-deeper than `max_depth`, refused as not permitted - by default, a sub-agent starts none of its own.
-The writer checks them, on the kernel's side: a component's parameters are the agent side's word.
-What the access policy refuses is answered as a refusal, saying what was refused and not by which
-rule; anything else as users are told it - a work that may not reach its own channel among them,
-which is not found, as a channel one may not reach is.
+innermost they may read, as `/agent create` finds one -, cleared no wider than the agent that starts
+it (issue 597: where that agent is limited, every role the personality names is named by its limit
+too; refused as a parameter, since another personality may do), named by an adjective and the
+personality (`curious-researcher`), never by a name the channel has had. Only the agent that started
+a sub-agent asks or ends it. Starting one asks for approval only where the component is configured
+so (`requires_approval`), and is bounded by the limits the operator sets in the plugin's section of
+the configuration (`plugins.subagents`, issue 597): no more sub-agents open at once in a tree of a
+channel - an agent and all that descend from it there, those let go not counted - than `max_open`,
+refused as a parameter, since ending one makes room; none deeper than `max_depth`, refused as not
+permitted - by default, a sub-agent starts none of its own. The writer checks them, on the kernel's
+side: a component's parameters are the agent side's word. What the access policy refuses is answered
+as a refusal, saying what was refused and not by which rule; anything else as users are told it - a
+work that may not reach its own channel among them, which is not found, as a channel one may not
+reach is.
 
 An agent's owner has it start one by a command of the agent, `/subagent @agent <personality>
 <brief>` (issue 596), offered by the same component with the same personalities - the one the

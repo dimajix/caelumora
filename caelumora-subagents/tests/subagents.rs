@@ -3,6 +3,8 @@
 //! given back what it answered, asking it again and ending it through the writer bound to its work.
 #![expect(clippy::unwrap_used, reason = "test code: what fails here fails the test that runs it")]
 
+use caelumora_agents::external::testing::{register_remote, ScriptedExternalAgent};
+use caelumora_agents::external::{ExternalAgentError, ExternalEvent};
 use caelumora_agents::library::AgentsLibrary;
 use caelumora_agents::testing::{
     agent_runtime, calling, prompts_with, register_answering, register_scripted, Answer,
@@ -16,6 +18,7 @@ use caelumora_domain::channel::{ThreadId, ThreadOrigin};
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::{Classification, Confidentiality};
 use caelumora_domain::config::AppConfig;
+use caelumora_domain::external_agent::TaskId;
 use caelumora_domain::history::HistoryEntry;
 use caelumora_domain::message::{Message, MessageId, MessageRole};
 use caelumora_domain::query::Query;
@@ -36,6 +39,7 @@ use caelumora_subagents::library::SubagentsLibrary;
 use caelumora_subagents::plugin::SubagentsPlugin;
 use caelumora_subagents::{NAMESPACE, PROMPTS, SUBAGENTS};
 use std::sync::Arc;
+use tokio::sync::Semaphore;
 
 fn said(text: &str) -> Message {
     Message {
@@ -50,13 +54,26 @@ fn said(text: &str) -> Message {
 /// given, whose model "remarking" remarks on a tool it calls before it answers - "found it", if it
 /// was given its brief framed as one (issue 619) -, and whose model "silent" answers nothing.
 async fn world(leading: Vec<Answer>) -> World {
-    configured_world(leading, |_| {}).await
+    configured_world(leading, |_| {}, |_| {}).await
 }
 
-/// The world `world` makes, its configuration changed by `configure` before the kernel is built.
-async fn configured_world(leading: Vec<Answer>, configure: impl FnOnce(&mut AppConfig)) -> World {
+/// The world `world` makes, with the kind "remote" too: `remote`, the remote agent an external
+/// personality's agents are (issue 591).
+async fn world_with_remote(leading: Vec<Answer>, remote: Arc<ScriptedExternalAgent>) -> World {
+    let register = |registry: &mut ComponentRegistry| register_remote(registry, "remote", remote);
+    configured_world(leading, register, |_| {}).await
+}
+
+/// The world `world` makes, with the kinds `register` registers too, its configuration changed by
+/// `configure` before the kernel is built.
+async fn configured_world(
+    leading: Vec<Answer>,
+    register: impl FnOnce(&mut ComponentRegistry),
+    configure: impl FnOnce(&mut AppConfig),
+) -> World {
     let libraries: [&dyn Library; 2] = [&AgentsLibrary, &SubagentsLibrary];
     let register = |registry: &mut ComponentRegistry| {
+        register(registry);
         register_answering(registry, "leading", leading);
         register_scripted(registry, "researching", vec![said("found it"), said("found more")]);
         let remark = Message {
@@ -162,7 +179,7 @@ async fn limited_world(leading: Vec<Answer>, max_open: usize, max_depth: usize) 
     let configure = |config: &mut AppConfig| {
         config.plugins.insert(SUBAGENTS.to_string(), limits);
     };
-    configured_world(leading, configure).await
+    configured_world(leading, |_| {}, configure).await
 }
 
 /// Issue 558: an agent starts a sub-agent of a personality its tool lists - a new agent, named by
@@ -171,8 +188,7 @@ async fn limited_world(leading: Vec<Answer>, max_open: usize, max_depth: usize) 
 /// too, each result telling it that nothing more is needed until the answer (issue 616); the turn
 /// that reads the second answer leaves it without a word, which lets it go: the session follower
 /// closes its thread with it - let go, the agent deleted -, and nothing is left to ask or to end. A
-/// personality of an external agent is no sub-agent's, and a thread without one of the work's is
-/// none to ask.
+/// thread without one of the work's is none to ask.
 #[tokio::test]
 async fn an_agent_starts_a_sub_agent_asks_it_again_as_it_reads_its_answer_and_lets_it_go() {
     let world = world(leading_a_researcher()).await;
@@ -180,8 +196,6 @@ async fn an_agent_starts_a_sub_agent_asks_it_again_as_it_reads_its_answer_and_le
     let alice = world.alice;
     let internal = PersonalityKind::Internal;
     personality(&world, "researcher", alice, internal, vec![model("researching")]).await;
-    let external = PersonalityKind::External;
-    personality(&world, "remote", alice, external, vec![model("researching")]).await;
     let subagents = ComponentDescriptor {
         params: serde_json::json!({ "personalities": ["researcher"] }),
         ..ComponentDescriptor::new("subagents", SUBAGENTS_KIND)
@@ -258,14 +272,110 @@ async fn an_agent_starts_a_sub_agent_asks_it_again_as_it_reads_its_answer_and_le
     assert!(matches!(refused, SubAgentError::NoSubAgent(_)), "nor to end: {refused}");
 
     let origin = ThreadOrigin { thread: ThreadId::line(main.id()), message: MessageId::new() };
-    let refused = writer.start("remote", origin, "Find it.".to_string()).await.unwrap_err();
-    assert!(matches!(refused, SubAgentError::External(_)), "{refused}");
     let refused = writer.start("nobody", origin, "Find it.".to_string()).await.unwrap_err();
     assert!(matches!(refused, SubAgentError::UnknownPersonality(_)), "{refused}");
     let elsewhere = ThreadId::new();
     let refused = writer.ask(elsewhere, "Hello?".to_string()).await.unwrap_err();
     assert!(matches!(refused, SubAgentError::NoSubAgent(_)), "{refused}");
     world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// Issue 591: an agent starts a sub-agent of an external personality, whose remote agent is given
+/// the brief and takes a task on that outlives the request: the agent is given back that the answer
+/// follows - the brief stays open over the turn that reads it, no word of the agent's being due -,
+/// then the task's later end as the answer, and the turn that reads that leaves the sub-agent
+/// without a word, which lets it go.
+#[tokio::test]
+async fn an_external_sub_agent_s_late_answer_is_given_back_to_the_agent_that_started_it() {
+    let reset = ExternalAgentError::Connection {
+        endpoint: "https://remote.example".to_string(),
+        reason: "reset".to_string(),
+    };
+    let request = vec![Ok(ExternalEvent::Started(TaskId("t-1".to_string()))), Err(reset)];
+    let task_end = vec![
+        Ok(ExternalEvent::Message("found far away".to_string())),
+        Ok(ExternalEvent::Completed),
+    ];
+    // The request is answered at once, the task followed after it only once let.
+    let gate = Arc::new(Semaphore::new(1));
+    let remote = ScriptedExternalAgent::answering(vec![request]).resuming(vec![task_end]);
+    let remote = Arc::new(remote.gated(Arc::clone(&gate)));
+    let fixed = |answer: Message| -> Answer { Box::new(move |_| answer.clone()) };
+    let start = calling(
+        START_SUBAGENT,
+        serde_json::json!({ "personality": "remote", "brief": "Find it." }),
+    );
+    let leading =
+        vec![fixed(start), fixed(said("started")), fixed(said("noted")), fixed(said("thanks"))];
+    let world = world_with_remote(leading, Arc::clone(&remote)).await;
+    let alice = world.alice;
+    let remote_agent = vec![ComponentDescriptor::new("remote", "remote")];
+    let external = PersonalityKind::External;
+    let mut remote_one = personality(&world, "remote", alice, external, remote_agent).await;
+    // Cleared as its owner, for the channels of the world: an external personality that names no
+    // roles is limited to what is public.
+    remote_one.roles = Some(vec![*STAFF]);
+    let personalities = &world.kernel.entity_stores().personalities;
+    personalities.update(&World::system(), &mut remote_one).await.unwrap();
+    let subagents = ComponentDescriptor {
+        params: serde_json::json!({ "personalities": ["remote"] }),
+        ..ComponentDescriptor::new("subagents", SUBAGENTS_KIND)
+    };
+    let components = vec![ComponentDescriptor::new("model", "leading"), subagents];
+    let internal = PersonalityKind::Internal;
+    let leading = personality(&world, "leading", alice, internal, components).await;
+    let lead_id = world.agent("lead", alice, &leading).await;
+    let session = world.session_of(&[], &[lead_id], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let lead = ActorId::Agent(lead_id);
+
+    main.user_actor(alice)
+        .expect("alice takes part")
+        .send_message(None, Some("@lead find it".to_string()), None, Vec::new())
+        .await
+        .expect("said");
+    // Where the lead answered being told that the answer follows, once the turn that read it ended.
+    let noted = |entries: &[HistoryEntry]| {
+        let said = entries.iter().position(|e| {
+            matches!(e, HistoryEntry::Said { message, .. }
+                if message.content.as_deref() == Some("noted"))
+        });
+        let ended = |e: &HistoryEntry| {
+            matches!(e, HistoryEntry::TurnFinished { actor, .. }
+                if *actor == lead)
+        };
+        said.filter(|at| entries[*at..].iter().any(ended))
+    };
+    main.history_once(|entries| noted(entries).is_some()).await;
+    gate.add_permits(1);
+    let closed =
+        |e: &HistoryEntry| matches!(e, HistoryEntry::ThreadClosed { by, .. } if *by != lead);
+    let entries = main.history_once(|entries| entries.iter().any(closed)).await;
+    let given_back: Vec<(usize, Option<&str>)> =
+        entries
+            .iter()
+            .enumerate()
+            .filter_map(|(at, e)| match e {
+                HistoryEntry::GivenToRead {
+                    recipient, message, by: ActorId::Delegate(_), ..
+                } if *recipient == lead => Some((at, message.content.as_deref())),
+                _ => None,
+            })
+            .collect();
+    let prompts = prompts_with(NAMESPACE, PROMPTS);
+    let follows = prompts.render("kernel.delegation_deferred", ()).unwrap();
+    let texts: Vec<Option<&str>> = given_back.iter().map(|(_, text)| *text).collect();
+    assert_eq!(texts, [Some(follows.as_str()), Some("found far away")], "told it follows, then it");
+    let closing = entries.iter().position(closed).unwrap();
+    assert!(
+        noted(&entries).unwrap() < given_back[1].0 && given_back[1].0 < closing,
+        "the brief stayed open over the turn that read that it follows: {entries:?}"
+    );
+    let sent: Vec<String> =
+        remote.sent.lock().unwrap()[0].1.said.iter().map(|said| said.text.clone()).collect();
+    let briefed = sent.iter().any(|text| text.contains("Find it."));
+    assert!(briefed, "its remote agent is given the brief: {sent:?}");
+    world.kernel.stop_session(&World::as_user(alice), session.id()).await.unwrap();
 }
 
 /// Issue 558: the agent of a participant who does not own the session starts a sub-agent - made by
@@ -392,6 +502,38 @@ async fn a_start_that_fails_leaves_no_agent() {
     writer.start("researcher", nowhere, "Find it.".to_string()).await.expect_err("not open");
     assert_eq!(agents().await, before, "the agent it made is deleted again");
     world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// Issue 591: an external personality that names no roles is limited to what is public - started
+/// as a sub-agent in an internal channel, it is refused as its thread takes it in - told as a
+/// failure, since the writer does not ask it before -, and no agent of it is left.
+#[tokio::test]
+async fn an_external_sub_agent_cleared_for_what_is_public_alone_is_refused_and_leaves_no_agent() {
+    let world = world_with_remote(Vec::new(), Arc::new(ScriptedExternalAgent::default())).await;
+    let alice = world.alice;
+    let external = PersonalityKind::External;
+    let remote_agent = vec![ComponentDescriptor::new("remote", "remote")];
+    personality(&world, "remote", alice, external, remote_agent).await;
+    let internal = PersonalityKind::Internal;
+    let model = vec![ComponentDescriptor::new("model", "leading")];
+    let leading = personality(&world, "leading", alice, internal, model).await;
+    let lead = world.agent("lead", alice, &leading).await;
+    let session = world.session_of(&[], &[lead], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let writer = writer_of(&main, ActorId::Agent(lead), alice).await;
+    let agents = || async {
+        let listed = world.entity_store::<Agent>().list(&World::system(), &Query::all()).await;
+        listed.unwrap().items.len()
+    };
+    let before = agents().await;
+
+    let origin = ThreadOrigin { thread: ThreadId::line(main.id()), message: MessageId::new() };
+    let refused = writer.start("remote", origin, "Find it.".to_string()).await.unwrap_err();
+    let not_cleared =
+        matches!(&refused, SubAgentError::Failed(told) if told.contains("not cleared"));
+    assert!(not_cleared, "refused as it is taken in: {refused:?}");
+    assert_eq!(agents().await, before, "the agent it made is deleted again");
+    world.kernel.stop_session(&World::as_user(alice), session.id()).await.unwrap();
 }
 
 /// Issue 558: starting a sub-agent asks for approval only where the component is configured so;

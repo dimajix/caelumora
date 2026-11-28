@@ -1,6 +1,6 @@
 # 591 — An external agent cannot be a sub-agent
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** low
 **Area:** Sessions and channels
@@ -155,3 +155,7 @@ the delegation's state says, so that a restart loses nothing. Each step is revie
 - **2026-11-28** — Step 4b done: the turns set aside are kept by their turn.
 - **2026-11-28** — Step 4 done (4c): an external agent's turn whose answer it deferred is set
   aside as going on, and a cancel reaches its task between requests.
+- **2026-11-28** — Step 5 done, and with it the issue: the sub-agent tool no longer refuses an
+  external personality, tested end to end with the scripted remote agent of `caelumora-agents`
+  (`external::testing`, now behind `test-support`). Like any external agent, an external sub-agent
+  needs roles to be cleared for an internal channel.

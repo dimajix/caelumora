@@ -166,14 +166,19 @@ pub fn register_all(registry: &mut LibraryComponents<'_>) {
     registry.single::<dyn ExternalAgent>(None);
 }
 
-/// Stand-ins for a remote agent, for the tests of what uses the facet.
-#[cfg(test)]
-pub(crate) mod testing {
+/// Stand-ins for a remote agent, for the tests of what uses the facet, of this crate and of
+/// others (issue 591).
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing {
     use super::*;
+    use caelumora_api::component::{ComponentFacets, ComponentKind};
     use caelumora_api::model::ModelProfileProvider;
     use caelumora_domain::context::ModelProfile;
     use caelumora_domain::value::secret_ref::SecretRef;
+    use caelumora_kernel::component::ComponentRegistry;
+    #[cfg(test)]
     use caelumora_security::secret::USE;
+    #[cfg(test)]
     use caelumora_security::{AccessPolicy, ActionType, SecurityContext, Verb};
     use futures::stream;
     use futures::StreamExt;
@@ -188,9 +193,11 @@ pub(crate) mod testing {
     /// The access policy a test of a scripted remote agent runs with: it allows everything, and
     /// keeps the context of every use of a secret - of `CALLED_AS`, in whose name the remote agent
     /// was called (issue 516).
+    #[cfg(test)]
     #[derive(Debug, Default)]
     pub(crate) struct CallsRead(Mutex<Vec<SecurityContext>>);
 
+    #[cfg(test)]
     #[async_trait]
     impl AccessPolicy for CallsRead {
         async fn check(&self, context: &SecurityContext, action: ActionType<'_>) -> bool {
@@ -215,18 +222,19 @@ pub(crate) mod testing {
     /// nothing more comes - what a cancel has to interrupt. So does a
     /// request with no script left.
     #[derive(Debug, Default)]
-    pub(crate) struct ScriptedExternalAgent {
+    pub struct ScriptedExternalAgent {
         answers: Mutex<VecDeque<Vec<ExternalAgentResult<ExternalEvent>>>>,
         resumed: Mutex<VecDeque<Vec<ExternalAgentResult<ExternalEvent>>>>,
         /// What the next calls of `resume` fail with, before any is answered with a stream.
         resume_failures: Mutex<VecDeque<ExternalAgentError>>,
         /// Every request, with the conversation it was sent in.
-        pub(crate) sent: Mutex<Vec<(Option<ConversationId>, OutboundMessage)>>,
+        pub sent: Mutex<Vec<(Option<ConversationId>, OutboundMessage)>>,
         /// Every task it was asked to cancel.
         pub(crate) cancelled: Mutex<Vec<TaskId>>,
         /// Every call, in order.
         calls: Mutex<Vec<&'static str>>,
         /// In whose name it was called, if its runtime runs under it (`called_as`).
+        #[cfg(test)]
         pub(crate) read: Arc<CallsRead>,
         /// How many requests to come cannot reach it.
         unreachable: Mutex<usize>,
@@ -234,22 +242,68 @@ pub(crate) mod testing {
         declared: Option<Classification>,
         /// How it is given what was said.
         profile: ModelProfile,
-        /// What each answer to a request waits for, one permit each, if
-        /// anything: a slow remote agent.
+        /// What each stream it answers with - of a request, or of a task followed - waits for,
+        /// one permit each, if anything: a slow remote agent.
         gate: Option<Arc<Semaphore>>,
     }
 
     impl ScriptedExternalAgent {
         /// A remote agent answering its requests with `answers`, in order.
-        pub(crate) fn answering(answers: Vec<Vec<ExternalAgentResult<ExternalEvent>>>) -> Self {
+        pub fn answering(answers: Vec<Vec<ExternalAgentResult<ExternalEvent>>>) -> Self {
             Self { answers: Mutex::new(answers.into()), ..Self::default() }
         }
 
         /// Answers `resume` with `events`, once per call, in order.
-        pub(crate) fn resuming(self, events: Vec<Vec<ExternalAgentResult<ExternalEvent>>>) -> Self {
+        pub fn resuming(self, events: Vec<Vec<ExternalAgentResult<ExternalEvent>>>) -> Self {
             Self { resumed: Mutex::new(events.into()), ..self }
         }
 
+        /// Begins each stream it answers with - of a request, or of a task followed - only once
+        /// `gate` gives it a permit.
+        pub fn gated(self, gate: Arc<Semaphore>) -> Self {
+            Self { gate: Some(gate), ..self }
+        }
+
+        /// Records `call`, made with `secrets`, reading `CALLED_AS` of them: whether there is such
+        /// a secret does not matter, in whose name it is asked does.
+        #[expect(clippy::unwrap_used, reason = "test code: `CALLED_AS` is a reference to a secret")]
+        async fn called(&self, call: &'static str, secrets: &dyn Secrets) {
+            let _ = secrets
+                .resolve(&SecretRef::new(CALLED_AS).unwrap(), "https://remote.example")
+                .await;
+            self.calls.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).push(call);
+        }
+
+        /// `stream`, begun once its gate gives it a permit, if it has one (`gated`).
+        fn opened(&self, stream: ExternalStream) -> ExternalStream {
+            let Some(gate) = self.gate.clone() else { return stream };
+            let opened = stream::once(async move {
+                if let Ok(permit) = gate.acquire_owned().await {
+                    permit.forget();
+                }
+            });
+            Box::pin(opened.filter_map(|()| async { None }).chain(stream))
+        }
+
+        /// The next stream of `script`: its events, and then open - but a stream with an error
+        /// among them ends after them, as a remote agent's stream ends that breaks.
+        fn next(
+            script: &Mutex<VecDeque<Vec<ExternalAgentResult<ExternalEvent>>>>,
+        ) -> ExternalStream {
+            let next = script.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).pop_front();
+            let events = next.unwrap_or_default();
+            if events.iter().any(Result::is_err) {
+                return Box::pin(stream::iter(events));
+            }
+            Box::pin(stream::iter(events).chain(stream::pending()))
+        }
+    }
+
+    /// What the tests of this crate make of a scripted remote agent besides: how it fails to be
+    /// reached or followed, what it declares, how it is given what was said, and in whose name it
+    /// was called.
+    #[cfg(test)]
+    impl ScriptedExternalAgent {
         /// Fails the next calls of `resume` with `failures`, one per call, in order, before it
         /// answers any with a stream.
         pub(crate) fn failing_to_resume(self, failures: Vec<ExternalAgentError>) -> Self {
@@ -266,25 +320,10 @@ pub(crate) mod testing {
             Self { profile, ..self }
         }
 
-        /// Begins each answer to a request only once `gate` gives it a
-        /// permit.
-        pub(crate) fn gated(self, gate: Arc<Semaphore>) -> Self {
-            Self { gate: Some(gate), ..self }
-        }
-
         /// Cannot be reached by the next `requests`: they fail before
         /// anything is sent, and are not recorded.
         pub(crate) fn unreachable_for(self, requests: usize) -> Self {
             Self { unreachable: Mutex::new(requests), ..self }
-        }
-
-        /// Records `call`, made with `secrets`, reading `CALLED_AS` of them: whether there is such
-        /// a secret does not matter, in whose name it is asked does.
-        async fn called(&self, call: &'static str, secrets: &dyn Secrets) {
-            let _ = secrets
-                .resolve(&SecretRef::new(CALLED_AS).unwrap(), "https://remote.example")
-                .await;
-            self.calls.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).push(call);
         }
 
         /// In whose name it was called, for every call: the call and the context its secrets were
@@ -294,19 +333,6 @@ pub(crate) mod testing {
             let read = self.read.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             assert_eq!(calls.len(), read.len(), "one read of its secrets per call, under `read`");
             calls.iter().copied().zip(read.iter().cloned()).collect()
-        }
-
-        /// The next stream of `script`: its events, and then open - but a stream with an error
-        /// among them ends after them, as a remote agent's stream ends that breaks.
-        fn next(
-            script: &Mutex<VecDeque<Vec<ExternalAgentResult<ExternalEvent>>>>,
-        ) -> ExternalStream {
-            let next = script.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).pop_front();
-            let events = next.unwrap_or_default();
-            if events.iter().any(Result::is_err) {
-                return Box::pin(stream::iter(events));
-            }
-            Box::pin(stream::iter(events).chain(stream::pending()))
         }
     }
 
@@ -333,14 +359,7 @@ pub(crate) mod testing {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .push((conversation.cloned(), message));
-            let answer = Self::next(&self.answers);
-            let Some(gate) = self.gate.clone() else { return Ok(answer) };
-            let opened = stream::once(async move {
-                if let Ok(permit) = gate.acquire_owned().await {
-                    permit.forget();
-                }
-            });
-            Ok(Box::pin(opened.filter_map(|()| async { None }).chain(answer)))
+            Ok(self.opened(Self::next(&self.answers)))
         }
 
         async fn resume(
@@ -353,7 +372,7 @@ pub(crate) mod testing {
                 self.resume_failures.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             match failures.pop_front() {
                 Some(failure) => Err(failure),
-                None => Ok(Self::next(&self.resumed)),
+                None => Ok(self.opened(Self::next(&self.resumed))),
             }
         }
 
@@ -379,6 +398,28 @@ pub(crate) mod testing {
         fn profile(&self) -> ModelProfile {
             self.profile
         }
+    }
+
+    /// `remote`, as the components of the kind `kind` - the remote agent an external personality's
+    /// agents are -, registered with `registry`.
+    pub fn register_remote(
+        registry: &mut ComponentRegistry,
+        kind: &str,
+        remote: Arc<ScriptedExternalAgent>,
+    ) {
+        registry.register(
+            ComponentKind::new(kind)
+                .provides::<dyn ExternalAgent>()
+                .provides::<dyn ModelProfileProvider>(),
+            move |_, _| {
+                let mut facets = ComponentFacets::empty();
+                facets.insert::<dyn ExternalAgent>(Arc::<ScriptedExternalAgent>::clone(&remote));
+                facets.insert::<dyn ModelProfileProvider>(Arc::<ScriptedExternalAgent>::clone(
+                    &remote,
+                ));
+                Ok(facets)
+            },
+        );
     }
 }
 

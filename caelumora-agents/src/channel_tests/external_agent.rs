@@ -2,13 +2,11 @@
 //! tasks it keeps open.
 
 use super::*;
-use crate::external::testing::{CallsRead, ScriptedExternalAgent};
-use crate::external::ExternalAgent;
+use crate::external::testing::{register_remote, CallsRead, ScriptedExternalAgent};
 use crate::library::AgentsLibrary;
 use crate::prompt::PromptProvider;
 use anyhow::Result;
 use caelumora_api::component::{ComponentFacets, ComponentKind};
-use caelumora_api::model::ModelProfileProvider;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::actor::{ActorEvent, Envelope};
 use caelumora_domain::agent::testing::make_personality;
@@ -90,19 +88,7 @@ async fn external_channel(
 
     let read = Arc::clone(&remote.read);
     let components = move |registry: &mut ComponentRegistry| {
-        registry.register(
-            ComponentKind::new("test_remote")
-                .provides::<dyn ExternalAgent>()
-                .provides::<dyn ModelProfileProvider>(),
-            move |_descriptor, _context| {
-                let mut facets = ComponentFacets::empty();
-                facets.insert::<dyn ExternalAgent>(Arc::<ScriptedExternalAgent>::clone(&remote));
-                facets.insert::<dyn ModelProfileProvider>(Arc::<ScriptedExternalAgent>::clone(
-                    &remote,
-                ));
-                Ok(facets)
-            },
-        );
+        register_remote(registry, "test_remote", remote);
         register_no_secrets(registry);
         register_heard(registry);
         register_first_only(registry);
@@ -2331,22 +2317,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
     let store = Persistence::in_memory();
     let components = {
         let remote = Arc::clone(&remote);
-        move |registry: &mut ComponentRegistry| {
-            registry.register(
-                ComponentKind::new("test_remote")
-                    .provides::<dyn ExternalAgent>()
-                    .provides::<dyn ModelProfileProvider>(),
-                move |_descriptor, _context| {
-                    let mut facets = ComponentFacets::empty();
-                    facets
-                        .insert::<dyn ExternalAgent>(Arc::<ScriptedExternalAgent>::clone(&remote));
-                    facets.insert::<dyn ModelProfileProvider>(Arc::<ScriptedExternalAgent>::clone(
-                        &remote,
-                    ));
-                    Ok(facets)
-                },
-            );
-        }
+        move |registry: &mut ComponentRegistry| register_remote(registry, "test_remote", remote)
     };
     let kernel = TestKernel {
         store: store.clone(),

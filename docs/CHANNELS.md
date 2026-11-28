@@ -1410,11 +1410,11 @@ requests too, as it reaches a request under way (issue 591): the remote task is 
 came of it so far is said as the end of the request's turn - or, from lowering the channel, given
 up. What a task says wakes nobody and does not end a thread's being quiet; only an agent it mentions
 is woken, to answer it. Only the end of a task is said: a failed task keeps nothing of what came
-before, and a stream that breaks before the task
-ends says nothing - the task stays open and is followed again, as is one that could not be followed,
-after a pause that doubles with each try in a row, from a second up to five minutes (issue 591). A
-task its remote agent does not know (`ExternalAgentError::UnknownTask`) is given up as failed. While
-it answers a request, what its other tasks send waits.
+before, and a stream that breaks before the task ends says nothing - the task stays open and is
+followed again, as is one that could not be followed, after a pause that doubles with each try in a
+row, from a second up to five minutes (issue 591). A task its remote agent does not know
+(`ExternalAgentError::UnknownTask`) is given up as failed. While it answers a request, what its
+other tasks send waits.
 
 What an external agent heard and said is kept in its `AgentChannelState` as every agent's, with
 what ties it to the remote side (see [STORAGE.md](STORAGE.md)).
