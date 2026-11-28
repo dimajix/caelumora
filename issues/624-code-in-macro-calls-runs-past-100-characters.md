@@ -1,6 +1,6 @@
 # 624 — Code in macro calls runs past 100 characters
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -124,3 +124,13 @@ Each step a commit of its own, reviewed before the next.
   is broken within the block.
   The chain of `.bind` in `caelumora-store-postgres/src/histories.rs`, which rustfmt left as
   written for the SQL string before it, laid out as the one above it.
+- **2026-11-28** — Step 3, the check: `scripts/code-width.sh` asks rustfmt whose a line longer
+  than 100 characters is, as decided; a space before a comment that ends the line is no place to
+  break at, since a break there moves the comment to a line of its own, which rustfmt keeps. The
+  pre-commit hook gives it the Rust files a commit adds or changes. CODING-GUIDELINES.md says
+  which long lines are rustfmt's and stay, which three things it leaves as written, how they are
+  broken, and names the check; the header of `scripts/wrapping.sh` points to it. Run on the files
+  as they were before step 2, it finds the same 128 lines; on the repository, none.
+  `scripts/tuple-bindings.sh` finds `scripts/rust-text.awk` by its own place before it changes to
+  the top of the repository, which a call by a relative path from below it had missed since
+  step 1. Done.

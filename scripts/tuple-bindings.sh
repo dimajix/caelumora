@@ -17,6 +17,7 @@
 set -eu
 
 max=100
+scripts=$(cd "$(dirname "$0")" && pwd -P)
 
 if [ $# -eq 0 ]; then
     cd "$(git rev-parse --show-toplevel)"
@@ -35,7 +36,7 @@ fi
 # Each file is read as `scripts/rust-text.awk` beside this script describes, which calls `check`.
 # What is particular to tuple bindings follows on the standard input as a second program file
 # (`-f -`): once awk is given one with `-f`, it takes no program as an argument.
-LC_ALL=C awk -v max="$max" -f "$(dirname "$0")/rust-text.awk" -f - "$@" <<'EOF'
+LC_ALL=C awk -v max="$max" -f "$scripts/rust-text.awk" -f - "$@" <<'EOF'
 # The position of the first character from `p` on that is neither white space nor in a comment.
 function skip(p,    q) {
     while (p <= size) {

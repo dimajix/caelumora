@@ -1,5 +1,5 @@
 #!/bin/sh
-# Nine checks before a commit, enabled per clone with `git config core.hooksPath .githooks`:
+# Ten checks before a commit, enabled per clone with `git config core.hooksPath .githooks`:
 #
 # - issues/INDEX.md and issues/OPEN.md are kept in step with the issue files: whenever something in
 #   issues/ is part of a commit, both are generated from the issue files as they are staged and
@@ -15,6 +15,9 @@
 #   line too long, and none beginning with a dash, in the Markdown, Rust and TypeScript files a
 #   commit adds or changes, read whole from the working tree; files the commit leaves out are not
 #   checked.
+# - Code that rustfmt leaves as written is broken within 100 characters (docs/CODING-GUIDELINES.md,
+#   "Code is laid out by rustfmt"): `scripts/code-width.sh` must find no line of it longer in the
+#   Rust files a commit adds or changes, read whole from the working tree.
 # - Tuple bindings stay on one line (docs/CODING-GUIDELINES.md, "Small return values"):
 #   `scripts/tuple-bindings.sh` must find none longer than 100 characters or across lines in the
 #   Rust files a commit adds or changes, read whole from the working tree.
@@ -39,7 +42,7 @@
 #   write it, or the commit is refused. It reads the manifests of the working tree, as clippy
 #   does.
 #
-# `git commit --no-verify` skips all nine.
+# `git commit --no-verify` skips all ten.
 set -eu
 
 . scripts/crates.sh
@@ -91,6 +94,7 @@ fi
 
 rust=$(git diff --cached --name-only --diff-filter=ACMR -- '*.rs')
 if [ -n "$rust" ]; then
+    scripts/code-width.sh $rust
     scripts/tuple-bindings.sh $rust
     scripts/import-blocks.sh $rust
 fi
