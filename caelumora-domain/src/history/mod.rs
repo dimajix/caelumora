@@ -365,7 +365,12 @@ mod tests {
         history.push(&context, Message { turn_id: Some(finished), ..make_message(id(2)) });
         history.record(
             &context,
-            HistoryEntry::TurnFinished { turn_id: finished, actor: ActorId::default(), at },
+            HistoryEntry::TurnFinished {
+                turn_id: finished,
+                actor: ActorId::default(),
+                at,
+                deferred: false,
+            },
         );
         history.modify(
             &context,

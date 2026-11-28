@@ -1,6 +1,7 @@
 use super::body::retry_target;
 use super::body::AgentBody;
-use super::run_control::Interrupt;
+use super::call_interrupts::{interruption, CallInterrupts};
+use super::run_control::{Aside, Interrupt};
 use crate::activity::ActivityProvider;
 use crate::command::AgentCommand;
 use crate::error::failure_message;
@@ -59,6 +60,8 @@ pub(crate) struct AgentActor {
     /// Runs the agent's tool calls with the tools of its components, behind the kernel's permission
     /// checks (issues 127, 280).
     tool_executor: ToolExecutor,
+    /// The calls of its turn's tool step that a user may interrupt on their own (issue 276).
+    call_interrupts: CallInterrupts,
 }
 
 impl AgentActor {
@@ -106,7 +109,15 @@ impl AgentActor {
             Arc::clone(&body.runtime),
         )?;
 
-        Ok(AgentActor { body, model_client, activities, emit_out_processors, tool_executor })
+        let call_interrupts = CallInterrupts::default();
+        Ok(AgentActor {
+            body,
+            model_client,
+            activities,
+            emit_out_processors,
+            tool_executor,
+            call_interrupts,
+        })
     }
 
     /// A message as it leaves the agent, through the emit processors - a
@@ -237,7 +248,10 @@ impl AgentActor {
         self.body.store(state).await;
         withdraw_requests(&answering, &abandoned_calls, output).await?;
         answering
-            .send(ActorEvent::TurnFinished { turn_id, messages: final_messages }, output)
+            .send(
+                ActorEvent::TurnFinished { turn_id, messages: final_messages, deferred: false },
+                output,
+            )
             .await?;
         debug!(
             "Agent {} {} ended its turn{}",
@@ -277,7 +291,7 @@ impl AgentActor {
         // Woken by the channel without a message - `/wakeup` - it says so,
         // and takes up a turn settled while it slept (issues 243, 602). What
         // waits for a turn set aside is not taken.
-        let waiting = self.body.control.set_aside_threads();
+        let waiting = self.body.control.waiting_threads();
         let takes = |envelope: &Envelope| !self.body.waits_for_set_aside(envelope, &waiting);
         let received = tokio::select! {
             received = rx.recv_matching(&takes) => received,
@@ -358,8 +372,11 @@ impl AgentActor {
         let asleep = control.state() == ActorState::Sleeping;
         let goes_on =
             |thread: &ThreadId| state.thread(*thread).is_some_and(|part| part.has_work_under_way());
-        let going_on = || control.set_aside_threads().into_iter().find(goes_on);
-        let thread = control.asked_of_set_aside().or_else(|| going_on().filter(|_| !asleep))?;
+        let going_on = || control.waiting_threads().into_iter().find(goes_on);
+        let thread = control
+            .asked_aside(Aside::WaitingForAPerson)
+            .map(|(thread, _)| thread)
+            .or_else(|| going_on().filter(|_| !asleep))?;
         let turn = control.turn_under_way(thread);
         let step = state.turn(thread).map_or(ActorState::Idle, |turn| turn.step);
         let Some(asked) = control.resume(thread, step)? else { return Some(step) };
@@ -868,8 +885,8 @@ impl AgentActor {
         // alone, running or still to run, and the step goes on (issue 276).
         let cancelled = self.body.control.token();
         let to_run = turn.tool_calls().to_run();
-        let mut by_user =
-            self.body.control.begin_calls(to_run.iter().filter_map(|(_, call, _)| call.id.clone()));
+        let ids = to_run.iter().filter_map(|(_, call, _)| call.id.clone());
+        let mut by_user = self.call_interrupts.begin(turn.turn_id(), ids);
         for (index, call, answers) in to_run {
             if cancelled.is_cancelled() {
                 return Ok(ActorState::ExecutingTools);
@@ -885,7 +902,7 @@ impl AgentActor {
                     &call,
                     answers.as_ref(),
                     turn,
-                    self.body.control.interruption(cancelled.clone(), interrupt),
+                    interruption(&self.body.control, cancelled.clone(), interrupt),
                 )
                 .await;
             turn.tool_calls().record(index, result);
@@ -1148,7 +1165,7 @@ impl Actor for AgentActor {
                     // A turn that waits for a person is set aside, stored at that step, and the
                     // agent goes on between turns (issue 602): what settles it is taken in there.
                     ActorState::WaitingForUser => {
-                        self.body.control.set_aside();
+                        self.body.control.set_aside(Aside::WaitingForAPerson);
                         Some(ActorState::Idle)
                     }
                     ActorState::Planning => {
@@ -1197,7 +1214,7 @@ impl Actor for AgentActor {
             if interrupt == Some(Interrupt::Leave) {
                 self.give_up(&mut state, GivenUpReason::Left, &*output).await;
                 // And every turn set aside (issue 602).
-                for thread in self.body.control.set_aside_threads() {
+                for thread in self.body.control.waiting_threads() {
                     self.body.control.resume(thread, ActorState::WaitingForUser);
                     self.give_up(&mut state, GivenUpReason::Left, &*output).await;
                 }
@@ -1304,7 +1321,7 @@ impl Actor for AgentActor {
     }
 
     fn interrupt_tool_call(&self, turn: TurnId, call: &str, by: String) -> bool {
-        let hit = self.body.control.interrupt_call(turn, call, by);
+        let hit = self.call_interrupts.interrupt(&self.body.control, turn, call, by);
         match hit {
             true => info!(
                 "Agent {} {}: tool call {} of turn {} is interrupted on its own",

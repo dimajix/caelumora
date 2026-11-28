@@ -1081,7 +1081,8 @@ that of a thread's pane its thread alone (`POST …/threads/{tid}/cancel`, issue
 operation on the channel, like renaming or deleting it, not an act of taking part: the policy
 decides who may, and nobody has to be a participant for it; a thread is part of its channel, and
 asks the same. Whether an actor had a turn to end there is the actor's to tell (`Actor::cancel`),
-not the channel's to judge.
+not the channel's to judge. An external agent's open task that works between requests is the
+counterpart of a turn, and ended so too (issue 591; see [External agents](#external-agents)).
 
 It is not a kill. The agent takes its turn over, so that observers stop waiting even when the turn
 said nothing, and returns to a normal state with its history intact. But nothing under way is waited
@@ -1173,7 +1174,11 @@ writes it, one change after the other in `run`: a brief recorded as it is delega
 logged, and refused to the giver, if the thread is no longer open by then, or its delegation was
 let go meanwhile -, given as the channel records it, answered as the channel records what came of
 it (`Delegation::follow`), dropped with what came of it if that cannot reach the giver, gone from
-where the thread was opened (`Delegation::refused`), and dropped as the thread is closed.
+where the thread was opened (`Delegation::refused`), and dropped as the thread is closed. A brief
+given whose answer the recipient's turn deferred (`deferred` of `TurnFinished`, issue 591) is
+deferred as the channel records that end (`Delegation::follow_deferred`, `BriefStage`): what is
+given back of it first only tells the giver that the answer follows - the brief stays open, and no
+word of the giver's is due -, and what is given back after that answers it.
 
 Once what came of its last brief is given back, the delegation waits for its **giver's word** on it
 (issue 598, `Delegation::word`): the channel follows the giver reading it, as the giver records what
@@ -1214,7 +1219,9 @@ given what goes to the users and happens in its thread or the whole channel
     it - the thread is a closed circle in which the delegate alone gives the recipient anything,
     and in which nobody else says anything (`Rejection::ClosedCircle`): a turn answering a user who
     wrote in it would be taken so, and the turn that answers the brief taken as the next brief's
-    answer, and so on -
+    answer, and so on -; a turn whose answer is deferred answers nothing yet: once the channel took
+    the brief as deferred, the delegate gives back that the answer follows, once, and the
+    recipient's next turn end - in the closed circle, the deferred turn's own - answers the brief -
 *   **and gives back** to the giver, where the thread was opened, what came of it, once: the
     turn's answer alone (issue 619) - its last message, if that is one (`Message::is_answer`) and
     says something in words, bounded in length with a notice (`MAX_ANSWER`), never the remarks
@@ -1338,8 +1345,10 @@ An **actor** is anything that sends and receives events in a channel.
     carries out itself, and its `RunControl` - where its actor stands and what `cancel`, `stop` and
     `leave` asked of it (issue 363). The two actors differ in their mind:
     a model run here with its tools, or the remote agent, whose every answer is a turn of the run
-    control, ended by `cancel`, `stop` and `leave` as an agent's turn is. Both tell where they stand
-    the same way; an external agent tells the begin and end of an answer at once.
+    control, ended by `cancel`, `stop` and `leave` as an agent's turn is - one whose answer is
+    deferred set aside while its task goes on (`Aside::GoingOn`, issue 591), as an agent's turn
+    waiting for a person is (`Aside::WaitingForAPerson`). Both tell where they stand the same way;
+    an external agent tells the begin and end of an answer at once.
 *   **`ActorId`** identifies an actor: a `User`, an `Agent` or an `Approver`, or `System` - the
     kernel itself, set only deliberately.
 *   **`Envelope`** is the unit of communication: a timestamp, an `EventContext` and the `ActorEvent`
@@ -1388,16 +1397,24 @@ has seen - all that was given and what the remote agent declares to bring in.
 
 **An external agent speaks on its own** when a task outlives the request it was given for: the
 answer broke off before the task ended, or the channel was restarted meanwhile - a task is stored as
-soon as the remote agent took it on. An answer that broke off is answered with nothing rather than
-cut off: what came so far is said once, with the rest, when the task ends. The actor follows every
+soon as the remote agent took it on. An answer that broke off is not cut off but **deferred**: the
+request's turn ends without it, marked so (`deferred` of `TurnFinished`, issue 591), and what came
+so far is said once, with the rest, when the task ends. That end of the task ends the request's turn
+once more - or for the first time, where the channel stopped while it answered -, with nothing said
+if nothing came, so that whoever waits for its answer is not left waiting. The actor follows every
 task left working beside the channel's events. An open task is the external agent's counterpart of a
 turn: it keeps the work of the request that began it, and is followed, cancelled and told of in it -
 as asked by whoever asked, with its owner's rights, and in the context of the answer to that
-request. One whose channel was lowered since it began is given up. It wakes nobody and does not end
-a thread's being quiet; only an agent it mentions is woken, to answer it. Only the end of a task is
-said: a failed task keeps nothing of what came before, and a stream that breaks before the task
-ends says nothing - the task stays open and is followed again on the next run. While it answers a
-request, what its other tasks send waits.
+request. One whose channel was lowered since it began is given up. A cancel reaches it between
+requests too, as it reaches a request under way (issue 591): the remote task is cancelled, and what
+came of it so far is said as the end of the request's turn - or, from lowering the channel, given
+up. What a task says wakes nobody and does not end a thread's being quiet; only an agent it mentions
+is woken, to answer it. Only the end of a task is said: a failed task keeps nothing of what came
+before, and a stream that breaks before the task ends says nothing - the task stays open and is
+followed again, as is one that could not be followed, after a pause that doubles with each try in a
+row, from a second up to five minutes (issue 591). A task its remote agent does not know
+(`ExternalAgentError::UnknownTask`) is given up as failed. While it answers a request, what its
+other tasks send waits.
 
 What an external agent heard and said is kept in its `AgentChannelState` as every agent's, with
 what ties it to the remote side (see [STORAGE.md](STORAGE.md)).

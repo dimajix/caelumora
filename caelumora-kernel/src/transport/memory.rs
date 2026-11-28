@@ -190,7 +190,11 @@ mod tests {
             .expect("room");
         tx.try_send(at(
             1,
-            ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: Vec::new() },
+            ActorEvent::TurnFinished {
+                turn_id: TurnId::new(),
+                messages: Vec::new(),
+                deferred: false,
+            },
         ))
         .expect("room");
         tx.try_send(envelope(ActorEvent::ResponseStarted { turn_id: TurnId::new() }))

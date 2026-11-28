@@ -18,6 +18,7 @@ use crate::turn::GivenUpReason;
 use crate::work::TurnId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::ops::Not;
 
 /// What happened in a `History`; its node carries the digest of the
 /// history up to and including it.
@@ -56,9 +57,16 @@ pub enum HistoryEntry {
     /// The channel was classified `channel`, and every message said so far
     /// fits into it from here on (`Classification::fitted_into`).
     Fitted { channel: Classification },
-    /// The turn `turn_id` of `actor` ended at `at` and was taken over
-    /// (issue 258).
-    TurnFinished { turn_id: TurnId, actor: ActorId, at: DateTime<Utc> },
+    /// The turn `turn_id` of `actor` ended at `at` and was taken over (issue 258) - if `deferred`,
+    /// without its answer, with which `actor` ends it again later, on its own and with the same
+    /// turn id (issue 591, `ActorEvent::TurnFinished`).
+    TurnFinished {
+        turn_id: TurnId,
+        actor: ActorId,
+        at: DateTime<Utc>,
+        #[serde(default, skip_serializing_if = "Not::not")]
+        deferred: bool,
+    },
     /// The turn `turn_id` of `actor` was given up at `at`, for `reason`
     /// (issue 258): what it said before stays said. Whose turn it was is
     /// recorded, since a turn may end before it said anything.
@@ -716,8 +724,8 @@ impl HistoryEntry {
             }
             Self::Modified { message } => ActorEvent::MessageModified(message),
             Self::Revoked { message, at } => ActorEvent::MessageRevoked { message, at },
-            Self::TurnFinished { turn_id, .. } => {
-                ActorEvent::TurnFinished { turn_id, messages: Vec::new() }
+            Self::TurnFinished { turn_id, deferred, .. } => {
+                ActorEvent::TurnFinished { turn_id, messages: Vec::new(), deferred }
             }
             Self::TurnGivenUp { turn_id, reason, .. } => {
                 ActorEvent::TurnGivenUp { turn_id, reason }

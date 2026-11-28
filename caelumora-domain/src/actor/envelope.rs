@@ -254,8 +254,8 @@ impl Envelope {
             ActorEvent::ContextCompacted { turn_id, from, to } => {
                 HistoryEntry::Compacted { turn_id: *turn_id, actor, from: *from, to: *to, at }
             }
-            ActorEvent::TurnFinished { turn_id, .. } => {
-                HistoryEntry::TurnFinished { turn_id: *turn_id, actor, at }
+            ActorEvent::TurnFinished { turn_id, deferred, .. } => {
+                HistoryEntry::TurnFinished { turn_id: *turn_id, actor, at, deferred: *deferred }
             }
             ActorEvent::TurnGivenUp { turn_id, reason } => {
                 HistoryEntry::TurnGivenUp { turn_id: *turn_id, actor, reason: reason.clone(), at }
@@ -1246,7 +1246,7 @@ mod tests {
                 total_steps: step(0).1,
                 description: step(0).2,
             },
-            ActorEvent::TurnFinished { turn_id, messages: vec![message.clone()] },
+            ActorEvent::TurnFinished { turn_id, messages: vec![message.clone()], deferred: false },
             ActorEvent::TurnGivenUp {
                 turn_id,
                 reason: GivenUpReason::Failed { message: "boom".to_string() },

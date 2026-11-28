@@ -321,7 +321,10 @@ An `Envelope`'s event is an `ActorEvent` as serde writes it. An agent's answer b
 `turn_id` - also in a channel's history - so that a client tells which messages are one answer, and
 which answer is under way after a reload, by the id rather than by who sent what when. A user's
 message carries none: it is said outside of any turn. A turn ends with `TurnFinished` or
-`TurnGivenUp` and its reason; a stopped agent sends neither. What an agent does of its own accord
+`TurnGivenUp` and its reason; a stopped agent sends neither. A `TurnFinished` marked `deferred`
+ends a turn without its answer - an external agent's whose remote task goes on (issue 591) -: the
+same `turn_id` ends once more with a `TurnFinished` and the answer, or a `TurnGivenUp`, when the
+task does. What an agent does of its own accord
 within a turn - compacting its context - begins with `ActivityStarted` and ends with
 `ActivityFinished`, which says what came of it, or with the turn's being given up. An event the
 channel's history records carries the position of its entry (`context.position`, issue 417): the

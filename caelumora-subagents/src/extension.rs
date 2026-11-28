@@ -15,10 +15,10 @@ pub trait SubAgentWriter: Send + Sync {
     /// the thread was opened.
     ///
     /// # Errors
-    /// `UnknownPersonality`, `External`; `ClearedWider` if the personality's agents would be
-    /// cleared wider than the work's agent, `TooDeep` if the work is a sub-agent as deep as
-    /// allowed, `TooMany` if as many sub-agents are open in its tree as allowed (issue 597); or
-    /// `Forbidden` or `Failed` with what the kernel refused or failed with.
+    /// `UnknownPersonality`; `ClearedWider` if the personality's agents would be cleared wider
+    /// than the work's agent, `TooDeep` if the work is a sub-agent as deep as allowed, `TooMany` if
+    /// as many sub-agents are open in its tree as allowed (issue 597); or `Forbidden` or `Failed`
+    /// with what the kernel refused or failed with.
     async fn start(
         &self,
         personality: &str,
@@ -49,9 +49,6 @@ pub enum SubAgentError {
     /// No personality of that name the work may start an agent of.
     #[error("no personality '{0}' to start a sub-agent of")]
     UnknownPersonality(String),
-    /// A personality of an external agent, which cannot be a sub-agent (issue 591).
-    #[error("'{0}' is the personality of an external agent, which cannot be a sub-agent")]
-    External(String),
     /// A personality whose agents would be cleared wider than the work's agent (issue 597).
     #[error(
         "'{0}' is cleared wider than the agent that would start it, so it cannot be its sub-agent"
@@ -95,7 +92,6 @@ impl SubAgentError {
     pub(crate) fn class(&self) -> ErrorClass {
         match self {
             SubAgentError::UnknownPersonality(_)
-            | SubAgentError::External(_)
             | SubAgentError::ClearedWider(_)
             | SubAgentError::NoSubAgent(_)
             | SubAgentError::TooMany(_) => ErrorClass::Correctable,

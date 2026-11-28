@@ -139,10 +139,13 @@ configured compartments.
         after the lowering, or in a step it did not complete, was never released (see
         [AGENT-TURN.md](AGENT-TURN.md#beginning-and-ending-a-turn)). The users are told why;
     *   an external agent's work is given up the same way: an answer under way publishes nothing of
-        what came so far; an open task begun before is cancelled at the remote agent and forgotten,
-        whenever it would be followed, said or taken up again. What the remote agent was given is
-        released with the channel, as an agent's transcript is; what is given up is the work begun
-        under the classification the channel had - one rule for both kinds of agent.
+        what came so far; an open task begun before is cancelled at the remote agent and forgotten -
+        at once if it works between requests, as the lowering's cancel reaches it (issue 591), else
+        whenever it would be followed, said or taken up again. An open task whose work still flows
+        into the channel is ended by that cancel too, and what came of it so far published, as a
+        cancel ends it. What the remote agent was given is released with the channel, as an
+        agent's transcript is; what is given up is the work begun under the classification the
+        channel had - one rule for both kinds of agent.
 
     The web UI warns when a change releases the channel.
 *   **A message** is a change to what was said, made by a participant, and goes as a modification

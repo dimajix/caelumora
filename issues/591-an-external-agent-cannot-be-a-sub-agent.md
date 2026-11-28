@@ -1,6 +1,6 @@
 # 591 — An external agent cannot be a sub-agent
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** low
 **Area:** Sessions and channels
@@ -80,6 +80,51 @@ remote agent would settle it.
 Recommended: B. An external agent's work is long by nature, and the main agent should be told that
 it is under way rather than be given an empty answer or wait in silence.
 
+## Decision
+
+B, as the maintainer decided on 2026-11-28: the end of a request whose task is still open is marked,
+and the delegate tells the main agent that the answer follows, keeps the brief open and takes the
+task's later end as its answer; the giver's word is not due before.
+
+The first point of *The problem* is done and tested since issue 557
+(`an_external_agent_is_given_what_a_delegate_gives_it_to_read_and_answers`).
+
+### Plan
+
+Built as the channel follows its giver's word (issue 598): the channel follows a recorded
+`HistoryEntry` in the delegation (`ChannelState::follow_giver`, `Word`), and the delegate does what
+the delegation's state says, so that a restart loses nothing. Each step is reviewed on its own:
+
+1.  **A deferred answer.** `TurnFinished` and its `HistoryEntry` say whether the turn's answer is
+    deferred (`deferred`, stored as `Recipients` stores its rare flags): its work goes on beyond it,
+    and its sender says the answer on its own, with the same turn id. An external agent defers the
+    answer of a request whose stream ends before its open task does; the task's end then always
+    ends that turn, with nothing said if nothing came, so that whoever waits for the answer is not
+    left waiting.
+2.  **The brief deferred.** A brief's stage (`BriefStage`: `Waiting`, `Given`, `Deferred { told }`)
+    replaces where it was given. The channel follows the recipient's turn ending deferred
+    (`Delegation::follow_deferred`); what the delegate gives back of a brief deferred and not told
+    yet tells the giver that the answer follows (`kernel.delegation_deferred`) and leaves the brief
+    open, no word due; the turn's later end is the answer.
+3.  **A followed task taken up again.** A task whose followed stream ends or breaks before it does,
+    or that cannot be followed, is followed again after a delay that grows, not only at the actor's
+    next run; one its remote agent no longer knows is given up as failed - told apart by a new
+    `ExternalAgentError::UnknownTask`, which A2A's `TaskNotFoundError` becomes, since `Rejected`
+    stands for any refusal, a passing one too.
+4.  **A cancel reaches an open task**, in three steps, `RunControl` restructured first:
+    *   **4a.** The tool calls a user interrupts on their own leave `RunControl` for a type of the
+        agent's (`CallInterrupts`), each kept with its turn.
+    *   **4b.** The turns set aside are kept by their turn, not their thread: an external agent
+        may have several tasks working in its one thread. No change of behaviour.
+    *   **4c.** A second kind of turn set aside (`Aside::GoingOn`, beside `WaitingForAPerson`): one
+        whose work goes on elsewhere. An external agent sets the turn of a request it defers aside
+        so, `resuming` the turns of its working tasks after a restart, and keeps them in step with
+        its tasks at one point (`keep_going_on`); a cancel reaches them as it reaches a turn set
+        aside, and the external agent cancels each task asked so and says what came of it so far,
+        as a cancel of a request does.
+5.  **External sub-agents.** The sub-agent tool no longer refuses an external personality
+    (`SubAgentError::External` goes); tested end to end with a scripted remote agent.
+
 ## Done when
 
 - An external agent can be started as a sub-agent: it is given the brief, and its answer reaches
@@ -94,3 +139,23 @@ it is under way rather than be given an empty answer or wait in silence.
 - **2026-11-27** — Corrected: what the section described is not what happens today - an external
   sub-agent is refused - but what would happen without the refusal (*What would happen with a late
   answer*); the first point of *The problem* noted as seemingly done since 557.
+- **2026-11-28** — The maintainer decided for approach B (*Decision*), with the field on
+  `TurnFinished`, and that a followed task is taken up again and a cancel reaches an open task in
+  this work too (*Plan*). The first point of *The problem* found tested since 557.
+- **2026-11-28** — Steps 1 and 2 done. For step 3 the maintainer decided that a task is given up
+  only once its remote agent says it does not know it (`ExternalAgentError::UnknownTask`), and
+  followed again otherwise, without limit.
+- **2026-11-28** — Step 3 done. A first version of step 4 kept which tasks a cancel finds beside
+  `RunControl` and had two races; the maintainer decided to restructure `RunControl` first, as part
+  of this issue, before step 4 is built on it (put aside on the branch): steps 4a-4c.
+- **2026-11-28** — Step 4a done. One change of behaviour came with it: `RunControl::stop` and
+  `leave` cancel `ending` at once, so that whoever sees a turn's token cancelled finds the run
+  ending - before, an external agent stopped in that moment could take the stop for a cancel and
+  cancel a remote task the stop should have left working.
+- **2026-11-28** — Step 4b done: the turns set aside are kept by their turn.
+- **2026-11-28** — Step 4 done (4c): an external agent's turn whose answer it deferred is set
+  aside as going on, and a cancel reaches its task between requests.
+- **2026-11-28** — Step 5 done, and with it the issue: the sub-agent tool no longer refuses an
+  external personality, tested end to end with the scripted remote agent of `caelumora-agents`
+  (`external::testing`, now behind `test-support`). Like any external agent, an external sub-agent
+  needs roles to be cleared for an internal channel.

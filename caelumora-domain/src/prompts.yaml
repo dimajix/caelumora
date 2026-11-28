@@ -39,6 +39,10 @@ delegation_not_asked: |-
   It could not be asked.
 delegation_left: |-
   It left before it answered.
+# Given back the same way where the turn answering a brief ended with its answer deferred (issue
+# 591): it is still at work, and what it answers is given back once it is done.
+delegation_deferred: |-
+  It is still working on it; its answer is given to you once it is done.
 # Where its answer was longer than the delegate gives back (issue 619) - at most `limit`
 # characters -, after what it gives of it.
 delegation_cut: |-

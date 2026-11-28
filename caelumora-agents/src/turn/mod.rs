@@ -661,7 +661,11 @@ mod tests {
             .await
             .unwrap();
         turn.send_event(
-            ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![thinking] },
+            ActorEvent::TurnFinished {
+                turn_id: TurnId::new(),
+                messages: vec![thinking],
+                deferred: false,
+            },
             &output,
         )
         .await

@@ -27,6 +27,10 @@ use tokio::sync::Notify;
 pub enum Script {
     /// Answers every request at once with this text, in a turn of its own.
     Answers(String),
+    /// Defers the answer to every request (issue 591) - ends its turn without it, marked so - and
+    /// then answers with this text at once, ending the same turn again, as an external agent does
+    /// whose remote task outlived the request.
+    Defers(String),
     /// Begins a turn and stays in it until it is cancelled, asked for
     /// again, stopped or leaves: what a cancel, a retry, a stop or leaving
     /// has to end.
@@ -124,15 +128,38 @@ impl ScriptedAgent {
                 (
                     vec![
                         ActorEvent::CompleteMessageGenerated(message.clone()),
-                        ActorEvent::TurnFinished { turn_id, messages: vec![message] },
+                        ActorEvent::TurnFinished {
+                            turn_id,
+                            messages: vec![message],
+                            deferred: false,
+                        },
                     ],
                     false,
                 )
             }
+            Script::Defers(text) => {
+                let message = self.message(text, turn_id);
+                let deferred =
+                    ActorEvent::TurnFinished { turn_id, messages: Vec::new(), deferred: true };
+                answering.send_all(vec![deferred], output).await;
+                self.set_turn(None);
+                self.go_to(ActorState::Idle, output).await;
+                let answer = vec![
+                    ActorEvent::CompleteMessageGenerated(message.clone()),
+                    ActorEvent::TurnFinished { turn_id, messages: vec![message], deferred: false },
+                ];
+                answering.send_all(answer, output).await;
+                return false;
+            }
             Script::Hangs => match self.interrupted().await {
-                Interrupt::Cancel => {
-                    (vec![ActorEvent::TurnFinished { turn_id, messages: Vec::new() }], false)
-                }
+                Interrupt::Cancel => (
+                    vec![ActorEvent::TurnFinished {
+                        turn_id,
+                        messages: Vec::new(),
+                        deferred: false,
+                    }],
+                    false,
+                ),
                 Interrupt::Retry => (
                     vec![ActorEvent::TurnGivenUp { turn_id, reason: GivenUpReason::Retried }],
                     false,

@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use caelumora_api::actor::{Actor, Answering};
 use caelumora_api::transport::{EventReceiver, EventSender};
 use caelumora_domain::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
-use caelumora_domain::channel::{Brief, ChannelId, Delegation, ThreadId};
+use caelumora_domain::channel::{Brief, BriefStage, ChannelId, Delegation, ThreadId};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::history::Heard;
 use caelumora_domain::message::{Message, MessageId, MessageRole};
@@ -31,7 +31,10 @@ use tracing::{info, warn};
 /// first turn that ends after the brief was given as the one answering it; and gives what came of
 /// it to the giver where the thread was opened: the turn's answer alone (`answer`), that the turn
 /// ended without one, that it was given up and why, that the recipient could not be asked - the
-/// brief refused -, or that it left.
+/// brief refused -, or that it left. A turn whose answer is deferred (issue 591) answers nothing
+/// yet: once the channel took the brief as deferred, the giver is given back that the answer
+/// follows, and the recipient's next turn end answers the brief - in a closed circle, where the
+/// delegate alone asks the recipient anything, that of the turn deferred.
 /// It hears what goes to the users of its thread (`Recipients::reaches`): after a restart it reads
 /// on from where its open brief was given (`heard`), so that an answer recorded meanwhile is not
 /// lost.
@@ -64,6 +67,9 @@ struct Carrying {
     briefed: Option<MessageId>,
     /// The brief it gave back what came of, until the channel takes the brief as answered.
     answered: Option<MessageId>,
+    /// The brief whose answer was deferred, of which it told the giver that it follows, until the
+    /// channel takes the giver as told (issue 591).
+    told: Option<MessageId>,
     /// What the recipient said last in each of its turns not ended yet: the answer, if it is one,
     /// once the turn that answers the brief ends. Taken from what it says, not from the end of the
     /// turn, whose messages the history does not keep for a delegate reading on after a restart.
@@ -98,8 +104,8 @@ impl DelegateActor {
         }
     }
 
-    /// Takes `delegation` as the channel's state holds it now: briefs delegated, given, answered
-    /// or dropped since.
+    /// Takes `delegation` as the channel's state holds it now: briefs delegated, given, deferred -
+    /// the giver told so -, answered or dropped since.
     pub(crate) fn sync(&self, delegation: Delegation) {
         *self.delegation() = delegation;
         self.changed.notify_one();
@@ -123,10 +129,21 @@ impl DelegateActor {
     }
 
     /// Does what the open brief waits for of it: gives it to the recipient, once, in the thread -
-    /// or, if the recipient left, gives back that it did.
+    /// or, if the recipient left, gives back that it did. Of a brief whose answer was deferred, it
+    /// first tells the giver that the answer follows, once (issue 591): the channel takes what is
+    /// given back next as that, also from a recipient that left meanwhile.
     async fn carry(&self, carrying: &mut Carrying, tx: &dyn EventSender) {
         let Some(open) = self.open() else { return };
         if carrying.answered == Some(open.message.id) {
+            return;
+        }
+        if let BriefStage::Deferred { told: false, .. } = open.stage {
+            if carrying.told != Some(open.message.id) {
+                let text = self.told("kernel.delegation_deferred", context! {});
+                if self.send_back(&open, text, None, tx).await {
+                    carrying.told = Some(open.message.id);
+                }
+            }
             return;
         }
         if carrying.gone {
@@ -134,7 +151,7 @@ impl DelegateActor {
             self.give_back(carrying, &open, text, None, tx).await;
             return;
         }
-        if open.given_at.is_some() || carrying.briefed == Some(open.message.id) {
+        if open.stage != BriefStage::Waiting || carrying.briefed == Some(open.message.id) {
             return;
         }
         let recipient = self.delegation().recipient;
@@ -145,9 +162,9 @@ impl DelegateActor {
         }
     }
 
-    /// Gives `text`, what came of `open`, back to the giver where the thread was opened - of the
-    /// recipient, classified `classification`, else as the brief -, once: the channel takes the
-    /// brief as answered as it records it, or drops it if it refuses.
+    /// Gives `text`, what came of `open`, back to the giver where the thread was opened
+    /// (`send_back`), once: the channel takes the brief as answered as it records it, or drops it
+    /// if it refuses.
     async fn give_back(
         &self,
         carrying: &mut Carrying,
@@ -156,6 +173,20 @@ impl DelegateActor {
         classification: Option<Classification>,
         tx: &dyn EventSender,
     ) {
+        if self.send_back(open, text, classification, tx).await {
+            carrying.answered = Some(open.message.id);
+        }
+    }
+
+    /// Sends `text`, of `open`, back to the giver where the thread was opened - of the recipient,
+    /// classified `classification`, else as the brief. Whether it was sent.
+    async fn send_back(
+        &self,
+        open: &Brief,
+        text: String,
+        classification: Option<Classification>,
+        tx: &dyn EventSender,
+    ) -> bool {
         let (giver, recipient) = {
             let delegation = self.delegation();
             (delegation.giver, delegation.recipient)
@@ -171,8 +202,11 @@ impl DelegateActor {
         };
         let given = ActorEvent::GivenToRead { recipient: giver, message };
         match tx.send(Envelope::new(self.context(self.origin), given)).await {
-            Ok(()) => carrying.answered = Some(open.message.id),
-            Err(e) => warn!("Delegate of thread {} could not give back: {:#}", self.thread, e),
+            Ok(()) => true,
+            Err(e) => {
+                warn!("Delegate of thread {} could not give back: {:#}", self.thread, e);
+                false
+            }
         }
     }
 
@@ -185,12 +219,12 @@ impl DelegateActor {
     }
 
     /// Takes in `envelope`: what the recipient says, the end of its turn that answers the open
-    /// brief, its leave, and a brief refused.
+    /// brief - not one whose answer is deferred (issue 591) -, its leave, and a brief refused.
     async fn take_in(&self, envelope: Envelope, carrying: &mut Carrying, tx: &dyn EventSender) {
         let recipient = self.delegation().recipient;
         let open = self.open().filter(|open| carrying.answered != Some(open.message.id));
         // The end of a turn after the open brief was given: its answer.
-        let answers = open.as_ref().and_then(|open| open.given_at).is_some_and(|given_at| {
+        let answers = open.as_ref().and_then(Brief::given_at).is_some_and(|given_at| {
             envelope.context.position.is_some_and(|position| position > given_at)
         });
         match envelope.event {
@@ -212,6 +246,8 @@ impl DelegateActor {
                     carrying.said.insert(turn, message);
                 }
             }
+            // Its answer follows, as its next turn end: the channel takes the brief as deferred.
+            ActorEvent::TurnFinished { deferred: true, .. } => {}
             ActorEvent::TurnFinished { turn_id, .. } => {
                 let last = carrying.said.remove(&turn_id);
                 if let Some(open) = open.filter(|_| answers) {
@@ -301,7 +337,7 @@ impl Actor for DelegateActor {
     /// Where its open brief was given, if it was: what it reads on from as it starts again, so
     /// that the answer to it is not lost however long it did not run.
     async fn heard(&self) -> Option<Heard> {
-        self.open().and_then(|open| open.given_at).map(Heard::at)
+        self.open().as_ref().and_then(Brief::given_at).map(Heard::at)
     }
 
     fn state(&self) -> ActorState {
@@ -350,13 +386,13 @@ mod tests {
         line: ThreadId,
     }
 
-    fn brief(giver: ActorId, text: &str, given_at: Option<Position>) -> Brief {
+    fn brief(giver: ActorId, text: &str, stage: BriefStage) -> Brief {
         let message = Message {
             sender_id: giver,
             content: Some(text.to_string()),
             ..make_message(MessageId::new())
         };
-        Brief { message, given_at }
+        Brief { message, stage }
     }
 
     fn running(briefs: impl FnOnce(ActorId) -> Vec<Brief>) -> Running {
@@ -414,6 +450,13 @@ mod tests {
             self.delegate.sync(self.delegation.clone());
         }
 
+        /// The channel recording the recipient's turn ending with its answer deferred, after the
+        /// open brief was given at `given`.
+        fn deferred(&mut self, given: Position) {
+            self.delegation.briefs[0].stage = BriefStage::Deferred { at: given, told: false };
+            self.delegate.sync(self.delegation.clone());
+        }
+
         /// `event` of `sender` in the thread, at `at`.
         async fn hears(&self, sender: ActorId, at: u64, event: ActorEvent) {
             let context = EventContext {
@@ -434,7 +477,8 @@ mod tests {
                 self.hears(recipient, at, ActorEvent::CompleteMessageGenerated(message)).await;
                 at += 1;
             }
-            let finished = ActorEvent::TurnFinished { turn_id: turn, messages: Vec::new() };
+            let finished =
+                ActorEvent::TurnFinished { turn_id: turn, messages: Vec::new(), deferred: false };
             self.hears(recipient, at, finished).await;
         }
 
@@ -468,8 +512,12 @@ mod tests {
     /// answered, whose turn it brings back as given up.
     #[tokio::test]
     async fn a_delegate_gives_its_briefs_and_brings_back_the_turns_that_answer_them() {
-        let mut delegate =
-            running(|giver| vec![brief(giver, "look it up", None), brief(giver, "and this", None)]);
+        let mut delegate = running(|giver| {
+            vec![
+                brief(giver, "look it up", BriefStage::Waiting),
+                brief(giver, "and this", BriefStage::Waiting),
+            ]
+        });
         let (giver, recipient) = (delegate.delegation.giver, delegate.delegation.recipient);
         let (thread, to, first, chain) = delegate.gives().await;
         assert_eq!((thread, to, chain), (delegate.thread, recipient, giver), "in its thread");
@@ -509,7 +557,7 @@ mod tests {
     async fn a_delegate_gives_back_the_turns_answer_alone_and_bounded() {
         let mut delegate = running(|giver| {
             let briefs = ["look it up", "and this", "and that", "and more"];
-            briefs.into_iter().map(|text| brief(giver, text, None)).collect()
+            briefs.into_iter().map(|text| brief(giver, text, BriefStage::Waiting)).collect()
         });
         let remark = Message {
             tool_calls: vec![make_tool_call("search")],
@@ -547,11 +595,77 @@ mod tests {
         delegate.run.abort();
     }
 
+    /// Issue 591: the end of a turn whose answer is deferred answers nothing; once the channel
+    /// took the brief as deferred, the giver is given back that the answer follows, once, and the
+    /// turn's later end - of the same turn - answers the brief.
+    #[tokio::test]
+    async fn a_delegate_tells_that_a_deferred_answer_follows_and_gives_it_back_later() {
+        let mut delegate = running(|giver| vec![brief(giver, "look it up", BriefStage::Waiting)]);
+        let (giver, recipient) = (delegate.delegation.giver, delegate.delegation.recipient);
+        let (_, _, first, _) = delegate.gives().await;
+        delegate.recorded(recipient, &first, 5);
+        let turn = TurnId::new();
+        let deferred =
+            ActorEvent::TurnFinished { turn_id: turn, messages: Vec::new(), deferred: true };
+        delegate.hears(recipient, 6, deferred).await;
+        assert!(delegate.gives_nothing().await, "a deferred end answers nothing");
+
+        delegate.deferred(Position::new(5));
+        let (thread, to, told, _) = delegate.gives().await;
+        assert_eq!((thread, to, told.sender_id), (delegate.line, giver, recipient), "to the giver");
+        let follows =
+            Some("It is still working on it; its answer is given to you once it is done.");
+        assert_eq!(told.content.as_deref(), follows, "that the answer follows");
+        assert!(delegate.gives_nothing().await, "once");
+        delegate.recorded(giver, &told, 7);
+        assert!(delegate.gives_nothing().await, "and not again once the giver was told");
+
+        delegate.answers(turn, "found it", 8).await;
+        let (_, to, answer, _) = delegate.gives().await;
+        assert_eq!((to, answer.content.as_deref()), (giver, Some("found it")), "the answer");
+        delegate.run.abort();
+    }
+
+    /// Issue 591: a delegate started again with a brief deferred tells the giver that the answer
+    /// follows only if it was not told yet, and reads on from where the brief was given; a
+    /// recipient that left while the giver was not told yet is told so after that.
+    #[tokio::test]
+    async fn a_delegate_started_again_tells_a_deferred_answer_once_and_what_its_recipient_left() {
+        let at = Position::new(7);
+        let told = BriefStage::Deferred { at, told: true };
+        let mut delegate = running(|giver| vec![brief(giver, "look it up", told)]);
+        let heard = delegate.delegate.heard().await.map(|heard| heard.next());
+        assert_eq!(heard, Some(at), "where its brief was given");
+        assert!(delegate.gives_nothing().await, "the giver was told");
+        delegate.answers(TurnId::new(), "found it", 9).await;
+        let (_, _, answer, _) = delegate.gives().await;
+        assert_eq!(answer.content.as_deref(), Some("found it"), "the answer");
+        delegate.run.abort();
+
+        let not_told = BriefStage::Deferred { at, told: false };
+        let mut delegate = running(|giver| vec![brief(giver, "look it up", not_told)]);
+        let (giver, recipient) = (delegate.delegation.giver, delegate.delegation.recipient);
+        let left = ActorEvent::ParticipantLeft {
+            participant: recipient,
+            name: "helper".to_string(),
+            until: Position::new(9),
+            out_of_channel: false,
+        };
+        delegate.hears(giver, 9, left).await;
+        let (_, _, first, _) = delegate.gives().await;
+        assert!(first.content.as_deref().is_some_and(|text| text.contains("still working")));
+        assert!(delegate.gives_nothing().await, "nothing more before the giver was told");
+        delegate.recorded(giver, &first, 10);
+        let (_, _, then, _) = delegate.gives().await;
+        assert_eq!(then.content.as_deref(), Some("It left before it answered."), "then its leave");
+        delegate.run.abort();
+    }
+
     /// Issue 557: a brief the channel refuses - its recipient gone before it was given - is given
     /// back as one its recipient could not be asked.
     #[tokio::test]
     async fn a_brief_refused_comes_back_as_not_asked() {
-        let mut delegate = running(|giver| vec![brief(giver, "look it up", None)]);
+        let mut delegate = running(|giver| vec![brief(giver, "look it up", BriefStage::Waiting)]);
         let (_, _, first, _) = delegate.gives().await;
         let refused = ActorEvent::EventRejected {
             rejected: "GivenToRead".to_string(),
@@ -572,7 +686,10 @@ mod tests {
     async fn a_delegate_started_again_reads_on_and_gives_back_what_its_recipient_left() {
         let at = Position::new(7);
         let mut delegate = running(|giver| {
-            vec![brief(giver, "look it up", Some(at)), brief(giver, "and this", None)]
+            vec![
+                brief(giver, "look it up", BriefStage::Given { at }),
+                brief(giver, "and this", BriefStage::Waiting),
+            ]
         });
         assert_eq!(
             delegate.delegate.heard().await.map(|heard| heard.next()),

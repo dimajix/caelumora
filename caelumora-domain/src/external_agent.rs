@@ -5,9 +5,10 @@
 //! `AgentChannelState`, as for every agent (issue 206) - and the handles of
 //! the protocol that tie the next exchange to the last one (`RemoteState`).
 
+use crate::channel::ThreadId;
 use crate::confidentiality::Classification;
 use crate::digest::Digest;
-use crate::work::Work;
+use crate::work::{TurnId, Work};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -154,6 +155,21 @@ impl RemoteState {
     /// The tasks the remote agent is working on.
     pub fn working(&self) -> impl Iterator<Item = &TaskId> {
         self.open_tasks.iter().filter(|t| t.state == OpenTaskState::Working).map(|t| &t.task)
+    }
+
+    /// The turns the tasks the remote agent is working on are done as (issue 591), each with its
+    /// thread: a task's work, which its turn goes on in.
+    pub fn working_turns(&self) -> impl Iterator<Item = (ThreadId, TurnId)> + '_ {
+        let working = self.open_tasks.iter().filter(|t| t.state == OpenTaskState::Working);
+        let works = working.filter_map(|t| t.work.as_ref());
+        works.map(|work| (work.event_context.thread_id, work.turn_id))
+    }
+
+    /// The task the remote agent is working on as the turn `turn`, if any (issue 591).
+    pub fn working_as(&self, turn: TurnId) -> Option<&TaskId> {
+        let working = self.open_tasks.iter().filter(|t| t.state == OpenTaskState::Working);
+        let mut of_turn = working.filter(|t| t.work.as_ref().is_some_and(|w| w.turn_id == turn));
+        of_turn.next().map(|t| &t.task)
     }
 
     /// Records `task` as begun - or, asked back before, taken up again - by

@@ -2,13 +2,11 @@
 //! tasks it keeps open.
 
 use super::*;
-use crate::external::testing::{CallsRead, ScriptedExternalAgent};
-use crate::external::ExternalAgent;
+use crate::external::testing::{register_remote, CallsRead, ScriptedExternalAgent};
 use crate::library::AgentsLibrary;
 use crate::prompt::PromptProvider;
 use anyhow::Result;
 use caelumora_api::component::{ComponentFacets, ComponentKind};
-use caelumora_api::model::ModelProfileProvider;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::actor::{ActorEvent, Envelope};
 use caelumora_domain::agent::testing::make_personality;
@@ -91,19 +89,7 @@ async fn external_channel(
 
     let read = Arc::clone(&remote.read);
     let components = move |registry: &mut ComponentRegistry| {
-        registry.register(
-            ComponentKind::new("test_remote")
-                .provides::<dyn ExternalAgent>()
-                .provides::<dyn ModelProfileProvider>(),
-            move |_descriptor, _context| {
-                let mut facets = ComponentFacets::empty();
-                facets.insert::<dyn ExternalAgent>(Arc::<ScriptedExternalAgent>::clone(&remote));
-                facets.insert::<dyn ModelProfileProvider>(Arc::<ScriptedExternalAgent>::clone(
-                    &remote,
-                ));
-                Ok(facets)
-            },
-        );
+        register_remote(registry, "test_remote", remote);
         register_no_secrets(registry);
         register_heard(registry);
         register_first_only(registry);
@@ -447,7 +433,7 @@ async fn an_external_agent_is_given_what_was_said_since_it_was_last_asked_and_an
 async fn an_external_agent_is_given_what_a_delegate_gives_it_to_read_and_answers() {
     use crate::external::ExternalEvent;
     use caelumora_domain::chain::Position;
-    use caelumora_domain::channel::{Brief, Delegation, ThreadId, Word};
+    use caelumora_domain::channel::{Brief, BriefStage, Delegation, ThreadId, Word};
     use std::collections::VecDeque;
 
     let remote = Arc::new(ScriptedExternalAgent::answering(vec![
@@ -488,7 +474,7 @@ async fn an_external_agent_is_given_what_a_delegate_gives_it_to_read_and_answers
     // Delegated by the agent to alice, as far as its delegate goes: alice's answer comes back.
     let briefed = Brief {
         message: Message::new(Classification::CHANNEL_DEFAULT),
-        given_at: Some(Position::START),
+        stage: BriefStage::Given { at: Position::START },
     };
     let delegation = Delegation {
         giver: ActorId::Agent(agent),
@@ -1198,6 +1184,133 @@ async fn a_cancel_ends_the_answer_of_an_external_agent_and_its_remote_task() {
     running.abort();
 }
 
+/// Issue 591: a cancel ends an open task that works between requests as it ends one under way:
+/// the remote task cancelled, and what came of it so far said as the end of the turn whose answer
+/// was deferred to it - the agent named as one that had something to end -, also right as the
+/// answer was deferred, before the task is followed again.
+#[tokio::test]
+async fn a_cancel_ends_an_open_task_between_requests_and_says_what_came_so_far() {
+    use crate::external::{ExternalAgentError, ExternalEvent};
+    use caelumora_domain::work::TurnId;
+
+    // The answer breaks off; followed again, the task works on for ever, saying nothing.
+    let remote = Arc::new(
+        ScriptedExternalAgent::answering(vec![vec![
+            Ok(ExternalEvent::Started(task("t-1"))),
+            Ok(ExternalEvent::Partial("Let me".to_string())),
+            Err(ExternalAgentError::Connection {
+                endpoint: "https://agent.example".to_string(),
+                reason: "reset".to_string(),
+            }),
+        ]])
+        .resuming(vec![Vec::new()]),
+    );
+    let Stuck { channel, context, agent, mut events, running, .. } =
+        with_an_external_agent(Arc::clone(&remote)).await;
+    let deferred = time::timeout(Duration::from_secs(5), async {
+        loop {
+            let envelope = events.recv().await.expect("the channel is running");
+            if let ActorEvent::TurnFinished { turn_id, deferred: true, .. } = envelope.event {
+                break turn_id;
+            }
+        }
+    })
+    .await
+    .expect("the answer deferred");
+
+    let ended = channel.cancel(&context, None).await.expect("permitted");
+    assert_eq!(ended, ["hermes"], "it had something to end");
+    let end = time::timeout(Duration::from_secs(5), async {
+        loop {
+            let envelope = events.recv().await.expect("the channel is running");
+            if envelope.context.sender_id != ActorId::Agent(agent) {
+                continue;
+            }
+            if let ActorEvent::TurnFinished { turn_id, messages, .. } = envelope.event {
+                break (turn_id, messages);
+            }
+        }
+    })
+    .await
+    .expect("the task's end said");
+    let (turn, said): (TurnId, Vec<Message>) = end;
+    assert_eq!(turn, deferred, "as the end of the turn whose answer was deferred");
+    let content = said.first().and_then(|m| m.content.as_deref());
+    assert_eq!(content, Some("Let me"), "what came so far");
+    assert_eq!(remote.cancelled.lock().unwrap().as_slice(), &[task("t-1")], "cancelled there");
+    let state = channel.stored_agent_channel_state(agent).await.unwrap();
+    assert!(state.remote.open_tasks.is_empty(), "and forgotten");
+    running.abort();
+}
+
+/// Issue 591: lowering the channel gives an open task up that works between requests, as one under
+/// way: the remote task cancelled, nothing of it said, the turn whose answer was deferred given up
+/// as lowered.
+#[tokio::test]
+async fn lowering_the_channel_gives_up_an_open_task_between_requests() {
+    use crate::external::{ExternalAgentError, ExternalEvent};
+    use caelumora_domain::confidentiality::Confidentiality;
+
+    let remote = Arc::new(
+        ScriptedExternalAgent::answering(vec![vec![
+            Ok(ExternalEvent::Started(task("t-1"))),
+            Ok(ExternalEvent::Partial("Let me".to_string())),
+            Err(ExternalAgentError::Connection {
+                endpoint: "https://agent.example".to_string(),
+                reason: "reset".to_string(),
+            }),
+        ]])
+        .resuming(vec![Vec::new()]),
+    );
+    let Stuck { channel, context, agent, mut events, running, .. } =
+        with_an_external_agent(Arc::clone(&remote)).await;
+    assert!(answered(&mut events, agent).await.is_empty(), "the answer deferred");
+
+    channel
+        .reclassify_by_procedure(&context, Classification::general(Confidentiality::Public))
+        .await
+        .expect("permitted");
+    let told = turn_given_up(&mut events, agent).await;
+    assert!(told.contains("lowered"), "{told}");
+    assert_eq!(remote.cancelled.lock().unwrap().as_slice(), &[task("t-1")], "cancelled there");
+    let state = channel.stored_agent_channel_state(agent).await.unwrap();
+    assert!(state.remote.open_tasks.is_empty(), "and forgotten");
+    assert!(
+        channel
+            .visible_messages(ActorId::Agent(agent))
+            .await
+            .iter()
+            .all(|m| m.sender_id != ActorId::Agent(agent)),
+        "nothing of it is said"
+    );
+    running.abort();
+}
+
+/// Issue 591: a cancel leaves an open task that asked back: it is under way no longer, and waits
+/// for the next request.
+#[tokio::test]
+async fn a_cancel_leaves_an_open_task_that_asked_back() {
+    use crate::external::ExternalEvent;
+
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![vec![
+        Ok(ExternalEvent::Started(task("t-1"))),
+        Ok(ExternalEvent::InputRequired("Which one?".to_string())),
+    ]]));
+    let Stuck { channel, context, agent, helper, mut events, running } =
+        with_an_external_agent(Arc::clone(&remote)).await;
+    let asked = answered(&mut events, agent).await;
+    assert_eq!(asked[0].content.as_deref(), Some("Which one?"), "it asks back");
+    settled(&helper, ActorState::Idle).await;
+
+    let ended = channel.cancel(&context, None).await.expect("permitted");
+    assert!(ended.is_empty(), "nothing to end: {ended:?}");
+    time::sleep(Duration::from_millis(50)).await;
+    assert!(remote.cancelled.lock().unwrap().is_empty(), "not cancelled there");
+    let state = channel.stored_agent_channel_state(agent).await.unwrap();
+    assert_eq!(state.remote.asking(), Some(&task("t-1")), "it still asks back");
+    running.abort();
+}
+
 #[tokio::test]
 async fn an_external_agent_removed_while_it_answers_cancels_its_task_and_gives_its_answer_up() {
     use crate::external::ExternalEvent;
@@ -1535,47 +1648,134 @@ async fn an_open_task_whose_answer_broke_off_is_followed_and_its_end_said_unaske
     running.abort();
 }
 
+/// Issue 591: the answer to a request whose task outlives it is deferred, and the task's end ends
+/// the same turn - with what came of it, or with nothing said if nothing did -, so that whoever
+/// waits for the answer is not left waiting; it continues the answer to the request, in its span
+/// and as far from the last user's message (issue 45).
 #[tokio::test]
-async fn what_an_open_task_says_unasked_continues_the_answer_to_its_request() {
+async fn a_request_whose_task_outlives_it_defers_its_answer_to_the_tasks_end() {
     use crate::external::{ExternalAgentError, ExternalEvent};
+    use caelumora_domain::work::TurnId;
 
-    let remote = Arc::new(
-        ScriptedExternalAgent::answering(vec![vec![
-            Ok(ExternalEvent::Started(task("t-1"))),
-            Err(ExternalAgentError::Connection {
-                endpoint: "https://agent.example".to_string(),
-                reason: "reset".to_string(),
-            }),
-        ]])
-        .resuming(vec![vec![
-            Ok(ExternalEvent::Message("Here it is.".to_string())),
-            Ok(ExternalEvent::Completed),
-        ]]),
-    );
-    let Stuck { agent, mut events, running, .. } = with_an_external_agent(remote).await;
+    let finished = [
+        vec![Ok(ExternalEvent::Message("Here it is.".to_string())), Ok(ExternalEvent::Completed)],
+        vec![Ok(ExternalEvent::Completed)],
+    ];
+    for (resumed, said) in finished.into_iter().zip([Some("Here it is."), None]) {
+        let remote = Arc::new(
+            ScriptedExternalAgent::answering(vec![vec![
+                Ok(ExternalEvent::Started(task("t-1"))),
+                Err(ExternalAgentError::Connection {
+                    endpoint: "https://agent.example".to_string(),
+                    reason: "reset".to_string(),
+                }),
+            ]])
+            .resuming(vec![resumed]),
+        );
+        let Stuck { agent, mut events, running, .. } = with_an_external_agent(remote).await;
 
-    // The answer to the request, with nothing, and later what the task
-    // says unasked.
-    let contexts = time::timeout(Duration::from_secs(5), async {
-        let mut contexts = Vec::new();
-        while contexts.len() < 2 {
-            let envelope = events.recv().await.expect("the channel is running");
-            if envelope.context.sender_id == ActorId::Agent(agent)
-                && matches!(envelope.event, ActorEvent::TurnFinished { .. })
-            {
-                contexts.push(envelope.context);
+        let ends = time::timeout(Duration::from_secs(5), async {
+            let mut ends: Vec<(TurnId, Vec<Message>, bool, EventContext)> = Vec::new();
+            while ends.len() < 2 {
+                let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id != ActorId::Agent(agent) {
+                    continue;
+                }
+                if let ActorEvent::TurnFinished { turn_id, messages, deferred } = envelope.event {
+                    ends.push((turn_id, messages, deferred, envelope.context));
+                }
             }
-        }
-        contexts
-    })
-    .await
-    .expect("answered, and said unasked");
-    assert_eq!(contexts[1].span_id, contexts[0].span_id, "in the span of the request");
-    assert_eq!(
-        contexts[1].agent_hops, contexts[0].agent_hops,
-        "as far from the last user's message as the answer (issue 45)"
-    );
-    running.abort();
+            ends
+        })
+        .await
+        .expect("the request answered, and its task's end said");
+        let (request, task_end) = (&ends[0], &ends[1]);
+        assert_eq!(task_end.3.span_id, request.3.span_id, "in the span of the request");
+        assert_eq!(task_end.3.agent_hops, request.3.agent_hops, "as far from the user's message");
+        assert!(request.1.is_empty() && request.2, "the request's answer deferred: {said:?}");
+        assert_eq!(task_end.0, request.0, "the task's end ends the same turn: {said:?}");
+        assert!(!task_end.2, "and is no longer deferred: {said:?}");
+        let content = task_end.1.first().and_then(|m| m.content.as_deref());
+        assert_eq!(content, said, "with what came of it");
+        running.abort();
+    }
+}
+
+/// Issue 591: an open task whose following breaks off, or that cannot be followed, is followed
+/// again after a pause, within the same run, and its end said; one its remote agent does not know -
+/// as it is followed, or as it is asked to be - is given up as failed, as the turn whose answer was
+/// deferred to it.
+#[tokio::test]
+async fn an_open_task_whose_following_broke_off_is_followed_again_or_given_up_if_unknown() {
+    use crate::external::{ExternalAgentError, ExternalEvent};
+    use caelumora_domain::turn::GivenUpReason;
+
+    let broken = || ExternalAgentError::Connection {
+        endpoint: "https://agent.example".to_string(),
+        reason: "reset".to_string(),
+    };
+    let unknown =
+        || ExternalAgentError::UnknownTask { endpoint: "https://agent.example".to_string() };
+    let request = || vec![Ok(ExternalEvent::Started(task("t-1"))), Err(broken())];
+    let ends = || {
+        vec![Ok(ExternalEvent::Message("Here it is.".to_string())), Ok(ExternalEvent::Completed)]
+    };
+    let remote = || ScriptedExternalAgent::answering(vec![request()]);
+
+    let broke_off = remote().resuming(vec![vec![Err(broken())], ends()]);
+    let refused = remote().failing_to_resume(vec![broken()]).resuming(vec![ends()]);
+    for (remote, how) in [(broke_off, "its following broke off"), (refused, "it was refused")] {
+        let remote = Arc::new(remote);
+        let Stuck { agent, mut events, running, .. } =
+            with_an_external_agent(Arc::clone(&remote)).await;
+        assert!(answered(&mut events, agent).await.is_empty(), "the answer deferred: {how}");
+        let said = answered(&mut events, agent).await;
+        assert_eq!(said[0].content.as_deref(), Some("Here it is."), "followed again: {how}");
+        let resumed = remote.called_as().iter().filter(|(call, _)| *call == "resume").count();
+        assert_eq!(resumed, 2, "followed twice in the same run: {how}");
+        running.abort();
+    }
+
+    let in_its_stream = remote().resuming(vec![vec![Err(unknown())]]);
+    let as_asked = remote().failing_to_resume(vec![unknown()]);
+    for (remote, how) in [(in_its_stream, "in its stream"), (as_asked, "as asked")] {
+        let Stuck { channel, agent, mut events, running, .. } =
+            with_an_external_agent(Arc::new(remote)).await;
+        let ends = time::timeout(Duration::from_secs(5), async {
+            let mut ends = Vec::new();
+            while ends.len() < 2 {
+                let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id != ActorId::Agent(agent) {
+                    continue;
+                }
+                match envelope.event {
+                    ActorEvent::TurnFinished { turn_id, deferred, .. } => {
+                        ends.push((turn_id, None, deferred));
+                    }
+                    ActorEvent::TurnGivenUp { turn_id, reason } => {
+                        ends.push((turn_id, Some(reason), false));
+                    }
+                    _ => {}
+                }
+            }
+            ends
+        })
+        .await
+        .expect("the request answered, and its task given up");
+        assert!(ends[0].2, "the answer deferred: {how}");
+        assert_eq!(ends[1].0, ends[0].0, "the turn whose answer was deferred ends: {how}");
+        assert!(
+            matches!(
+                &ends[1].1,
+                Some(GivenUpReason::Failed { message }) if message.contains("no longer knows")
+            ),
+            "given up as failed, {how}: {:?}",
+            ends[1].1
+        );
+        let state = channel.stored_agent_channel_state(agent).await.unwrap();
+        assert!(state.remote.open_tasks.is_empty(), "and forgotten: {how}");
+        running.abort();
+    }
 }
 
 #[tokio::test]
@@ -2114,22 +2314,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
     let store = Persistence::in_memory();
     let components = {
         let remote = Arc::clone(&remote);
-        move |registry: &mut ComponentRegistry| {
-            registry.register(
-                ComponentKind::new("test_remote")
-                    .provides::<dyn ExternalAgent>()
-                    .provides::<dyn ModelProfileProvider>(),
-                move |_descriptor, _context| {
-                    let mut facets = ComponentFacets::empty();
-                    facets
-                        .insert::<dyn ExternalAgent>(Arc::<ScriptedExternalAgent>::clone(&remote));
-                    facets.insert::<dyn ModelProfileProvider>(Arc::<ScriptedExternalAgent>::clone(
-                        &remote,
-                    ));
-                    Ok(facets)
-                },
-            );
-        }
+        move |registry: &mut ComponentRegistry| register_remote(registry, "test_remote", remote)
     };
     let kernel = TestKernel {
         store: store.clone(),

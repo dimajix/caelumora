@@ -449,7 +449,12 @@ mod tests {
             "a step of a plan: the users', no other agent's"
         );
         let ended = Recorded::new(
-            HistoryEntry::TurnFinished { turn_id: TurnId::new(), actor: agent, at: Utc::now() },
+            HistoryEntry::TurnFinished {
+                turn_id: TurnId::new(),
+                actor: agent,
+                at: Utc::now(),
+                deferred: false,
+            },
             agent,
             Audience::Everybody,
             &context,
@@ -551,7 +556,8 @@ mod tests {
             ActorEvent::IntermediateMessageGenerated(step),
             ActorEvent::MessageGiven { message: heard.clone() },
             ActorEvent::ContextCompacted { turn_id, from: transcript, to: transcript },
-            ActorEvent::TurnFinished { turn_id, messages: Vec::new() },
+            ActorEvent::TurnFinished { turn_id, messages: Vec::new(), deferred: false },
+            ActorEvent::TurnFinished { turn_id, messages: Vec::new(), deferred: true },
             ActorEvent::TurnGivenUp { turn_id, reason: GivenUpReason::Left },
             ActorEvent::PlanStepStarted {
                 turn_id,
@@ -775,7 +781,11 @@ mod tests {
             Message { sender_id: agent, turn_id: Some(TurnId::new()), ..make_message(id(1)) };
         let ended = Envelope::new(
             context.clone(),
-            ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![answer] },
+            ActorEvent::TurnFinished {
+                turn_id: TurnId::new(),
+                messages: vec![answer],
+                deferred: false,
+            },
         );
         let again = Recorded::of(&ended, agent, Audience::Everybody)
             .and_then(|recorded| recorded.envelope(Position::START));
