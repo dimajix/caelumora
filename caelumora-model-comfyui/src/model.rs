@@ -326,8 +326,11 @@ mod tests {
         let refused = model(&url, 10).generate(&request(None)).await.unwrap_err();
         let at_the_node = "node 27 (CLIPTextEncode): Required input is missing clip";
         assert!(
-            matches!(&refused, ModelError::Backend { model, message, .. }
-                if model == "z_image_turbo" && message.contains(at_the_node)),
+            matches!(
+                &refused,
+                ModelError::Backend { model, message, .. }
+                    if model == "z_image_turbo" && message.contains(at_the_node)
+            ),
             "{refused}"
         );
         let (_, url) = comfyui(Behaviour::Fails).await;
@@ -357,8 +360,10 @@ mod tests {
         let (fake, url) = comfyui(Behaviour::Lost).await;
         let lost = model(&url, 60).generate(&request(None)).await.unwrap_err();
         assert!(
-            matches!(&lost, ModelError::Rejected { model, status: 500, .. }
-                if model == "z_image_turbo"),
+            matches!(
+                &lost,
+                ModelError::Rejected { model, status: 500, .. } if model == "z_image_turbo"
+            ),
             "{lost}"
         );
         assert_eq!(ended(&fake).await, ["interrupt p1"], "still running, so ended");
@@ -377,8 +382,11 @@ mod tests {
         let wide = model("http://127.0.0.1:1", 10).generate(&request(Some(4096))).await;
         let wide = wide.unwrap_err();
         assert!(
-            matches!(&wide, ModelError::Unfit { model, reason }
-                if model == "z_image_turbo" && reason.contains("512 to 2048")),
+            matches!(
+                &wide,
+                ModelError::Unfit { model, reason }
+                    if model == "z_image_turbo" && reason.contains("512 to 2048")
+            ),
             "{wide}"
         );
     }

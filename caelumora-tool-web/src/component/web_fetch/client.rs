@@ -348,8 +348,10 @@ mod tests {
         assert!(error.contains(&url) && !error.contains("secret"), "{error}");
         let image = client.fetch(&format!("http://localhost:{port}/image")).await;
         assert!(
-            matches!(&image, Err(FetchError::Unreadable { media_type, .. })
-                if media_type == "image/png"),
+            matches!(
+                &image,
+                Err(FetchError::Unreadable { media_type, .. }) if media_type == "image/png"
+            ),
             "{image:?}"
         );
         let untyped = client.fetch(&format!("http://localhost:{port}/untyped")).await;
@@ -364,8 +366,10 @@ mod tests {
         let public = Client::direct(is_public, &[]);
         let by_name = public.fetch(&format!("http://localhost:{port}/page")).await;
         assert!(
-            matches!(&by_name, Err(FetchError::Refused(Refusal::InsideNetwork(host)))
-                if host == "localhost"),
+            matches!(
+                &by_name,
+                Err(FetchError::Refused(Refusal::InsideNetwork(host))) if host == "localhost"
+            ),
             "{by_name:?}"
         );
         let by_address = public.fetch(&format!("http://127.0.0.1:{port}/page")).await;

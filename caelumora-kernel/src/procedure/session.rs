@@ -1510,8 +1510,11 @@ mod tests {
         let channel_id = session.channels[0];
         let mut rx = kernel.event_bus().subscribe_all();
         let is_channel = |event: &GlobalEvent, wanted: &str| {
-            matches!(event.about::<Channel>(), Some(((s, c), EntityChange::Custom { name, .. }))
-                if s == session_id && c == channel_id && *name == wanted)
+            matches!(
+                event.about::<Channel>(),
+                Some(((s, c), EntityChange::Custom { name, .. }))
+                    if s == session_id && c == channel_id && *name == wanted
+            )
         };
         create(&kernel, &SecurityContext::default(), session).await.unwrap();
         let started = time::timeout(Duration::from_secs(5), async {
@@ -1524,8 +1527,11 @@ mod tests {
         let events = rx.drain().await;
         let ch_stopped = events.iter().position(|e| is_channel(e, channel::STOPPED));
         let stopped = events.iter().position(|e| {
-            matches!(e.about::<Session>(), Some((id, EntityChange::Custom { name, .. }))
-                if id == session_id && *name == session::STOPPED)
+            matches!(
+                e.about::<Session>(),
+                Some((id, EntityChange::Custom { name, .. }))
+                    if id == session_id && *name == session::STOPPED
+            )
         });
         assert!(ch_stopped.is_some(), "expected the channel stopped, got {events:?}");
         assert!(ch_stopped < stopped, "the channel, then the session: {events:?}");
@@ -1878,14 +1884,31 @@ mod tests {
         kernel.procedures().run(following).await.unwrap();
         assert!(!talk.participant_ids().contains(&actor), "looking again, it stops the actor");
         let announced = rx.drain().await;
-        assert!(announced.iter().any(|e| matches!(e.about::<Channel>(), Some((address, change)) if address == (session.id(), talk.id()) && change.data::<ActorId>(channel::LEFT) == Some(ActorId::Agent(helper.id)))), "as a leave: {announced:?}");
+        assert!(
+            announced.iter().any(|e| matches!(
+                e.about::<Channel>(),
+                Some((address, change))
+                    if address == (session.id(), talk.id())
+                        && change.data::<ActorId>(channel::LEFT) == Some(ActorId::Agent(helper.id))
+            )),
+            "as a leave: {announced:?}"
+        );
 
         kernel.entity_stores().agents.restore(&system, helper.id).await.unwrap();
         let following = Follow::session(session.id());
         kernel.procedures().run(following).await.unwrap();
         assert!(talk.participant_ids().contains(&actor), "and starts it again");
         let announced = rx.drain().await;
-        assert!(announced.iter().any(|e| matches!(e.about::<Channel>(), Some(((_, c), change)) if c == talk.id() && change.data::<ActorId>(channel::JOINED) == Some(ActorId::Agent(helper.id)))), "as a join: {announced:?}");
+        assert!(
+            announced.iter().any(|e| matches!(
+                e.about::<Channel>(),
+                Some(((_, c), change))
+                    if c == talk.id()
+                        && change.data::<ActorId>(channel::JOINED)
+                            == Some(ActorId::Agent(helper.id))
+            )),
+            "as a join: {announced:?}"
+        );
         kernel.stop_session(&system, session.id()).await.unwrap();
     }
 

@@ -99,8 +99,15 @@ async fn an_agent_carries_out_a_command_in_a_turn_of_its_own_and_answers_the_iss
         ),
         "its transcript records the turn's end"
     );
-    let recorded = channel.history_entries().await.into_iter()
-        .any(|item| matches!(item, HistoryEntry::CommandExecuted { issuer, actor, ref command, .. } if issuer == ActorId::User(alice) && actor == ActorId::Agent(agent) && command == "mark"));
+    let recorded = channel.history_entries().await.into_iter().any(|item| {
+        matches!(
+            item,
+            HistoryEntry::CommandExecuted { issuer, actor, ref command, .. }
+                if issuer == ActorId::User(alice)
+                    && actor == ActorId::Agent(agent)
+                    && command == "mark"
+        )
+    });
     assert!(recorded, "the channel's history records what was carried out, and on whose word");
     assert_eq!(
         told_states(&mut watch, agent, ActorState::Idle).await,
@@ -216,7 +223,11 @@ async fn a_command_of_an_agent_names_its_agent() {
 
     let unnamed = error(actor.execute_command(None, "mark twice").await);
     assert!(
-        matches!(as_command_error(&unnamed), CommandError::InvalidArguments { reason, .. } if reason.contains("@helper") && reason.contains("@all")),
+        matches!(
+            as_command_error(&unnamed),
+            CommandError::InvalidArguments { reason, .. }
+                if reason.contains("@helper") && reason.contains("@all")
+        ),
         "{unnamed}"
     );
     let named = actor
@@ -226,7 +237,10 @@ async fn a_command_of_an_agent_names_its_agent() {
     assert!(named.span_id.is_some(), "it is asked: {named:?}");
     let nobody = error(actor.execute_command(None, "mark @nobody twice").await);
     assert!(
-        matches!(as_command_error(&nobody), CommandError::InvalidArguments { reason, .. } if reason.contains("@helper")),
+        matches!(
+            as_command_error(&nobody),
+            CommandError::InvalidArguments { reason, .. } if reason.contains("@helper")
+        ),
         "{nobody}"
     );
     let unknown = error(actor.execute_command(None, "nonsense @helper").await);

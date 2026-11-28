@@ -2994,9 +2994,10 @@ mod tests {
         channel.handle_actor_event(farewell, &running).await;
 
         let heard = events.try_recv().expect("the farewell enters the channel");
-        assert!(
-            matches!(heard.event, ActorEvent::TurnGivenUp { turn_id: id, .. } if id == turn_id)
-        );
+        assert!(matches!(
+            heard.event,
+            ActorEvent::TurnGivenUp { turn_id: id, .. } if id == turn_id
+        ));
         assert_eq!(heard.context.sender_id, going);
     }
 

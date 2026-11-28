@@ -601,7 +601,10 @@ mod tests {
         std_fs::write(&journal, format!("not json\n{good}")).unwrap();
         let corrupt = states.get_agent_channel_state(agent, channel).await.unwrap_err();
         assert!(
-            matches!(corrupt, StoreError::Backend(ref m) if m.contains("line 1") && !m.contains("not json")),
+            matches!(
+                corrupt,
+                StoreError::Backend(ref m) if m.contains("line 1") && !m.contains("not json")
+            ),
             "{corrupt}"
         );
     }

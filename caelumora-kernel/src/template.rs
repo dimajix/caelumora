@@ -454,7 +454,10 @@ mod tests {
         .await
         .expect_err("the global one is of another personality");
         assert!(
-            matches!(refused.downcast_ref::<AgentError>(), Some(AgentError::OfAnotherPersonality(name)) if *name == "helper"),
+            matches!(
+                refused.downcast_ref::<AgentError>(),
+                Some(AgentError::OfAnotherPersonality(name)) if *name == "helper"
+            ),
             "{refused}"
         );
         assert_eq!(
@@ -632,7 +635,10 @@ mod tests {
             .await
             .expect_err("not one outside it");
             assert!(
-                matches!(refused.downcast_ref::<AgentError>(), Some(AgentError::PersonalityOutOfScope(name)) if *name == "planner"),
+                matches!(
+                    refused.downcast_ref::<AgentError>(),
+                    Some(AgentError::PersonalityOutOfScope(name)) if *name == "planner"
+                ),
                 "{scope:?}: {refused}"
             );
         }
@@ -672,9 +678,10 @@ mod tests {
             resolve(&store, &policies, &as_user(owner), &template, SessionId::new(), owner)
                 .await
                 .unwrap();
-        assert!(
-            matches!(participants[0], (ref name, Participant::User(id)) if name == "user" && id == owner)
-        );
+        assert!(matches!(
+            participants[0],
+            (ref name, Participant::User(id)) if name == "user" && id == owner
+        ));
 
         let unbound = self::template(vec![ParticipantTemplate::User { name: "guest".to_string() }]);
         let error = resolve(&store, &policies, &as_user(owner), &unbound, SessionId::new(), owner)

@@ -346,9 +346,10 @@ mod tests {
 
         let unknown =
             AcceptAnyConfig { default_roles: vec!["boss".to_string()], ..Default::default() };
-        assert!(
-            matches!(unknown.provider(store(), Some(&roles)), Err(RoleError::UnknownRole(role)) if role == "boss")
-        );
+        assert!(matches!(
+            unknown.provider(store(), Some(&roles)),
+            Err(RoleError::UnknownRole(role)) if role == "boss"
+        ));
         assert!(
             matches!(config.provider(store(), None), Err(RoleError::UnknownRole(_))),
             "roles given, but none configured"

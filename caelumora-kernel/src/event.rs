@@ -1134,22 +1134,30 @@ mod tests {
 
         backlog.measure(long, 3, start);
         assert!(
-            matches!(backlog, Backlog::Behind { since, told, longest }
-                if since == start && told == start && longest == long),
+            matches!(
+                backlog,
+                Backlog::Behind { since, told, longest }
+                    if since == start && told == start && longest == long
+            ),
             "it falls behind, and is told so: {backlog:?}"
         );
         let soon = start + BEHIND_TOLD_EVERY / 2;
         backlog.measure(long * 2, 3, soon);
         assert!(
-            matches!(backlog, Backlog::Behind { told, longest, .. }
-                if told == start && longest == long * 2),
+            matches!(
+                backlog,
+                Backlog::Behind { told, longest, .. } if told == start && longest == long * 2
+            ),
             "not told again so soon, the longest wait kept: {backlog:?}"
         );
         let later = start + BEHIND_TOLD_EVERY;
         backlog.measure(long, 3, later);
         assert!(
-            matches!(backlog, Backlog::Behind { since, told, longest }
-                if since == start && told == later && longest == long * 2),
+            matches!(
+                backlog,
+                Backlog::Behind { since, told, longest }
+                    if since == start && told == later && longest == long * 2
+            ),
             "told again once it stayed behind long enough: {backlog:?}"
         );
         backlog.measure(long, 0, later);

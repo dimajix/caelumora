@@ -124,7 +124,10 @@ mod tests {
         assert_eq!(commands.running(), [key(workspace, "running")], "only what may still run");
         assert!(commands.get(&key(workspace, "ended")).is_ok(), "kept a while after it ended");
         assert!(
-            matches!(commands.get(&key(other, "long ended")), Err(TerminalError::UnknownCommand(id)) if id == "long ended"),
+            matches!(
+                commands.get(&key(other, "long ended")),
+                Err(TerminalError::UnknownCommand(id)) if id == "long ended"
+            ),
             "forgotten after that"
         );
         assert!(

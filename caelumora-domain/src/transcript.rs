@@ -1607,7 +1607,10 @@ mod tests {
              one of a turn given up as lowered, which the model is given nothing of"
         );
         assert!(
-            matches!(&transcript.entries(ThreadId::default()).nth(1).unwrap().entry, TranscriptEntry::Given { source, .. } if *source == part("roster")),
+            matches!(
+                &transcript.entries(ThreadId::default()).nth(1).unwrap().entry,
+                TranscriptEntry::Given { source, .. } if *source == part("roster")
+            ),
             "still the part of its component"
         );
         assert_eq!(

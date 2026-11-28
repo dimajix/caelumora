@@ -330,28 +330,32 @@ mod tests {
         );
         assert!(listed[0].modified.is_some());
         assert_eq!(terminal.stat(&path("docs/a.md")).await.unwrap().size, 5);
-        assert!(
-            matches!(terminal.list(&path("docs/a.md")).await, Err(TerminalError::NotADirectory(p)) if p == "docs/a.md")
-        );
-        assert!(
-            matches!(terminal.list(&path("nowhere")).await, Err(TerminalError::NotFound(p)) if p == "nowhere")
-        );
+        assert!(matches!(
+            terminal.list(&path("docs/a.md")).await,
+            Err(TerminalError::NotADirectory(p)) if p == "docs/a.md"
+        ));
+        assert!(matches!(
+            terminal.list(&path("nowhere")).await,
+            Err(TerminalError::NotFound(p)) if p == "nowhere"
+        ));
         assert!(matches!(terminal.read(&path("docs")).await, Err(TerminalError::IsADirectory(_))));
         assert!(matches!(
             terminal.write(&path("docs"), content("x")).await,
             Err(TerminalError::IsADirectory(_))
         ));
-        assert!(
-            matches!(terminal.write(&path("docs/a.md/x"), content("x")).await, Err(TerminalError::NotADirectory(p)) if p == "docs/a.md")
-        );
+        assert!(matches!(
+            terminal.write(&path("docs/a.md/x"), content("x")).await,
+            Err(TerminalError::NotADirectory(p)) if p == "docs/a.md"
+        ));
 
         terminal
             .move_entry(&path("docs/a.md"), &path("archive/2026/a.md"))
             .await
             .expect("its directory made");
-        assert!(
-            matches!(terminal.stat(&path("docs/a.md")).await, Err(TerminalError::NotFound(p)) if p == "docs/a.md")
-        );
+        assert!(matches!(
+            terminal.stat(&path("docs/a.md")).await,
+            Err(TerminalError::NotFound(p)) if p == "docs/a.md"
+        ));
         terminal.write(&path("docs/b.md"), content("b")).await.unwrap();
         assert!(
             matches!(
@@ -360,9 +364,10 @@ mod tests {
             ),
             "nothing is moved over"
         );
-        assert!(
-            matches!(terminal.move_entry(&path("gone"), &path("x")).await, Err(TerminalError::NotFound(p)) if p == "gone")
-        );
+        assert!(matches!(
+            terminal.move_entry(&path("gone"), &path("x")).await,
+            Err(TerminalError::NotFound(p)) if p == "gone"
+        ));
 
         assert!(
             matches!(terminal.delete(&path("docs")).await, Err(TerminalError::NotEmpty(_))),
@@ -440,7 +445,16 @@ mod tests {
         let again = shell.output(&started, state.next_offset, Duration::ZERO).await.unwrap();
         assert_eq!(again.output, "", "nothing new after the offset");
         assert!(
-            matches!(provider.shell_for(id, "channel-b").await.unwrap().unwrap().output(&started, 0, Duration::ZERO).await, Err(TerminalError::UnknownCommand(c)) if c == started),
+            matches!(
+                provider
+                    .shell_for(id, "channel-b")
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .output(&started, 0, Duration::ZERO)
+                    .await,
+                Err(TerminalError::UnknownCommand(c)) if c == started
+            ),
             "not seen from another channel"
         );
     }
@@ -527,7 +541,10 @@ mod tests {
         .unwrap();
         let error = refused.create(WorkspaceId::new()).await.unwrap_err();
         assert!(
-            matches!(&error, TerminalError::Unavailable(why) if why.contains("refused the storage's key")),
+            matches!(
+                &error,
+                TerminalError::Unavailable(why) if why.contains("refused the storage's key")
+            ),
             "{error}"
         );
         let away = SharedProvider::new(

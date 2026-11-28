@@ -416,8 +416,11 @@ impl AgentChannelState {
             .any(|(node, given)| node.entry.knowledge() == Some(source) && alike(&given, message));
         let turn = self.turn(thread);
         let put_aside = turn.iter().flat_map(|turn| &turn.after_step).any(|put| {
-            matches!(put, AfterStep::Given { message: given, knowledge: Some(k) }
-                if k.source == *source && alike(given, message))
+            matches!(
+                put,
+                AfterStep::Given { message: given, knowledge: Some(k) }
+                    if k.source == *source && alike(given, message)
+            )
         });
         on_path || put_aside
     }

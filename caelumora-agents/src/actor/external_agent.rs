@@ -1323,9 +1323,10 @@ mod tests {
         state.remote.open(&task, OpenTaskState::Working);
         let mut answer = Answer::default();
 
-        assert!(
-            matches!(answer.take(&mut state, Some(&task), ExternalEvent::Partial("Wh".to_string())), Step::Partial(p) if p == "Wh")
-        );
+        assert!(matches!(
+            answer.take(&mut state, Some(&task), ExternalEvent::Partial("Wh".to_string())),
+            Step::Partial(p) if p == "Wh"
+        ));
         assert!(matches!(
             answer.take(
                 &mut state,
@@ -1346,9 +1347,10 @@ mod tests {
         );
 
         let mut answer = Answer::default();
-        assert!(
-            matches!(answer.take(&mut state, Some(&task), ExternalEvent::Failed("no".to_string())), Step::Failed(r) if r == "no")
-        );
+        assert!(matches!(
+            answer.take(&mut state, Some(&task), ExternalEvent::Failed("no".to_string())),
+            Step::Failed(r) if r == "no"
+        ));
         assert!(state.remote.open_tasks.is_empty(), "a failed task is forgotten");
     }
 

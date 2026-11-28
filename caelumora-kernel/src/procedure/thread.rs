@@ -459,13 +459,19 @@ mod tests {
 
         main.delegate(&alice, thread, helper, "look it up".to_string()).await.expect("delegated");
         let back = |e: &HistoryEntry| {
-            matches!(e, HistoryEntry::GivenToRead { recipient, message, .. }
-                if *recipient == hers && message.sender_id == helper)
+            matches!(
+                e,
+                HistoryEntry::GivenToRead { recipient, message, .. }
+                    if *recipient == hers && message.sender_id == helper
+            )
         };
         let entries = main.history_once(|entries| entries.iter().any(back)).await;
         let briefed = entries.iter().position(|e| {
-            matches!(e, HistoryEntry::GivenToRead { recipient, message, .. }
-                if *recipient == helper && message.content.as_deref() == Some("look it up"))
+            matches!(
+                e,
+                HistoryEntry::GivenToRead { recipient, message, .. }
+                    if *recipient == helper && message.content.as_deref() == Some("look it up")
+            )
         });
         let answered = entries.iter().position(
             |e| matches!(e, HistoryEntry::Said { message } if message.sender_id == helper),
@@ -549,8 +555,11 @@ mod tests {
             .expect("opened");
         let briefed = |text: &'static str| {
             move |e: &HistoryEntry| {
-                matches!(e, HistoryEntry::GivenToRead { recipient, message, .. }
-                    if *recipient == helper && message.content.as_deref() == Some(text))
+                matches!(
+                    e,
+                    HistoryEntry::GivenToRead { recipient, message, .. }
+                        if *recipient == helper && message.content.as_deref() == Some(text)
+                )
             }
         };
         main.delegate(&bob, thread, helper, "look it up".to_string()).await.expect("delegated");
@@ -616,9 +625,12 @@ mod tests {
             }
         };
         let not_asked = |e: &HistoryEntry| {
-            matches!(e, HistoryEntry::GivenToRead { recipient, message, .. }
-                if *recipient == hers
-                    && message.content.as_deref() == Some("It could not be asked."))
+            matches!(
+                e,
+                HistoryEntry::GivenToRead { recipient, message, .. }
+                    if *recipient == hers
+                        && message.content.as_deref() == Some("It could not be asked.")
+            )
         };
         let entries = main.history_once(|entries| entries.iter().any(not_asked)).await;
         assert!(entries.iter().any(ended(helper)), "its turn ended: {entries:?}");
@@ -797,9 +809,12 @@ mod tests {
         let main = Arc::clone(&session.channels()[0]);
         session.remove_participant(&alice, helper).await.expect("let go");
         let back = |e: &HistoryEntry| {
-            matches!(e, HistoryEntry::GivenToRead { recipient, message, .. }
-                if *recipient == hers
-                    && message.content.as_deref() == Some("It left before it answered."))
+            matches!(
+                e,
+                HistoryEntry::GivenToRead { recipient, message, .. }
+                    if *recipient == hers
+                        && message.content.as_deref() == Some("It left before it answered.")
+            )
         };
         let entries = main.history_once(|entries| entries.iter().any(back)).await;
         assert_eq!(entries.iter().filter(|e| briefed(e)).count(), 1, "given once: {entries:?}");
@@ -834,8 +849,10 @@ mod tests {
         assert!(session.session().takes_part(helper), "taken into the session");
         assert!(main.channel().lists(helper), "and into the channel");
         let joined = |e: &HistoryEntry| {
-            matches!(e, HistoryEntry::ParticipantJoined { participant, .. }
-                if *participant == helper)
+            matches!(
+                e,
+                HistoryEntry::ParticipantJoined { participant, .. } if *participant == helper
+            )
         };
         let entries = main.history_once(|entries| entries.iter().any(joined)).await;
         let opened = entries.iter().position(
@@ -871,8 +888,10 @@ mod tests {
             "by whoever opened it"
         );
         let closed = |e: &HistoryEntry| {
-            matches!(e, HistoryEntry::ThreadClosed { thread: t, .. }
-                if *t == thread)
+            matches!(
+                e,
+                HistoryEntry::ThreadClosed { thread: t, .. } if *t == thread
+            )
         };
         let entries = main.history_once(|entries| entries.iter().any(closed)).await;
         let left = entries.iter().position(|e| {

@@ -177,7 +177,10 @@ mod tests {
             .execute(&json!({ "from": "", "to": "elsewhere" }), None, &mut turn)
             .await;
         assert!(
-            matches!(&top, Err(ToolError::InvalidParameter(why)) if why.contains("workspace itself")),
+            matches!(
+                &top,
+                Err(ToolError::InvalidParameter(why)) if why.contains("workspace itself")
+            ),
             "{top:?}"
         );
 

@@ -498,11 +498,15 @@ mod tests {
             matches!(&twice, Err(PromptError::NamespaceTaken(namespace)) if namespace == "agents"),
             "{twice:?}"
         );
+        assert!(matches!(
+            catalogue.add("skills", "- a list\n"),
+            Err(PromptError::Unreadable { namespace, .. }) if namespace == "skills"
+        ));
         assert!(
-            matches!(catalogue.add("skills", "- a list\n"), Err(PromptError::Unreadable { namespace, .. }) if namespace == "skills")
-        );
-        assert!(
-            matches!(catalogue.add("decision", "limit: 5\n"), Err(PromptError::Unreadable { namespace, .. }) if namespace == "decision"),
+            matches!(
+                catalogue.add("decision", "limit: 5\n"),
+                Err(PromptError::Unreadable { namespace, .. }) if namespace == "decision"
+            ),
             "a number is to be quoted"
         );
         let refused = catalogue.add("tools", "broken: \"{% if %}\"\n").expect_err("does not parse");

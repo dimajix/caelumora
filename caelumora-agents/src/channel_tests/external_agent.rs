@@ -504,8 +504,10 @@ async fn an_external_agent_is_given_what_a_delegate_gives_it_to_read_and_answers
     let sent = remote.sent.lock().unwrap().clone();
     let texts: Vec<_> = sent[1].1.said.iter().map(|said| said.text.clone()).collect();
     assert!(
-        matches!(texts.as_slice(), [given] if given.contains("gave you this to read")
-            && given.contains("Look this up.")),
+        matches!(
+            texts.as_slice(),
+            [given] if given.contains("gave you this to read") && given.contains("Look this up.")
+        ),
         "given to it, its giver named: {texts:?}"
     );
     running.abort();

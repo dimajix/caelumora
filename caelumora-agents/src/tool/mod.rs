@@ -1783,7 +1783,10 @@ mod tests {
         let mut agent_channel_state = agent_turn(&refusing).await;
         let turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
         assert!(
-            matches!(refusing.admit(&mut call("test_tool"), &turn).await, Admission::Answered(r) if r.status == ToolResultStatus::Forbidden),
+            matches!(
+                refusing.admit(&mut call("test_tool"), &turn).await,
+                Admission::Answered(r) if r.status == ToolResultStatus::Forbidden
+            ),
             "first the policy"
         );
 

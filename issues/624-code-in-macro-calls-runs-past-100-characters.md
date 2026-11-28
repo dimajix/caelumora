@@ -114,3 +114,13 @@ Each step a commit of its own, reviewed before the next.
   `names_are_unique` of the store's suite and a test of `channel/participants.rs` - and carry
   `#[expect(clippy::too_many_lines)]` naming this issue, as the maintainer decided;
   CODING-GUIDELINES.md names it beside issue 490.
+- **2026-11-28** — Added to step 2: every `matches!` with a guard laid out as rustfmt lays out a
+  call, the call around it too - those longer than 100 characters because of a string literal,
+  those left in the layout rustfmt falls back to around a macro it cannot parse, and the older
+  layouts by hand, which no check finds. A binding `ref x` was masked as `&&& x`; in a field of a
+  pattern written short (`{ ref name, .. }`) that is no expression either, and those six were
+  laid out by hand. In `let f = |e| { matches!(…) }` rustfmt takes the block away again while the
+  `matches!` stands on one line, and joins it to one line longer than 100; there the `matches!`
+  is broken within the block.
+  The chain of `.bind` in `caelumora-store-postgres/src/histories.rs`, which rustfmt left as
+  written for the SQL string before it, laid out as the one above it.

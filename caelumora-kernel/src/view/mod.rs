@@ -2418,7 +2418,10 @@ mod tests {
         assert!(matches!(refused, ViewError::Forbidden { .. }), "{refused}");
         let hr_from_team = from_team.channel_named("hr").await.unwrap();
         assert!(
-            matches!(whole(&hr_from_team).await, Err(ViewError::NoChannelNamed(name)) if name == "hr"),
+            matches!(
+                whole(&hr_from_team).await,
+                Err(ViewError::NoChannelNamed(name)) if name == "hr"
+            ),
             "nothing released: as if it did not exist"
         );
         assert!(matches!(

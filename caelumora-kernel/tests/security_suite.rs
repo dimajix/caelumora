@@ -1911,11 +1911,17 @@ async fn a_message_is_reclassified_by_its_author_or_the_channels_owner() {
     );
 
     let internal = Classification::general(Confidentiality::Internal);
-    let (_, asked) = world.asked(async {
-        alice.reclassify_message(bobs, internal.clone()).await.expect("her channel");
-        // His actor showed him his own before.
-        while !matches!(shown(&mut his, "MessageReclassified").await, ActorEvent::MessageReclassified { classification, .. } if classification == internal) {}
-    }).await;
+    let (_, asked) = world
+        .asked(async {
+            alice.reclassify_message(bobs, internal.clone()).await.expect("her channel");
+            // His actor showed him his own before.
+            while !matches!(
+                shown(&mut his, "MessageReclassified").await,
+                ActorEvent::MessageReclassified { classification, .. }
+                    if classification == internal
+            ) {}
+        })
+        .await;
     assert_eq!(
         asked,
         checks(&["alice: Reclassify(bob's message) yes", "alice: Publish yes"]),

@@ -1021,9 +1021,11 @@ mod tests {
             "{entries:?}"
         );
         let told = shown(&mut mine, |e| matches!(e, ActorEvent::ParticipantLeft { .. })).await;
-        assert!(
-            matches!(told.event, ActorEvent::ParticipantLeft { participant, ref name, .. } if participant == other && name == "other")
-        );
+        assert!(matches!(
+            told.event,
+            ActorEvent::ParticipantLeft { participant, ref name, .. }
+                if participant == other && name == "other"
+        ));
         kernel.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
@@ -1376,8 +1378,10 @@ mod tests {
             let until = left_until(&main, actor).await;
             let ranges = main.attendance(actor).await;
             assert!(
-                matches!(ranges.as_slice(), [at]
-                    if at.range.start == founding && at.range.end == until),
+                matches!(
+                    ranges.as_slice(),
+                    [at] if at.range.start == founding && at.range.end == until
+                ),
                 "{again:?}: one range, from its founding to where it left: {ranges:?}"
             );
             world.kernel.stop_session(&alice, session.id()).await.unwrap();
@@ -1394,8 +1398,11 @@ mod tests {
         assert!(!shared, "{case}: nothing shared is recorded");
         let visible = channel.visible_entries(newcomer).await;
         assert!(
-            matches!(visible.first(), Some(HistoryEntry::ParticipantJoined { participant, .. })
-                if *participant == newcomer),
+            matches!(
+                visible.first(),
+                Some(HistoryEntry::ParticipantJoined { participant, .. })
+                    if *participant == newcomer
+            ),
             "{case}: its own join first: {visible:?}"
         );
     }

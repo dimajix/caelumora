@@ -335,8 +335,10 @@ mod tests {
         let refused = Refused { subject: "agent", action: "CreateAgent".to_string() };
         let told_refused = told(AgentError::Store(StoreError::PermissionDenied(refused)));
         assert!(
-            matches!(&told_refused, SubAgentError::Forbidden(text)
-                if text == "CreateAgent is not permitted"),
+            matches!(
+                &told_refused,
+                SubAgentError::Forbidden(text) if text == "CreateAgent is not permitted"
+            ),
             "{told_refused}"
         );
         let broken = told(AgentError::Store(StoreError::Backend("the disk is full".to_string())));

@@ -24,9 +24,12 @@ use tokio::time;
 async fn help_answers_the_issuer_alone_and_lists_what_they_may_see() {
     let alice = make_user("alice");
     // `/agent wakeup` is hidden from everybody.
-    let policy = Policy(
-        |action| !matches!(action, ActionType::ShowCommand { command, .. } if command.name.as_str() == "agent wakeup"),
-    );
+    let policy = Policy(|action| {
+        !matches!(
+            action,
+            ActionType::ShowCommand { command, .. } if command.name.as_str() == "agent wakeup"
+        )
+    });
     let channel = channel_with(&[&alice], Arc::new(policy)).await;
     let actor = channel.user_actor(alice.id).unwrap();
     let mut events = channel.observe();
@@ -63,9 +66,12 @@ async fn help_answers_the_issuer_alone_and_lists_what_they_may_see() {
     assert!(matches!(as_command_error(&error), CommandError::Unknown(_)), "{error}");
 
     // A group of which nothing may be seen is unknown as well.
-    let hide_agents = Policy(
-        |action| !matches!(action, ActionType::ShowCommand { command, .. } if command.name.as_str().starts_with("agent ")),
-    );
+    let hide_agents = Policy(|action| {
+        !matches!(
+            action,
+            ActionType::ShowCommand { command, .. } if command.name.as_str().starts_with("agent ")
+        )
+    });
     let hidden = channel_with(&[&alice], Arc::new(hide_agents)).await;
     let error = hidden.user_actor(alice.id).unwrap().execute_command(None, "help agent").await;
     let error = error.expect_err("a hidden group");
@@ -174,9 +180,12 @@ async fn wakeup_reports_refusals_and_unknown_agents() {
     assert!(matches!(as_command_error(&error), CommandError::Forbidden { .. }), "{error}");
     assert!(is_forbidden(&error), "{error}");
 
-    let refuse_running = Policy(
-        |action| !matches!(action, ActionType::ExecuteCommand { command, .. } if command.name.as_str() == "agent wakeup"),
-    );
+    let refuse_running = Policy(|action| {
+        !matches!(
+            action,
+            ActionType::ExecuteCommand { command, .. } if command.name.as_str() == "agent wakeup"
+        )
+    });
     let channel = channel_with(&[&alice], Arc::new(refuse_running)).await;
     let actor = channel.user_actor(alice.id).unwrap();
     let error = actor.execute_command(None, "wakeup").await.expect_err("running it is refused");
@@ -210,7 +219,10 @@ async fn wakeup_wakes_the_agent_named_and_refuses_an_ambiguous_name() {
 
     let error = actor.execute_command(None, "wakeup @dr-who").await.expect_err("ambiguous");
     assert!(
-        matches!(as_command_error(&error), CommandError::InvalidArguments { reason, .. } if reason.contains("Dr-Who and Dr. Who")),
+        matches!(
+            as_command_error(&error),
+            CommandError::InvalidArguments { reason, .. } if reason.contains("Dr-Who and Dr. Who")
+        ),
         "{error}"
     );
     assert!(!sleepers[2].woken(), "nobody is picked");
@@ -375,7 +387,10 @@ async fn a_user_says_and_nudges_in_the_thread_they_name() {
     let said = time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("open");
-            if matches!(&envelope.event, ActorEvent::CompleteMessageGenerated(m) if m.content.as_deref() == Some("aside")) {
+            if matches!(
+                &envelope.event,
+                ActorEvent::CompleteMessageGenerated(m) if m.content.as_deref() == Some("aside")
+            ) {
                 break envelope;
             }
         }

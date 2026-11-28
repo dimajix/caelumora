@@ -146,7 +146,12 @@ async fn an_agent_whose_context_fills_up_compacts_it_on_its_own_before_its_next_
         .filter(|c| !c.is_empty())
         .collect();
     assert_eq!(said, ["Done."], "the turn goes on, the summary no part of its answer");
-    let recorded = main.history_entries().await.into_iter().any(|item| matches!(item, HistoryEntry::ActivityFinished { activity, .. } if activity == "compacting its context"));
+    let recorded = main.history_entries().await.into_iter().any(|item| {
+        matches!(
+            item,
+            HistoryEntry::ActivityFinished { activity, .. } if activity == "compacting its context"
+        )
+    });
     assert!(recorded, "the channel records it where it happened");
     let stored = main.stored_agent_channel_state(helper).await.unwrap();
     let now: Vec<_> = stored
@@ -227,7 +232,10 @@ async fn only_an_agents_owner_compacts_its_context() {
         .await;
     let refused = refused.expect_err("not his");
     assert!(
-        matches!(refused.downcast_ref::<CommandError>(), Some(CommandError::Unknown(name)) if name == "compact"),
+        matches!(
+            refused.downcast_ref::<CommandError>(),
+            Some(CommandError::Unknown(name)) if name == "compact"
+        ),
         "unknown to him: {refused}"
     );
     assert!(
@@ -242,7 +250,10 @@ async fn only_an_agents_owner_compacts_its_context() {
         .await
         .expect("hers, as its owner");
     assert!(
-        matches!(shown(&mut hers, "CommandFailed").await, ActorEvent::CommandFailed { ref reason, .. } if reason.contains("nothing to compact")),
+        matches!(
+            shown(&mut hers, "CommandFailed").await,
+            ActorEvent::CommandFailed { ref reason, .. } if reason.contains("nothing to compact")
+        ),
         "carried out for her by the agent, which has nothing to compact yet"
     );
     world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();

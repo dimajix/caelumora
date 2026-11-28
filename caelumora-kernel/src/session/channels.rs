@@ -667,7 +667,13 @@ mod tests {
                 .contains(&id),
             "listed again"
         );
-        assert!(rx.drain().await.iter().any(|e| matches!(e.about::<Channel>(), Some(((_, cid), EntityChange::Restored)) if cid == id)), "and announced");
+        assert!(
+            rx.drain().await.iter().any(|e| matches!(
+                e.about::<Channel>(),
+                Some(((_, cid), EntityChange::Restored)) if cid == id
+            )),
+            "and announced"
+        );
         assert!(kernel.state_store().get_channel_state(id).await.is_ok());
         let again = session.restore_channel(&ctx, id).await.expect_err("not deleted");
         assert!(
