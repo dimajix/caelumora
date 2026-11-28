@@ -1,6 +1,6 @@
 # 624 — Code in macro calls runs past 100 characters
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -59,6 +59,50 @@ change touching one of them has to break it first -, or as they are touched.
 - The lines long now are broken, or the decision to break them as they are touched is recorded.
 - CODING-GUIDELINES.md names the check where it states the rule.
 
+## Decision
+
+Decided by the maintainer on 2026-11-28, on what was found in trying rustfmt by hand:
+
+- **rustfmt itself lays out lines longer than 100 characters**, and takes back a line broken by
+  hand there: the head of a test with a long name, a return type (`caelumora-compaction`'s
+  `napping_with`), the pattern of a `let … else`, `async move { … }` on one line, even an
+  `assert!` of 101 characters. On 2026-11-28 there were 32 of them - not the 23 heads of tests
+  alone. A check of every line, as option A has it, would refuse what `cargo fmt --check` asks
+  for.
+- **What rustfmt leaves as written is not only the inside of a macro call.** It also leaves a
+  whole statement that holds a string literal it cannot fit (`KernelBuilder` in the tests of
+  `kernel/builder.rs`, `From<ArtifactError> for ToolError`), while it lays out the arguments of
+  an `assert!` itself. Whether a line lies in a macro call does not tell the two apart.
+
+**The check asks rustfmt.** `scripts/code-width.sh` takes every line of Rust code longer than 100
+characters - but for a comment, a line with a string literal or inside one, and a single word past
+its indent -, breaks it at every space in a copy of the file, and lets rustfmt lay out the copy: a
+line rustfmt restores is its own, a line it leaves broken is the author's, and is reported. On
+2026-11-28 that found 128 lines in 49 files, as every line tried by hand had shown.
+
+**The long lines are broken once**, in a step of their own: the pre-commit hook gives a check whole
+files, so a commit would otherwise have to break every long line of each file it touches. Without
+files, the script checks every Rust file of the repository, as `scripts/tuple-bindings.sh` and
+`scripts/import-blocks.sh` do, since none is to be found.
+
+**How a file is read as Rust text is shared**: `scripts/rust-text.awk`, loaded by
+`tuple-bindings.sh` and `code-width.sh`.
+
+## Plan
+
+Each step a commit of its own, reviewed before the next.
+
+1. **The reading shared.** `scripts/rust-text.awk` - a file read as one text, `literal`, the
+   reading of each file before its `check` - out of `scripts/tuple-bindings.sh`, without a change
+   of behaviour.
+2. **The long lines broken**, by hand as rustfmt would break them; `cargo fmt --all --check`
+   passes.
+3. **The check.** `scripts/code-width.sh` and the pre-commit hook; CODING-GUIDELINES.md corrected -
+   rustfmt's own long lines stay, what it leaves as written is broken by hand - and the check
+   named there and in its checklist; the header of `scripts/wrapping.sh`.
+
 ## History
 
 - **2026-11-27** — Opened on the maintainer's request, from the review of step 5 of issue 620.
+- **2026-11-28** — Decision and plan recorded; step 1: how a file is read as Rust text moves to
+  `scripts/rust-text.awk`, which `scripts/tuple-bindings.sh` loads.
