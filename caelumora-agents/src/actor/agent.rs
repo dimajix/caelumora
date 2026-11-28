@@ -1,7 +1,7 @@
 use super::body::retry_target;
 use super::body::AgentBody;
 use super::call_interrupts::{interruption, CallInterrupts};
-use super::run_control::Interrupt;
+use super::run_control::{Aside, Interrupt};
 use crate::activity::ActivityProvider;
 use crate::command::AgentCommand;
 use crate::error::failure_message;
@@ -291,7 +291,7 @@ impl AgentActor {
         // Woken by the channel without a message - `/wakeup` - it says so,
         // and takes up a turn settled while it slept (issues 243, 602). What
         // waits for a turn set aside is not taken.
-        let waiting = self.body.control.set_aside_threads();
+        let waiting = self.body.control.waiting_threads();
         let takes = |envelope: &Envelope| !self.body.waits_for_set_aside(envelope, &waiting);
         let received = tokio::select! {
             received = rx.recv_matching(&takes) => received,
@@ -372,8 +372,11 @@ impl AgentActor {
         let asleep = control.state() == ActorState::Sleeping;
         let goes_on =
             |thread: &ThreadId| state.thread(*thread).is_some_and(|part| part.has_work_under_way());
-        let going_on = || control.set_aside_threads().into_iter().find(goes_on);
-        let thread = control.asked_of_set_aside().or_else(|| going_on().filter(|_| !asleep))?;
+        let going_on = || control.waiting_threads().into_iter().find(goes_on);
+        let thread = control
+            .asked_aside(Aside::WaitingForAPerson)
+            .map(|(thread, _)| thread)
+            .or_else(|| going_on().filter(|_| !asleep))?;
         let turn = control.turn_under_way(thread);
         let step = state.turn(thread).map_or(ActorState::Idle, |turn| turn.step);
         let Some(asked) = control.resume(thread, step)? else { return Some(step) };
@@ -1162,7 +1165,7 @@ impl Actor for AgentActor {
                     // A turn that waits for a person is set aside, stored at that step, and the
                     // agent goes on between turns (issue 602): what settles it is taken in there.
                     ActorState::WaitingForUser => {
-                        self.body.control.set_aside();
+                        self.body.control.set_aside(Aside::WaitingForAPerson);
                         Some(ActorState::Idle)
                     }
                     ActorState::Planning => {
@@ -1211,7 +1214,7 @@ impl Actor for AgentActor {
             if interrupt == Some(Interrupt::Leave) {
                 self.give_up(&mut state, GivenUpReason::Left, &*output).await;
                 // And every turn set aside (issue 602).
-                for thread in self.body.control.set_aside_threads() {
+                for thread in self.body.control.waiting_threads() {
                     self.body.control.resume(thread, ActorState::WaitingForUser);
                     self.give_up(&mut state, GivenUpReason::Left, &*output).await;
                 }

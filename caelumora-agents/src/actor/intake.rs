@@ -117,7 +117,7 @@ impl AgentBody {
         let mut request = None;
         let mut retries = Vec::new();
         let mut next = Some(received);
-        let waiting = self.control.set_aside_threads();
+        let waiting = self.control.waiting_threads();
         while let Some(event) = next {
             if self.is_unfollowed(&event) {
                 envelope_span(&event.context, event.event.kind()).in_scope(|| {

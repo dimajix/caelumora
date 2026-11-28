@@ -26,6 +26,7 @@
 //! when the channel was lowered since.
 
 use super::body::AgentBody;
+use super::run_control::Aside;
 use crate::command::AgentCommand;
 use crate::error::failure_message;
 use crate::external::{
@@ -298,6 +299,11 @@ impl ExternalAgentActor {
         let token = self.body.control.token();
         self.go_to(ActorState::Planning, output).await;
         let ending = self.exchange(state, &answering, &mut work, &token, output).await;
+        // Its answer deferred, the turn goes on in its task: set aside, so that a cancel reaches
+        // it there - one asked since the exchange ended goes with it (issue 591).
+        if matches!(ending, Ok(Ending::Deferred)) {
+            self.body.control.set_aside(Aside::GoingOn);
+        }
         if matches!(ending, Ok(Ending::Answered(_) | Ending::Deferred)) {
             self.body.drop_answered(state, self.thread(), request.context.initiator_id, rx).await;
         }
@@ -568,11 +574,9 @@ impl ExternalAgentActor {
             if !followed.is_due(&task, Instant::now()) {
                 continue;
             }
-            if let Some(work) = state.remote.work_of(&task) {
-                if let Some(channel) = self.lowered(&work) {
-                    self.give_up_task(state, &task, &work, channel, output).await;
-                    continue;
-                }
+            let work = state.remote.work_of(&task);
+            if self.give_up_lowered(state, &task, work.as_ref(), output).await {
+                continue;
             }
             let secrets = self.body.runtime.secrets(self.initiator_of(state, &task));
             match self.remote.resume(secrets, &task).await {
@@ -590,6 +594,64 @@ impl ExternalAgentActor {
                 }
             }
         }
+    }
+
+    /// Keeps the turns its run control holds set aside as going on (`Aside::GoingOn`) in step with
+    /// its open tasks in `state` (issue 591): the turn of each task that works, and no other - the
+    /// one point where a task that ended, however it ended, stops being reached by a cancel, and
+    /// one that works is, however it came to.
+    fn keep_tasks_in_step(&self, state: &AgentChannelState) {
+        let turns: Vec<(ThreadId, TurnId)> = state.remote.working_turns().collect();
+        self.body.control.keep_going_on(&turns);
+    }
+
+    /// Ends the open tasks whose turns a cancel asked to end (issue 591,
+    /// `RunControl::asked_aside`), set aside as their answers were deferred or as the run resumed
+    /// them, each as a cancel of a request ends its task: the remote agent asked to cancel it, it
+    /// is forgotten, and what came of it so far is said as the end of its turn - or given up,
+    /// without a word of it, if its channel was lowered since it began (`give_up_lowered`). Only
+    /// the tasks set aside when the cancel came: one begun later is not reached. Nothing once the
+    /// run is to end: leaving cancels every task anyway, and a stop keeps them (issue 377).
+    async fn cancel_asked_tasks(
+        &self,
+        state: &mut AgentChannelState,
+        followed: &mut FollowedTasks,
+        output: &dyn EventSender,
+    ) {
+        while let Some((_, turn)) = self.body.control.asked_aside(Aside::GoingOn) {
+            if self.body.control.is_ending() {
+                return;
+            }
+            if let Some(task) = state.remote.working_as(turn).cloned() {
+                info!("External agent {} {} cancels its open task", self.id(), self.name());
+                let unsaid = state.remote.unsaid_of(&task);
+                let answer = followed.forget(&task).unwrap_or_else(|| Answer::after(unsaid));
+                let work = state.remote.work_of(&task);
+                if !self.give_up_lowered(state, &task, work.as_ref(), output).await {
+                    let initiator = self.initiator_of(state, &task);
+                    self.cancel_remote(state, initiator, &task).await;
+                    self.speak(state, work, Ok(answer), output).await;
+                }
+            }
+            // Its turn is set aside no longer, the task ended or not found.
+            self.keep_tasks_in_step(state);
+        }
+    }
+
+    /// Gives up the open `task`, done as `work`, if its channel was lowered since the work began
+    /// (`give_up_task`, issue 212); whether it did.
+    async fn give_up_lowered(
+        &self,
+        state: &mut AgentChannelState,
+        task: &TaskId,
+        work: Option<&Work>,
+        output: &dyn EventSender,
+    ) -> bool {
+        let Some((work, channel)) = work.and_then(|work| Some((work, self.lowered(work)?))) else {
+            return false;
+        };
+        self.give_up_task(state, task, work, channel, output).await;
+        true
     }
 
     /// Gives up the open `task`, which its remote agent does not know (issue 591): followed no
@@ -679,13 +741,9 @@ impl ExternalAgentActor {
         // Said now, if it asks back and stays open.
         state.remote.set_unsaid(&task, None);
         // Not said at all if its channel was lowered since it began.
-        if let Some(work) = &work {
-            if let Some(channel) = self.lowered(work) {
-                self.give_up_task(state, &task, work, channel, output).await;
-                return;
-            }
+        if !self.give_up_lowered(state, &task, work.as_ref(), output).await {
+            self.speak(state, work, outcome.map(|()| answer), output).await;
         }
-        self.speak(state, work, outcome.map(|()| answer), output).await;
     }
 
     /// Says in the channel, on the agent's own account, what came of an open task - a long task
@@ -1268,7 +1326,9 @@ impl Actor for ExternalAgentActor {
         let mut followed = FollowedTasks::default();
         self.follow_open_tasks(&mut state, &mut followed, &*output).await;
         loop {
-            // What others said, a request to respond, an open task's news, or a lost one due.
+            self.keep_tasks_in_step(&state);
+            // What others said, a request to respond, an open task's news, a lost one due, or a
+            // cancel of its tasks.
             let next_due = followed.next_due();
             let due = time::sleep_until(next_due.unwrap_or_else(Instant::now));
             tokio::select! {
@@ -1290,6 +1350,10 @@ impl Actor for ExternalAgentActor {
                 // A task lost is due to be followed again (issue 591).
                 () = due, if next_due.is_some() => {
                     self.follow_open_tasks(&mut state, &mut followed, &*output).await;
+                }
+                // A cancel asked the turn of an open task to end (issue 591).
+                () = self.body.control.asked() => {
+                    self.cancel_asked_tasks(&mut state, &mut followed, &*output).await;
                 }
             }
             // Where it stands now, if it moved without telling: after a
@@ -1316,9 +1380,10 @@ impl Actor for ExternalAgentActor {
         self.body.control.state()
     }
 
+    /// Ends its answer under way and the open tasks that work between requests - their turns set
+    /// aside as going on (issue 591) -, in `thread` or in every one.
     fn cancel(&self, thread: Option<ThreadId>) -> bool {
         info!("Cancelling external agent {} {}", self.id(), self.name());
-        // Only an answer under way: between answers there is nothing to end.
         self.body.control.cancel(thread)
     }
 

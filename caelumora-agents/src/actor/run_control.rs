@@ -33,6 +33,26 @@ pub(crate) enum Interrupt {
     Leave = 4,
 }
 
+/// Why a turn under way does not run (issues 602, 591).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Aside {
+    /// It waits for a person: so does the agent (`standing`), and it runs again once settled
+    /// (`resume`).
+    WaitingForAPerson,
+    /// Its work goes on elsewhere - an external agent's open task -, and ends there: the run loop
+    /// keeps it in step with that work (`keep_going_on`).
+    GoingOn,
+}
+
+/// A turn set aside: in which thread, why, and what `cancel` or `retry` asked of it meanwhile
+/// (`Interrupt::Cancel`, `Interrupt::Retry`), for the run loop to take up.
+#[derive(Debug, Clone, Copy)]
+struct SetAside {
+    thread: ThreadId,
+    why: Aside,
+    asked: Option<Interrupt>,
+}
+
 /// `RunControl::interrupt` when nothing was asked.
 const NO_INTERRUPT: u8 = 0;
 
@@ -69,11 +89,11 @@ pub(crate) struct RunControl {
     /// What `cancel`, `retry`, `stop` or `leave` asked of the run loop (an
     /// `Interrupt`, or `NO_INTERRUPT`), taken after every step.
     interrupt: AtomicU8,
-    /// The turns set aside because they wait for a person (issue 602), by their ids, each with its
-    /// thread - one a thread - and what `cancel` or `retry` asked of it meanwhile
-    /// (`Interrupt::Cancel`, `Interrupt::Retry`), which the run loop takes up as it resumes the
-    /// turn (`resume`). The turn that runs is never among them.
-    set_aside: Mutex<BTreeMap<TurnId, (ThreadId, Option<Interrupt>)>>,
+    /// The turns under way that do not run (issues 602, 591), by their ids: those that wait for a
+    /// person - one a thread -, and those whose work goes on elsewhere. The turn that runs is
+    /// never among them. Changed under the turn's lock alone, so that a cancel or a retry finds a
+    /// turn either running or set aside.
+    set_aside: Mutex<BTreeMap<TurnId, SetAside>>,
     /// Tells the run loop, waiting between turns, that `cancel` or `retry` asked a turn set aside
     /// to end.
     asked: Notify,
@@ -102,7 +122,8 @@ impl RunControl {
     /// whichever thread - one at a time (issue 557) -, at the step it stands at
     /// (`TurnState::step`), or else asleep or idle as it stood outside a turn, its own as a whole
     /// (`AgentChannelState::asleep`); every other turn stored - one waiting for a person - set
-    /// aside (issue 602).
+    /// aside (issue 602), and so the turn of every open task of an external agent that works
+    /// (issue 591).
     pub(crate) fn resuming(state: &AgentChannelState) -> Self {
         // Asleep, it takes no turn up before it is woken: every turn waits.
         let resumed = state.threads.iter().filter(|_| !state.asleep).find_map(|(thread, part)| {
@@ -116,9 +137,15 @@ impl RunControl {
         };
         let running = resumed.map(|(_, (thread, _))| thread);
         let waiting = state.threads.iter().filter(|(thread, _)| Some(**thread) != running);
-        *control.lock_set_aside() = waiting
-            .filter_map(|(thread, part)| Some((part.turn.as_ref()?.work.turn_id, (*thread, None))))
-            .collect();
+        let waiting = waiting.filter_map(|(thread, part)| {
+            let turn = part.turn.as_ref()?.work.turn_id;
+            Some((turn, SetAside { thread: *thread, why: Aside::WaitingForAPerson, asked: None }))
+        });
+        let going_on = state
+            .remote
+            .working_turns()
+            .map(|(thread, turn)| (turn, SetAside { thread, why: Aside::GoingOn, asked: None }));
+        *control.lock_set_aside() = waiting.chain(going_on).collect();
         // What it tells first, as a whole, counts as told.
         control.announced.store(control.standing());
         control
@@ -153,7 +180,7 @@ impl RunControl {
     /// person while it is idle and a turn set aside waits for one - what it tells of itself.
     pub(crate) fn standing(&self) -> ActorState {
         match self.state() {
-            ActorState::Idle if !self.lock_set_aside().is_empty() => ActorState::WaitingForUser,
+            ActorState::Idle if !self.waiting_threads().is_empty() => ActorState::WaitingForUser,
             state => state,
         }
     }
@@ -176,24 +203,24 @@ impl RunControl {
 
     /// The turn under way in `thread` that can still be ended (issues 235, 602): the one that runs
     /// there, if the run loop is in it and it is not ending already, which a cancel or a retry
-    /// would find over - else the one set aside there.
+    /// would find over - else the one set aside there waiting for a person.
     pub(crate) fn turn_under_way(&self, thread: ThreadId) -> Option<TurnId> {
         match self.under_way() {
             Some((there, turn)) if there == thread => Some(turn),
-            _ => self.set_aside_in(thread),
+            _ => self.waiting_in(thread),
         }
     }
 
-    /// The running turn waits for a person (issue 602): it is set aside, its thread holding it, and
-    /// no turn runs; the run loop goes on between turns, and resumes it once it goes on by itself
-    /// (`resume`). A cancel or a retry asked of it since its step ended, which the run loop has
-    /// not taken, goes with it, and the run loop is told (`asked`). Nothing to set aside if no turn
-    /// runs.
-    pub(crate) fn set_aside(&self) {
+    /// The running turn does not run on, for `why` (issues 602, 591): it is set aside, and no turn
+    /// runs; the run loop goes on between turns - and resumes a turn waiting for a person once it
+    /// goes on by itself (`resume`). A cancel or a retry asked of it since its step ended, which
+    /// the run loop has not taken, goes with it, and the run loop is told (`asked`). Nothing to set
+    /// aside if no turn runs.
+    pub(crate) fn set_aside(&self, why: Aside) {
         let mut running = self.lock_turn();
         if let Some((thread, turn)) = running.0.take() {
             let asked = self.take_turn_interrupt();
-            self.lock_set_aside().insert(turn, (thread, asked));
+            self.lock_set_aside().insert(turn, SetAside { thread, why, asked });
             if asked.is_some() {
                 self.asked.notify_one();
             }
@@ -201,14 +228,14 @@ impl RunControl {
         running.1 = self.ending.child_token();
     }
 
-    /// The turn set aside in `thread` runs again at `step` (issue 602), with a token of its own,
-    /// as a turn begins - one step under the turn's lock, so that a cancel or a retry finds it
-    /// either set aside or running -; what `cancel` or `retry` asked of it meanwhile, for the run
-    /// loop to take up. `None` if no turn is set aside there.
+    /// The turn set aside in `thread` waiting for a person runs again at `step` (issue 602), with a
+    /// token of its own, as a turn begins - one step under the turn's lock, so that a cancel or a
+    /// retry finds it either set aside or running -; what `cancel` or `retry` asked of it
+    /// meanwhile, for the run loop to take up. `None` if no turn waits there.
     pub(crate) fn resume(&self, thread: ThreadId, step: ActorState) -> Option<Option<Interrupt>> {
         let mut running = self.lock_turn();
-        let turn = self.set_aside_in(thread)?;
-        let (_, asked) = self.lock_set_aside().remove(&turn)?;
+        let turn = self.waiting_in(thread)?;
+        let SetAside { asked, .. } = self.lock_set_aside().remove(&turn)?;
         *running = (Some((thread, turn)), self.ending.child_token());
         self.go_to(step);
         self.take_turn_interrupt();
@@ -228,22 +255,44 @@ impl RunControl {
         }
     }
 
-    /// The threads of the turns set aside (issue 602).
-    pub(crate) fn set_aside_threads(&self) -> BTreeSet<ThreadId> {
-        self.lock_set_aside().values().map(|(thread, _)| *thread).collect()
+    /// The threads of the turns set aside waiting for a person (issue 602).
+    pub(crate) fn waiting_threads(&self) -> BTreeSet<ThreadId> {
+        let set_aside = self.lock_set_aside();
+        let waiting = set_aside.values().filter(|aside| aside.why == Aside::WaitingForAPerson);
+        waiting.map(|aside| aside.thread).collect()
     }
 
-    /// The turn set aside in `thread`, if one is.
-    fn set_aside_in(&self, thread: ThreadId) -> Option<TurnId> {
+    /// The turn set aside in `thread` waiting for a person, if one is.
+    fn waiting_in(&self, thread: ThreadId) -> Option<TurnId> {
         let set_aside = self.lock_set_aside();
-        set_aside.iter().find(|(_, (there, _))| *there == thread).map(|(turn, _)| *turn)
+        let mut waiting =
+            set_aside.iter().filter(|(_, aside)| aside.why == Aside::WaitingForAPerson);
+        waiting.find(|(_, aside)| aside.thread == thread).map(|(turn, _)| *turn)
     }
 
-    /// The thread of a turn set aside that `cancel` or `retry` asked to end (issue 602), if any:
-    /// for the run loop to resume it and end it.
-    pub(crate) fn asked_of_set_aside(&self) -> Option<ThreadId> {
+    /// A turn set aside for `why` that `cancel` or `retry` asked to end (issues 602, 591), with its
+    /// thread, if any: for the run loop to end it - to resume and end a turn waiting for a person,
+    /// to end the work of one that goes on.
+    pub(crate) fn asked_aside(&self, why: Aside) -> Option<(ThreadId, TurnId)> {
         let set_aside = self.lock_set_aside();
-        set_aside.values().find_map(|(thread, asked)| asked.map(|_| *thread))
+        let mut of_kind = set_aside.iter().filter(|(_, aside)| aside.why == why);
+        of_kind.find_map(|(turn, aside)| aside.asked.map(|_| (aside.thread, *turn)))
+    }
+
+    /// Keeps the turns set aside whose work goes on in step with that work (issue 591): `turns`,
+    /// each with its thread, are set aside so - those that were keep what was asked of them -, and
+    /// every other one goes, its work ended, however it ended. The turn that runs is never set
+    /// aside so.
+    pub(crate) fn keep_going_on(&self, turns: &[(ThreadId, TurnId)]) {
+        let running = self.lock_turn();
+        let mut set_aside = self.lock_set_aside();
+        let going_on = |turn: &TurnId| turns.iter().any(|(_, going_on)| going_on == turn);
+        set_aside.retain(|turn, aside| aside.why != Aside::GoingOn || going_on(turn));
+        let runs = running.0.map(|(_, turn)| turn);
+        for (thread, turn) in turns.iter().filter(|(_, turn)| Some(*turn) != runs) {
+            let fresh = SetAside { thread: *thread, why: Aside::GoingOn, asked: None };
+            set_aside.entry(*turn).or_insert(fresh);
+        }
     }
 
     /// Returns once `cancel` or `retry` asked a turn set aside to end - at once if one did since
@@ -252,19 +301,18 @@ impl RunControl {
         self.asked.notified().await;
     }
 
-    fn lock_set_aside(&self) -> MutexGuard<'_, BTreeMap<TurnId, (ThreadId, Option<Interrupt>)>> {
+    fn lock_set_aside(&self) -> MutexGuard<'_, BTreeMap<TurnId, SetAside>> {
         self.set_aside.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Asks the turns set aside that `which` picks, by turn and thread, to end as `asked` says -
-    /// what was asked first wins -, and tells the waiting run loop; whether one was asked.
-    fn ask_set_aside(&self, which: impl Fn(TurnId, ThreadId) -> bool, asked: Interrupt) -> bool {
+    /// Asks the turns set aside that `which` picks, by turn and how it was set aside, to end as
+    /// `asked` says - what was asked first wins -, and tells the waiting run loop; whether one was
+    /// asked.
+    fn ask_set_aside(&self, which: impl Fn(TurnId, &SetAside) -> bool, asked: Interrupt) -> bool {
         let mut set_aside = self.lock_set_aside();
         let mut any = false;
-        for (_, (_, already)) in
-            set_aside.iter_mut().filter(|(turn, (thread, _))| which(**turn, *thread))
-        {
-            already.get_or_insert(asked);
+        for (_, aside) in set_aside.iter_mut().filter(|(turn, aside)| which(**turn, aside)) {
+            aside.asked.get_or_insert(asked);
             any = true;
         }
         drop(set_aside);
@@ -307,13 +355,14 @@ impl RunControl {
         self.turn.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Asks for the turns under way in `thread` to end and be taken over - in every thread if
-    /// `None` (issue 602): the one that runs there, and those set aside there -, and returns
-    /// whether there was one (issue 611) - decided under the turn's lock, as `retry` decides, so
-    /// that a turn set aside or resumed meanwhile is found either running or set aside. Outside a
-    /// turn there is nothing to cancel, and a running turn already ending is ended anyway: it is
-    /// none. A turn set aside counts until the run loop has taken it up, as `turn_under_way` counts
-    /// it.
+    /// Asks for the turns under way in `thread` to end - in every thread if `None` (issue 602): the
+    /// one that runs there, taken over, and those set aside there, of either kind: one waiting for
+    /// a person taken over once the run loop resumed it, one whose work goes on ended where that
+    /// work goes on (issue 591) -, and returns whether there was one (issue 611) - decided under
+    /// the turn's lock, as `retry` decides, so that a turn set aside or resumed meanwhile is found
+    /// either running or set aside. Outside a turn there is nothing to cancel, and a running turn
+    /// already ending is ended anyway: it is none. A turn set aside counts until the run loop has
+    /// taken it up.
     pub(crate) fn cancel(&self, thread: Option<ThreadId>) -> bool {
         let under_way = self.lock_turn();
         let there = thread.is_none_or(|thread| under_way.0.is_some_and(|(t, _)| t == thread));
@@ -322,7 +371,7 @@ impl RunControl {
             self.ask(Interrupt::Cancel);
             under_way.1.cancel();
         }
-        let there = |_, aside| thread.is_none_or(|thread| aside == thread);
+        let there = |_, aside: &SetAside| thread.is_none_or(|thread| aside.thread == thread);
         self.ask_set_aside(there, Interrupt::Cancel) || running
     }
 
@@ -335,8 +384,11 @@ impl RunControl {
     pub(crate) fn retry(&self, turn: TurnId) -> bool {
         let under_way = self.lock_turn();
         if under_way.0.map(|(_, under_way)| under_way) != Some(turn) || !self.interruptible() {
-            // Or a turn set aside, which waits for a person (issue 602).
-            return self.ask_set_aside(|aside, _| aside == turn, Interrupt::Retry);
+            // Or a turn set aside waiting for a person (issue 602): the work of one that goes on
+            // elsewhere is not done again.
+            let of_turn =
+                |aside, set: &SetAside| aside == turn && set.why == Aside::WaitingForAPerson;
+            return self.ask_set_aside(of_turn, Interrupt::Retry);
         }
         self.ask(Interrupt::Retry);
         under_way.1.cancel();
@@ -460,7 +512,7 @@ mod tests {
         assert_eq!(control.thread(), Some(line), "the turn that goes on runs");
         assert_eq!(control.turn_under_way(line), Some(going_on));
         assert_eq!(control.state(), ActorState::Planning, "at the step it stands at");
-        assert_eq!(control.set_aside_threads(), BTreeSet::from([there]), "the other set aside");
+        assert_eq!(control.waiting_threads(), BTreeSet::from([there]), "the other set aside");
     }
 
     /// Issue 591: one cancel asks every turn set aside it reaches to end - in every thread - and
@@ -477,12 +529,81 @@ mod tests {
         }
         let control = RunControl::resuming(&state);
         assert!(control.cancel(None), "there were turns to end");
-        assert!(control.asked_of_set_aside().is_some_and(|asked| threads.contains(&asked)));
+        let asked = control.asked_aside(Aside::WaitingForAPerson);
+        assert!(asked.is_some_and(|(asked, _)| threads.contains(&asked)));
         for thread in threads {
             let asked = control.resume(thread, ActorState::WaitingForUser);
             assert_eq!(asked, Some(Some(Interrupt::Cancel)), "each asked");
-            control.set_aside();
+            control.set_aside(Aside::WaitingForAPerson);
         }
+    }
+
+    /// Issue 591: the turn of an external agent's open task that works is set aside as going on as
+    /// it resumes: not waiting for a person - the agent tells no wait, and takes requests in its
+    /// thread -, reached by a cancel but not by a retry, and kept in step with its work.
+    #[test]
+    fn a_turn_whose_work_goes_on_is_set_aside_reached_by_a_cancel_and_kept_in_step() {
+        use caelumora_domain::external_agent::TaskId;
+
+        let mut state = AgentChannelState::default();
+        let work = Work::new(EventContext::default(), None, Classification::PUBLIC, TimeZone::UTC);
+        let (turn, thread) = (work.turn_id, work.event_context.thread_id);
+        state.remote.begin(&TaskId("t-1".to_string()), &work);
+        let control = RunControl::resuming(&state);
+        assert_eq!(control.thread(), None, "it runs not");
+        assert!(control.waiting_threads().is_empty(), "nor waits for a person");
+        assert_eq!(control.standing(), ActorState::Idle, "and the agent tells no wait");
+        assert_eq!(control.turn_under_way(thread), None, "nor is it a turn to answer again");
+        assert!(!control.retry(turn), "which a retry does not reach");
+        assert!(control.cancel(Some(thread)), "a cancel does");
+        assert_eq!(
+            control.asked_aside(Aside::GoingOn),
+            Some((thread, turn)),
+            "for the run loop to end it"
+        );
+
+        control.keep_going_on(&[(thread, turn)]);
+        assert_eq!(
+            control.asked_aside(Aside::GoingOn),
+            Some((thread, turn)),
+            "kept while its work goes on"
+        );
+        control.keep_going_on(&[]);
+        assert_eq!(control.asked_aside(Aside::GoingOn), None, "gone once it ended");
+        assert!(!control.cancel(None), "and nothing to end any more");
+    }
+
+    /// Issue 591: a cancel reaches the turns whose work goes on as it finds them, not one set aside
+    /// so after it; and keeping them in step sets aside one whose work goes on that was not, but
+    /// never the turn that runs.
+    #[test]
+    fn a_cancel_reaches_no_turn_set_aside_after_it() {
+        use caelumora_domain::external_agent::TaskId;
+
+        let mut state = AgentChannelState::default();
+        let work = Work::new(EventContext::default(), None, Classification::PUBLIC, TimeZone::UTC);
+        let (first, thread) = (work.turn_id, work.event_context.thread_id);
+        state.remote.begin(&TaskId("t-1".to_string()), &work);
+        let control = RunControl::resuming(&state);
+        assert!(control.cancel(None), "the first is reached");
+        let second = TurnId::new();
+        control.begin_turn(thread, second);
+        control.go_to(ActorState::Planning);
+        control.keep_going_on(&[(thread, first), (thread, second)]);
+        assert!(control.waiting_threads().is_empty(), "nothing waits");
+        control.set_aside(Aside::GoingOn);
+        control.go_to(ActorState::Idle);
+        assert_eq!(control.asked_aside(Aside::GoingOn), Some((thread, first)), "the first asked");
+        control.keep_going_on(&[(thread, second)]);
+        assert_eq!(control.asked_aside(Aside::GoingOn), None, "the second not");
+        assert!(control.cancel(Some(thread)), "until the next cancel");
+
+        let third = TurnId::new();
+        control.keep_going_on(&[(thread, second), (thread, third)]);
+        assert!(control.cancel(None));
+        control.keep_going_on(&[(thread, third)]);
+        assert_eq!(control.asked_aside(Aside::GoingOn), Some((thread, third)), "kept in step");
+        assert_eq!(control.asked_aside(Aside::WaitingForAPerson), None, "of its kind alone");
     }
 
     #[test]
@@ -610,7 +731,7 @@ mod tests {
         assert_eq!(control.answering_in(), Some(there), "where its turn runs");
         control.go_to(ActorState::WaitingForUser);
         assert_eq!(control.answering_in(), None, "waiting for a person");
-        control.set_aside();
+        control.set_aside(Aside::WaitingForAPerson);
         control.go_to(ActorState::Idle);
         assert_eq!(control.answering_in(), None, "set aside");
         control.begin_turn(there, TurnId::new());
@@ -628,7 +749,7 @@ mod tests {
         let (line, there) = (ThreadId::default(), ThreadId::new());
         let (waiting, running) = (TurnId::new(), TurnId::new());
         let control = RunControl::new(ActorState::WaitingForUser, Some((there, waiting)));
-        control.set_aside();
+        control.set_aside(Aside::WaitingForAPerson);
         control.go_to(ActorState::Idle);
         assert_eq!(control.thread(), None, "no turn runs");
         assert_eq!(control.turn_under_way(there), Some(waiting), "it is set aside there");
@@ -638,11 +759,19 @@ mod tests {
         control.go_to(ActorState::Planning);
         assert!(control.cancel(Some(line)), "a turn runs in the line");
         assert_eq!(control.take_interrupt(), Some(Interrupt::Cancel), "the turn that runs");
-        assert_eq!(control.asked_of_set_aside(), None, "not the one set aside elsewhere");
+        assert_eq!(
+            control.asked_aside(Aside::WaitingForAPerson).map(|(thread, _)| thread),
+            None,
+            "not the one set aside elsewhere"
+        );
         assert!(control.retry(waiting), "a retry of the one set aside");
         assert!(control.cancel(Some(there)), "the turn set aside there counts");
         control.asked().await;
-        assert_eq!(control.asked_of_set_aside(), Some(there), "it is asked to end");
+        assert_eq!(
+            control.asked_aside(Aside::WaitingForAPerson).map(|(thread, _)| thread),
+            Some(there),
+            "it is asked to end"
+        );
         assert_eq!(control.take_interrupt(), None, "the turn that runs is left as it is");
 
         control.go_to(ActorState::Idle);
@@ -650,14 +779,18 @@ mod tests {
         assert_eq!(asked, Some(Some(Interrupt::Retry)), "what was asked first");
         assert_eq!(control.thread(), Some(there), "it runs again");
         assert_eq!(control.state(), ActorState::WaitingForUser, "at the step it stands at");
-        assert!(control.set_aside_threads().is_empty(), "and is set aside no more");
+        assert!(control.waiting_threads().is_empty(), "and is set aside no more");
 
         // A cancel asked as its step ended, before the run loop took it, goes with it as it is set
         // aside.
         control.cancel(Some(there));
-        control.set_aside();
+        control.set_aside(Aside::WaitingForAPerson);
         control.asked().await;
-        assert_eq!(control.asked_of_set_aside(), Some(there), "not lost");
+        assert_eq!(
+            control.asked_aside(Aside::WaitingForAPerson).map(|(thread, _)| thread),
+            Some(there),
+            "not lost"
+        );
         assert_eq!(control.take_interrupt(), None, "nor left for another turn");
     }
 

@@ -403,7 +403,7 @@ impl AgentBody {
             if awake {
                 self.control.go_to(ActorState::Idle);
             }
-            let waiting = self.control.set_aside_threads();
+            let waiting = self.control.waiting_threads();
             let between_turns = |envelope: &Envelope| self.between_turns(envelope, &waiting);
             let Some(next) = rx.try_recv_if(&between_turns).await else { break };
             taken = taken.then(self.take_in(state, next, rx).await);

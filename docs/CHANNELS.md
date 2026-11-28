@@ -1081,7 +1081,8 @@ that of a thread's pane its thread alone (`POST …/threads/{tid}/cancel`, issue
 operation on the channel, like renaming or deleting it, not an act of taking part: the policy
 decides who may, and nobody has to be a participant for it; a thread is part of its channel, and
 asks the same. Whether an actor had a turn to end there is the actor's to tell (`Actor::cancel`),
-not the channel's to judge.
+not the channel's to judge. An external agent's open task that works between requests is the
+counterpart of a turn, and ended so too (issue 591; see [External agents](#external-agents)).
 
 It is not a kill. The agent takes its turn over, so that observers stop waiting even when the turn
 said nothing, and returns to a normal state with its history intact. But nothing under way is waited
@@ -1344,8 +1345,10 @@ An **actor** is anything that sends and receives events in a channel.
     carries out itself, and its `RunControl` - where its actor stands and what `cancel`, `stop` and
     `leave` asked of it (issue 363). The two actors differ in their mind:
     a model run here with its tools, or the remote agent, whose every answer is a turn of the run
-    control, ended by `cancel`, `stop` and `leave` as an agent's turn is. Both tell where they stand
-    the same way; an external agent tells the begin and end of an answer at once.
+    control, ended by `cancel`, `stop` and `leave` as an agent's turn is - one whose answer is
+    deferred set aside while its task goes on (`Aside::GoingOn`, issue 591), as an agent's turn
+    waiting for a person is (`Aside::WaitingForAPerson`). Both tell where they stand the same way;
+    an external agent tells the begin and end of an answer at once.
 *   **`ActorId`** identifies an actor: a `User`, an `Agent` or an `Approver`, or `System` - the
     kernel itself, set only deliberately.
 *   **`Envelope`** is the unit of communication: a timestamp, an `EventContext` and the `ActorEvent`
@@ -1402,9 +1405,12 @@ if nothing came, so that whoever waits for its answer is not left waiting. The a
 task left working beside the channel's events. An open task is the external agent's counterpart of a
 turn: it keeps the work of the request that began it, and is followed, cancelled and told of in it -
 as asked by whoever asked, with its owner's rights, and in the context of the answer to that
-request. One whose channel was lowered since it began is given up. It wakes nobody and does not end
-a thread's being quiet; only an agent it mentions is woken, to answer it. Only the end of a task is
-said: a failed task keeps nothing of what came before, and a stream that breaks before the task
+request. One whose channel was lowered since it began is given up. A cancel reaches it between
+requests too, as it reaches a request under way (issue 591): the remote task is cancelled, and what
+came of it so far is said as the end of the request's turn - or, from lowering the channel, given
+up. What a task says wakes nobody and does not end a thread's being quiet; only an agent it mentions
+is woken, to answer it. Only the end of a task is said: a failed task keeps nothing of what came
+before, and a stream that breaks before the task
 ends says nothing - the task stays open and is followed again, as is one that could not be followed,
 after a pause that doubles with each try in a row, from a second up to five minutes (issue 591). A
 task its remote agent does not know (`ExternalAgentError::UnknownTask`) is given up as failed. While

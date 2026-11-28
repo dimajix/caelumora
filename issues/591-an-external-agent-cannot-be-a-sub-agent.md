@@ -153,3 +153,5 @@ the delegation's state says, so that a restart loses nothing. Each step is revie
   ending - before, an external agent stopped in that moment could take the stop for a cancel and
   cancel a remote task the stop should have left working.
 - **2026-11-28** — Step 4b done: the turns set aside are kept by their turn.
+- **2026-11-28** — Step 4 done (4c): an external agent's turn whose answer it deferred is set
+  aside as going on, and a cancel reaches its task between requests.

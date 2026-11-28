@@ -3129,6 +3129,37 @@ async fn an_external_agents_task_is_followed_for_its_owner_as_whoever_asked_bega
     world.kernel.stop_session(&World::as_user(world.alice), reopened.id()).await.unwrap();
 }
 
+/// A cancel reaches an external agent's open task between requests (issue 591): followed after a
+/// restart, the task is cancelled in the name it was begun in - alice's credential, asked by bob -
+/// though alice cancels the channel.
+#[tokio::test]
+async fn cancelling_a_channel_cancels_an_open_task_between_requests_as_whoever_asked_began_it() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let (world, session, _) = with_a_task_bob_asked_for(&calls).await;
+    let alice = World::as_user(world.alice);
+    world.kernel.stop_session(&alice, session.id()).await.unwrap();
+    let reopened = world.kernel.open_session(&alice, session.id()).await.expect("she opens it");
+    calls_made(&calls, 2).await;
+    let main = Arc::clone(&reopened.channels()[0]);
+
+    let (cancelled, asked) = world
+        .asked(async {
+            let cancelled = main.cancel(&alice, None).await.expect("hers to cancel");
+            calls_made(&calls, 3).await;
+            cancelled
+        })
+        .await;
+    assert_eq!(cancelled, ["hermes"], "it had a task to end");
+    assert_eq!(calls.lock().unwrap().as_slice(), ["send", "resume", "cancel"]);
+    let used: Vec<&String> = asked.iter().filter(|line| line.contains("UseSecret")).collect();
+    assert_eq!(
+        used,
+        ["alice as hermes, asked by bob: UseSecret(system's) yes"],
+        "in the name the task was begun in"
+    );
+    world.kernel.stop_session(&alice, reopened.id()).await.unwrap();
+}
+
 /// A session restarted by the kernel (issue 388) - nobody asked for it - has an external agent's
 /// open task followed in the name it was begun in, alice's credential, asked by bob, as when
 /// someone opens the session: the kernel's name reaches nothing the agent does.
