@@ -83,7 +83,6 @@ pub enum HistoryStart {
 mod tests {
     use super::*;
     use crate::message::testing::make_message;
-    use crate::message::MessageRole;
 
     /// Five messages, one a day, the last one `now`.
     fn daily(now: DateTime<Utc>) -> Vec<Message> {
@@ -92,7 +91,6 @@ mod tests {
             .map(|days| Message {
                 timestamp: now - Duration::days(days),
                 content: None,
-                role: MessageRole::System,
                 ..make_message(MessageId::new())
             })
             .collect()

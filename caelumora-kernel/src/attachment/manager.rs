@@ -999,14 +999,13 @@ mod tests {
                 Message {
                     attachments: vec![image.clone(), text.clone()],
                     content: None,
-                    role: MessageRole::System,
                     classification: main.classification.clone(),
                     ..make_message(MessageId::new())
                 },
                 Message {
                     tool_results: vec![showing.clone()],
                     content: None,
-                    role: MessageRole::System,
+                    role: MessageRole::Tool,
                     classification: main.classification.clone(),
                     ..make_message(MessageId::new())
                 },

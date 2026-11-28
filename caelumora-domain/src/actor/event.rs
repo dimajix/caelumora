@@ -820,12 +820,12 @@ mod tests {
                 ..make_tool_call("f")
             }],
             content: None,
-            role: MessageRole::System,
+            role: MessageRole::Assistant,
             ..make_message(MessageId::new())
         };
         let text = Message {
             content: Some("hi".to_string()),
-            role: MessageRole::System,
+            role: MessageRole::Assistant,
             ..make_message(MessageId::new())
         };
 

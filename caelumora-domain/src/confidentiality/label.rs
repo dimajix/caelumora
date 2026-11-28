@@ -97,7 +97,7 @@ mod tests {
         let message = Message {
             tool_results: vec![result],
             content: None,
-            role: MessageRole::System,
+            role: MessageRole::Tool,
             classification: internal.clone(),
             ..make_message(MessageId::new())
         };
@@ -112,7 +112,6 @@ mod tests {
                 ..make_content_ref("a.png", b"a")
             }],
             content: None,
-            role: MessageRole::System,
             classification: internal.clone(),
             ..make_message(MessageId::new())
         };

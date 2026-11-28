@@ -1142,15 +1142,13 @@ mod tests {
         let mut channel = main_channel(&session);
         let session = stored(&kernel, session, slice::from_mut(&mut channel)).await;
 
-        let said = |t: &str| Message {
-            content: Some(t.to_string()),
-            role: MessageRole::System,
-            ..make_message(MessageId::new())
-        };
+        let said =
+            |t: &str| Message { content: Some(t.to_string()), ..make_message(MessageId::new()) };
         let question = said("question");
         let answer = Message {
             turn_id: Some(TurnId::new()),
             sender_id: ActorId::Agent(remote.id),
+            role: MessageRole::Assistant,
             ..said("answer")
         };
         let mut state = AgentChannelState::default();
@@ -2015,7 +2013,6 @@ mod tests {
             &EventContext::new(hers.session_id, hers.id, ActorId::None, String::new()),
             vec![Message {
                 content: Some("hers alone".to_string()),
-                role: MessageRole::System,
                 classification: hers.classification.clone(),
                 ..make_message(MessageId::new())
             }],
@@ -2078,7 +2075,6 @@ mod tests {
         let mut kept = AgentChannelState::default();
         let heard = Message {
             content: Some("kept".to_string()),
-            role: MessageRole::System,
             classification: Classification::PUBLIC,
             ..make_message(MessageId::new())
         };
@@ -2185,7 +2181,7 @@ mod tests {
             sender_id: ActorId::Agent(helper.id),
             measures: Some(measures),
             content: None,
-            role: MessageRole::System,
+            role: MessageRole::Assistant,
             ..make_message(MessageId::new())
         };
         let calls = vec![make_tool_call("delete")];
@@ -2479,7 +2475,7 @@ mod tests {
             vec![Message {
                 sender_id: ActorId::Agent(helper.id),
                 content: Some("I was here".to_string()),
-                role: MessageRole::System,
+                role: MessageRole::Assistant,
                 ..make_message(MessageId::new())
             }],
         );

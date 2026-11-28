@@ -23,7 +23,6 @@ pub(super) fn prompts() -> PromptTexts {
 pub(super) fn heard(text: &str) -> Message {
     Message {
         content: Some(text.to_string()),
-        role: MessageRole::System,
         classification: Classification::PUBLIC,
         ..make_message(MessageId::new())
     }

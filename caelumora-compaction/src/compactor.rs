@@ -634,7 +634,6 @@ mod tests {
         let mut state = AgentChannelState::default();
         let heard = |text: &str| Message {
             content: Some(text.to_string()),
-            role: MessageRole::System,
             classification: Classification::PUBLIC,
             ..make_message(MessageId::new())
         };
@@ -788,7 +787,6 @@ mod tests {
         let mut state = AgentChannelState::default();
         let u1 = Message {
             content: Some("u1".to_string()),
-            role: MessageRole::System,
             classification: Classification::PUBLIC,
             ..make_message(MessageId::new())
         };
@@ -836,7 +834,6 @@ mod tests {
         let mut state = AgentChannelState::default();
         let u1 = Message {
             content: Some("u1".to_string()),
-            role: MessageRole::System,
             classification: Classification::PUBLIC,
             ..make_message(MessageId::new())
         };
@@ -922,7 +919,6 @@ mod tests {
         let mut state = AgentChannelState::default();
         let u1 = Message {
             content: Some("u1".to_string()),
-            role: MessageRole::System,
             classification: Classification::PUBLIC,
             ..make_message(MessageId::new())
         };
@@ -982,7 +978,6 @@ mod tests {
         let mut state = AgentChannelState::default();
         let u1 = Message {
             content: Some("u1".to_string()),
-            role: MessageRole::System,
             classification: Classification::PUBLIC,
             ..make_message(MessageId::new())
         };

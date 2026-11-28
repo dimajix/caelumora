@@ -997,7 +997,7 @@ pub(crate) mod tests {
                 ..result("1", ToolVisibility::SHOWN)
             }],
             content: None,
-            role: MessageRole::System,
+            role: MessageRole::Tool,
             classification: Classification::PUBLIC,
             ..make_message(MessageId::new())
         };
@@ -1008,7 +1008,7 @@ pub(crate) mod tests {
                 ..result("1", ToolVisibility::SHOWN)
             }],
             content: None,
-            role: MessageRole::System,
+            role: MessageRole::Tool,
             classification: classified(Confidentiality::Internal, &["finance"]),
             ..make_message(MessageId::new())
         };
@@ -1185,7 +1185,7 @@ pub(crate) mod tests {
             content: Some("let me look".to_string()),
             reasoning: Some("hm".to_string()),
             tool_calls: vec![call.clone()],
-            role: MessageRole::System,
+            role: MessageRole::Assistant,
             classification: secret.clone(),
             ..make_message(MessageId::new())
         };
@@ -1226,7 +1226,6 @@ pub(crate) mod tests {
         assert_eq!(given.tool_results[0].classification, Classification::PUBLIC);
         let words = Message {
             content: Some("said".to_string()),
-            role: MessageRole::System,
             classification: secret,
             ..make_message(MessageId::new())
         };

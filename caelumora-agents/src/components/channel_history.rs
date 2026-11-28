@@ -228,11 +228,7 @@ mod tests {
 
     /// A message saying `content`, recorded as the store keeps it.
     fn said(content: &str) -> Value {
-        recorded(Message {
-            content: Some(content.to_string()),
-            role: MessageRole::System,
-            ..make_message(MessageId::new())
-        })
+        recorded(Message { content: Some(content.to_string()), ..make_message(MessageId::new()) })
     }
 
     #[test]
@@ -247,7 +243,6 @@ mod tests {
         let attached = Message {
             attachments: vec![make_content_ref("a.png", b"a")],
             content: None,
-            role: MessageRole::System,
             ..make_message(MessageId::new())
         };
         let attached = recorded(attached);

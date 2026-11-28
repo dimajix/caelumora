@@ -414,7 +414,7 @@ mod tests {
     use caelumora_domain::actor::{ActorEvent, EventContext, RequestReason};
     use caelumora_domain::approval::ApprovalVerdict;
     use caelumora_domain::message::testing::make_message;
-    use caelumora_domain::message::{Message, MessageId, MessageRole};
+    use caelumora_domain::message::{Message, MessageId};
     use caelumora_domain::question::QuestionId;
     use caelumora_domain::work::TurnId;
     use std::ops::Range;
@@ -463,7 +463,6 @@ mod tests {
     fn said(n: usize) -> ActorEvent {
         ActorEvent::CompleteMessageGenerated(Message {
             content: Some(n.to_string()),
-            role: MessageRole::System,
             ..make_message(MessageId::new())
         })
     }

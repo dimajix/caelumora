@@ -257,7 +257,7 @@ mod tests {
             let answer = Message {
                 sender_id: ActorId::Agent(recipient),
                 content: None,
-                role: MessageRole::System,
+                role: MessageRole::Assistant,
                 ..make_message(MessageId::new())
             };
             let brief =

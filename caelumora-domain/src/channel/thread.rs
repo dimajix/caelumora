@@ -248,7 +248,6 @@ mod tests {
             message: Message {
                 sender_id: giver,
                 content: Some(text.to_string()),
-                role: MessageRole::System,
                 ..make_message(MessageId::new())
             },
             given_at: None,
@@ -260,7 +259,7 @@ mod tests {
         let answer = Message {
             sender_id: recipient,
             content: None,
-            role: MessageRole::System,
+            role: MessageRole::Assistant,
             classification: Classification::PUBLIC,
             ..make_message(MessageId::new())
         };
@@ -326,12 +325,7 @@ mod tests {
         let giver = ActorId::Agent(AgentId::new());
         let recipient = ActorId::Agent(AgentId::new());
         let brief = || Brief {
-            message: Message {
-                sender_id: giver,
-                content: None,
-                role: MessageRole::System,
-                ..make_message(MessageId::new())
-            },
+            message: Message { sender_id: giver, content: None, ..make_message(MessageId::new()) },
             given_at: None,
         };
         let delegated = |briefs: usize| Delegation {
@@ -344,7 +338,7 @@ mod tests {
         let answer = || Message {
             sender_id: recipient,
             content: None,
-            role: MessageRole::System,
+            role: MessageRole::Assistant,
             ..make_message(MessageId::new())
         };
         let at = Position::new;

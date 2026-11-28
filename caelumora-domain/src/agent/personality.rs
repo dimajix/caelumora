@@ -332,7 +332,7 @@ mod tests {
     use crate::agent::AgentId;
     use crate::confidentiality::Classification;
     use crate::message::testing::make_message;
-    use crate::message::{MessageId, MessageRole};
+    use crate::message::MessageId;
     use crate::user::UserId;
 
     #[test]
@@ -411,7 +411,6 @@ mod tests {
                 ActorEvent::CompleteMessageGenerated(Message {
                     sender_id: sender,
                     content: None,
-                    role: MessageRole::System,
                     classification: classification.clone(),
                     ..make_message(MessageId::new())
                 }),
@@ -556,7 +555,6 @@ mod tests {
                 ActorEvent::CompleteMessageGenerated(Message {
                     sender_id: sender,
                     content: None,
-                    role: MessageRole::System,
                     classification: classification.clone(),
                     ..make_message(MessageId::new())
                 }),

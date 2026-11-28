@@ -1039,7 +1039,6 @@ mod tests {
     use caelumora_domain::channel::Participant;
     use caelumora_domain::history::{Audience, Recorded};
     use caelumora_domain::message::testing::make_message;
-    use caelumora_domain::message::MessageRole;
     use caelumora_domain::security::Refused;
     use caelumora_kernel::channel::ChannelError;
     use caelumora_kernel::view::{AgentContextError, Viewer};
@@ -1377,7 +1376,6 @@ mod tests {
         let said = Message {
             sender_id: alice,
             content: Some("in the line".to_string()),
-            role: MessageRole::System,
             ..make_message(MessageId::new())
         };
         let given = Message { content: Some("given".to_string()), ..said.clone() };
@@ -1400,6 +1398,7 @@ mod tests {
         assert!(!items.iter().any(|item| item["given_to_read"].is_object()), "{page}");
         let given = items.iter().filter(|item| item["said"].to_string().contains("given"));
         assert_eq!(given.count(), 1, "once, as what it was given: {page}");
+        assert!(page.to_string().contains("in the line"), "what was said in the line: {page}");
         let of_other =
             page_of(&api, &cookie, &format!("{agents}?thread={}", ThreadId::new().0)).await;
         assert!(!of_other.to_string().contains("in the line"), "{of_other}");

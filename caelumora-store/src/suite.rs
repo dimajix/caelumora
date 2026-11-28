@@ -1027,7 +1027,7 @@ pub async fn state_store_behaves(store: &dyn StateStore) {
     // An external agent's: its transcript and its remote part.
     let mut talking = AgentChannelState::default();
     talking.remote.conversation = Some(ConversationId("c-1".to_string()));
-    let hello = Message { role: MessageRole::System, ..make_message(MessageId::new()) };
+    let hello = make_message(MessageId::new());
     talking.transcript.extend(ThreadId::default(), vec![hello]);
     store
         .put_agent_channel_state(remote_agent, channel, &mut talking)
@@ -1052,11 +1052,7 @@ pub async fn state_store_behaves(store: &dyn StateStore) {
     // Stored in a second put, as what changed since the first (issue 376).
     talking.transcript.extend(
         ThreadId::default(),
-        vec![Message {
-            content: Some("and more".to_string()),
-            role: MessageRole::System,
-            ..make_message(MessageId::new())
-        }],
+        vec![Message { content: Some("and more".to_string()), ..make_message(MessageId::new()) }],
     );
     store
         .put_agent_channel_state(remote_agent, channel, &mut talking)

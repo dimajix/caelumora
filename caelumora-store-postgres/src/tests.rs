@@ -326,7 +326,6 @@ async fn what_an_agent_waiting_for_an_approval_stored_survives_a_restart() {
     let (agent, channel) = (AgentId::new(), ChannelId::new());
     let said = |content: &str| Message {
         content: Some(content.to_string()),
-        role: MessageRole::System,
         ..make_message(MessageId::new())
     };
     let mut channel_state = ChannelState::new(channel);
@@ -417,13 +416,15 @@ fn joined(participant: ActorId) -> HistoryEntry {
     }
 }
 
-/// A message said by `by`, saying `content`, for a history a test fills by hand.
+/// A message said by `by`, saying `content` - as an agent's answer if `by` is an agent -, for a
+/// history a test fills by hand.
 fn said(by: ActorId, content: Option<&str>) -> HistoryEntry {
+    let role = if by.as_agent_id().is_some() { MessageRole::Assistant } else { MessageRole::User };
     HistoryEntry::Said {
         message: Message {
             sender_id: by,
+            role,
             content: content.map(str::to_string),
-            role: MessageRole::System,
             ..make_message(MessageId::new())
         },
     }

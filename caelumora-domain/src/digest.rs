@@ -754,11 +754,7 @@ mod tests {
     use serde_json::json;
 
     fn message(content: &str) -> Message {
-        Message {
-            content: Some(content.to_string()),
-            role: MessageRole::System,
-            ..make_message(MessageId::new())
-        }
+        Message { content: Some(content.to_string()), ..make_message(MessageId::new()) }
     }
 
     #[test]

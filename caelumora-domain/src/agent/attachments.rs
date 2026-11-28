@@ -108,7 +108,6 @@ mod tests {
         let mut first = Message {
             attachments: vec![a.clone()],
             content: None,
-            role: MessageRole::System,
             ..make_message(MessageId::new())
         };
         index.number(&mut first);
@@ -161,7 +160,7 @@ mod tests {
                 ..ToolCallResult::of(&call, Default::default(), String::new(), Default::default())
             }],
             content: None,
-            role: MessageRole::System,
+            role: MessageRole::Tool,
             ..make_message(MessageId::new())
         };
         let mut index = AttachmentIndex::default();
