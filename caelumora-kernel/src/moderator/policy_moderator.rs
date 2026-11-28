@@ -637,6 +637,7 @@ mod tests {
             ActorEvent::TurnFinished {
                 turn_id: TurnId::new(),
                 messages: vec![text_from(sender_id, content, mentions)],
+                deferred: false,
             },
         )
     }
@@ -768,6 +769,7 @@ mod tests {
                     ActorEvent::TurnFinished {
                         turn_id: TurnId::new(),
                         messages: vec![in_turn.clone(), tool_calls_only],
+                        deferred: false,
                     },
                 ),
                 &SecurityContext::default(),
@@ -1733,7 +1735,11 @@ mod tests {
                 .route(
                     &envelope(
                         agents[0],
-                        ActorEvent::TurnFinished { turn_id: turn, messages: vec![in_turn] },
+                        ActorEvent::TurnFinished {
+                            turn_id: turn,
+                            messages: vec![in_turn],
+                            deferred: false,
+                        },
                     ),
                     &SecurityContext::default(),
                 )
@@ -1758,7 +1764,10 @@ mod tests {
             let agents = add_agents(&moderator);
             let sender = agents[0];
             let ended = |messages: Vec<Message>| {
-                envelope(sender, ActorEvent::TurnFinished { turn_id: TurnId::new(), messages })
+                envelope(
+                    sender,
+                    ActorEvent::TurnFinished { turn_id: TurnId::new(), messages, deferred: false },
+                )
             };
             let calling = Message {
                 sender_id: sender,

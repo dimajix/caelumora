@@ -1454,7 +1454,7 @@ mod tests {
             .await
             .is_empty());
         assert_eq!(followed.under_way().len(), 1, "kept, though nothing is printed of it");
-        let finished = ActorEvent::TurnFinished { turn_id, messages: Vec::new() };
+        let finished = ActorEvent::TurnFinished { turn_id, messages: Vec::new(), deferred: false };
         assert!(followed.take_in(&in_other(finished)).await.is_empty());
         assert!(followed.under_way().is_empty(), "ended, in another thread");
 
@@ -2046,7 +2046,11 @@ mod tests {
         followed
             .take_in(&from(&channel, agent, ActorEvent::CompleteMessageGenerated(calling)))
             .await;
-        let finished = ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: Vec::new() };
+        let finished = ActorEvent::TurnFinished {
+            turn_id: TurnId::new(),
+            messages: Vec::new(),
+            deferred: false,
+        };
         followed.take_in(&from(&channel, agent, finished)).await;
 
         let result = ToolCallResult::of(
@@ -2159,7 +2163,7 @@ mod tests {
             .take_in(&from(
                 &channel,
                 agent,
-                ActorEvent::TurnFinished { turn_id, messages: Vec::new() },
+                ActorEvent::TurnFinished { turn_id, messages: Vec::new(), deferred: false },
             ))
             .await;
         let error = refused(followed.retry(&actor).await.unwrap_err());

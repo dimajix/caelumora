@@ -124,15 +124,24 @@ impl ScriptedAgent {
                 (
                     vec![
                         ActorEvent::CompleteMessageGenerated(message.clone()),
-                        ActorEvent::TurnFinished { turn_id, messages: vec![message] },
+                        ActorEvent::TurnFinished {
+                            turn_id,
+                            messages: vec![message],
+                            deferred: false,
+                        },
                     ],
                     false,
                 )
             }
             Script::Hangs => match self.interrupted().await {
-                Interrupt::Cancel => {
-                    (vec![ActorEvent::TurnFinished { turn_id, messages: Vec::new() }], false)
-                }
+                Interrupt::Cancel => (
+                    vec![ActorEvent::TurnFinished {
+                        turn_id,
+                        messages: Vec::new(),
+                        deferred: false,
+                    }],
+                    false,
+                ),
                 Interrupt::Retry => (
                     vec![ActorEvent::TurnGivenUp { turn_id, reason: GivenUpReason::Retried }],
                     false,

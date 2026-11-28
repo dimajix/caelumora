@@ -282,8 +282,12 @@ mod tests {
             let given = HistoryEntry::Given { message: answer.clone() };
             assert!(state.follow_read(giver, &given).is_some(), "read by its giver");
         }
-        let finished =
-            HistoryEntry::TurnFinished { turn_id: TurnId::new(), actor: giver, at: Utc::now() };
+        let finished = HistoryEntry::TurnFinished {
+            turn_id: TurnId::new(),
+            actor: giver,
+            at: Utc::now(),
+            deferred: false,
+        };
 
         assert!(state.follow_giver(&finished, ThreadId::new()).is_empty(), "elsewhere");
         let reason = GivenUpReason::Retried;

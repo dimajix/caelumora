@@ -383,20 +383,16 @@ fn taking_part(
     e.finish()
 }
 
-/// The digest of a history (issue 06) ending in `recorded`, whose
-/// predecessor chain has the digest `previous`: of what the entry says, who
-/// sent it and whom it went to, as recorded (issue 417) - not the head of
-/// the envelope it came in (issue 223), which says when and in which chain
-/// of events, not what. What an entry says is digested
-/// by its kind: a message said as `message_chain`; the channel's
-/// classification fitted into (issue 133), a turn's end (issue 258) and the
-/// start of a step of its plan (issue 263) in schemes of their own - the
-/// step by what it says, not when -, a command carried out (issue 269), a
-/// context compacted (issue 16), a change of who takes part (issue 408), a
-/// thread opened or closed (issue 557) and
-/// a message given withdrawn (issue 537) likewise - by what they say, not
-/// when; a message modified, taken back or
-/// reclassified as `message_modified`, `message_revoked` and
+/// The digest of a history (issue 06) ending in `recorded`, whose predecessor chain has the digest
+/// `previous`: of what the entry says, who sent it and whom it went to, as recorded (issue 417) -
+/// not the head of the envelope it came in (issue 223), which says when and in which chain of
+/// events, not what. What an entry says is digested by its kind: a message said as
+/// `message_chain`; the channel's classification fitted into (issue 133), a turn's end (issue 258),
+/// deferred or not (issue 591), and the start of a step of its plan (issue 263) in schemes of their
+/// own - the step by what it says, not when -, a command carried out (issue 269), a context
+/// compacted (issue 16), a change of who takes part (issue 408), a thread opened or closed (issue
+/// 557) and a message given withdrawn (issue 537) likewise - by what they say, not when; a message
+/// modified, taken back or reclassified as `message_modified`, `message_revoked` and
 /// `message_reclassified`.
 pub fn history_chain(previous: Option<&Digest>, recorded: &Recorded) -> Digest {
     let mut e = Encoder::new("caelumora.history-recorded.v3");
@@ -443,8 +439,14 @@ fn history_entry(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
             e.json(&to_json(channel));
             e.finish()
         }
-        HistoryEntry::TurnFinished { turn_id, actor, .. } => {
-            turn_ended("caelumora.history-turn-finished.v1", previous, *turn_id, Some(actor), None)
+        // A deferred end in a scheme of its own (issue 591), which leaves the others' as they were.
+        HistoryEntry::TurnFinished { turn_id, actor, deferred, .. } => {
+            let scheme = if *deferred {
+                "caelumora.history-turn-deferred.v1"
+            } else {
+                "caelumora.history-turn-finished.v1"
+            };
+            turn_ended(scheme, previous, *turn_id, Some(actor), None)
         }
         HistoryEntry::TurnGivenUp { turn_id, actor, reason, .. } => turn_ended(
             "caelumora.history-turn-given-up.v1",
@@ -878,6 +880,21 @@ mod tests {
         let mut other = given.clone();
         other.tool_results[0].files[0].digest = content(b"b");
         assert_ne!(message_chain(None, &given), message_chain(None, &other));
+    }
+
+    /// Issue 591: whether a turn's answer is deferred is part of the digest of its end.
+    #[test]
+    fn a_deferred_end_of_a_turn_has_a_digest_of_its_own() {
+        use crate::history::HistoryEntry;
+        use chrono::Utc;
+
+        let ended = |deferred| HistoryEntry::TurnFinished {
+            turn_id: TurnId::default(),
+            actor: ActorId::default(),
+            at: Utc::now(),
+            deferred,
+        };
+        assert_ne!(history_entry(None, &ended(true)), history_entry(None, &ended(false)));
     }
 
     #[test]

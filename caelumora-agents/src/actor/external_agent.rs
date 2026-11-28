@@ -107,6 +107,10 @@ enum Ending {
     /// It answered - with nothing, if it had nothing to say or was
     /// cancelled before it said anything.
     Answered(Option<Box<Message>>),
+    /// The answer broke off before its task ended (issues 195, 591): the task goes on, what came
+    /// of it so far kept with it, and the answer is deferred - said with the rest, on its own, when
+    /// the task ends.
+    Deferred,
     /// It failed or refused the task, for the reason given.
     Failed(String),
     /// The channel was lowered to this classification since it began: it
@@ -262,13 +266,12 @@ impl ExternalAgentActor {
         request
     }
 
-    /// Answers the `ResponseRequested` in `request`. Whatever happens, the
-    /// answer ends here - published, or given up with `TurnGivenUp` -, or
-    /// its channel stops and it ends with the remote task it waits for
-    /// (issue 377); and the state is stored. An error ends the
-    /// answer, never the actor. Published, it answered a request to respond
-    /// that is the very next event in `rx` too, in its authority, which is
-    /// dropped (`AgentBody::drop_answered`, issue 567), as by an agent run
+    /// Answers the `ResponseRequested` in `request`. Whatever happens, the answer ends here -
+    /// published, deferred to its remote task that goes on (issue 591), or given up with
+    /// `TurnGivenUp` -, or its channel stops and it ends with the remote task it waits for (issue
+    /// 377); and the state is stored. An error ends the answer, never the actor. Published or
+    /// deferred, it answered a request to respond that is the very next event in `rx` too, in its
+    /// authority, which is dropped (`AgentBody::drop_answered`, issue 567), as by an agent run
     /// here.
     async fn respond(
         &self,
@@ -289,7 +292,7 @@ impl ExternalAgentActor {
         let token = self.body.control.token();
         self.go_to(ActorState::Planning, output).await;
         let ending = self.exchange(state, &answering, &mut work, &token, output).await;
-        if matches!(ending, Ok(Ending::Answered(_))) {
+        if matches!(ending, Ok(Ending::Answered(_) | Ending::Deferred)) {
             self.body.drop_answered(state, self.thread(), request.context.initiator_id, rx).await;
         }
         self.body.store(state).await;
@@ -298,6 +301,11 @@ impl ExternalAgentActor {
             Ok(Ending::Answered(message)) => {
                 answered(Some(work.turn_id), message.map(|message| *message))
             }
+            Ok(Ending::Deferred) => vec![ActorEvent::TurnFinished {
+                turn_id: work.turn_id,
+                messages: Vec::new(),
+                deferred: true,
+            }],
             Ok(Ending::Failed(reason)) => {
                 info!("External agent {} {} failed its task: {}", self.id(), self.name(), reason);
                 vec![ActorEvent::TurnGivenUp {
@@ -485,14 +493,13 @@ impl ExternalAgentActor {
                             self.id()
                         ),
                     }
-                    // The remote side owes an end; without one the task is
-                    // left open, as far as anyone knows, and followed again:
-                    // what came so far is kept with it and said with the
-                    // rest when it ends - not now, cut off, and then again
-                    // (issue 195). The request is answered with nothing.
+                    // The remote side owes an end; without one the task is left open, as far
+                    // as anyone knows, and followed again: what came so far is kept with it and
+                    // said with the rest when it ends - not now, cut off, and then again (issue
+                    // 195). The answer to the request is deferred until then (issue 591).
                     if let Some(open) = &task {
                         state.remote.set_unsaid(open, answer.finish());
-                        return Ok(Ending::Answered(None));
+                        return Ok(Ending::Deferred);
                     }
                     // No task to follow: what came is all there is.
                     match broken {
@@ -635,21 +642,18 @@ impl ExternalAgentActor {
         self.speak(state, work, outcome.map(|()| answer), output).await;
     }
 
-    /// Says in the channel, on the agent's own account, what came of an
-    /// open task - a long task finishing, a question back - or that it
-    /// failed. It wakes nobody: sleeping agents hear it all the same, and
-    /// only one it mentions is woken, to answer it (issue 199). What it
-    /// says is kept in its history and stored first; a failure, as when it
-    /// answers a request, keeps nothing of what came before it. It speaks as
-    /// the task's `work` is done (`RemoteState::work_of`): with the
-    /// authority of the request that began it, in the event context of the
-    /// answer to it, continued - in its span, and as many hops between
-    /// agents away from the last user's message as that answer (issue 45) -
-    /// and classified as the work has seen (issue 212), with the context of
-    /// the call that began the task or last took it up (issue 205). A task
-    /// without it
-    /// speaks afresh, as the agent itself, classified as its remote agent
-    /// declares, else as the channel is now.
+    /// Says in the channel, on the agent's own account, what came of an open task - a long task
+    /// finishing, a question back - or that it failed, and so ends the turn of the request that
+    /// began it, whose answer was deferred to it or which its channel's stop left without an end
+    /// (issue 591). It wakes nobody: sleeping agents hear it all the same, and only one it mentions
+    /// is woken, to answer it (issue 199). What it says is kept in its history and stored first; a
+    /// failure, as when it answers a request, keeps nothing of what came before it. It speaks as
+    /// the task's `work` is done (`RemoteState::work_of`): with the authority of the request that
+    /// began it, in the event context of the answer to it, continued - in its span, and as many
+    /// hops between agents away from the last user's message as that answer (issue 45) - and
+    /// classified as the work has seen (issue 212), with the context of the call that began the
+    /// task or last took it up (issue 205). A task without it speaks afresh, as the agent itself,
+    /// classified as its remote agent declares, else as the channel is now.
     async fn speak(
         &self,
         state: &mut AgentChannelState,
@@ -670,11 +674,13 @@ impl ExternalAgentActor {
                     message: format!("{} could not finish: {reason}", self.name()),
                 },
             }],
-            // Nobody asked: it says nothing if it has nothing to say.
-            Ok(answer) => match self.record(state, answer, label, work.as_ref()) {
-                Some(message) => answered(work.as_ref().map(|w| w.turn_id), Some(message)),
-                None => Vec::new(),
-            },
+            // The turn of the request that began it ends with it - with nothing said if nothing
+            // came -, so that whoever waits for its deferred answer is not left waiting (issue
+            // 591). A task nobody asked for says nothing if it has nothing to say.
+            Ok(answer) => {
+                let message = self.record(state, answer, label, work.as_ref());
+                answered(work.as_ref().map(|w| w.turn_id), message)
+            }
         };
         self.body.store(state).await;
         answering.send_all(events, output).await;
@@ -1026,6 +1032,7 @@ fn answered(turn_id: Option<TurnId>, message: Option<Message>) -> Vec<ActorEvent
     let finished = turn_id.map(|turn_id| ActorEvent::TurnFinished {
         turn_id,
         messages: message.into_iter().collect(),
+        deferred: false,
     });
     complete.into_iter().chain(finished).collect()
 }

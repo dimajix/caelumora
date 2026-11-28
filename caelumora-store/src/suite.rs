@@ -1661,7 +1661,10 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
         &mut turns.history,
         ActorEvent::CompleteMessageGenerated(by_speaker(700, earlier, false)),
     );
-    record(&mut turns.history, ActorEvent::TurnFinished { turn_id: earlier, messages: Vec::new() });
+    record(
+        &mut turns.history,
+        ActorEvent::TurnFinished { turn_id: earlier, messages: Vec::new(), deferred: false },
+    );
     record(&mut turns.history, ActorEvent::CompleteMessageGenerated(by_speaker(701, turn, false)));
     record(
         &mut turns.history,
@@ -1672,7 +1675,10 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
     }
     record(&mut turns.history, ActorEvent::CompleteMessageGenerated(by_speaker(703, turn, false)));
     let ended = turns.history.end();
-    record(&mut turns.history, ActorEvent::TurnFinished { turn_id: turn, messages: Vec::new() });
+    record(
+        &mut turns.history,
+        ActorEvent::TurnFinished { turn_id: turn, messages: Vec::new(), deferred: false },
+    );
     states.put_channel_state(channel, &mut turns).await.expect("put");
     let head =
         histories.entries(key, &Reader::Participant(user), first..first.next()).await.unwrap();

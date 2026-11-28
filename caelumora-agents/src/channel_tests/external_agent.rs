@@ -1538,47 +1538,57 @@ async fn an_open_task_whose_answer_broke_off_is_followed_and_its_end_said_unaske
     running.abort();
 }
 
+/// Issue 591: the answer to a request whose task outlives it is deferred, and the task's end ends
+/// the same turn - with what came of it, or with nothing said if nothing did -, so that whoever
+/// waits for the answer is not left waiting; it continues the answer to the request, in its span
+/// and as far from the last user's message (issue 45).
 #[tokio::test]
-async fn what_an_open_task_says_unasked_continues_the_answer_to_its_request() {
+async fn a_request_whose_task_outlives_it_defers_its_answer_to_the_tasks_end() {
     use crate::external::{ExternalAgentError, ExternalEvent};
+    use caelumora_domain::work::TurnId;
 
-    let remote = Arc::new(
-        ScriptedExternalAgent::answering(vec![vec![
-            Ok(ExternalEvent::Started(task("t-1"))),
-            Err(ExternalAgentError::Connection {
-                endpoint: "https://agent.example".to_string(),
-                reason: "reset".to_string(),
-            }),
-        ]])
-        .resuming(vec![vec![
-            Ok(ExternalEvent::Message("Here it is.".to_string())),
-            Ok(ExternalEvent::Completed),
-        ]]),
-    );
-    let Stuck { agent, mut events, running, .. } = with_an_external_agent(remote).await;
+    let finished = [
+        vec![Ok(ExternalEvent::Message("Here it is.".to_string())), Ok(ExternalEvent::Completed)],
+        vec![Ok(ExternalEvent::Completed)],
+    ];
+    for (resumed, said) in finished.into_iter().zip([Some("Here it is."), None]) {
+        let remote = Arc::new(
+            ScriptedExternalAgent::answering(vec![vec![
+                Ok(ExternalEvent::Started(task("t-1"))),
+                Err(ExternalAgentError::Connection {
+                    endpoint: "https://agent.example".to_string(),
+                    reason: "reset".to_string(),
+                }),
+            ]])
+            .resuming(vec![resumed]),
+        );
+        let Stuck { agent, mut events, running, .. } = with_an_external_agent(remote).await;
 
-    // The answer to the request, with nothing, and later what the task
-    // says unasked.
-    let contexts = time::timeout(Duration::from_secs(5), async {
-        let mut contexts = Vec::new();
-        while contexts.len() < 2 {
-            let envelope = events.recv().await.expect("the channel is running");
-            if envelope.context.sender_id == ActorId::Agent(agent)
-                && matches!(envelope.event, ActorEvent::TurnFinished { .. })
-            {
-                contexts.push(envelope.context);
+        let ends = time::timeout(Duration::from_secs(5), async {
+            let mut ends: Vec<(TurnId, Vec<Message>, bool, EventContext)> = Vec::new();
+            while ends.len() < 2 {
+                let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id != ActorId::Agent(agent) {
+                    continue;
+                }
+                if let ActorEvent::TurnFinished { turn_id, messages, deferred } = envelope.event {
+                    ends.push((turn_id, messages, deferred, envelope.context));
+                }
             }
-        }
-        contexts
-    })
-    .await
-    .expect("answered, and said unasked");
-    assert_eq!(contexts[1].span_id, contexts[0].span_id, "in the span of the request");
-    assert_eq!(
-        contexts[1].agent_hops, contexts[0].agent_hops,
-        "as far from the last user's message as the answer (issue 45)"
-    );
-    running.abort();
+            ends
+        })
+        .await
+        .expect("the request answered, and its task's end said");
+        let (request, task_end) = (&ends[0], &ends[1]);
+        assert_eq!(task_end.3.span_id, request.3.span_id, "in the span of the request");
+        assert_eq!(task_end.3.agent_hops, request.3.agent_hops, "as far from the user's message");
+        assert!(request.1.is_empty() && request.2, "the request's answer deferred: {said:?}");
+        assert_eq!(task_end.0, request.0, "the task's end ends the same turn: {said:?}");
+        assert!(!task_end.2, "and is no longer deferred: {said:?}");
+        let content = task_end.1.first().and_then(|m| m.content.as_deref());
+        assert_eq!(content, said, "with what came of it");
+        running.abort();
+    }
 }
 
 #[tokio::test]

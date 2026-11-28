@@ -17,6 +17,7 @@ use crate::work::TurnId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::ops::Not;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ActorEvent {
@@ -94,17 +95,23 @@ pub enum ActorEvent {
     StateChanged(ActorState),
     PartialMessageGenerated(Message),
     CompleteMessageGenerated(Message),
-    /// The turn `turn_id` ended and was taken over, with its answer,
-    /// `messages` - those that are not internal (issue 258). The channel
-    /// records the turn's end from it, and the moderator decides from it
-    /// whom to ask to respond; the messages themselves were said before,
-    /// each as a `CompleteMessageGenerated`, which is what the channel keeps
-    /// and the agents hear. A message said outside of any turn - a user's,
-    /// one an external agent says unasked - is answered by itself: it has no
-    /// turn to end.
+    /// The turn `turn_id` ended and was taken over, with its answer, `messages` - those that are
+    /// not internal (issue 258). The channel records the turn's end from it, and the moderator
+    /// decides from it whom to ask to respond; the messages themselves were said before, each as a
+    /// `CompleteMessageGenerated`, which is what the channel keeps and the agents hear. A message
+    /// said outside of any turn - a user's, one an external agent says unasked - is answered by
+    /// itself: it has no turn to end.
+    ///
+    /// If `deferred`, its answer is deferred (issue 591): its work goes on beyond it - an external
+    /// agent's request whose remote task outlived it -, and its sender ends the turn again later,
+    /// on its own and with the same `turn_id`: with a `TurnFinished` and the answer, or with a
+    /// `TurnGivenUp` if the work fails or is given up. The turn has ended all the same: its sender
+    /// takes the next request.
     TurnFinished {
         turn_id: TurnId,
         messages: Vec<Message>,
+        #[serde(default, skip_serializing_if = "Not::not")]
+        deferred: bool,
     },
     WakeupRequested,
     /// Streaming text produced by the agent while it is not yet ready to give
@@ -521,10 +528,13 @@ impl ActorEvent {
             ActorEvent::GivenToRead { recipient, message } => {
                 message.published().map(|message| ActorEvent::GivenToRead { recipient, message })
             }
-            ActorEvent::TurnFinished { turn_id, messages } => Some(ActorEvent::TurnFinished {
-                turn_id,
-                messages: messages.iter().filter_map(Message::published).collect(),
-            }),
+            ActorEvent::TurnFinished { turn_id, messages, deferred } => {
+                Some(ActorEvent::TurnFinished {
+                    turn_id,
+                    messages: messages.iter().filter_map(Message::published).collect(),
+                    deferred,
+                })
+            }
             // The agent's record of what it read and did to its context.
             ActorEvent::MessageGiven { .. }
             | ActorEvent::MessageWithdrawn { .. }
@@ -832,6 +842,7 @@ mod tests {
         match (ActorEvent::TurnFinished {
             turn_id: TurnId::new(),
             messages: vec![hidden.clone(), text.clone()],
+            deferred: false,
         })
         .published()
         {
@@ -841,8 +852,16 @@ mod tests {
             }
             other => panic!("expected the response, got {other:?}"),
         }
+        let ended = ActorEvent::TurnFinished {
+            turn_id: TurnId::new(),
+            messages: vec![hidden],
+            deferred: false,
+        };
         assert!(
-            matches!(ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![hidden] }.published(), Some(ActorEvent::TurnFinished { messages: m, .. }) if m.is_empty()),
+            matches!(
+                ended.published(),
+                Some(ActorEvent::TurnFinished { messages: m, .. }) if m.is_empty()
+            ),
             "the end of the turn is still announced"
         );
     }

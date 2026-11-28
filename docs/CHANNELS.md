@@ -1388,8 +1388,11 @@ has seen - all that was given and what the remote agent declares to bring in.
 
 **An external agent speaks on its own** when a task outlives the request it was given for: the
 answer broke off before the task ended, or the channel was restarted meanwhile - a task is stored as
-soon as the remote agent took it on. An answer that broke off is answered with nothing rather than
-cut off: what came so far is said once, with the rest, when the task ends. The actor follows every
+soon as the remote agent took it on. An answer that broke off is not cut off but **deferred**: the
+request's turn ends without it, marked so (`deferred` of `TurnFinished`, issue 591), and what came
+so far is said once, with the rest, when the task ends. That end of the task ends the request's turn
+once more - or for the first time, where the channel stopped while it answered -, with nothing said
+if nothing came, so that whoever waits for its answer is not left waiting. The actor follows every
 task left working beside the channel's events. An open task is the external agent's counterpart of a
 turn: it keeps the work of the request that began it, and is followed, cancelled and told of in it -
 as asked by whoever asked, with its owner's rights, and in the context of the answer to that

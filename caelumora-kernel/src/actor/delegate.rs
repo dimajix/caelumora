@@ -434,7 +434,8 @@ mod tests {
                 self.hears(recipient, at, ActorEvent::CompleteMessageGenerated(message)).await;
                 at += 1;
             }
-            let finished = ActorEvent::TurnFinished { turn_id: turn, messages: Vec::new() };
+            let finished =
+                ActorEvent::TurnFinished { turn_id: turn, messages: Vec::new(), deferred: false };
             self.hears(recipient, at, finished).await;
         }
 

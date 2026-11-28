@@ -1,6 +1,6 @@
 # 591 — An external agent cannot be a sub-agent
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** low
 **Area:** Sessions and channels
@@ -80,6 +80,41 @@ remote agent would settle it.
 Recommended: B. An external agent's work is long by nature, and the main agent should be told that
 it is under way rather than be given an empty answer or wait in silence.
 
+## Decision
+
+B, as the maintainer decided on 2026-11-28: the end of a request whose task is still open is marked,
+and the delegate tells the main agent that the answer follows, keeps the brief open and takes the
+task's later end as its answer; the giver's word is not due before.
+
+The first point of *The problem* is done and tested since issue 557
+(`an_external_agent_is_given_what_a_delegate_gives_it_to_read_and_answers`).
+
+### Plan
+
+Built as the channel follows its giver's word (issue 598): the channel follows a recorded
+`HistoryEntry` in the delegation (`ChannelState::follow_giver`, `Word`), and the delegate does what
+the delegation's state says, so that a restart loses nothing. Each step is reviewed on its own:
+
+1.  **A deferred answer.** `TurnFinished` and its `HistoryEntry` say whether the turn's answer is
+    deferred (`deferred`, stored as `Recipients` stores its rare flags): its work goes on beyond it,
+    and its sender says the answer on its own, with the same turn id. An external agent defers the
+    answer of a request whose stream ends before its open task does; the task's end then always
+    ends that turn, with nothing said if nothing came, so that whoever waits for the answer is not
+    left waiting.
+2.  **The brief deferred.** A brief's stage (`BriefStage`: `Waiting`, `Given`, `Deferred { told }`)
+    replaces where it was given. The channel follows the recipient's turn ending deferred
+    (`Delegation::follow_deferred`); what the delegate gives back of a brief deferred and not told
+    yet tells the giver that the answer follows (`kernel.delegation_deferred`) and leaves the brief
+    open, no word due; the turn's later end is the answer.
+3.  **A followed task taken up again.** A task whose followed stream ends or breaks before it does,
+    or that cannot be followed, is followed again after a delay that grows, not only at the actor's
+    next run; one its remote agent no longer knows (`ExternalAgentError::Rejected`) is given up as
+    failed.
+4.  **A cancel reaches an open task.** A cancel in the external agent's thread cancels its open
+    tasks between requests too, and says what came of them so far, as a cancel of a request does.
+5.  **External sub-agents.** The sub-agent tool no longer refuses an external personality
+    (`SubAgentError::External` goes); tested end to end with a scripted remote agent.
+
 ## Done when
 
 - An external agent can be started as a sub-agent: it is given the brief, and its answer reaches
@@ -94,3 +129,6 @@ it is under way rather than be given an empty answer or wait in silence.
 - **2026-11-27** — Corrected: what the section described is not what happens today - an external
   sub-agent is refused - but what would happen without the refusal (*What would happen with a late
   answer*); the first point of *The problem* noted as seemingly done since 557.
+- **2026-11-28** — The maintainer decided for approach B (*Decision*), with the field on
+  `TurnFinished`, and that a followed task is taken up again and a cancel reaches an open task in
+  this work too (*Plan*). The first point of *The problem* found tested since 557.

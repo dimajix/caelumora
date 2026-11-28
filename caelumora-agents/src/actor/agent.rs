@@ -237,7 +237,10 @@ impl AgentActor {
         self.body.store(state).await;
         withdraw_requests(&answering, &abandoned_calls, output).await?;
         answering
-            .send(ActorEvent::TurnFinished { turn_id, messages: final_messages }, output)
+            .send(
+                ActorEvent::TurnFinished { turn_id, messages: final_messages, deferred: false },
+                output,
+            )
             .await?;
         debug!(
             "Agent {} {} ended its turn{}",

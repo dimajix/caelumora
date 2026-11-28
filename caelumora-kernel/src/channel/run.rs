@@ -1610,6 +1610,7 @@ mod tests {
             ActorEvent::TurnFinished {
                 turn_id: TurnId::new(),
                 messages: vec![Message::new(Classification::CHANNEL_DEFAULT)],
+                deferred: false,
             },
         );
 
@@ -1648,7 +1649,11 @@ mod tests {
         };
         let answer = Envelope::new(
             context,
-            ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![said] },
+            ActorEvent::TurnFinished {
+                turn_id: TurnId::new(),
+                messages: vec![said],
+                deferred: false,
+            },
         );
         channel
             .adopt(
@@ -2051,7 +2056,7 @@ mod tests {
             },
             ActorEvent::ActivityStarted { turn_id, activity: activity.clone() },
             ActorEvent::ActivityFinished { turn_id, activity, output: "done".to_string() },
-            ActorEvent::TurnFinished { turn_id, messages: Vec::new() },
+            ActorEvent::TurnFinished { turn_id, messages: Vec::new(), deferred: false },
             ActorEvent::TurnGivenUp { turn_id, reason: GivenUpReason::Left },
             // A prompt part its turn no longer gives (issue 537).
             ActorEvent::MessageWithdrawn { message: MessageId::new(), at: Utc::now() },
@@ -2108,6 +2113,7 @@ mod tests {
                 ActorEvent::TurnFinished {
                     turn_id: TurnId::new(),
                     messages: vec![Message::new(Classification::CHANNEL_DEFAULT)],
+                    deferred: false,
                 },
             )
         };
@@ -3206,6 +3212,7 @@ mod tests {
             from_alice(ActorEvent::TurnFinished {
                 turn_id: TurnId::new(),
                 messages: vec![Message::new(Classification::CHANNEL_DEFAULT)],
+                deferred: false,
             })
         };
         let delivered = async |rx: &mut InboxReceiver| {
@@ -3264,6 +3271,7 @@ mod tests {
             ActorEvent::TurnFinished {
                 turn_id: TurnId::new(),
                 messages: vec![Message::new(Classification::CHANNEL_DEFAULT)],
+                deferred: false,
             },
         );
         routed(&channel, &HashMap::new(), said).await;

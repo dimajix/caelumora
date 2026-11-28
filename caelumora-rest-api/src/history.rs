@@ -215,7 +215,7 @@ impl<M> HistoryItemResponse<M> {
             HistoryEntry::Said { message } | HistoryEntry::Given { message } => {
                 Some(Self::Said(said(message)))
             }
-            HistoryEntry::TurnFinished { turn_id, actor, at } => {
+            HistoryEntry::TurnFinished { turn_id, actor, at, .. } => {
                 Some(Self::TurnFinished { turn_id, actor, at })
             }
             HistoryEntry::TurnGivenUp { turn_id, actor, reason, at } => {
