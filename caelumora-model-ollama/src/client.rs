@@ -851,7 +851,9 @@ where
                 continue;
             }
             // Ollama reports errors that occur mid-stream as `{"error": ...}`.
-            if let Ok(OllamaErrorResponse { error }) = serde_json::from_str::<OllamaErrorResponse>(&line) {
+            if let Ok(OllamaErrorResponse { error }) =
+                serde_json::from_str::<OllamaErrorResponse>(&line)
+            {
                 yield Err(ModelError::Backend { endpoint, model, message: error });
                 return;
             }
@@ -997,7 +999,12 @@ impl LanguageModelProvider for OllamaModel {
             let status = response.status();
             if !status.is_success() {
                 let body = response.text().await.unwrap_or_default();
-                yield Err(ModelError::Rejected { endpoint, model, status: status.as_u16(), message: backend_error_message(&body) });
+                yield Err(ModelError::Rejected {
+                    endpoint,
+                    model,
+                    status: status.as_u16(),
+                    message: backend_error_message(&body),
+                });
                 return;
             }
             let bytes =

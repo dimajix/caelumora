@@ -212,7 +212,9 @@ impl Screen for FullScreen {
                     Some(Ok(event)) => {
                         self.changed = true;
                         let height = self.terminal.size().map_or(20, |size| size.height);
-                        if let Some(typed) = self.window.take_event(event, usize::from(height / 2)) {
+                        if let Some(typed) =
+                            self.window.take_event(event, usize::from(height / 2))
+                        {
                             self.draw();
                             return typed;
                         }

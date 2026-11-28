@@ -1100,10 +1100,15 @@ impl Actor for ExternalAgentActor {
                 received = rx.recv() => {
                     let Some(received) = received else { break };
                     // One answer to all that was queued, to the last request.
-                    if let Some(request) = self.hear(&mut state, received, &mut rx, &*output).await {
+                    if let Some(request) =
+                        self.hear(&mut state, received, &mut rx, &*output).await
+                    {
                         let span = envelope_span(&request.context, request.event.kind());
-                        self.respond(&mut state, &request, &mut rx, &*output).instrument(span).await;
-                        self.follow_open_tasks(&mut state, &mut followed, &mut attempted, &*output).await;
+                        self.respond(&mut state, &request, &mut rx, &*output)
+                            .instrument(span)
+                            .await;
+                        self.follow_open_tasks(&mut state, &mut followed, &mut attempted, &*output)
+                            .await;
                     }
                 }
                 Some((task, event)) = followed.next(), if !followed.is_empty() => {

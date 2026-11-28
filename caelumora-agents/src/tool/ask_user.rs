@@ -44,7 +44,11 @@ struct AskUserTool {
 /// # Errors
 /// `PromptError` if one of them cannot be had.
 fn tools(prompts: &PromptTexts) -> Result<FixedTools, PromptError> {
-    let limits = context! { max_questions => MAX_QUESTIONS, max_choices => MAX_CHOICES, max_header_chars => MAX_HEADER_CHARS };
+    let limits = context! {
+        max_questions => MAX_QUESTIONS,
+        max_choices => MAX_CHOICES,
+        max_header_chars => MAX_HEADER_CHARS,
+    };
     let choice = ToolParameters::object(
         vec![
             ("label", ToolParameters::string()),

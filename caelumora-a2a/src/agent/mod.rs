@@ -150,7 +150,14 @@ impl A2aAgent {
             loop {
                 let found = match first.take() {
                     Some(found) => found,
-                    None => match client.call::<WireTask>(&*secrets, method::GET_TASK, TaskParams { id: task.0.clone() }).await {
+                    None => match client
+                        .call::<WireTask>(
+                            &*secrets,
+                            method::GET_TASK,
+                            TaskParams { id: task.0.clone() },
+                        )
+                        .await
+                    {
                         Ok(Ok(found)) => found,
                         Ok(Err(error)) => {
                             yield Err(client.rejected(error));
@@ -163,7 +170,9 @@ impl A2aAgent {
                     },
                 };
                 if !found.status.state.works() {
-                    for event in translation.events(StreamResponse { task: Some(found), ..StreamResponse::default() }) {
+                    for event in translation
+                        .events(StreamResponse { task: Some(found), ..StreamResponse::default() })
+                    {
                         yield Ok(event);
                     }
                     return;

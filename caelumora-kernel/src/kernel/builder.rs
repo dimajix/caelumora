@@ -819,7 +819,10 @@ mod tests {
             ("secrets:\n  vaults:\n    team:\n      type: vault\n", ["the vault of secrets 'team' (vault)", "known are: env, file"]),
             ("secrets:\n  vaults:\n    local:\n      type: env\n      fallback: team\n", ["vaults of secrets", "falls back to 'team'"]),
         ] {
-            let refused = KernelBuilder::from_config(&AppConfig::from_yaml(yaml).unwrap(), &[]).await.map(|_| ()).expect_err(yaml);
+            let refused = KernelBuilder::from_config(&AppConfig::from_yaml(yaml).unwrap(), &[])
+                .await
+                .map(|_| ())
+                .expect_err(yaml);
             let message = format!("{refused:#}");
             assert!(names.iter().all(|name| message.contains(name)), "{yaml:?} gave: {message}");
         }

@@ -1208,7 +1208,10 @@ mod tests {
             "the wakeup first, so that the agents are awake when the message comes"
         );
         assert!(
-            matches!(&complete.event, ActorEvent::CompleteMessageGenerated(m) if m.turn_id.is_none()),
+            matches!(
+                &complete.event,
+                ActorEvent::CompleteMessageGenerated(m) if m.turn_id.is_none()
+            ),
             "said outside of any turn, answered by itself (issue 258)"
         );
         let more = time::timeout(Duration::from_millis(100), channel_inbox.recv()).await;

@@ -1292,9 +1292,10 @@ mod tests {
             4,
             "the turn's messages, followed by its end"
         );
-        assert!(
-            matches!(state.transcript.last(ThreadId::default()).map(|n| &n.entry), Some(TranscriptEntry::TurnFinished { turn_id: t, .. }) if *t == turn_id)
-        );
+        assert!(matches!(
+            state.transcript.last(ThreadId::default()).map(|n| &n.entry),
+            Some(TranscriptEntry::TurnFinished { turn_id: t, .. }) if *t == turn_id
+        ));
         let turns: Vec<_> =
             state.transcript.messages(ThreadId::default()).iter().map(|m| m.turn_id).collect();
         assert_eq!(
@@ -1771,7 +1772,10 @@ mod tests {
             },
         );
         assert!(
-            matches!(state.transcript.last(ThreadId::default()).map(|n| &n.entry), Some(TranscriptEntry::ParticipantLeft { participant, .. }) if *participant == alice),
+            matches!(
+                state.transcript.last(ThreadId::default()).map(|n| &n.entry),
+                Some(TranscriptEntry::ParticipantLeft { participant, .. }) if *participant == alice
+            ),
             "after the results"
         );
         assert!(state.turn(ThreadId::default()).unwrap().after_step.is_empty());
@@ -1901,7 +1905,8 @@ mod tests {
         assert!(
             matches!(
                 told.first(),
-                Some((_, ActorEvent::ContextCompacted { from: f, to: t, .. })) if *f == from && *t == to
+                Some((_, ActorEvent::ContextCompacted { from: f, to: t, .. }))
+                    if *f == from && *t == to
             ),
             "its channel is to be told of the compaction (issue 417)"
         );
@@ -2102,9 +2107,10 @@ mod tests {
 
         *turn_slot(&mut state) = None;
         state.finish_turn(ThreadId::default(), turn_id);
-        assert!(
-            matches!(state.transcript.last(ThreadId::default()).map(|n| &n.entry), Some(TranscriptEntry::TurnFinished { turn_id: t, .. }) if *t == turn_id)
-        );
+        assert!(matches!(
+            state.transcript.last(ThreadId::default()).map(|n| &n.entry),
+            Some(TranscriptEntry::TurnFinished { turn_id: t, .. }) if *t == turn_id
+        ));
         assert_eq!(state.transcript.messages(ThreadId::default()).len(), 1, "nothing said");
     }
 
@@ -2133,14 +2139,19 @@ mod tests {
             state.transcript.entries(ThreadId::default()).count(),
             "nothing branches"
         );
-        assert!(
-            matches!(state.transcript.last(ThreadId::default()).map(|n| &n.entry), Some(TranscriptEntry::TurnGivenUp { turn_id: t, reason: GivenUpReason::Left, .. }) if *t == turn_id)
-        );
+        assert!(matches!(
+            state.transcript.last(ThreadId::default()).map(|n| &n.entry),
+            Some(TranscriptEntry::TurnGivenUp { turn_id: t, reason: GivenUpReason::Left, .. })
+                if *t == turn_id
+        ));
 
         let silent = TurnId::new();
         state.give_up_turn(ThreadId::default(), silent, GivenUpReason::Left);
         assert!(
-            matches!(state.transcript.last(ThreadId::default()).map(|n| &n.entry), Some(TranscriptEntry::TurnGivenUp { turn_id: t, .. }) if *t == silent),
+            matches!(
+                state.transcript.last(ThreadId::default()).map(|n| &n.entry),
+                Some(TranscriptEntry::TurnGivenUp { turn_id: t, .. }) if *t == silent
+            ),
             "a turn that said nothing leaves its end too"
         );
     }

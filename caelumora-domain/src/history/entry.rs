@@ -438,7 +438,12 @@ impl HistoryEntry {
 
     /// Whether it ends a turn of `actor`, finished or given up.
     pub fn ends_turn_of(&self, actor: ActorId) -> bool {
-        matches!(self, HistoryEntry::TurnFinished { actor: of, .. } | HistoryEntry::TurnGivenUp { actor: of, .. } if *of == actor)
+        matches!(
+            self,
+            HistoryEntry::TurnFinished { actor: of, .. }
+            | HistoryEntry::TurnGivenUp { actor: of, .. }
+                if *of == actor
+        )
     }
 
     /// The message, if this is one said.

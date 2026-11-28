@@ -154,7 +154,8 @@ against this list, rule by rule, before it is reported (the self-review of
 *   **Long functions.** `too_many_lines` warns of a function longer than 100 lines. A new function,
     or one that grows past the limit, is split rather than given an `expect`. One that was
     longer before the lint (issue 452), or that rustfmt made longer when it laid out the code
-    (issue 490), carries `#[expect(clippy::too_many_lines, reason = "…")]` naming its issue, which
+    (issue 490) - or the macro calls in it, broken by hand by its rules once (issue 624) -,
+    carries `#[expect(clippy::too_many_lines, reason = "…")]` naming its issue, which
     fires as unfulfilled once the function is shorter, and is then removed: these attributes are
     the list of what is still to be simplified, and it only gets shorter. `cognitive_complexity` is
     not on: it counts what the logging macros expand to, which differs with the features a build

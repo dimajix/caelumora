@@ -1615,7 +1615,12 @@ mod tests {
         )
         .await;
         assert!(
-            matches!(denied, Admission::Answered(ref r) if r.status == ToolResultStatus::Forbidden && r.content == forbidden_result(&testing::prompts())),
+            matches!(
+                denied,
+                Admission::Answered(ref r)
+                    if r.status == ToolResultStatus::Forbidden
+                        && r.content == forbidden_result(&testing::prompts())
+            ),
             "the system's, as the policy refuses: {denied:?}"
         );
         let asked = admitted(
@@ -1701,7 +1706,12 @@ mod tests {
 
         let admitted = executor.admit(&mut call("test_tool"), &context).await;
         assert!(
-            matches!(admitted, Admission::Answered(ref r) if r.status == ToolResultStatus::Forbidden && r.content == forbidden_result(&testing::prompts())),
+            matches!(
+                admitted,
+                Admission::Answered(ref r)
+                    if r.status == ToolResultStatus::Forbidden
+                        && r.content == forbidden_result(&testing::prompts())
+            ),
             "refused before anyone is asked: {admitted:?}"
         );
         let result =
@@ -1863,7 +1873,10 @@ mod tests {
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
         let admitted = executor.admit(&mut call("send_out"), &turn).await;
         assert!(
-            matches!(&admitted, Admission::Answered(r) if r.status == ToolResultStatus::UnknownTool),
+            matches!(
+                &admitted,
+                Admission::Answered(r) if r.status == ToolResultStatus::UnknownTool
+            ),
             "not called by its name: {admitted:?}"
         );
         let result = executor.execute(&call("send_out"), None, &mut turn, future::pending()).await;
@@ -2022,7 +2035,10 @@ mod tests {
         vanishing.gone.store(true, Ordering::SeqCst);
         let admitted = executor.admit(&mut call("vanishing_tool"), &turn).await;
         assert!(
-            matches!(&admitted, Admission::Answered(r) if r.status == ToolResultStatus::UnknownTool),
+            matches!(
+                &admitted,
+                Admission::Answered(r) if r.status == ToolResultStatus::UnknownTool
+            ),
             "{admitted:?}"
         );
         let ran =

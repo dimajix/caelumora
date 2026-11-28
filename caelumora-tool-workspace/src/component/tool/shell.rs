@@ -80,7 +80,12 @@ pub(super) fn tools(
     prompts: &PromptTexts,
 ) -> Result<Vec<UsingTool>, PromptError> {
     let most = params.max_wait_secs.min(MAX_WAIT_SECS);
-    let values = context! { most, run_command => RUN_COMMAND, command_output => COMMAND_OUTPUT, kill_command => KILL_COMMAND };
+    let values = context! {
+        most,
+        run_command => RUN_COMMAND,
+        command_output => COMMAND_OUTPUT,
+        kill_command => KILL_COMMAND,
+    };
     let run_command = RunCommandTool {
         description: tool(
             prompts,

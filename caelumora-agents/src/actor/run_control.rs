@@ -479,10 +479,12 @@ impl RunControl {
         };
         tokio::select! {
             biased;
-            () = turn.cancelled() => match self.interrupt.load(Ordering::SeqCst) == Interrupt::Stop as u8 {
-                true => Interruption::Stopped,
-                false => Interruption::TurnEnded,
-            },
+            () = turn.cancelled() => {
+                match self.interrupt.load(Ordering::SeqCst) == Interrupt::Stop as u8 {
+                    true => Interruption::Stopped,
+                    false => Interruption::TurnEnded,
+                }
+            }
             by = by_user => Interruption::ByUser(by),
         }
     }

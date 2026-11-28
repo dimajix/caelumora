@@ -847,7 +847,11 @@ mod tests {
             other => panic!("expected the response, got {other:?}"),
         }
         assert!(
-            matches!(ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![hidden] }.published(), Some(ActorEvent::TurnFinished { messages: m, .. }) if m.is_empty()),
+            matches!(
+                ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![hidden] }
+                    .published(),
+                Some(ActorEvent::TurnFinished { messages: m, .. }) if m.is_empty()
+            ),
             "the end of the turn is still announced"
         );
     }

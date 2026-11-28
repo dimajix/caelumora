@@ -847,7 +847,17 @@ pub async fn entity_store_behaves(stores: &EntityStores) {
 /// deleted, it is free. `$make` makes one of a name in one name space,
 /// `$elsewhere` one in another, `$rename` renames one where it is.
 macro_rules! unique_by_name {
-    ($store:expr, $make:expr, $(elsewhere: $elsewhere:expr,)? rename: $rename:expr, $entity:literal, $create:ident, $update:ident, $delete:ident, $restore:ident) => {{
+    (
+        $store:expr,
+        $make:expr,
+        $(elsewhere: $elsewhere:expr,)?
+        rename: $rename:expr,
+        $entity:literal,
+        $create:ident,
+        $update:ident,
+        $delete:ident,
+        $restore:ident
+    ) => {{
         let store = $store;
         let ctx = SecurityContext::default();
         let taken = |result| matches!(result, Err(StoreError::NameTaken { entity: $entity }));
@@ -876,46 +886,175 @@ macro_rules! unique_by_name {
 
 /// Names are unique per kind in their name space (issue 250), for every
 /// kind that is `Scoped`.
+#[expect(clippy::too_many_lines, reason = "to be split, longer since laid out (issue 624)")]
 pub async fn names_are_unique(stores: &EntityStores) {
     let user_id = UserId::new();
     let in_scope = |name: &str, scope: &Scope| ScopedName::new(name, scope.clone()).unwrap();
     let (global, users) = (Scope::GlobalScope, Scope::UserScope { user_id });
-    unique_by_name!(stores.personalities.as_ref(), |name| Personality { name: in_scope(name, &global), ..make_personality("assistant") },
-        elsewhere: |name| Personality { name: in_scope(name, &users), ..make_personality("assistant") },
-        rename: |value: Personality, name| Personality { name: in_scope(name, &value.name.scope), ..value }, "personality",
-        create, update, delete, restore);
-    unique_by_name!(stores.session_templates.as_ref(), |name| SessionTemplate { name: in_scope(name, &global), id: SessionTemplateId::new(), ..session_template() },
-        elsewhere: |name| SessionTemplate { name: in_scope(name, &users), id: SessionTemplateId::new(), ..session_template() },
-        rename: |value: SessionTemplate, name| SessionTemplate { name: in_scope(name, &value.name.scope), ..value }, "session_template",
-        create, update, delete, restore);
-    unique_by_name!(stores.agents.as_ref(), |name| Agent::new(in_scope(name, &global), PersonalityId::new(), ActorId::User(UserId::new())),
-        elsewhere: |name| Agent::new(in_scope(name, &users), PersonalityId::new(), ActorId::User(UserId::new())),
-        rename: |value: Agent, name| Agent { name: in_scope(name, &value.name.scope), ..value }, "agent",
-        create, update, delete, restore);
+    unique_by_name!(
+        stores.personalities.as_ref(),
+        |name| Personality { name: in_scope(name, &global), ..make_personality("assistant") },
+        elsewhere: |name| Personality {
+            name: in_scope(name, &users),
+            ..make_personality("assistant")
+        },
+        rename: |value: Personality, name| Personality {
+            name: in_scope(name, &value.name.scope),
+            ..value
+        },
+        "personality",
+        create,
+        update,
+        delete,
+        restore
+    );
+    unique_by_name!(
+        stores.session_templates.as_ref(),
+        |name| SessionTemplate {
+            name: in_scope(name, &global),
+            id: SessionTemplateId::new(),
+            ..session_template()
+        },
+        elsewhere: |name| SessionTemplate {
+            name: in_scope(name, &users),
+            id: SessionTemplateId::new(),
+            ..session_template()
+        },
+        rename: |value: SessionTemplate, name| SessionTemplate {
+            name: in_scope(name, &value.name.scope),
+            ..value
+        },
+        "session_template",
+        create,
+        update,
+        delete,
+        restore
+    );
+    unique_by_name!(
+        stores.agents.as_ref(),
+        |name| {
+            Agent::new(in_scope(name, &global), PersonalityId::new(), ActorId::User(UserId::new()))
+        },
+        elsewhere: |name| {
+            Agent::new(in_scope(name, &users), PersonalityId::new(), ActorId::User(UserId::new()))
+        },
+        rename: |value: Agent, name| Agent { name: in_scope(name, &value.name.scope), ..value },
+        "agent",
+        create,
+        update,
+        delete,
+        restore
+    );
     let (session_id, other_session) = (SessionId::new(), SessionId::new());
-    unique_by_name!(stores.channels.as_ref(), |name| Channel { name: Name::new(name).unwrap(), session_id, id: ChannelId::new(), ..channel() },
-        elsewhere: |name| Channel { name: Name::new(name).unwrap(), session_id: other_session, id: ChannelId::new(), ..channel() },
-        rename: |value: Channel, name| Channel { name: Name::new(name).unwrap(), ..value }, "channel",
-        create, update, delete, restore);
-    unique_by_name!(stores.users.as_ref(), user, rename: |value: User, name| User { username: Name::new(name).unwrap(), ..value }, "user",
-        create, update, delete, restore);
+    unique_by_name!(
+        stores.channels.as_ref(),
+        |name| Channel {
+            name: Name::new(name).unwrap(),
+            session_id,
+            id: ChannelId::new(),
+            ..channel()
+        },
+        elsewhere: |name| Channel {
+            name: Name::new(name).unwrap(),
+            session_id: other_session,
+            id: ChannelId::new(),
+            ..channel()
+        },
+        rename: |value: Channel, name| Channel { name: Name::new(name).unwrap(), ..value },
+        "channel",
+        create,
+        update,
+        delete,
+        restore
+    );
+    unique_by_name!(
+        stores.users.as_ref(),
+        user,
+        rename: |value: User, name| User { username: Name::new(name).unwrap(), ..value },
+        "user",
+        create,
+        update,
+        delete,
+        restore
+    );
     let (alice, bob) = (UserId::new(), UserId::new());
-    unique_by_name!(stores.workspaces.as_ref(), |name| Workspace { name: in_scope(name, &global), id: WorkspaceId::new(), ..workspace(alice) },
-        elsewhere: |name| Workspace { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: WorkspaceId::new(), ..workspace(bob) },
-        rename: |value: Workspace, name| Workspace { name: in_scope(name, &value.name.scope), ..value }, "workspace",
-        create, update, delete, restore);
-    unique_by_name!(stores.groups.as_ref(), |name| Group { name: in_scope(name, &global), id: GroupId::new(), ..group(alice) },
-        elsewhere: |name| Group { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: GroupId::new(), ..group(bob) },
-        rename: |value: Group, name| Group { name: in_scope(name, &value.name.scope), ..value }, "group",
-        create, update, delete, restore);
-    unique_by_name!(stores.projects.as_ref(), |name| Project { name: in_scope(name, &global), id: ProjectId::new(), ..project(alice) },
-        elsewhere: |name| Project { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: ProjectId::new(), ..project(bob) },
-        rename: |value: Project, name| Project { name: in_scope(name, &value.name.scope), ..value }, "project",
-        create, update, delete, restore);
-    unique_by_name!(stores.component_bundles.as_ref(), |name| ComponentBundle { name: in_scope(name, &global), id: ComponentBundleId::new(), ..bundle() },
-        elsewhere: |name| ComponentBundle { name: in_scope(name, &users), id: ComponentBundleId::new(), ..bundle() },
-        rename: |value: ComponentBundle, name| ComponentBundle { name: in_scope(name, &value.name.scope), ..value }, "component_bundle",
-        create, update, delete, restore);
+    unique_by_name!(
+        stores.workspaces.as_ref(),
+        |name| Workspace {
+            name: in_scope(name, &global),
+            id: WorkspaceId::new(),
+            ..workspace(alice)
+        },
+        elsewhere: |name| Workspace {
+            name: in_scope(name, &Scope::UserScope { user_id: bob }),
+            id: WorkspaceId::new(),
+            ..workspace(bob)
+        },
+        rename: |value: Workspace, name| Workspace {
+            name: in_scope(name, &value.name.scope),
+            ..value
+        },
+        "workspace",
+        create,
+        update,
+        delete,
+        restore
+    );
+    unique_by_name!(
+        stores.groups.as_ref(),
+        |name| Group { name: in_scope(name, &global), id: GroupId::new(), ..group(alice) },
+        elsewhere: |name| Group {
+            name: in_scope(name, &Scope::UserScope { user_id: bob }),
+            id: GroupId::new(),
+            ..group(bob)
+        },
+        rename: |value: Group, name| Group { name: in_scope(name, &value.name.scope), ..value },
+        "group",
+        create,
+        update,
+        delete,
+        restore
+    );
+    unique_by_name!(
+        stores.projects.as_ref(),
+        |name| Project { name: in_scope(name, &global), id: ProjectId::new(), ..project(alice) },
+        elsewhere: |name| Project {
+            name: in_scope(name, &Scope::UserScope { user_id: bob }),
+            id: ProjectId::new(),
+            ..project(bob)
+        },
+        rename: |value: Project, name| Project {
+            name: in_scope(name, &value.name.scope),
+            ..value
+        },
+        "project",
+        create,
+        update,
+        delete,
+        restore
+    );
+    unique_by_name!(
+        stores.component_bundles.as_ref(),
+        |name| ComponentBundle {
+            name: in_scope(name, &global),
+            id: ComponentBundleId::new(),
+            ..bundle()
+        },
+        elsewhere: |name| ComponentBundle {
+            name: in_scope(name, &users),
+            id: ComponentBundleId::new(),
+            ..bundle()
+        },
+        rename: |value: ComponentBundle, name| ComponentBundle {
+            name: in_scope(name, &value.name.scope),
+            ..value
+        },
+        "component_bundle",
+        create,
+        update,
+        delete,
+        restore
+    );
 
     // Moved into a scope where its name is taken.
     let ctx = SecurityContext::default();

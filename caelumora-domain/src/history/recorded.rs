@@ -777,7 +777,10 @@ mod tests {
         let again = Recorded::of(&ended, agent, Audience::Everybody)
             .and_then(|recorded| recorded.envelope(Position::START));
         assert!(
-            matches!(again.map(|e| e.event), Some(ActorEvent::TurnFinished { messages, .. }) if messages.is_empty()),
+            matches!(
+                again.map(|e| e.event),
+                Some(ActorEvent::TurnFinished { messages, .. }) if messages.is_empty()
+            ),
             "without its answer"
         );
         assert!(

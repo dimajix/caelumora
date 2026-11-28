@@ -304,11 +304,18 @@ async fn a_channel_is_read_by_its_participants_wherever_they_act_and_no_more_onc
         .expect("alice's to remove her");
     time::timeout(Duration::from_secs(5), async {
         while let Some(event) = events.recv().await {
-            if matches!(event.about::<Channel>(), Some(((_, channel), change)) if channel == main.id() && change.data::<ActorId>(LEFT) == Some(ActorId::User(world.carol))) {
+            if matches!(
+                event.about::<Channel>(),
+                Some(((_, channel), change))
+                    if channel == main.id()
+                        && change.data::<ActorId>(LEFT) == Some(ActorId::User(world.carol))
+            ) {
                 return;
             }
         }
-    }).await.expect("she is told she was removed");
+    })
+    .await
+    .expect("she is told she was removed");
     assert!(
         session.channel_for(&World::as_user(world.carol), main.id()).await.is_err(),
         "and reads it no more"
@@ -519,7 +526,11 @@ async fn a_history_is_read_in_pages_and_by_message_as_far_as_the_readers_view_go
     assert_eq!(texts(&page.entries().cloned().collect::<Vec<_>>()), ["after bob"]);
     let page = theirs.history_page(page.earlier, 1).await.unwrap();
     assert!(
-        matches!(page.entries().collect::<Vec<_>>().as_slice(), [HistoryEntry::ParticipantJoined { participant, .. }] if *participant == ActorId::User(world.bob)),
+        matches!(
+            page.entries().collect::<Vec<_>>().as_slice(),
+            [HistoryEntry::ParticipantJoined { participant, .. }]
+                if *participant == ActorId::User(world.bob)
+        ),
         "where bob joined (issue 408): {:?}",
         page.items
     );
@@ -532,7 +543,11 @@ async fn a_history_is_read_in_pages_and_by_message_as_far_as_the_readers_view_go
     );
     let page = theirs.history_page(page.earlier, 1).await.unwrap();
     assert!(
-        matches!(page.entries().collect::<Vec<_>>().as_slice(), [HistoryEntry::ParticipantJoined { participant, .. }] if *participant == ActorId::User(world.alice)),
+        matches!(
+            page.entries().collect::<Vec<_>>().as_slice(),
+            [HistoryEntry::ParticipantJoined { participant, .. }]
+                if *participant == ActorId::User(world.alice)
+        ),
         "her own join as the channel's founder (issue 420): {:?}",
         page.items
     );
@@ -564,7 +579,11 @@ async fn a_history_is_read_in_pages_and_by_message_as_far_as_the_readers_view_go
         "bob from where he was taken in"
     );
     assert!(
-        matches!(page.entries().collect::<Vec<_>>().as_slice(), [HistoryEntry::ParticipantJoined { participant, .. }, ..] if *participant == ActorId::User(world.bob)),
+        matches!(
+            page.entries().collect::<Vec<_>>().as_slice(),
+            [HistoryEntry::ParticipantJoined { participant, .. }, ..]
+                if *participant == ActorId::User(world.bob)
+        ),
         "his own join first, given nothing before it: {:?}",
         page.items
     );
@@ -1584,7 +1603,10 @@ async fn searching_whom_to_take_in_is_for_whoever_may_change_the_session() {
     };
     let carol = found("CA").await;
     assert!(
-        matches!(carol.as_slice(), [c] if c.id == ActorId::User(world.carol) && !c.in_session && c.refusal.is_none()),
+        matches!(
+            carol.as_slice(),
+            [c] if c.id == ActorId::User(world.carol) && !c.in_session && c.refusal.is_none()
+        ),
         "carol, to be taken in: {carol:?}"
     );
     let bob = found("bo").await;
@@ -1594,13 +1616,20 @@ async fn searching_whom_to_take_in_is_for_whoever_may_change_the_session() {
     );
     let dave_found = found("da").await;
     assert!(
-        matches!(dave_found.as_slice(), [d] if d.id == ActorId::User(dave.id) && d.refusal == Some(CandidateRefusal::NotCleared)),
+        matches!(
+            dave_found.as_slice(),
+            [d] if d.id == ActorId::User(dave.id)
+                && d.refusal == Some(CandidateRefusal::NotCleared)
+        ),
         "dave exists, but is not cleared: {dave_found:?}"
     );
     let named = NameMatch::Exact(Name::new("dave").unwrap());
     let dave_named = his.candidates(&named, Some(main)).await.unwrap();
     assert!(
-        matches!(dave_named.as_slice(), [d] if d.id == ActorId::User(dave.id) && d.refusal.is_none()),
+        matches!(
+            dave_named.as_slice(),
+            [d] if d.id == ActorId::User(dave.id) && d.refusal.is_none()
+        ),
         "named by bob, who may not change the session: not whether dave is cleared"
     );
     world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
@@ -2523,7 +2552,11 @@ async fn deleting_a_session_needs_owning_it() {
     let (refused, asked) = world.asked(world.kernel.delete_session(&alice, session.id())).await;
     let refused = refused.expect_err("bob's agent is left");
     assert!(
-        matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ScopeNotEmpty(ScopeNotEmpty { left, .. })) if *left == [(Agent::KIND, 1)]),
+        matches!(
+            refused.downcast_ref::<SessionError>(),
+            Some(SessionError::ScopeNotEmpty(ScopeNotEmpty { left, .. }))
+                if *left == [(Agent::KIND, 1)]
+        ),
         "{refused}"
     );
     assert_eq!(asked, checks(&[
@@ -2594,7 +2627,11 @@ async fn a_session_s_own_project_is_read_by_its_participants_and_goes_with_it() 
     let session_scope = Scope::SessionScope { session_id: session.id() };
     let left = [(ComponentBundle::KIND, 1)];
     assert!(
-        matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ScopeNotEmpty(ScopeNotEmpty { holder, left: l })) if *holder == session_scope && *l == left),
+        matches!(
+            refused.downcast_ref::<SessionError>(),
+            Some(SessionError::ScopeNotEmpty(ScopeNotEmpty { holder, left: l }))
+                if *holder == session_scope && *l == left
+        ),
         "{refused}"
     );
     assert!(
@@ -3075,7 +3112,11 @@ async fn deleting_a_project_deletes_its_sessions_and_what_lies_in_it_as_far_as_t
         .await
         .expect_err("bob's bundle is left");
     assert!(
-        matches!(&refused, ProjectError::ScopeNotEmpty(ScopeNotEmpty { holder, left }) if *holder == project.holds() && *left == [(ComponentBundle::KIND, 1)]),
+        matches!(
+            &refused,
+            ProjectError::ScopeNotEmpty(ScopeNotEmpty { holder, left })
+                if *holder == project.holds() && *left == [(ComponentBundle::KIND, 1)]
+        ),
         "{refused:?}"
     );
     assert!(stores.projects.get(&alice, project.id).await.is_ok(), "the project is kept");
@@ -3112,7 +3153,11 @@ async fn deleting_a_project_deletes_its_sessions_and_what_lies_in_it_as_far_as_t
         .await
         .expect_err("bob's session is left");
     assert!(
-        matches!(&refused, ProjectError::ScopeNotEmpty(ScopeNotEmpty { left, .. }) if *left == [(Session::KIND, 1)]),
+        matches!(
+            &refused,
+            ProjectError::ScopeNotEmpty(ScopeNotEmpty { left, .. })
+                if *left == [(Session::KIND, 1)]
+        ),
         "{refused:?}"
     );
     world.kernel.restore_session(&alice, session.id()).await.expect("hers restored by hand");
@@ -3192,7 +3237,11 @@ async fn a_channel_is_kept_with_what_of_its_scope_is_not_the_deleters() {
         *scope == holder && left == [(Agent::KIND, 1)]
     };
     assert!(
-        matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ScopeNotEmpty(ScopeNotEmpty { holder, left })) if left_in(holder, left)),
+        matches!(
+            refused.downcast_ref::<SessionError>(),
+            Some(SessionError::ScopeNotEmpty(ScopeNotEmpty { holder, left }))
+                if left_in(holder, left)
+        ),
         "{refused}"
     );
     assert!(

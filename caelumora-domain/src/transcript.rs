@@ -1064,7 +1064,11 @@ mod tests {
         assert_eq!(known(given.entries(ThreadId::default()), id(2)).map(|m| m.id), Some(id(2)));
         let entry = &given.last(ThreadId::default()).unwrap().entry;
         assert!(
-            matches!(entry, TranscriptEntry::Given { source: Some(GivenSource::Knowledge(s)), .. } if *s == source),
+            matches!(
+                entry,
+                TranscriptEntry::Given { source: Some(GivenSource::Knowledge(s)), .. }
+                    if *s == source
+            ),
             "and keeps what it is"
         );
         assert_eq!(entry.classification(), Some(&make_message(id(2)).classification));

@@ -703,7 +703,11 @@ mod tests {
         approving.answer(0, &request, true).await;
         let decided = approving.next().await;
         assert!(
-            matches!(decided.event, ActorEvent::ApprovalGranted(ref r) if r.id == request.id && r.agent_id == approving.agent),
+            matches!(
+                decided.event,
+                ActorEvent::ApprovalGranted(ref r)
+                    if r.id == request.id && r.agent_id == approving.agent
+            ),
             "one id from the agent's request to the decision: {:?}",
             decided.event
         );

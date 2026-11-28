@@ -486,9 +486,10 @@ mod tests {
             .context_of(told.id)
             .await
             .expect("resolved");
-        assert!(
-            matches!(&seen.items[0], ContextItem::Prompt { classification: Some(c), .. } if *c == confidential)
-        );
+        assert!(matches!(
+            &seen.items[0],
+            ContextItem::Prompt { classification: Some(c), .. } if *c == confidential
+        ));
 
         // A reference to a prompt that was never kept cannot be resolved.
         let lost = produced("lost");

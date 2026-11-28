@@ -607,7 +607,14 @@ mod tests {
         }
 
         main.cancel(&alice, Some(thread)).await.expect("cancelled");
-        let ended = |actor: ActorId| move |e: &HistoryEntry| matches!(e, HistoryEntry::TurnFinished { actor: a, .. } if *a == actor);
+        let ended = |actor: ActorId| {
+            move |e: &HistoryEntry| {
+                matches!(
+                    e,
+                    HistoryEntry::TurnFinished { actor: a, .. } if *a == actor
+                )
+            }
+        };
         let not_asked = |e: &HistoryEntry| {
             matches!(e, HistoryEntry::GivenToRead { recipient, message, .. }
                 if *recipient == hers
@@ -661,7 +668,12 @@ mod tests {
         };
         let thread = session.open_thread(&bob, main.id(), owning).await.expect("opened");
         main.delegate(&bob, thread, helper, "look it up".to_string()).await.expect("delegated");
-        let back = |e: &HistoryEntry| matches!(e, HistoryEntry::GivenToRead { recipient, .. } if *recipient == his);
+        let back = |e: &HistoryEntry| {
+            matches!(
+                e,
+                HistoryEntry::GivenToRead { recipient, .. } if *recipient == his
+            )
+        };
         main.history_once(|entries| entries.iter().any(back)).await;
         let due = main.delegation(thread).await.is_some_and(|held| !held.is_let_go());
         assert!(due, "its word due");
@@ -689,7 +701,12 @@ mod tests {
         let (session, thread, helper, announced) = left_by_its_giver(&world).await;
         assert!(announced, "announced as it was recorded");
         let main = Arc::clone(&session.channels()[0]);
-        let closed = |e: &HistoryEntry| matches!(e, HistoryEntry::ThreadClosed { thread: t, .. } if *t == thread);
+        let closed = |e: &HistoryEntry| {
+            matches!(
+                e,
+                HistoryEntry::ThreadClosed { thread: t, .. } if *t == thread
+            )
+        };
         main.history_once(|entries| entries.iter().any(closed)).await;
         assert!(!main.channel().lists(helper), "its agent let go");
         let agent = helper.as_agent_id().expect("an agent");
@@ -730,7 +747,12 @@ mod tests {
         let _followed = SessionFollower::spawn(&world.kernel);
         let agent = helper.as_agent_id().expect("an agent");
         world.kernel.event_bus().publish_past_capacity(&GlobalEvent::created::<Agent>(&agent));
-        let closed = |e: &HistoryEntry| matches!(e, HistoryEntry::ThreadClosed { thread: t, .. } if *t == thread);
+        let closed = |e: &HistoryEntry| {
+            matches!(
+                e,
+                HistoryEntry::ThreadClosed { thread: t, .. } if *t == thread
+            )
+        };
         main.history_once(|entries| entries.iter().any(closed)).await;
         assert!(!main.channel().lists(helper), "its agent let go");
         world.kernel.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
@@ -762,7 +784,12 @@ mod tests {
             .await
             .expect("opened");
         main.delegate(&alice, thread, helper, "look it up".to_string()).await.expect("delegated");
-        let briefed = |e: &HistoryEntry| matches!(e, HistoryEntry::GivenToRead { recipient, .. } if *recipient == helper);
+        let briefed = |e: &HistoryEntry| {
+            matches!(
+                e,
+                HistoryEntry::GivenToRead { recipient, .. } if *recipient == helper
+            )
+        };
         main.history_once(|entries| entries.iter().any(briefed)).await;
 
         world.kernel.stop_session(&alice, session.id()).await.unwrap();
@@ -1149,8 +1176,18 @@ mod tests {
             "and out of the session"
         );
         let entries = main.history_entries().await;
-        let joined = |e: &HistoryEntry| matches!(e, HistoryEntry::ParticipantJoined { participant, .. } if *participant == helper);
-        let left = |e: &HistoryEntry| matches!(e, HistoryEntry::ParticipantLeft { participant, .. } if *participant == helper);
+        let joined = |e: &HistoryEntry| {
+            matches!(
+                e,
+                HistoryEntry::ParticipantJoined { participant, .. } if *participant == helper
+            )
+        };
+        let left = |e: &HistoryEntry| {
+            matches!(
+                e,
+                HistoryEntry::ParticipantLeft { participant, .. } if *participant == helper
+            )
+        };
         assert!(entries.iter().any(joined) && entries.iter().any(left), "{entries:#?}");
         let closed = |e: &HistoryEntry| matches!(e, HistoryEntry::ThreadClosed { .. });
         assert!(entries.iter().any(closed), "the thread closed again");

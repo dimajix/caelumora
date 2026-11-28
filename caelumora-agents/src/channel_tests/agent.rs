@@ -1070,10 +1070,16 @@ async fn an_agent_takes_note_of_who_left_without_responding() {
     })
     .await
     .expect("the agent takes note of it");
-    assert!(state.transcript.entries(line).any(|node| matches!(node.entry, TranscriptEntry::ParticipantLeft { participant, by, .. } if participant == context.initiator_id && by == context.initiator_id)));
-    assert!(
-        matches!(channel.visible_entries(ActorId::Agent(agent)).await.last(), Some(HistoryEntry::ParticipantLeft { participant, by, .. }) if *participant == context.initiator_id && *by == context.initiator_id)
-    );
+    assert!(state.transcript.entries(line).any(|node| matches!(
+        node.entry,
+        TranscriptEntry::ParticipantLeft { participant, by, .. }
+            if participant == context.initiator_id && by == context.initiator_id
+    )));
+    assert!(matches!(
+        channel.visible_entries(ActorId::Agent(agent)).await.last(),
+        Some(HistoryEntry::ParticipantLeft { participant, by, .. })
+            if *participant == context.initiator_id && *by == context.initiator_id
+    ));
     time::sleep(Duration::from_millis(50)).await;
     assert_eq!(model.seen.lock().unwrap().len(), 1, "no turn begins for it");
     running.abort();
@@ -1868,7 +1874,11 @@ async fn a_plan_runs_its_steps_as_intermediate_messages_and_ends_with_the_final_
     assert_eq!(items, ["step 1/2: first", "first done", "step 2/2: second", "second done"]);
     let ended = channel.last_history_entry().await;
     assert!(
-        matches!(ended, Some(HistoryEntry::TurnFinished { turn_id, .. }) if Some(turn_id) == history.last().and_then(|m| m.turn_id)),
+        matches!(
+            ended,
+            Some(HistoryEntry::TurnFinished { turn_id, .. })
+                if Some(turn_id) == history.last().and_then(|m| m.turn_id)
+        ),
         "{ended:?}"
     );
     running.abort();
@@ -3299,7 +3309,11 @@ async fn an_agent_removed_while_a_tool_runs_gives_up_its_turn_and_keeps_the_call
         "the turn's end comes before: {entries:?}"
     );
     assert!(
-        matches!(entries.last(), Some(HistoryEntry::ParticipantLeft { participant, by, .. }) if *participant == ActorId::Agent(agent) && *by == context.caller_id),
+        matches!(
+            entries.last(),
+            Some(HistoryEntry::ParticipantLeft { participant, by, .. })
+                if *participant == ActorId::Agent(agent) && *by == context.caller_id
+        ),
         "in the name of who removed it"
     );
     assert!(

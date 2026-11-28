@@ -1433,7 +1433,12 @@ mod tests {
         let ch_created = events.iter().position(|e| {
             e.about::<Channel>() == Some(((session_id, channel_id), &EntityChange::Created))
         });
-        let started = events.iter().position(|e| matches!(e.about::<Session>(), Some((id, EntityChange::Custom { name: session::STARTED, .. })) if id == session_id));
+        let started = events.iter().position(|e| {
+            matches!(
+                e.about::<Session>(),
+                Some((id, EntityChange::Custom { name: session::STARTED, .. })) if id == session_id
+            )
+        });
 
         // The group of its participants before it, as whoever makes a change announces it, and
         // so that the group admits them as the bus delivers it (issue 593).
@@ -1473,7 +1478,12 @@ mod tests {
         assert!(kernel.delete_session(&ctx, session_id).await.unwrap());
 
         let events = rx.drain().await;
-        let stopped = events.iter().position(|e| matches!(e.about::<Session>(), Some((id, EntityChange::Custom { name: session::STOPPED, .. })) if id == session_id));
+        let stopped = events.iter().position(|e| {
+            matches!(
+                e.about::<Session>(),
+                Some((id, EntityChange::Custom { name: session::STOPPED, .. })) if id == session_id
+            )
+        });
         let ch_deleted = events.iter().any(|e| {
             e.about::<Channel>() == Some(((session_id, channel_id), &EntityChange::Deleted))
         });
@@ -1537,8 +1547,12 @@ mod tests {
 
         let events = rx.drain().await;
         assert!(
-            events.iter().any(|e| matches!(e.about::<Session>(), Some((id, EntityChange::Custom { name: session::STARTED, .. })) if id == session_id)),
-            "expected SessionStarted, got {:?}", events
+            events.iter().any(|e| matches!(
+                e.about::<Session>(),
+                Some((id, EntityChange::Custom { name: session::STARTED, .. })) if id == session_id
+            )),
+            "expected SessionStarted, got {:?}",
+            events
         );
         assert!(
             !events
@@ -1572,7 +1586,18 @@ mod tests {
             "one loop for all of them"
         );
 
-        let started = rx.drain().await.into_iter().filter(|e| matches!(e.about::<Session>(), Some((id, EntityChange::Custom { name: session::STARTED, .. })) if id == session_id)).count();
+        let started = rx
+            .drain()
+            .await
+            .into_iter()
+            .filter(|e| {
+                matches!(
+                    e.about::<Session>(),
+                    Some((id, EntityChange::Custom { name: session::STARTED, .. }))
+                        if id == session_id
+                )
+            })
+            .count();
         assert_eq!(started, 1, "the session started once");
         kernel.stop_session(&SecurityContext::system(), session_id).await.unwrap();
     }
@@ -1910,7 +1935,10 @@ mod tests {
         );
         let stored = kernel.entity_stores().channels.get(&hers, main.id()).await.unwrap();
         assert!(
-            matches!(stored.internal_actors.as_slice(), [InternalActor::Approver(a)] if a.strategy == ApprovalStrategy::All),
+            matches!(
+                stored.internal_actors.as_slice(),
+                [InternalActor::Approver(a)] if a.strategy == ApprovalStrategy::All
+            ),
             "an approver deciding as the template says"
         );
         assert!(

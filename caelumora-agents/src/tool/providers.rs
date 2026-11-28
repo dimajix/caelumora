@@ -67,12 +67,14 @@ impl ToolProviders {
                     Ok(tools) => (tools.iter().map(|t| t.description().clone()).collect(), None),
                     Err(why) => (Vec::new(), Some(why)),
                 };
-            tools.retain(|tool| match sets.iter().find(|set| set.tools.iter().any(|t| t.name == tool.name)) {
-                Some(set) => {
-                    warn!("Tool '{}' of component '{}' is not offered: component '{}' offers a tool of that name", tool.name, provider.id, set.name);
-                    false
+            tools.retain(|tool| {
+                match sets.iter().find(|set| set.tools.iter().any(|t| t.name == tool.name)) {
+                    Some(set) => {
+                        warn!("Tool '{}' of component '{}' is not offered: component '{}' offers a tool of that name", tool.name, provider.id, set.name);
+                        false
+                    }
+                    None => true,
                 }
-                None => true,
             });
             sets.push(ToolSet {
                 unavailable,

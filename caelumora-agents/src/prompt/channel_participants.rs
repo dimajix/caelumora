@@ -109,7 +109,15 @@ fn render(
     };
     let example =
         others.iter().find(|participant| !participant.is_person()).map(|agent| agent.name.as_str());
-    prompts.render(TEXT, context! { me => me.map(described), others => others.iter().map(described).collect::<Vec<_>>(), example, explanation })
+    prompts.render(
+        TEXT,
+        context! {
+            me => me.map(described),
+            others => others.iter().map(described).collect::<Vec<_>>(),
+            example,
+            explanation,
+        },
+    )
 }
 
 /// An introduction on one line, so that it cannot break out of its entry.

@@ -106,3 +106,11 @@ Each step a commit of its own, reviewed before the next.
 - **2026-11-27** — Opened on the maintainer's request, from the review of step 5 of issue 620.
 - **2026-11-28** — Decision and plan recorded; step 1: how a file is read as Rust text moves to
   `scripts/rust-text.awk`, which `scripts/tuple-bindings.sh` loads.
+- **2026-11-28** — Step 2: the 128 lines broken, in 49 files. A `matches!` with a guard and the
+  body of a `stream!` were laid out by rustfmt itself, masked in a copy as a call it can parse
+  (`matchez!`, the guard's `if` as `||`; `stream!({ … })`) and unmasked again, taking only what
+  touched a long line; the rest by hand. Where a `matches!` broken within 100 characters let
+  rustfmt lay out the statement around it, `cargo fmt` did. Two functions grew past 100 lines -
+  `names_are_unique` of the store's suite and a test of `channel/participants.rs` - and carry
+  `#[expect(clippy::too_many_lines)]` naming this issue, as the maintainer decided;
+  CODING-GUIDELINES.md names it beside issue 490.

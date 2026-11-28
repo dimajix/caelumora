@@ -1172,7 +1172,10 @@ mod tests {
         let soon = start + BEHIND_AFTER;
         backlog.measure(long, 3, soon);
         assert!(
-            matches!(backlog, Backlog::Behind { since, told, .. } if since == soon && told == start),
+            matches!(
+                backlog,
+                Backlog::Behind { since, told, .. } if since == soon && told == start
+            ),
             "behind again, untold: {backlog:?}"
         );
         backlog.measure(Duration::ZERO, 0, soon);

@@ -529,7 +529,12 @@ mod tests {
             stores.agents.list(&system, &Query::all()).await.map(|page| page.items).unwrap();
         assert_eq!(agents.len(), 1, "no second one");
         assert!(
-            matches!(participants[0].1, Participant::Agent(id) if id == agents[0].id && agents[0].security_attributes.owner_id != ActorId::User(owner)),
+            matches!(
+                participants[0].1,
+                Participant::Agent(id)
+                    if id == agents[0].id
+                        && agents[0].security_attributes.owner_id != ActorId::User(owner)
+            ),
             "the other's"
         );
     }

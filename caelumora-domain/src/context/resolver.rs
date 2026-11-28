@@ -1381,7 +1381,13 @@ mod tests {
             contents(&current.items),
             ["earlier", "question", "prompt:step 1", "first", "prompt:step 2", "second"]
         );
-        let reasoning = current.items.iter().map(|item| matches!(item, ContextItem::Conversation { message } if message.reasoning.is_some())).collect::<Vec<_>>();
+        let reasoning = current
+            .items
+            .iter()
+            .map(|item| {
+                matches!(item, ContextItem::Conversation { message } if message.reasoning.is_some())
+            })
+            .collect::<Vec<_>>();
         assert_eq!(
             reasoning,
             [false, false, false, true, false, true],
