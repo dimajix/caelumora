@@ -1173,7 +1173,11 @@ writes it, one change after the other in `run`: a brief recorded as it is delega
 logged, and refused to the giver, if the thread is no longer open by then, or its delegation was
 let go meanwhile -, given as the channel records it, answered as the channel records what came of
 it (`Delegation::follow`), dropped with what came of it if that cannot reach the giver, gone from
-where the thread was opened (`Delegation::refused`), and dropped as the thread is closed.
+where the thread was opened (`Delegation::refused`), and dropped as the thread is closed. A brief
+given whose answer the recipient's turn deferred (`deferred` of `TurnFinished`, issue 591) is
+deferred as the channel records that end (`Delegation::follow_deferred`, `BriefStage`): what is
+given back of it first only tells the giver that the answer follows - the brief stays open, and no
+word of the giver's is due -, and what is given back after that answers it.
 
 Once what came of its last brief is given back, the delegation waits for its **giver's word** on it
 (issue 598, `Delegation::word`): the channel follows the giver reading it, as the giver records what
@@ -1214,7 +1218,9 @@ given what goes to the users and happens in its thread or the whole channel
     it - the thread is a closed circle in which the delegate alone gives the recipient anything,
     and in which nobody else says anything (`Rejection::ClosedCircle`): a turn answering a user who
     wrote in it would be taken so, and the turn that answers the brief taken as the next brief's
-    answer, and so on -
+    answer, and so on -; a turn whose answer is deferred answers nothing yet: once the channel took
+    the brief as deferred, the delegate gives back that the answer follows, once, and the
+    recipient's next turn end - in the closed circle, the deferred turn's own - answers the brief -
 *   **and gives back** to the giver, where the thread was opened, what came of it, once: the
     turn's answer alone (issue 619) - its last message, if that is one (`Message::is_answer`) and
     says something in words, bounded in length with a notice (`MAX_ANSWER`), never the remarks

@@ -278,7 +278,7 @@ mod tests {
     use caelumora_domain::agent::{Agent, PersonalityKind};
     use caelumora_domain::chain::Position;
     use caelumora_domain::channel::{
-        Channel, Circle, Delegation, ThreadId, ThreadOrigin, DELEGATION_LET_GO,
+        Channel, Circle, Delegation, ThreadId, ThreadOrigin, Word, DELEGATION_LET_GO,
     };
     use caelumora_domain::event::GlobalEvent;
     use caelumora_domain::history::{Attended, HistoryEntry};
@@ -428,6 +428,51 @@ mod tests {
         assert!(world.kernel.procedures().run(closing).await.unwrap(), "started and closed");
         assert!(deleted(agents[2]).await, "its agent deleted");
         world.kernel.stop_session(&alice, id).await.unwrap();
+    }
+
+    /// Issue 591: a brief whose answer its recipient's turn deferred comes back as an answer that
+    /// follows, the brief kept open and no word due, and then as what the turn answered later.
+    #[tokio::test]
+    async fn a_deferred_answer_comes_back_after_its_giver_was_told_that_it_follows() {
+        let deferring = ScriptedAgents(Script::Defers("found it".to_string()));
+        let world = World::with(&[], &[&deferring], |_| {}).await;
+        let personality = world.personality("helper", Some(world.alice), &[]).await;
+        let helper = ActorId::Agent(world.agent("helper", world.alice, &personality).await);
+        let alice = World::as_user(world.alice);
+        let hers = ActorId::User(world.alice);
+        let session = world.session_of(&[], &[], &[]).await;
+        let main = Arc::clone(&session.channels()[0]);
+        let thread = session
+            .open_thread(
+                &alice,
+                main.id(),
+                ThreadSpec {
+                    circle: Circle::Closed,
+                    founders: vec![helper],
+                    ..ThreadSpec::new(at_the_line(&main, world.alice).await)
+                },
+            )
+            .await
+            .expect("alice opens a thread with her agent");
+
+        main.delegate(&alice, thread, helper, "look it up".to_string()).await.expect("delegated");
+        let back = |e: &HistoryEntry| match e {
+            HistoryEntry::GivenToRead { recipient, message, .. }
+                if *recipient == hers && message.sender_id == helper =>
+            {
+                message.content.clone()
+            }
+            _ => None,
+        };
+        let entries =
+            main.history_once(|entries| entries.iter().filter_map(back).count() == 2).await;
+        let given_back: Vec<String> = entries.iter().filter_map(back).collect();
+        let follows = "It is still working on it; its answer is given to you once it is done.";
+        assert_eq!(given_back, [follows, "found it"], "that it follows, then the answer");
+        let held = main.delegation(thread).await.expect("delegated into");
+        assert!(held.briefs.is_empty(), "its brief answered");
+        assert!(matches!(held.word, Word::Due { .. }), "alice's word due on the answer alone");
+        session.remove_participant(&alice, helper).await.expect("let go");
     }
 
     /// Issue 557: what is delegated into a thread its delegate gives the recipient to read there,

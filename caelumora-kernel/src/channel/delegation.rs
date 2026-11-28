@@ -8,7 +8,7 @@ use super::{ActorChange, ChannelActor, ChannelError, ChannelLoop};
 use crate::actor::delegate::DelegateActor;
 use anyhow::{anyhow, Result};
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::channel::{Brief, Channel, Circle, Delegation, ThreadId, Word};
+use caelumora_domain::channel::{Brief, BriefStage, Channel, Circle, Delegation, ThreadId, Word};
 use caelumora_domain::message::{Message, MessageId, MessageRole};
 use caelumora_domain::store::Stored;
 use caelumora_security::{ActionType, SecurityContext};
@@ -84,7 +84,7 @@ impl ChannelLoop {
             content: Some(brief),
             ..Message::new(self.classification())
         };
-        let brief = Brief { message, given_at: None };
+        let brief = Brief { message, stage: BriefStage::Waiting };
         let briefs = VecDeque::from([brief]);
         let delegation = Delegation {
             giver,

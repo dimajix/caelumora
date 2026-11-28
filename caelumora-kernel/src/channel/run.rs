@@ -1328,9 +1328,9 @@ impl ChannelLoop {
     /// Records `recorded` in the channel's history and stores it (`append_history`); returns its
     /// position, or `None` if it was not recorded - a change of a message that changes nothing.
     /// What a delegate gave is followed in its delegation (`Delegation::follow`), stored with it,
-    /// and so is what its giver did with what came back (issue 598): its reading, then its turn's
-    /// end or its leave, which let the delegation go - announced once stored
-    /// (`channel::DELEGATION_LET_GO`).
+    /// and so is its recipient's turn ending with its answer deferred (issue 591), and what its
+    /// giver did with what came back (issue 598): its reading, then its turn's end or its leave,
+    /// which let the delegation go - announced once stored (`channel::DELEGATION_LET_GO`).
     async fn record(&self, recorded: Recorded) -> Option<Position> {
         let (thread, sender) = (recorded.context.thread_id, recorded.sender);
         let in_line = recorded.thread().is_none_or(|of| of == ThreadId::line(self.id));
@@ -1346,13 +1346,15 @@ impl ChannelLoop {
             return None;
         }
         let position = state.history.end().previous();
-        // What a delegate gave, and what its giver did with what came back, followed in the
-        // delegation with its entry, stored together, and its delegate in step with it (issues
-        // 557, 598).
+        // What a delegate gave, its recipient's answer deferred, and what its giver did with what
+        // came back, followed in the delegation with its entry, stored together, and its delegate
+        // in step with it (issues 557, 591, 598).
         let delegated = position.and_then(|at| state.follow_given(&entry, at));
+        let deferred = state.follow_deferred(&entry, thread);
         let read = state.follow_read(sender, &entry);
         let let_go = state.follow_giver(&entry, thread);
-        for followed in delegated.into_iter().chain(read).chain(let_go.iter().copied()) {
+        let followed = delegated.into_iter().chain(deferred).chain(read);
+        for followed in followed.chain(let_go.iter().copied()) {
             if let Some(delegation) = state.delegation(followed) {
                 self.sync_delegate(followed, delegation);
             }
@@ -1472,7 +1474,7 @@ mod tests {
     };
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::channel::{
-        Brief, ChannelId, Delegation, Opening, ThreadId, ThreadOrigin, Word,
+        Brief, BriefStage, ChannelId, Delegation, Opening, ThreadId, ThreadOrigin, Word,
     };
     use caelumora_domain::confidentiality::{Classification, Confidentiality};
     use caelumora_domain::content::ContentRef;
@@ -3482,7 +3484,7 @@ mod tests {
             content: Some("look this up".to_string()),
             ..Message::new(Classification::CHANNEL_DEFAULT)
         };
-        let brief = Brief { message, given_at: Some(Position::START) };
+        let brief = Brief { message, stage: BriefStage::Given { at: Position::START } };
         let briefs = VecDeque::from([brief]);
         let delegation =
             Delegation { giver: his, recipient: hers, initiator: hers, briefs, word: Word::NotDue };

@@ -448,7 +448,7 @@ async fn an_external_agent_is_given_what_was_said_since_it_was_last_asked_and_an
 async fn an_external_agent_is_given_what_a_delegate_gives_it_to_read_and_answers() {
     use crate::external::ExternalEvent;
     use caelumora_domain::chain::Position;
-    use caelumora_domain::channel::{Brief, Delegation, ThreadId, Word};
+    use caelumora_domain::channel::{Brief, BriefStage, Delegation, ThreadId, Word};
     use caelumora_domain::message::MessageRole;
     use std::collections::VecDeque;
 
@@ -491,7 +491,7 @@ async fn an_external_agent_is_given_what_a_delegate_gives_it_to_read_and_answers
     // Delegated by the agent to alice, as far as its delegate goes: alice's answer comes back.
     let briefed = Brief {
         message: Message::new(Classification::CHANNEL_DEFAULT),
-        given_at: Some(Position::START),
+        stage: BriefStage::Given { at: Position::START },
     };
     let delegation = Delegation {
         giver: ActorId::Agent(agent),

@@ -111,7 +111,8 @@ impl ThreadState {
 /// that delegated - what both directions carry as their initiator -, the briefs, the first the
 /// one open, and the giver's word on what came of the last (issue 598, `Word`). The thread's
 /// delegate carries it out; the channel alone writes it, following what the delegate gives as the
-/// channel records it (`follow`), and what the giver does with what came back (`follow_read`,
+/// channel records it (`follow`), its recipient's turn ending with its answer deferred
+/// (`follow_deferred`, issue 591), and what the giver does with what came back (`follow_read`,
 /// `follow_turn_end`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Delegation {
@@ -137,11 +138,35 @@ pub enum Word {
 }
 
 /// A brief of a delegation: the message given to read - its sender the giver, its id its own -,
-/// and where it was given; `None` while it waits.
+/// and where it stands.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Brief {
     pub message: Message,
-    pub given_at: Option<Position>,
+    pub stage: BriefStage,
+}
+
+/// Where a brief of a delegation stands (issues 557, 591).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BriefStage {
+    /// Delegated, not given yet.
+    Waiting,
+    /// Given to its recipient at `at`.
+    Given { at: Position },
+    /// Given at `at`; the recipient's turn answering it ended with its answer deferred (issue 591,
+    /// `deferred` of `TurnFinished`) - `told` once the giver was given back that it follows. What
+    /// is given back after that is the answer.
+    Deferred { at: Position, told: bool },
+}
+
+impl Brief {
+    /// Where it was given, if it was.
+    pub fn given_at(&self) -> Option<Position> {
+        match self.stage {
+            BriefStage::Waiting => None,
+            BriefStage::Given { at } | BriefStage::Deferred { at, .. } => Some(at),
+        }
+    }
 }
 
 impl Delegation {
@@ -150,7 +175,7 @@ impl Delegation {
     pub fn gives_brief(&self, recipient: ActorId, message: &Message) -> bool {
         recipient == self.recipient
             && self.briefs.front().is_some_and(|open| {
-                open.given_at.is_none()
+                open.stage == BriefStage::Waiting
                     && (open.message.id, open.message.sender_id) == (message.id, message.sender_id)
                     && open.message.content == message.content
             })
@@ -165,14 +190,23 @@ impl Delegation {
 
     /// Follows its delegate giving `recipient` `message` to read, as the channel records it at
     /// `at`: the open brief given there; what came of it given back, and the next brief open - or,
-    /// if none is, the giver's word on it due (issue 598). Whether it moved on.
+    /// if none is, the giver's word on it due (issue 598). What is given back of a brief whose
+    /// answer was deferred, and of which the giver was not told yet, tells the giver that the
+    /// answer follows (issue 591): the brief stays open, and no word is due. Whether it moved on.
     pub fn follow(&mut self, recipient: ActorId, message: &Message, at: Position) -> bool {
         if self.gives_brief(recipient, message) {
             if let Some(open) = self.briefs.front_mut() {
-                open.given_at = Some(at);
+                open.stage = BriefStage::Given { at };
             }
             true
-        } else if self.gives_back(recipient, message) && self.briefs.pop_front().is_some() {
+        } else if !self.gives_back(recipient, message) {
+            false
+        } else if let Some(BriefStage::Deferred { told: told @ false, .. }) =
+            self.briefs.front_mut().map(|open| &mut open.stage)
+        {
+            *told = true;
+            true
+        } else if self.briefs.pop_front().is_some() {
             if self.briefs.is_empty() {
                 self.word = Word::Due { answer: message.id, read: false };
             }
@@ -180,6 +214,19 @@ impl Delegation {
         } else {
             false
         }
+    }
+
+    /// Follows a turn of `ender` ending with its answer deferred, as the channel records it after
+    /// what it recorded before (issue 591): the open brief deferred, if `ender` is its recipient
+    /// and it was given. Whether it moved on.
+    pub(crate) fn follow_deferred(&mut self, ender: ActorId) -> bool {
+        if ender != self.recipient {
+            return false;
+        }
+        let Some(open) = self.briefs.front_mut() else { return false };
+        let BriefStage::Given { at } = open.stage else { return false };
+        open.stage = BriefStage::Deferred { at, told: false };
+        true
     }
 
     /// Whether it was let go (issue 598): it takes no brief.
@@ -249,7 +296,7 @@ mod tests {
                 content: Some(text.to_string()),
                 ..Message::new(Classification::CHANNEL_DEFAULT)
             },
-            given_at: None,
+            stage: BriefStage::Waiting,
         };
         let (first, second) = (brief("first"), brief("second"));
         let briefs = VecDeque::from([first.clone(), second.clone()]);
@@ -264,7 +311,7 @@ mod tests {
         assert!(!delegation.gives_brief(recipient, &altered), "as it was delegated");
         assert!(delegation.gives_brief(recipient, &first.message));
         delegation.follow(recipient, &first.message, Position::new(3));
-        assert_eq!(delegation.briefs[0].given_at, Some(Position::new(3)), "given there");
+        assert_eq!(delegation.briefs[0].given_at(), Some(Position::new(3)), "given there");
         assert!(!delegation.gives_brief(recipient, &first.message), "once");
 
         assert!(!delegation.gives_back(recipient, &answer), "back to its giver");
@@ -293,7 +340,7 @@ mod tests {
             initiator: giver,
             briefs: VecDeque::from([Brief {
                 message: Message::new(Classification::CHANNEL_DEFAULT),
-                given_at: None,
+                stage: BriefStage::Waiting,
             }]),
             word: Word::NotDue,
         };
@@ -323,7 +370,7 @@ mod tests {
                 sender_id: giver,
                 ..Message::new(Classification::CHANNEL_DEFAULT)
             },
-            given_at: None,
+            stage: BriefStage::Waiting,
         };
         let delegated = |briefs: usize| Delegation {
             giver,
@@ -372,6 +419,50 @@ mod tests {
         let mut left = delegated(0);
         assert!(!left.follow_leave(recipient), "another leaving");
         assert!(left.follow_leave(giver) && left.is_let_go(), "its giver leaving");
+    }
+
+    /// Issue 591: a brief given whose answer its recipient's turn deferred - not one of another -
+    /// stays open as what is given back first tells its giver that the
+    /// answer follows, and no word is due; what is given back next answers it.
+    #[test]
+    fn a_brief_whose_answer_was_deferred_is_answered_after_its_giver_was_told() {
+        let giver = ActorId::Agent(AgentId::new());
+        let recipient = ActorId::Agent(AgentId::new());
+        let brief = Brief {
+            message: Message {
+                id: MessageId::new(),
+                sender_id: giver,
+                ..Message::new(Classification::CHANNEL_DEFAULT)
+            },
+            stage: BriefStage::Waiting,
+        };
+        let briefs = VecDeque::from([brief.clone()]);
+        let mut delegation =
+            Delegation { giver, recipient, initiator: giver, briefs, word: Word::NotDue };
+        let back = || Message {
+            id: MessageId::new(),
+            sender_id: recipient,
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        };
+        let at = Position::new;
+
+        assert!(!delegation.follow_deferred(recipient), "not given yet");
+        delegation.follow(recipient, &brief.message, at(3));
+        assert!(!delegation.follow_deferred(giver), "a turn of another");
+        assert!(delegation.follow_deferred(recipient), "its recipient's");
+        let deferred = BriefStage::Deferred { at: at(3), told: false };
+        assert_eq!(delegation.briefs[0].stage, deferred, "deferred, given where it was");
+        assert!(!delegation.follow_deferred(recipient), "once");
+
+        assert!(delegation.follow(giver, &back(), at(6)), "its giver told");
+        assert_eq!(delegation.briefs[0].stage, BriefStage::Deferred { at: at(3), told: true });
+        assert_eq!(delegation.word, Word::NotDue, "the brief open: no word due");
+        assert_eq!(delegation.briefs[0].given_at(), Some(at(3)), "read on from where it was given");
+
+        let answer = back();
+        assert!(delegation.follow(giver, &answer, at(9)), "then the answer");
+        assert!(delegation.briefs.is_empty(), "answered");
+        assert_eq!(delegation.word, Word::Due { answer: answer.id, read: false }, "the word due");
     }
 
     /// Issue 557: a channel's line is named by the channel alone - the same for the same channel,

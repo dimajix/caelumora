@@ -51,6 +51,16 @@ impl ChannelState {
         self.delegation(*thread)?.follow(*recipient, message, at).then_some(*thread)
     }
 
+    /// Follows a turn ending in `thread` with its answer deferred, as `entry` records it (issue
+    /// 591, `Delegation::follow_deferred`): the open brief of that thread's delegation deferred, if
+    /// the turn was its recipient's; the thread, if it moved its delegation on.
+    pub fn follow_deferred(&mut self, entry: &HistoryEntry, thread: ThreadId) -> Option<ThreadId> {
+        let HistoryEntry::TurnFinished { actor, deferred: true, .. } = entry else {
+            return None;
+        };
+        self.delegation(thread)?.follow_deferred(*actor).then_some(thread)
+    }
+
     /// Follows the channel refusing what a thread's delegate gave, as `entry` would have recorded
     /// it (issue 557, `Delegation::refused`); the thread whose delegation it moved on, if it moved
     /// one on.
@@ -229,13 +239,57 @@ mod tests {
         );
     }
 
+    /// Issue 591: a channel follows a turn ending deferred in the thread whose delegation it
+    /// answers - not one that ended with its answer, nor one in another thread.
+    #[test]
+    fn a_channel_follows_a_deferred_answer_in_its_threads_delegation() {
+        use super::super::{Brief, BriefStage, Word};
+        use crate::agent::AgentId;
+        use crate::confidentiality::Classification;
+        use crate::message::Message;
+        use crate::work::TurnId;
+        use chrono::Utc;
+        use std::collections::VecDeque;
+
+        let channel = ChannelId::new();
+        let mut state = ChannelState::new(channel);
+        let giver = ActorId::Agent(AgentId::new());
+        let recipient = ActorId::Agent(AgentId::new());
+        let given = Brief {
+            message: Message::new(Classification::CHANNEL_DEFAULT),
+            stage: BriefStage::Given { at: Position::new(3) },
+        };
+        let delegation = Delegation {
+            giver,
+            recipient,
+            initiator: giver,
+            briefs: VecDeque::from([given]),
+            word: Word::NotDue,
+        };
+        let thread = ThreadId::new();
+        let held = ThreadState { opening: None, closed: false, delegation: Some(delegation) };
+        state.threads.insert(thread, held);
+        let ended = |deferred| HistoryEntry::TurnFinished {
+            turn_id: TurnId::new(),
+            actor: recipient,
+            at: Utc::now(),
+            deferred,
+        };
+
+        assert_eq!(state.follow_deferred(&ended(false), thread), None, "with its answer");
+        assert_eq!(state.follow_deferred(&ended(true), ThreadId::line(channel)), None, "elsewhere");
+        assert_eq!(state.follow_deferred(&ended(true), thread), Some(thread), "deferred");
+        let stage = state.delegation(thread).map(|held| held.briefs[0].stage);
+        assert_eq!(stage, Some(BriefStage::Deferred { at: Position::new(3), told: false }));
+    }
+
     /// Issue 598: a channel follows a giver reading what came back, and lets go the delegations
     /// into threads that own their recipient as the giver's turn ends where they were opened, or as
     /// it leaves the thread there; one into a thread that does not own its recipient stays, and so
     /// does one whose giver's turn ends in another thread, or is given up.
     #[test]
     fn a_channel_lets_go_what_its_giver_left_without_a_word() {
-        use super::super::{Brief, Circle, Opening, ThreadOrigin, Word};
+        use super::super::{Brief, BriefStage, Circle, Opening, ThreadOrigin, Word};
         use crate::agent::AgentId;
         use crate::confidentiality::Classification;
         use crate::message::{Message, MessageId};
@@ -258,8 +312,10 @@ mod tests {
                 sender_id: ActorId::Agent(recipient),
                 ..Message::new(Classification::CHANNEL_DEFAULT)
             };
-            let brief =
-                Brief { message: Message::new(Classification::CHANNEL_DEFAULT), given_at: None };
+            let brief = Brief {
+                message: Message::new(Classification::CHANNEL_DEFAULT),
+                stage: BriefStage::Waiting,
+            };
             let mut delegation = Delegation {
                 giver,
                 recipient: ActorId::Agent(recipient),
